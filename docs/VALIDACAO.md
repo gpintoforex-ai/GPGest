@@ -5,7 +5,7 @@ Ambiente local Windows, Python 3.13, React/TypeScript, FastAPI e PostgreSQL 16.1
 ## Verificações concluídas
 
 - `npm run build`: TypeScript e compilação de produção passaram.
-- `pytest -q`: **18 testes passaram**, usando esquemas PostgreSQL temporários isolados.
+- **20 testes passaram** (suite geral e teste adicional de permissões), usando esquemas PostgreSQL temporários isolados.
 - Teste de navegador: login, abertura, venda em cartão sem alterar numerário, contagem, fecho, ligação a PDF, menu móvel e ausência de erros JavaScript passaram.
 - Imagens de computador e telemóvel verificadas; não existe deslocamento horizontal da página no teste a 390 px.
 - Relatório de fecho validado como PDF no teste do backend.
@@ -31,6 +31,8 @@ Ambiente local Windows, Python 3.13, React/TypeScript, FastAPI e PostgreSQL 16.1
 Os testes não deixam sessões ou movimentos na caixa da aplicação. O ensaio de recuperação remove apenas a base temporária criada para o teste.
 
 ## Limites da entrega
+
+O painel de sincronização foi movido para **Integrações → Wintouch** da empresa. Foram validados acesso sem sessão da plataforma, seleção exclusiva da própria empresa e bloqueio de operação/histórico para operadores. O navegador confirmou formulário, histórico e largura móvel, com resposta de sincronização simulada. As credenciais da API continuam na administração central.
 
 Foi acrescentada a [importação manual Wintouch](SINCRONIZACAO-WINTOUCH.md) de artigos, entidades e caixas. Os testes verificam confirmação na demonstração, paginação, atualização sem duplicados, anulação por IDs repetidos, preservação do catálogo anterior e classificação explícita cliente/fornecedor. Três leituras reais de um registo confirmaram HTTP 200 e o formato de lista dos endpoints; não guardaram esses dados. A interface de importação foi exercitada com resposta simulada, sem importar dados reais durante o teste do navegador.
 

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { ShieldCheck, Building2, Plus, LogOut, KeyRound } from "lucide-react";
 import { api, Form, Field } from "./App";
-import SyncPanel from "./SyncPanel";
 type Company = {
   id: string;
   name: string;
@@ -333,7 +332,6 @@ export default function Platform() {
             >
               {testing ? "A testar…" : "Testar ligação de leitura"}
             </button>
-            <SyncPanel company={selected} />
           </section>
         )}
         <div className="cash-grid">

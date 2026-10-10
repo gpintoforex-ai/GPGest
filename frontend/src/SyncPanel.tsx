@@ -3,16 +3,16 @@ import { api, Form, Field } from "./App";
 
 export default function SyncPanel({
   company,
+  apiBase = "/integrations/wintouch",
 }: {
   company: { id: string; mode: string; active: boolean; api_active: boolean };
+  apiBase?: string;
 }) {
   const [history, setHistory] = useState<any[]>([]),
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
   async function refresh() {
-    setHistory(
-      await api("/platform/companies/" + company.id + "/sync-history"),
-    );
+    setHistory(await api(apiBase + "/sync-history"));
   }
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
@@ -35,7 +35,7 @@ export default function SyncPanel({
           submitLabel="Sincronizar agora"
           onSubmit={async (v) => {
             setNotice("");
-            const r = await api("/platform/companies/" + company.id + "/sync", {
+            const r = await api(apiBase + "/sync", {
               resource: v.resource,
               confirm_demo: v.confirm_demo === "on",
             });

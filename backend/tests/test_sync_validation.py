@@ -14,6 +14,21 @@ def test_entity_roles_are_explicit_and_unknown_stays_unknown():
         normalize("entities", {"ID": "e3", "Name": "Inválida", "IsSupplier": "false"})
 
 
+def test_operator_cannot_manage_company_integrations(setup):
+    client, _, _ = setup
+    assert (
+        client.post(
+            "/api/auth/login", json={"email": "operator@test.pt", "password": "PasswordTest123!"}
+        ).status_code
+        == 200
+    )
+    assert client.get("/api/integrations/wintouch/sync-history").status_code == 403
+    assert (
+        client.post("/api/integrations/wintouch/sync", json={"resource": "products"}).status_code
+        == 403
+    )
+
+
 def test_cost_precision_and_dates_do_not_guess_timezone():
     values = normalize(
         "products",

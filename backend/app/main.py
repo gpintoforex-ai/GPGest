@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from . import db as database
 from .db import db_session
 from .models import (
     Access,
@@ -32,8 +33,9 @@ from .models import (
     now,
     uid,
 )
+from .platform import SyncRequest, selection_router, sync_company, sync_history
 from .platform import router as platform_router
-from .platform import selection_router
+from .platform_models import Company
 from .schemas import (
     BankCreate,
     CloseCash,
@@ -56,6 +58,8 @@ app = FastAPI(
 )
 app.include_router(platform_router)
 app.include_router(selection_router)
+
+
 hasher = PasswordHash.recommended()
 dummy_hash = hasher.hash(secrets.token_urlsafe(32))
 attempts = defaultdict(deque)
@@ -898,3 +902,40 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="fecho-caixa.pdf"'},
     )
+
+
+@app.get("/api/integrations/wintouch")
+def company_wintouch_status(user=Depends(current), db: Session = Depends(db_session)):
+    with database.next_platform_session() as core:
+        company = core.get(Company, db.info.get("company", {}).get("id"))
+        if not company:
+            raise HTTPException(404, "Empresa indisponivel.")
+        return {
+            "id": company.id,
+            "mode": company.mode,
+            "active": bool(company.active),
+            "api_active": bool(company.api_active),
+        }
+
+
+@app.post("/api/integrations/wintouch/sync")
+def company_wintouch_sync(
+    data: SyncRequest, user=Depends(current), db: Session = Depends(db_session)
+):
+    authorize(user, db, roles=["administrador"])
+    from .wintouch_sync import RESOURCES
+
+    if data.resource not in RESOURCES:
+        raise HTTPException(422, "Escolha artigos, entidades ou caixas.")
+    company_id = db.info.get("company", {}).get("id")
+    record(db, user, "sincronizacao_" + data.resource, company_id or "", {})
+    db.commit()
+    with database.next_platform_session() as core:
+        return sync_company(company_id, data, admin=None, db=core)
+
+
+@app.get("/api/integrations/wintouch/sync-history")
+def company_wintouch_history(user=Depends(current), db: Session = Depends(db_session)):
+    authorize(user, db, roles=["administrador"])
+    with database.next_platform_session() as core:
+        return sync_history(db.info.get("company", {}).get("id"), admin=None, db=core)

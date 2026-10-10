@@ -74,7 +74,7 @@ Veja [o guia da plataforma](docs/ADMINISTRACAO-PLATAFORMA.md) para configuraçã
 
 A base inclui [11 tabelas de integração Wintouch](docs/TABELAS-WINTOUCH.md) por empresa: artigos, categorias, clientes/fornecedores, caixas, turnos, documentos/linhas, meios de pagamento, movimentos e controlo de sincronização. Os dados externos ficam separados dos saldos GPGest até validação explícita.
 
-A [importação manual de artigos, entidades e caixas](docs/SINCRONIZACAO-WINTOUCH.md) está disponível na configuração de cada empresa, com paginação, atualização sem duplicados e histórico. Na demonstração exige confirmação explícita; não arranca automaticamente nem altera saldos financeiros.
+A [importação manual de artigos, entidades e caixas](docs/SINCRONIZACAO-WINTOUCH.md) está disponível em **Integrações → Wintouch**, com paginação, atualização sem duplicados e histórico. Apenas o administrador da empresa pode gerir a sincronização da sua empresa. Na demonstração exige confirmação explícita; não arranca automaticamente nem altera saldos financeiros.
 
 ## Guia de utilização
 

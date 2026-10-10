@@ -1,6 +1,6 @@
 # Importação manual Wintouch — 11/10/2026
 
-Em `/plataforma`, abra **Configurar empresa**, guarde uma ligação ativa e use **Importação Wintouch → Dados a importar → Sincronizar agora**. Pode escolher artigos, entidades (clientes/fornecedores) ou caixas. Na demonstração é obrigatória confirmação explícita de que pretende guardar dados da origem nesse ambiente. A implementação não inicia importações automaticamente.
+Entre na sua empresa e abra **Integrações → Wintouch → Dados a importar → Sincronizar agora**. Pode escolher artigos, entidades (clientes/fornecedores) ou caixas e consultar o histórico da sua empresa. Apenas o administrador da empresa pode gerir sincronizações; não precisa de sessão da plataforma. A ligação e as credenciais API continuam a ser definidas pela administração central. Na demonstração é obrigatória confirmação explícita de que pretende guardar dados da origem nesse ambiente. A implementação não inicia importações automaticamente.
 
 Foram feitas três pequenas leituras reais, uma por endpoint com `limit=1`, na ligação configurada: `products`, `entities` e `cash_accounts` responderam HTTP 200 com listas. Foi verificado apenas o formato/campos, sem guardar estes dados ou publicar valores pessoais. Os campos `IsClient` e `IsSupplier` foram confirmados na resposta de entidades e usados como classificação explícita.
 

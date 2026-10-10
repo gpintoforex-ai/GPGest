@@ -853,13 +853,13 @@ footer {
 .platform-editor {
   margin-bottom: 24px;
 }
-.platform-page .checkbox {
+.checkbox {
   display: flex;
   align-items: center;
   gap: 10px;
   margin: 16px 0;
 }
-.platform-page .checkbox input {
+.checkbox input {
   width: 18px;
   height: 18px;
 }

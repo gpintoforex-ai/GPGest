@@ -352,11 +352,12 @@ def sync_company(
         raise HTTPException(503, "Não foi possível decifrar a chave API.") from None
     # A origem é obtida exclusivamente da configuração central desta empresa.
     bind = engine.execution_options(schema_translate_map={None: company.schema_name})
-    db.add(
-        PlatformAudit(
-            admin_id=admin.id, company_id=company.id, action="sincronizacao_" + data.resource
+    if admin is not None:
+        db.add(
+            PlatformAudit(
+                admin_id=admin.id, company_id=company.id, action="sincronizacao_" + data.resource
+            )
         )
-    )
     db.commit()
     try:
         return synchronize(bind, company.api_enterprise, data.resource, url, key)

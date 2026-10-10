@@ -116,6 +116,25 @@ def test_company_validation_explains_fields_and_normalizes_slug(platform):
     assert response.json()["slug"] == "empresa-nova"
 
 
+def test_tenant_integration_uses_own_company_without_platform_session(platform):
+    c, _ = platform
+    a = create(c, "empresa-integracoes-a")
+    b = create(c, "empresa-integracoes-b")
+    c.cookies.clear()
+    enter(c, a["slug"])
+    assert c.get("/api/integrations/wintouch").json()["id"] == a["id"]
+    assert c.get("/api/integrations/wintouch/sync-history").json() == []
+    assert c.get("/api/platform/companies").status_code == 401
+    assert (
+        c.post(
+            "/api/integrations/wintouch/sync", json={"resource": "products", "company_id": b["id"]}
+        ).status_code
+        == 422
+    )
+    enter(c, b["slug"])
+    assert c.get("/api/integrations/wintouch").json()["id"] == b["id"]
+
+
 def test_manual_sync_pagination_deduplication_and_demo_confirmation(platform, monkeypatch):
     from app.db import engine
     from app.models import WintouchProduct, WintouchSyncState

@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 
 type Row = Record<string, any>;
+import TenantIntegrations from "./TenantIntegrations";
 type Bootstrap = {
   user: Row;
   mode: string;
@@ -840,19 +841,9 @@ export default function App() {
                 </div>
               </div>
               <div className="cash-grid">
-                <section className="panel">
-                  <Plug />
-                  <h3>Wintouch</h3>
-                  <span className="pill neutral">Aguarda documentação</span>
-                  <p>
-                    Precisamos da versão, documentação da API ou estrutura
-                    autorizada de leitura e exemplos de exportação.
-                  </p>
-                  <p>
-                    Nunca será escrita informação diretamente na base de dados
-                    do Wintouch.
-                  </p>
-                </section>
+                <TenantIntegrations
+                  canManage={boot.user.role === "administrador"}
+                />
                 <section className="panel">
                   <Landmark />
                   <h3>Open Banking</h3>
