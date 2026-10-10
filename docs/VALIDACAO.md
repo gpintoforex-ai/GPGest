@@ -5,7 +5,7 @@ Ambiente local Windows, Python 3.13, React/TypeScript, FastAPI e PostgreSQL 16.1
 ## Verificações concluídas
 
 - `npm run build`: TypeScript e compilação de produção passaram.
-- `pytest -q`: **15 testes passaram**, usando esquemas PostgreSQL temporários isolados.
+- `pytest -q`: **18 testes passaram**, usando esquemas PostgreSQL temporários isolados.
 - Teste de navegador: login, abertura, venda em cartão sem alterar numerário, contagem, fecho, ligação a PDF, menu móvel e ausência de erros JavaScript passaram.
 - Imagens de computador e telemóvel verificadas; não existe deslocamento horizontal da página no teste a 390 px.
 - Relatório de fecho validado como PDF no teste do backend.
@@ -32,9 +32,11 @@ Os testes não deixam sessões ou movimentos na caixa da aplicação. O ensaio d
 
 ## Limites da entrega
 
+Foi acrescentada a [importação manual Wintouch](SINCRONIZACAO-WINTOUCH.md) de artigos, entidades e caixas. Os testes verificam confirmação na demonstração, paginação, atualização sem duplicados, anulação por IDs repetidos, preservação do catálogo anterior e classificação explícita cliente/fornecedor. Três leituras reais de um registo confirmaram HTTP 200 e o formato de lista dos endpoints; não guardaram esses dados. A interface de importação foi exercitada com resposta simulada, sem importar dados reais durante o teste do navegador.
+
 Em 11/10/2026 foi aplicada a migração `0003` com 11 tabelas Wintouch por empresa. Os testes adicionais verificam preço Decimal com quatro casas, clientes/fornecedores na mesma entidade, prevenção de duplicados, separação dos movimentos financeiros locais, exclusão de execuções de sincronização concorrentes e migração/reversão em dois esquemas existentes. Não há importação automática nesta etapa; veja [TABELAS-WINTOUCH.md](TABELAS-WINTOUCH.md).
 
-A administração central em `/plataforma` foi validada no navegador: autenticação separada, formulários de criação/configuração, saída de sessão e largura móvel. Os novos testes verificam isolamento dos esquemas, rejeição de uma sessão de outra empresa, impossibilidade de administradores das lojas acederem à plataforma, desativação imediata de empresas, cifragem das chaves e teste Wintouch exclusivamente de leitura com transporte simulado. Nenhuma chamada real ao Wintouch foi feita; são necessárias as credenciais de cada cliente.
+A administração central em `/plataforma` foi validada no navegador: autenticação separada, formulários de criação/configuração, saída de sessão e largura móvel. Os testes verificam isolamento dos esquemas, rejeição de uma sessão de outra empresa, impossibilidade de administradores das lojas acederem à plataforma, desativação imediata de empresas, cifragem das chaves e teste Wintouch exclusivamente de leitura com transporte simulado. Para importar são necessárias as credenciais de cada cliente.
 
 O backup inclui agora a plataforma e os esquemas das empresas; a recuperação compara tabelas e contagens. A empresa inicial e os acessos anteriores foram preservados. Consulte [ADMINISTRACAO-PLATAFORMA.md](ADMINISTRACAO-PLATAFORMA.md) para configuração e atualização dos esquemas.
 

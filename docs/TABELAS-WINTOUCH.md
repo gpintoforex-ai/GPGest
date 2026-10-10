@@ -30,7 +30,7 @@ Valores financeiros consolidados usam cêntimos inteiros; preços e custos unit�
 
 O futuro adaptador deve validar que entidades, documentos, caixas e turnos ligados pertencem ao mesmo `enterprise_id`, confirmar o significado dos campos, paginar completamente, atualizar por identidade externa e só avançar o cursor após uma execução concluída. Mudanças do identificador Wintouch da configuração mantêm identidades distintas, exigindo seleção explícita da origem nas consultas.
 
-Esta etapa entrega o modelo e a migração, sem importar dados reais para a demonstração. A sincronização automática, o adaptador dos campos das respostas e a consulta do catálogo pela interface continuam como etapa seguinte. Não são guardadas respostas completas da API, cabeçalhos nem chaves nestas tabelas; os erros de sincronização devem ser sanitizados antes de persistir.
+O modelo e a migração foram entregues sem importar dados reais para a demonstração. Foi depois acrescentada a [importação manual de artigos, entidades e caixas](SINCRONIZACAO-WINTOUCH.md), com confirmação explícita na demonstração. A sincronização automática, categorias, preços/stock detalhados, documentos, turnos e movimentos financeiros continuam como etapas seguintes. Não são guardadas respostas completas da API, cabeçalhos nem chaves nestas tabelas; os erros de sincronização são sanitizados antes de persistir.
 
 ## Atualização e recuperação
 

@@ -15,10 +15,11 @@ from pydantic import Field, field_validator
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from .db import platform_db
-from .models import Base, Category, Register, Store, User, now, uid
+from .db import engine, platform_db
+from .models import Base, Category, Register, Store, User, WintouchSyncRun, now, uid
 from .platform_models import Company, PlatformAdmin, PlatformAudit, PlatformSession
 from .schemas import Login, Name, Strict
+from .wintouch_sync import RESOURCES, SyncError, synchronize
 
 router = APIRouter(prefix="/api/platform", tags=["Administração da plataforma"])
 hasher = PasswordHash.recommended()
@@ -49,6 +50,11 @@ class CompanyConfig(Name):
 
 class CompanySelect(Strict):
     slug: str = Field(max_length=80)
+
+
+class SyncRequest(Strict):
+    resource: str
+    confirm_demo: bool = False
 
 
 def cipher():
@@ -317,6 +323,76 @@ def audit(admin=Depends(require_platform), db: Session = Depends(platform_db)):
             select(PlatformAudit).order_by(PlatformAudit.created_at.desc()).limit(200)
         )
     ]
+
+
+@router.post("/companies/{company_id}/sync")
+def sync_company(
+    company_id: str,
+    data: SyncRequest,
+    admin=Depends(require_platform),
+    db: Session = Depends(platform_db),
+):
+    company = db.get(Company, company_id)
+    if not company or not company.active or not company.api_active:
+        raise HTTPException(409, "Ative a empresa e a ligação Wintouch antes de importar.")
+    if data.resource not in RESOURCES:
+        raise HTTPException(
+            422,
+            "Escolha artigos, entidades ou caixas. A importação financeira exige validação própria.",
+        )
+    if company.mode == "demonstracao" and not data.confirm_demo:
+        raise HTTPException(
+            422,
+            "Confirme explicitamente a importação de dados Wintouch para esta empresa de demonstração.",
+        )
+    url = validate_url(company.api_url)
+    try:
+        key = cipher().decrypt(company.api_key_ciphertext.encode()).decode()
+    except InvalidToken:
+        raise HTTPException(503, "Não foi possível decifrar a chave API.") from None
+    # A origem é obtida exclusivamente da configuração central desta empresa.
+    bind = engine.execution_options(schema_translate_map={None: company.schema_name})
+    db.add(
+        PlatformAudit(
+            admin_id=admin.id, company_id=company.id, action="sincronizacao_" + data.resource
+        )
+    )
+    db.commit()
+    try:
+        return synchronize(bind, company.api_enterprise, data.resource, url, key)
+    except SyncError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+@router.get("/companies/{company_id}/sync-history")
+def sync_history(
+    company_id: str, admin=Depends(require_platform), db: Session = Depends(platform_db)
+):
+    company = db.get(Company, company_id)
+    if not company:
+        raise HTTPException(404, "Empresa não encontrada.")
+    with Session(
+        engine.execution_options(schema_translate_map={None: company.schema_name})
+    ) as tenant:
+        return [
+            {
+                "id": r.id,
+                "resource": r.resource,
+                "status": r.status,
+                "read_count": r.read_count,
+                "inserted_count": r.inserted_count,
+                "updated_count": r.updated_count,
+                "started_at": r.started_at,
+                "finished_at": r.finished_at,
+                "error_message": r.error_message,
+            }
+            for r in tenant.scalars(
+                select(WintouchSyncRun)
+                .where(WintouchSyncRun.enterprise_id == company.api_enterprise)
+                .order_by(WintouchSyncRun.started_at.desc())
+                .limit(30)
+            )
+        ]
 
 
 selection_router = APIRouter()

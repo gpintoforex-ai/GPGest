@@ -21,6 +21,8 @@ A chave é cifrada com Fernet usando `PLATFORM_ENCRYPTION_KEY`, independente da 
 
 ## Instalação, isolamento e recuperação
 
+Para importar artigos, clientes/fornecedores e caixas, use o painel **Importação Wintouch** na configuração da empresa. O botão **Sincronizar agora** atualiza por ID externo e guarda histórico. Na demonstração exige confirmação explícita. Consulte [SINCRONIZACAO-WINTOUCH.md](SINCRONIZACAO-WINTOUCH.md) para paginação, campos e limites. O teste de ligação continua a ser apenas um teste, sem importar.
+
 O instalador executa as migrações até à versão atual (`0003`), gera a chave de encriptação e as credenciais privadas, e regista a empresa inicial sem substituir dados existentes. Em instalações manuais existentes:
 
 ```powershell

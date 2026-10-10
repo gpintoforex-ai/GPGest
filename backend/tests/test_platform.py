@@ -116,6 +116,80 @@ def test_company_validation_explains_fields_and_normalizes_slug(platform):
     assert response.json()["slug"] == "empresa-nova"
 
 
+def test_manual_sync_pagination_deduplication_and_demo_confirmation(platform, monkeypatch):
+    from app.db import engine
+    from app.models import WintouchProduct, WintouchSyncState
+    from sqlalchemy.orm import Session
+
+    c, factory = platform
+    company = create(c, "empresa-sync")
+    url = "/api/platform/companies/" + company["id"]
+    config = configuration(
+        company, api_active=True, api_enterprise="api-sync", api_key="secret-sync-key"
+    )
+    assert c.post(url + "/config", json=config).status_code == 200
+    assert c.post(url + "/sync", json={"resource": "products"}).status_code == 422
+    assert (
+        c.post(
+            url + "/sync", json={"resource": "settlement_documents", "confirm_demo": True}
+        ).status_code
+        == 422
+    )
+    calls = []
+    mode = {"fail": False}
+
+    class API:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def get(self, target, params, headers):
+            calls.append((target, params, headers))
+            if params["skip"] and not mode["fail"]:
+                return httpx.Response(200, json=[])
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "ID": "p1",
+                        "Code": "P1",
+                        "Name": "Artigo atualizado" if mode["fail"] else "Artigo",
+                        "LastCostGlobal": "12.3456",
+                        "Enabled": True,
+                    }
+                ],
+            )
+
+    monkeypatch.setattr("app.wintouch_sync.httpx.Client", API)
+    for expected_new in (1, 0):
+        result = c.post(url + "/sync", json={"resource": "products", "confirm_demo": True})
+        assert result.status_code == 200, result.text
+        assert result.json()["status"] == "concluida"
+        assert result.json()["inserted_count"] == expected_new
+    assert [x[1]["skip"] for x in calls] == [0, 1, 0, 1]
+    assert all(x[2]["x-current-enterprise"] == "api-sync" for x in calls)
+    mode["fail"] = True
+    result = c.post(url + "/sync", json={"resource": "products", "confirm_demo": True}).json()
+    assert result["status"] == "falhou"
+    assert "repetiu IDs" in result["error_message"]
+    with factory() as core:
+        schema = core.get(Company, company["id"]).schema_name
+    with Session(engine.execution_options(schema_translate_map={None: schema})) as tenant:
+        products = list(tenant.scalars(select(WintouchProduct)))
+        assert len(products) == 1 and products[0].name == "Artigo"
+        assert tenant.scalar(select(WintouchSyncState)).last_success_at is not None
+    history = c.get(url + "/sync-history")
+    assert len(history.json()) == 3
+    assert "secret-sync-key" not in history.text
+    enter(c, company["slug"])
+    assert c.get("/api/movements").json() == []
+
+
 def test_company_isolation_and_separate_admin(platform):
     c, _ = platform
     a, b = create(c, "empresa-a"), create(c, "empresa-b")

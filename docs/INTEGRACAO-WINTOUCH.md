@@ -46,4 +46,4 @@ Os caminhos da tabela são relativos ao prefixo `/api/{apiVersion}/` documentado
 
 Não reutilizar as rotas de criação de encomendas, alteração de entidades, abertura/fecho POS ou emissão de documentos do projeto anterior: o GPGest é uma ferramenta de gestão e não deve escrever no Wintouch nesta integração.
 
-Esta análise serviu de base à gestão central de empresas. A configuração por cliente e o teste de leitura estão agora disponíveis em `/plataforma`; consulte [ADMINISTRACAO-PLATAFORMA.md](ADMINISTRACAO-PLATAFORMA.md). A sincronização remota e a importação de dados ainda não estão implementadas.
+Esta análise serviu de base à gestão central de empresas. A configuração por cliente, teste de leitura e [importação manual de artigos, entidades e caixas](SINCRONIZACAO-WINTOUCH.md) estão disponíveis em `/plataforma`. Consulte [ADMINISTRACAO-PLATAFORMA.md](ADMINISTRACAO-PLATAFORMA.md). A sincronização automática e a importação financeira continuam pendentes.
