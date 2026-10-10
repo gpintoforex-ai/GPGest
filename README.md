@@ -72,6 +72,8 @@ A página reservada **http://127.0.0.1:5174/plataforma** permite criar/desativar
 
 Veja [o guia da plataforma](docs/ADMINISTRACAO-PLATAFORMA.md) para configuração, cópias de segurança e limitações da integração. Não há importação automática nesta entrega.
 
+A base inclui [11 tabelas de integração Wintouch](docs/TABELAS-WINTOUCH.md) por empresa: artigos, categorias, clientes/fornecedores, caixas, turnos, documentos/linhas, meios de pagamento, movimentos e controlo de sincronização. Os dados externos ficam separados dos saldos GPGest até validação explícita.
+
 ## Guia de utilização
 
 1. **Configurações**: crie lojas, caixas, categorias e equipa. Um administrador tem acesso a todas as lojas; os restantes utilizadores recebem acesso explícito. Na criação pela interface escolhe-se uma loja; a API aceita várias `store_ids`.

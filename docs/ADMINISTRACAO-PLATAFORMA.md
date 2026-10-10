@@ -21,7 +21,7 @@ A chave é cifrada com Fernet usando `PLATFORM_ENCRYPTION_KEY`, independente da 
 
 ## Instalação, isolamento e recuperação
 
-O instalador executa a migração `0002`, gera a chave de encriptação e as credenciais privadas, e regista a empresa inicial sem substituir dados existentes. Em instalações manuais existentes:
+O instalador executa as migrações até à versão atual (`0003`), gera a chave de encriptação e as credenciais privadas, e regista a empresa inicial sem substituir dados existentes. Em instalações manuais existentes:
 
 ```powershell
 cd 'C:\Projetos\Site Loja\GPGest'
@@ -38,4 +38,4 @@ Os dados operacionais usam esquemas `gpgest_c_<uuid>` exclusivos; os registos da
 
 As cópias de segurança incluem a plataforma e todos os esquemas de empresas, excluindo os esquemas temporários de testes. Guarde também `.env`, sobretudo `PLATFORM_ENCRYPTION_KEY`, numa cópia privada e protegida: sem essa chave as credenciais Wintouch guardadas não podem ser recuperadas. Não a substitua após configurar clientes. O teste de recuperação compara tabelas e contagens de todas as empresas numa base temporária.
 
-Antes de futuras alterações às tabelas operacionais, prepare e teste a migração de **todos** os esquemas existentes; `alembic upgrade head` atualiza atualmente o esquema inicial e a plataforma. Os esquemas de novas empresas são criados com o modelo corrente. Para alojamento público são ainda necessários HTTPS, `COOKIE_SECURE=true`, origens permitidas e configuração de produção adequada. Esta entrega mantém o arranque local.
+Antes de futuras alterações às tabelas operacionais, prepare e teste a migração de **todos** os esquemas existentes. A migração `0003` cria as [tabelas Wintouch](TABELAS-WINTOUCH.md) em todas as empresas registadas; futuras migrações devem seguir o mesmo cuidado. Os esquemas de novas empresas são criados com o modelo corrente. Execute as migrações com o servidor parado para impedir criação concorrente de empresas. Para alojamento público são ainda necessários HTTPS, `COOKIE_SECURE=true`, origens permitidas e configuração de produção adequada. Esta entrega mantém o arranque local.
