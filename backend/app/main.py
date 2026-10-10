@@ -30,6 +30,8 @@ from .models import (
     now,
     uid,
 )
+from .platform import router as platform_router
+from .platform import selection_router
 from .schemas import (
     BankCreate,
     CloseCash,
@@ -50,6 +52,8 @@ app = FastAPI(
     version="0.1.0",
     description="Gestão interna. Não emite documentos fiscais.",
 )
+app.include_router(platform_router)
+app.include_router(selection_router)
 hasher = PasswordHash.recommended()
 dummy_hash = hasher.hash(secrets.token_urlsafe(32))
 attempts = defaultdict(deque)
@@ -289,7 +293,8 @@ def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
     )
     return {
         "user": serial(user),
-        "mode": os.getenv("APP_MODE", "real"),
+        "mode": db.info.get("company", {}).get("mode", os.getenv("APP_MODE", "real")),
+        "company": db.info.get("company", {}),
         "stores": [serial(s) for s in db.scalars(select(Store).where(Store.id.in_(ids)))],
         "registers": [
             serial(r) for r in db.scalars(select(Register).where(Register.store_id.in_(ids)))

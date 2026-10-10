@@ -31,6 +31,7 @@ type Row = Record<string, any>;
 type Bootstrap = {
   user: Row;
   mode: string;
+  company: Row;
   stores: Row[];
   registers: Row[];
   accounts: Row[];
@@ -68,7 +69,7 @@ const labels: Record<string, string> = {
 const denominations = [
   50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1,
 ];
-async function api(path: string, body?: unknown) {
+export async function api(path: string, body?: unknown) {
   const r = await fetch("/api" + path, {
     credentials: "same-origin",
     ...(body !== undefined
@@ -95,7 +96,7 @@ async function api(path: string, body?: unknown) {
     );
   return data;
 }
-function Form({
+export function Form({
   onSubmit,
   children,
   submitLabel = "Guardar",
@@ -133,7 +134,7 @@ function Form({
     </form>
   );
 }
-function Field({
+export function Field({
   label,
   children,
 }: {
@@ -268,10 +269,24 @@ export default function App() {
           <Form
             submitLabel="Entrar"
             onSubmit={async (v) => {
-              await api("/auth/login", v);
+              const { company, ...credentials } = v;
+              await api("/company/select", { slug: company });
+              await api("/auth/login", credentials);
               await reload();
             }}
           >
+            <Field label="Empresa">
+              <input
+                name="company"
+                required
+                defaultValue={
+                  new URLSearchParams(window.location.search).get("empresa") ||
+                  "demo"
+                }
+                autoComplete="organization"
+              />
+            </Field>
+            <small>Use o identificador fornecido pelo administrador.</small>
             <Field label="Email">
               <input
                 name="email"
@@ -335,7 +350,7 @@ export default function App() {
       <aside className={mobile ? "sidebar visible" : "sidebar"}>
         <div className="brand">
           GP<span>Gest</span>
-          <small>GESTÃO DE LOJA</small>
+          <small>{boot.company?.name || "GESTÃO DE LOJA"}</small>
         </div>
         <nav>
           {menu.map(([label, Icon]) => (

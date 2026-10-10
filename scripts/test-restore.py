@@ -50,20 +50,20 @@ with psycopg.connect(**params, dbname="postgres", autocommit=True) as admin:
             psycopg.connect(**params, dbname=target) as restored,
         ):
             tables = [
-                r[0]
+                tuple(r)
                 for r in source.execute(
-                    "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'"
+                    "SELECT table_schema, table_name FROM information_schema.tables WHERE (table_schema='public' OR table_schema LIKE 'gpgest_c_%') AND table_type='BASE TABLE'"
                 ).fetchall()
             ]
             restored_tables = [
-                r[0]
+                tuple(r)
                 for r in restored.execute(
-                    "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'"
+                    "SELECT table_schema, table_name FROM information_schema.tables WHERE (table_schema='public' OR table_schema LIKE 'gpgest_c_%') AND table_type='BASE TABLE'"
                 ).fetchall()
             ]
             assert sorted(tables) == sorted(restored_tables)
-            for table in tables:
-                query = sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table))
+            for schema, table in tables:
+                query = sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(schema, table))
                 assert source.execute(query).fetchone() == restored.execute(query).fetchone(), table
         print("Backup restaurado numa base temporária: contagens de todas as tabelas verificadas.")
     finally:

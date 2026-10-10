@@ -66,6 +66,12 @@ Os registos dos processos iniciados pelo script estão em `.local\backend.log`, 
 
 Para parar os processos iniciados pelo script e a base local, execute `powershell -ExecutionPolicy Bypass -File .\Parar.ps1`. O script verifica o identificador e a data de arranque dos processos antes de os terminar. Os dados são preservados.
 
+## Administração central de empresas
+
+A página reservada **http://127.0.0.1:5174/plataforma** permite criar/desativar empresas e configurar/testar a API Wintouch de cada cliente. O acesso é separado das contas das lojas; consulte `.local/ACESSO-PLATAFORMA.txt`. Os dados operacionais são separados por esquema PostgreSQL e as chaves API ficam cifradas. A entrada normal passa a pedir o identificador da empresa (a empresa inicial é `demo`).
+
+Veja [o guia da plataforma](docs/ADMINISTRACAO-PLATAFORMA.md) para configuração, cópias de segurança e limitações da integração. Não há importação automática nesta entrega.
+
 ## Guia de utilização
 
 1. **Configurações**: crie lojas, caixas, categorias e equipa. Um administrador tem acesso a todas as lojas; os restantes utilizadores recebem acesso explícito. Na criação pela interface escolhe-se uma loja; a API aceita várias `store_ids`.

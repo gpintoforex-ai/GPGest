@@ -831,3 +831,43 @@ footer {
     display: none;
   }
 }
+
+.platform-page {
+  min-height: 100vh;
+  background: var(--bg, #f5f7f5);
+}
+.platform-page > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 5%;
+  background: white;
+  border-bottom: 1px solid #e0e7e1;
+  gap: 16px;
+}
+.platform-page > main {
+  max-width: 1240px;
+  margin: auto;
+  padding: 32px 24px;
+}
+.platform-editor {
+  margin-bottom: 24px;
+}
+.platform-page .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+}
+.platform-page .checkbox input {
+  width: 18px;
+  height: 18px;
+}
+@media (max-width: 600px) {
+  .platform-page > main {
+    padding: 20px 12px;
+  }
+  .platform-page > header {
+    padding: 16px;
+  }
+}

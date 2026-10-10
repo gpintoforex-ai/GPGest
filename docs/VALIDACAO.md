@@ -5,7 +5,7 @@ Ambiente local Windows, Python 3.13, React/TypeScript, FastAPI e PostgreSQL 16.1
 ## Verificações concluídas
 
 - `npm run build`: TypeScript e compilação de produção passaram.
-- `pytest -q`: **9 testes passaram**, usando esquemas PostgreSQL temporários isolados.
+- `pytest -q`: **11 testes passaram**, usando esquemas PostgreSQL temporários isolados.
 - Teste de navegador: login, abertura, venda em cartão sem alterar numerário, contagem, fecho, ligação a PDF, menu móvel e ausência de erros JavaScript passaram.
 - Imagens de computador e telemóvel verificadas; não existe deslocamento horizontal da página no teste a 390 px.
 - Relatório de fecho validado como PDF no teste do backend.
@@ -32,7 +32,11 @@ Os testes não deixam sessões ou movimentos na caixa da aplicação. O ensaio d
 
 ## Limites da entrega
 
-Esta entrega corresponde à **Fase 1 funcional**, com PDF de fecho, anexos e exportação CSV de movimentos. Os módulos das fases 2–5 estão identificados como pendentes. Não foram testadas integrações reais com Wintouch ou bancos, pois não existem versão/documentação e prestador confirmados.
+A administração central em `/plataforma` foi validada no navegador: autenticação separada, formulários de criação/configuração, saída de sessão e largura móvel. Os novos testes verificam isolamento dos esquemas, rejeição de uma sessão de outra empresa, impossibilidade de administradores das lojas acederem à plataforma, desativação imediata de empresas, cifragem das chaves e teste Wintouch exclusivamente de leitura com transporte simulado. Nenhuma chamada real ao Wintouch foi feita; são necessárias as credenciais de cada cliente.
+
+O backup inclui agora a plataforma e os esquemas das empresas; a recuperação compara tabelas e contagens. A empresa inicial e os acessos anteriores foram preservados. Consulte [ADMINISTRACAO-PLATAFORMA.md](ADMINISTRACAO-PLATAFORMA.md) para configuração e atualização dos esquemas.
+
+Esta entrega corresponde à **Fase 1 funcional**, com PDF de fecho, anexos e exportação CSV de movimentos, mais gestão central de empresas e configuração Wintouch. Os módulos das fases 2–5 estão identificados como pendentes. A análise Wintouch usa o Swagger guardado no projeto existente; a configuração e o teste de leitura estão disponíveis, mas ainda não há sincronização de dados. A integração bancária continua sem prestador confirmado.
 
 A importação CSV/Excel, depósitos com talões e trânsito, receitas/custos reconhecidos, lotes e reconciliação ainda não estão implementados. O ambiente foi validado localmente; ainda não foi publicado nem auditado para utilização em produção.
 

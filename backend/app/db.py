@@ -2,8 +2,11 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from fastapi import HTTPException, Request
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
+
+from .platform_models import Company
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 url = os.environ.get("DATABASE_URL")
@@ -13,6 +16,38 @@ engine = create_engine(url, pool_pre_ping=True)
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 
-def db_session():
-    with SessionLocal() as db:
+def platform_db():
+    with SessionLocal(bind=engine.execution_options(schema_translate_map={None: "public"})) as db:
         yield db
+
+
+def db_session(request: Request):
+    selected = request.cookies.get("gpgest_company")
+    company = None
+    with next_platform_session() as core:
+        company = (
+            core.get(Company, selected)
+            if selected
+            else core.scalar(select(Company).where(Company.schema_name == "public"))
+        )
+        if not company or not company.active:
+            raise HTTPException(
+                401, "Empresa indisponível. Selecione uma empresa ativa para entrar."
+            )
+    bind = (
+        engine
+        if company.schema_name == "public"
+        else engine.execution_options(schema_translate_map={None: company.schema_name})
+    )
+    with SessionLocal(bind=bind) as db:
+        db.info["company"] = {
+            "id": company.id,
+            "name": company.name,
+            "slug": company.slug,
+            "mode": company.mode,
+        }
+        yield db
+
+
+def next_platform_session():
+    return SessionLocal(bind=engine.execution_options(schema_translate_map={None: "public"}))
