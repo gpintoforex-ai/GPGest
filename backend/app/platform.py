@@ -11,7 +11,7 @@ import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pwdlib import PasswordHash
-from pydantic import Field
+from pydantic import Field, field_validator
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -31,6 +31,11 @@ class CompanyCreate(Name):
     admin_name: str = Field(min_length=2, max_length=100)
     admin_email: str = Field(min_length=3, max_length=200)
     admin_password: str = Field(min_length=12, max_length=200)
+
+    @field_validator("slug", "admin_email", mode="before")
+    @classmethod
+    def normalize_identifier(cls, value):
+        return value.strip().lower() if isinstance(value, str) else value
 
 
 class CompanyConfig(Name):

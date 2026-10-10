@@ -5,7 +5,7 @@ Ambiente local Windows, Python 3.13, React/TypeScript, FastAPI e PostgreSQL 16.1
 ## Verificações concluídas
 
 - `npm run build`: TypeScript e compilação de produção passaram.
-- `pytest -q`: **11 testes passaram**, usando esquemas PostgreSQL temporários isolados.
+- `pytest -q`: **12 testes passaram**, usando esquemas PostgreSQL temporários isolados.
 - Teste de navegador: login, abertura, venda em cartão sem alterar numerário, contagem, fecho, ligação a PDF, menu móvel e ausência de erros JavaScript passaram.
 - Imagens de computador e telemóvel verificadas; não existe deslocamento horizontal da página no teste a 390 px.
 - Relatório de fecho validado como PDF no teste do backend.

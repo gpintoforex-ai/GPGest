@@ -8,6 +8,8 @@ from decimal import Decimal, InvalidOperation
 from time import monotonic
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pwdlib import PasswordHash
 from sqlalchemy import func, select
@@ -99,6 +101,45 @@ async def conflict(request, exc):
         {"detail": "Operação duplicada ou conflito. Atualize os dados antes de repetir."},
         status_code=409,
     )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    if not request.url.path.startswith("/api/platform/"):
+        return await request_validation_exception_handler(request, exc)
+    labels = {
+        "name": "Nome da empresa",
+        "slug": "Identificador da empresa",
+        "admin_name": "Nome do administrador",
+        "admin_email": "Email do administrador",
+        "admin_password": "Palavra-passe inicial",
+        "email": "Email",
+        "password": "Palavra-passe",
+        "api_url": "URL da API",
+        "api_enterprise": "Identificador Wintouch",
+        "api_key": "Chave API",
+    }
+    messages = []
+    for error in exc.errors():
+        field = str(error["loc"][-1])
+        label = labels.get(field, "Formulário")
+        kind = error["type"]
+        ctx = error.get("ctx", {})
+        if kind == "missing":
+            reason = "preencha este campo"
+        elif kind == "string_too_short":
+            reason = f"introduza pelo menos {ctx['min_length']} caracteres"
+        elif kind == "string_too_long":
+            reason = f"introduza no máximo {ctx['max_length']} caracteres"
+        elif kind == "string_pattern_mismatch" and field == "slug":
+            reason = "use entre 3 e 80 caracteres: letras sem acentos, números e hífen; comece com uma letra ou número"
+        elif kind == "extra_forbidden":
+            reason = "foi enviado um campo não permitido"
+        else:
+            reason = "valor inválido"
+        messages.append(f"{label}: {reason}.")
+    # Não devolver valores submetidos, sobretudo palavras-passe e chaves API.
+    return JSONResponse({"detail": " ".join(messages)}, status_code=422)
 
 
 def cents(value: str, zero=False):

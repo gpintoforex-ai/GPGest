@@ -93,6 +93,29 @@ def configuration(company, **updates):
     }
 
 
+def test_company_validation_explains_fields_and_normalizes_slug(platform):
+    c, _ = platform
+    payload = {
+        "name": "Empresa de teste",
+        "slug": "identificador inválido",
+        "admin_name": "Administrador",
+        "admin_email": "ADMIN@test.pt",
+        "admin_password": "curta",
+    }
+    response = c.post("/api/platform/companies", json=payload)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "Identificador da empresa" in detail
+    assert "Palavra-passe inicial: introduza pelo menos 12 caracteres" in detail
+    assert payload["admin_password"] not in detail
+    response = c.post(
+        "/api/platform/companies",
+        json={**payload, "slug": "  EMPRESA-NOVA  ", "admin_password": "TenantPassword123!"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["slug"] == "empresa-nova"
+
+
 def test_company_isolation_and_separate_admin(platform):
     c, _ = platform
     a, b = create(c, "empresa-a"), create(c, "empresa-b")

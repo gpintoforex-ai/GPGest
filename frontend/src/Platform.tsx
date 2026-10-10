@@ -173,15 +173,31 @@ export default function Platform() {
                   <input
                     name="slug"
                     required
-                    pattern="[a-z0-9][a-z0-9-]{2,79}"
+                    pattern={"[a-z0-9][a-z0-9\\-]{2,79}"}
+                    minLength={3}
                     maxLength={80}
+                    onBlur={(e) => {
+                      e.currentTarget.value = e.currentTarget.value
+                        .trim()
+                        .toLowerCase();
+                    }}
                   />
                 </Field>
                 <Field label="Nome do primeiro administrador">
-                  <input name="admin_name" required minLength={2} />
+                  <input
+                    name="admin_name"
+                    required
+                    minLength={2}
+                    maxLength={100}
+                  />
                 </Field>
                 <Field label="Email do primeiro administrador">
-                  <input name="admin_email" type="email" required />
+                  <input
+                    name="admin_email"
+                    type="email"
+                    required
+                    maxLength={200}
+                  />
                 </Field>
               </div>
               <Field label="Palavra-passe inicial (mínimo 12 caracteres)">
