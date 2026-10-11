@@ -172,6 +172,21 @@ try:
         expect(dialog.locator(".cash-count-total")).to_contain_text("105,00")
         expect(dialog.locator("img")).to_have_count(15)
         page.wait_for_function("Array.from(document.querySelectorAll('dialog img')).every(img => img.complete && img.naturalWidth > 0)")
+        for width, height in [(1366, 768), (1280, 720), (1024, 768), (390, 844), (390, 740)]:
+            page.set_viewport_size({"width": width, "height": height})
+            dialog.locator(".cash-count-body").evaluate("element => element.scrollTop = 0")
+            assert dialog.locator(".cash-count-body").evaluate(
+                """element => {
+                    const bounds = element.getBoundingClientRect();
+                    return element.scrollHeight <= element.clientHeight + 1 &&
+                        Array.from(element.querySelectorAll('.cash-denomination')).every(card => {
+                            const rect = card.getBoundingClientRect();
+                            return rect.top >= bounds.top && rect.bottom <= bounds.bottom + 1 &&
+                                rect.left >= bounds.left && rect.right <= bounds.right + 1;
+                        });
+                }"""
+            ), f"Todas as notas e moedas devem ficar visíveis sem deslocação em {width}x{height}."
+        page.set_viewport_size({"width": 1280, "height": 720})
         dialog.locator(".cash-count-body").evaluate("element => element.scrollTop = 0")
         page.screenshot(path=str(root / ".local" / "cash-count-desktop.png"), animations="disabled")
         page.set_viewport_size({"width": 390, "height": 844})

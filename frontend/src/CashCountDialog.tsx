@@ -84,7 +84,6 @@ export default function CashCountDialog({
               height={80}
             />
             <strong>{money(value)}</strong>
-            <span>Quantidade</span>
             <input
               aria-label={`Quantidade de ${money(value)}`}
               type="number"
@@ -160,10 +159,20 @@ export default function CashCountDialog({
           </div>
           {mode === "denominations" ? (
             <>
-              <h3>Notas</h3>
-              {group(notes, "note")}
-              <h3>Moedas</h3>
-              {group(coins, "coin")}
+              <div className="cash-count-groups">
+                <section aria-label="Contagem de notas">
+                  <h3>
+                    Notas <small>· quantidade</small>
+                  </h3>
+                  {group(notes, "note")}
+                </section>
+                <section aria-label="Contagem de moedas">
+                  <h3>
+                    Moedas <small>· quantidade</small>
+                  </h3>
+                  {group(coins, "coin")}
+                </section>
+              </div>
               <p className="footnote">
                 Imagens:{" "}
                 <a

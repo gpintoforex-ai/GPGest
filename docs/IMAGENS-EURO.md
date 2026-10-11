@@ -17,4 +17,6 @@ Moedas: [faces comuns publicadas pelo BCE](https://www.ecb.europa.eu/euro/coins/
 | 2.jpg | common_2cent_800.jpg |
 | 1.jpg | common_1cent_800.jpg |
 
-A janela apresenta imagens proporcionais, quantidades inteiras e subtotais por denominação. **Aplicar contagem** atualiza a folha; **Guardar contagem** grava na base de dados. Cancelar ou premir Escape descarta apenas as alterações feitas nessa janela.
+A janela apresenta imagens proporcionais, quantidades inteiras e subtotais por denominação. No computador, as sete notas ocupam uma linha e as oito moedas outra; no telemóvel, duas listas compactas mostram notas e moedas lado a lado. O total e os botões ficam sempre disponíveis; ecrãs muito baixos ou ampliação de texto mantêm a possibilidade de deslocar o conteúdo.
+
+**Aplicar contagem** atualiza a folha; **Guardar contagem** grava na base de dados. Cancelar ou premir Escape descarta apenas as alterações feitas nessa janela.
