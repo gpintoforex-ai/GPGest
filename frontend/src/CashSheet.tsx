@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, Field } from "./App";
+import CashCountDialog from "./CashCountDialog";
 import "./CashSheet.css";
 
 type Row = Record<string, any>;
@@ -8,9 +9,6 @@ const money = (value: number) =>
     value / 100,
   );
 const euros = (value: number) => (value / 100).toFixed(2).replace(".", ",");
-const denominations = [
-  50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1,
-];
 function readAmount(value: string): number | null {
   const text = value.trim().replace(",", ".");
   if (!/^-?\d+(\.\d{1,2})?$/.test(text)) return null;
@@ -55,6 +53,7 @@ export default function CashSheet({
     stored.counts || {},
   );
   const [cashMode, setCashMode] = useState(stored.cash_mode || "total");
+  const [countDialog, setCountDialog] = useState(false);
   const [reason, setReason] = useState(stored.reason || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -191,17 +190,6 @@ export default function CashSheet({
           </button>
         </details>
       )}
-      {editable && (
-        <Field label="Contagem de numerário">
-          <select
-            value={cashMode}
-            onChange={(e) => setCashMode(e.target.value)}
-          >
-            <option value="total">Introduzir valor total</option>
-            <option value="denominations">Contar notas e moedas</option>
-          </select>
-        </Field>
-      )}
       <div className="table-wrap">
         <table className="cash-sheet-table">
           <thead>
@@ -235,10 +223,20 @@ export default function CashSheet({
                     <b>{money(row.expected_cents)}</b>
                   </td>
                   <td>
-                    {editable &&
-                    !(
-                      row.key === "numerario" && cashMode === "denominations"
-                    ) ? (
+                    {editable && row.key === "numerario" ? (
+                      <button
+                        className="cash-count-trigger"
+                        aria-label="Contar numerário"
+                        aria-haspopup="dialog"
+                        disabled={busy}
+                        onClick={() => setCountDialog(true)}
+                      >
+                        <span>
+                          {counted === null ? "Por contar" : money(counted)}
+                        </span>
+                        <small>Contar notas e moedas</small>
+                      </button>
+                    ) : editable ? (
                       <input
                         aria-label={`Contagem ${row.name} (€)`}
                         inputMode="decimal"
@@ -299,24 +297,25 @@ export default function CashSheet({
           </tfoot>
         </table>
       </div>
-      {editable && cashMode === "denominations" && (
-        <div className="denominations cash-sheet-denominations">
-          {denominations.map((d) => (
-            <Field key={d} label={money(d)}>
-              <input
-                aria-label={"Quantidade de " + money(d)}
-                type="number"
-                min="0"
-                max="100000"
-                step="1"
-                value={counts[d] ?? ""}
-                onChange={(e) =>
-                  setCounts({ ...counts, [d]: Number(e.target.value) })
-                }
-              />
-            </Field>
-          ))}
-        </div>
+      {editable && countDialog && (
+        <CashCountDialog
+          initial={{
+            mode:
+              cashMode === "denominations" || amountFor("numerario") === null
+                ? "denominations"
+                : "total",
+            counts,
+            total: values.numerario || "",
+          }}
+          expected={rows.find((row) => row.key === "numerario")!.expected_cents}
+          onCancel={() => setCountDialog(false)}
+          onApply={(draft) => {
+            setCashMode(draft.mode);
+            setCounts(draft.counts);
+            setValues((previous) => ({ ...previous, numerario: draft.total }));
+            setCountDialog(false);
+          }}
+        />
       )}
       <p className="footnote">
         Numerário: dinheiro físico. Nos restantes meios, introduza o valor
