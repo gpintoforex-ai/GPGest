@@ -40,6 +40,10 @@ O fecho conserva na base de dados os valores esperados, contagens e origens apur
 
 Não emite documentos fiscais. Não substitui o Wintouch. Cartões são recebimentos registados, não saldos bancários confirmados. O saldo do dashboard corresponde às sessões **abertas**, evitando somar novamente o dinheiro de sessões históricas fechadas.
 
+Ao fechar uma folha com diferença de numerário, é criado automaticamente um movimento real **Diferença de caixa**: entrada por excesso ou saída por falta, com a justificação e referência à folha. A folha fechada conserva o esperado e a diferença originais. Reabrir estorna automaticamente o ajuste, conservando ambos os movimentos no histórico; um novo fecho apura novamente a diferença. As diferenças dos restantes meios continuam na conferência, sem criar recebimentos ou pagamentos bancários.
+
+Os **Movimentos previstos** apresentam numa única lista os documentos locais e os saldos a crédito Wintouch, com origem identificada e totais conjuntos. A importação atualiza os saldos de vendas e compras ainda em aberto, incluindo documentos anteriores ao período selecionado. O filtro de vencimento começa no documento pendente mais antigo da loja selecionada e termina no último dia do mês atual. Sem pendentes, a data inicial assume o primeiro dia do mês atual. Pode alterar as datas ou usar **Limpar datas**; atualizar os dados conserva uma data inicial alterada manualmente. Também pode filtrar por vendas/compras e pesquisar a entidade. Os filtros atualizam a lista, os totais e a paginação. Administradores e gestores podem liquidar os saldos Wintouch diretamente pelo formulário, com confirmação de envio à origem.
+
 ## Começar neste computador
 
 1. Abra a pasta do projeto no VS Code.

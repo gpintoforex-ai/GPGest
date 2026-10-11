@@ -6,7 +6,7 @@ from decimal import Decimal
 from time import monotonic
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -225,6 +225,7 @@ def sales_snapshot(reader, start, end):
         )
         return {
             "document": document_label(row, types, series),
+            "document_group": "compras" if types.get(row.get("DocumentTypeID"), {}).get("Class") in (32, 33, 34, 35) else "vendas",
             "entity": string(entity, 300, True),
             "occurred_at": row["Date"],
             "currency": "EUR",
@@ -269,10 +270,10 @@ def sales_snapshot(reader, start, end):
                 source_date(data["occurred_at"])
                 save("payment", payment.get("ID"), "real", day, data)
 
-    # Saldo explícito da conta corrente, incluindo pagamentos posteriores à fatura.
+    # Saldos em aberto de vendas e compras, incluindo documentos anteriores ao período.
     for pending in reader.collection("payablesreceivables", "CreditAccountState"):
         source_id = pending.get("SourceProductDocumentMasterID")
-        if source_id not in selected:
+        if not source_id:
             continue
         state = pending.get("CreditAccountState") or states.get(pending.get("CreditAccountStateID"))
         if not state or not isinstance(state.get("IsFinalStateEnabled"), bool):
@@ -282,7 +283,21 @@ def sales_snapshot(reader, start, end):
         value = amount(pending.get("StateValue"))
         if value == 0:
             continue
-        values = json.loads(result["document:" + source_id]["data"])
+        if source_id in selected:
+            values = json.loads(result["document:" + source_id]["data"])
+        else:
+            document = reader.get(
+                "product_documents/" + string(source_id, 150, True),
+                {"embed": "DocumentType,DocumentSerie,CEntity"},
+            )
+            typ = types.get(document.get("DocumentTypeID"), {})
+            directions = {3: 1, 5: 1, 6: -1, 40: 1, 32: -1, 33: 1, 34: -1, 35: 1}
+            if typ.get("Class") not in directions or document.get("DeletedDate"):
+                continue
+            direction = directions[typ["Class"]]
+            if typ.get("CashFlowMode") not in (None, direction):
+                raise SyncError("O sentido financeiro do documento de conta corrente não é suportado.")
+            values = common(document, direction)
         values.update(
             amount_cents=abs(value),
             due_date=source_date(pending.get("DueDate")),
@@ -389,8 +404,13 @@ def synchronize_sales(bind, enterprise, store_id, start: date, end: date, url, k
                 .where(
                     WintouchSaleRecord.enterprise_id == enterprise,
                     WintouchSaleRecord.store_id == store_id,
-                    WintouchSaleRecord.document_date >= start.isoformat(),
-                    WintouchSaleRecord.document_date <= end.isoformat(),
+                    or_(
+                        WintouchSaleRecord.kind == "previsto",
+                        and_(
+                            WintouchSaleRecord.document_date >= start.isoformat(),
+                            WintouchSaleRecord.document_date <= end.isoformat(),
+                        ),
+                    ),
                     WintouchSaleRecord.sync_run_id != run.id,
                 )
                 .values(active=False)

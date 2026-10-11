@@ -71,6 +71,12 @@ export default function CashSheet({
         ? countedCash
         : readAmount(values[key] || "");
   const rows: Row[] = s.sheet.rows;
+  const cashRow = rows.find((row) => row.key === "numerario")!;
+  const cashCount = amountFor("numerario");
+  const cashDifference =
+    cashCount === null ? null : cashCount - cashRow.expected_cents;
+  const cashToWithdraw =
+    cashCount === null ? null : cashCount - s.opening_cents;
   async function updateSources() {
     setError("");
     setNotice("");
@@ -152,17 +158,44 @@ export default function CashSheet({
           {s.closed_at ? "Fechada" : "Aberta"}
         </span>
       </div>
-      <div className="cash-sheet-overview">
-        <div>
-          <small>Fundo de maneio inicial</small>
-          <strong>{money(s.opening_cents)}</strong>
+      <div
+        className={`cash-reconciliation ${cashDifference === null ? "pending" : cashDifference === 0 ? "balanced" : "unbalanced"}`}
+        role="status"
+        aria-label="Apuramento de numerário"
+      >
+        <div className="cash-reconciliation-heading">
+          <b>Apuramento de numerário</b>
+          <span>
+            {cashDifference === null
+              ? "Por contar"
+              : cashDifference === 0
+                ? "Caixa correta"
+                : "Caixa com diferença"}
+          </span>
         </div>
-        <div>
-          <small>Numerário esperado (fundo + movimentos)</small>
-          <strong className="cash-value">
-            {money(rows.find((row) => row.key === "numerario")!.expected_cents)}
-          </strong>
+        <div className="cash-reconciliation-values">
+          <div>
+            <small>Fundo de maneio a manter</small>
+            <strong>{money(s.opening_cents)}</strong>
+          </div>
+          <div>
+            <small>Movimentos de numerário (entradas − saídas)</small>
+            <strong>{money(cashRow.expected_cents - s.opening_cents)}</strong>
+          </div>
+          <div>
+            <small>Total esperado (fundo + movimentos)</small>
+            <strong>{money(cashRow.expected_cents)}</strong>
+          </div>
+          <div>
+            <small>Diferença de caixa (contado − esperado)</small>
+            <strong>{cashDifference === null ? "Por contar" : money(cashDifference)}</strong>
+          </div>
+          <div>
+            <small>{cashToWithdraw !== null && cashToWithdraw < 0 ? "Valor a repor no fundo" : "Valor a retirar"}</small>
+            <strong>{cashToWithdraw === null ? "Por contar" : money(Math.abs(cashToWithdraw))}</strong>
+          </div>
         </div>
+        <p>Valor a retirar = numerário contado − fundo de maneio. Se faltar dinheiro para o fundo, é apresentado o valor a repor.</p>
       </div>
       <p className="footnote">
         {s.sheet.scope === "store_day"

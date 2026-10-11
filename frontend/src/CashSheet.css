@@ -5,16 +5,52 @@
 .cash-sheet {
   min-width: 0;
 }
-.cash-sheet-overview {
+.cash-reconciliation {
+  padding: 18px;
+  margin: 18px 0;
+  border: 1px solid #cbd5d1;
+  border-radius: 12px;
+  background: #f5f8f6;
+  color: #425a51;
+}
+.cash-reconciliation.balanced {
+  background: #eaf7ee;
+  border-color: #71b487;
+  color: #176534;
+}
+.cash-reconciliation.unbalanced {
+  background: #fff0ef;
+  border-color: #df8e87;
+  color: #a12622;
+}
+.cash-reconciliation-heading {
   display: flex;
   flex-wrap: wrap;
-  gap: 24px 48px;
-  margin: 18px 0;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
 }
-.cash-sheet-overview strong {
+.cash-reconciliation-heading span {
+  font-weight: 700;
+}
+.cash-reconciliation-values {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 18px;
+}
+.cash-reconciliation-values small,
+.cash-reconciliation-values strong {
   display: block;
+  color: inherit;
+}
+.cash-reconciliation-values strong {
+  margin-top: 6px;
   font-size: 24px;
-  margin: 6px 0;
+}
+.cash-reconciliation p {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: inherit;
 }
 .cash-sheet-table {
   min-width: 960px;

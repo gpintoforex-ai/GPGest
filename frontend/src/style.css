@@ -160,6 +160,25 @@ textarea {
   color: #e6f4b4;
   background: #2b5147;
 }
+.finance-menu > button,
+.finance-submenu > button {
+  width: 100%;
+}
+.finance-submenu {
+  display: grid;
+  gap: 4px;
+  margin: 5px 0 5px 14px;
+  padding-left: 7px;
+  border-left: 1px solid #41685c;
+}
+.finance-submenu[hidden] {
+  display: none;
+}
+.sidebar nav .finance-submenu button {
+  padding: 10px;
+  font-size: 12px;
+  gap: 9px;
+}
 .sidebar nav button:hover {
   background: #224c42;
   color: white;

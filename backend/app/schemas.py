@@ -108,6 +108,17 @@ class SalesImport(Strict):
     confirm_demo: bool = False
 
 
+class WintouchSettlement(Strict):
+    document_type_id: str
+    document_serie_id: str
+    payment_method_id: str
+    payment_number: str = Field(default="", max_length=100)
+    amount: str
+    occurred_at: datetime
+    notes: str = Field(default="", max_length=2000)
+    request_key: str = Field(min_length=36, max_length=36)
+
+
 class Reason(Strict):
     reason: str = Field(min_length=5, max_length=2000)
 

@@ -5,6 +5,106 @@
   flex-wrap: wrap;
   margin: 18px 0;
 }
+.wintouch-settlement-dialog {
+  width: 720px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  margin: auto;
+  padding: 22px;
+  border: 0;
+  border-radius: 16px;
+  color: #23483e;
+  box-shadow: 0 20px 80px #0003;
+}
+.wintouch-settlement-dialog h2 {
+  margin: 0 0 10px;
+  font-size: 23px;
+}
+.wintouch-settlement-dialog > p {
+  margin: 0 0 18px;
+}
+.wintouch-settlement-dialog form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+.wintouch-settlement-dialog .field {
+  margin: 0;
+  min-width: 0;
+}
+.wintouch-settlement-dialog .field:has(textarea),
+.wintouch-settlement-dialog .settlement-consent,
+.wintouch-settlement-dialog form > .error,
+.wintouch-settlement-dialog form > button {
+  grid-column: 1 / -1;
+}
+.wintouch-settlement-dialog input:not([type="checkbox"]),
+.wintouch-settlement-dialog select {
+  padding: 10px 12px;
+  min-height: 42px;
+}
+.wintouch-settlement-dialog textarea {
+  min-height: 60px;
+  height: 60px;
+  padding: 10px 12px;
+}
+.wintouch-settlement-dialog .settlement-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.5;
+  font-size: 13px;
+}
+.wintouch-settlement-dialog .settlement-consent input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+}
+.wintouch-settlement-dialog > button {
+  display: block;
+  margin-top: 12px;
+  width: 100%;
+}
+@media (max-width: 600px) {
+  .wintouch-settlement-dialog {
+    padding: 18px;
+  }
+  .wintouch-settlement-dialog form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.wintouch-settlement-dialog::backdrop {
+  background: #102e2770;
+  backdrop-filter: blur(4px);
+}
+.settlement-confirmation {
+  width: 440px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 28px;
+  border: 1px solid #71b487;
+  border-radius: 16px;
+  background: #eaf7ee;
+  color: #176534;
+  text-align: center;
+  box-shadow: 0 20px 80px #0003;
+}
+.settlement-confirmation::backdrop {
+  background: #102e2770;
+  backdrop-filter: blur(4px);
+}
+.settlement-confirmation h2 {
+  margin: 12px 0;
+}
+.settlement-confirmation p {
+  overflow-wrap: anywhere;
+  margin: 0 0 22px;
+}
+.settlement-confirmation button {
+  min-width: 120px;
+}
 .record-filters .record-field {
   display: flex;
   flex-direction: column;

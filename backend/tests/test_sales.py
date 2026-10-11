@@ -104,7 +104,45 @@ def test_sales_payments_and_credit_are_separate():
     assert sum(r["amount_cents"] for r in real) == 1730
     pending = [json.loads(r["data"]) for r in rows if r["kind"] == "previsto"]
     assert pending[0]["amount_cents"] == 1500
+    assert pending[0]["document_group"] == "vendas"
     assert all("ENC" not in json.loads(r["data"])["document"] for r in rows)
+
+
+def test_outstanding_credit_from_document_before_import_period():
+    data = fixtures()
+    old = {**data["product_documents"][1], "ID": "old-credit", "Date": "2026-05-01T10:00:00"}
+    data["product_documents"].append(old)
+    data["product_documents/old-credit"] = old
+    data["payablesreceivables"].append({
+        "ID": "old-debt", "SourceProductDocumentMasterID": "old-credit",
+        "CreditAccountStateID": "open", "StateValue": "7.50", "DueDate": "2026-06-01",
+    })
+    rows, _ = sales_snapshot(reader(data), "2026-10-01", "2026-10-31")
+    pending = next(r for r in rows if r["external_id"] == "pending:old-debt")
+    assert pending["kind"] == "previsto"
+    assert pending["document_date"] == "2026-05-01"
+    assert json.loads(pending["data"])["amount_cents"] == 750
+    assert not any(r["external_id"] == "document:old-credit" for r in rows)
+
+
+@pytest.mark.parametrize("document_class,direction", [(32, -1), (34, -1), (33, 1), (35, 1)])
+def test_supplier_pending_balances(document_class, direction):
+    data = fixtures()
+    data["document_types"].append({"ID": "purchase", "Code": "COMPRA", "Class": document_class, "CashFlowMode": direction})
+    data["product_documents/purchase"] = {
+        **data["product_documents"][1], "ID": "purchase", "DocumentTypeID": "purchase",
+        "Date": "2026-04-22T00:00:00", "EntityName": "Fornecedor teste",
+    }
+    data["payablesreceivables"].append({
+        "ID": "supplier-debt", "SourceProductDocumentMasterID": "purchase",
+        "CreditAccountStateID": "open", "StateValue": "469.10", "DueDate": "2026-05-22",
+    })
+    rows, _ = sales_snapshot(reader(data), "2026-10-01", "2026-10-31")
+    pending = json.loads(next(r for r in rows if r["external_id"] == "pending:supplier-debt")["data"])
+    assert pending["direction"] == direction
+    assert pending["amount_cents"] == 46910
+    assert pending["entity"] == "Fornecedor teste"
+    assert pending["document_group"] == "compras"
 
 
 def test_unknown_payment_classification_and_foreign_currency_fail():

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, Field, Form } from "./App";
 import RecordList from "./RecordList";
+import WintouchSettlementForm from "./WintouchSettlementForm";
+import SettlementConfirmation from "./SettlementConfirmation";
 type Row = Record<string, any>;
 const money = (value: number) =>
   new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(
@@ -19,16 +21,50 @@ export default function PlannedMovements({
   reload: () => Promise<void>;
 }) {
   const [rows, setRows] = useState<Row[]>([]);
+  const [sourceRows, setSourceRows] = useState<Row[]>([]);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [create, setCreate] = useState(false);
   const [selected, setSelected] = useState<Row | null>(null);
   const [key, setKey] = useState(crypto.randomUUID());
   const load = async () => {
-    setRows(await api("/planned-movements"));
+    const [local, imported] = await Promise.all([
+      api("/planned-movements"),
+      api("/integrations/wintouch/sales"),
+    ]);
+    setRows(local);
+    setSourceRows(
+      imported
+        .filter((r: Row) => r.kind === "previsto")
+        .map((r: Row) => ({
+          ...r,
+          id: `wintouch:${r.id}`,
+          external: true,
+          paid_cents: null,
+          remaining_cents: r.amount_cents,
+          status: "Pendente",
+          settlements: [],
+        })),
+    );
+    setError("");
   };
   useEffect(() => {
-    load().catch((e) => setError(e.message));
+    const refresh = () => {
+      load().catch((e) => setError(e.message));
+    };
+    refresh();
+    window.addEventListener("gpgest-sales-updated", refresh);
+    return () => window.removeEventListener("gpgest-sales-updated", refresh);
   }, []);
+  const allRows = [
+    ...rows.map<Row>((r) => ({
+      ...r,
+      document_group: r.direction === 1 ? "vendas" : "compras",
+    })),
+    ...sourceRows,
+  ].sort(
+    (a, b) => a.due_date.localeCompare(b.due_date) || a.id.localeCompare(b.id),
+  );
   const write = boot.user.role !== "consulta";
   const open = sessions.filter(
     (s) =>
@@ -60,6 +96,9 @@ export default function PlannedMovements({
           </button>
         )}
       </div>
+      {notice && (
+        <SettlementConfirmation message={notice} onClose={() => setNotice("")} />
+      )}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -127,7 +166,29 @@ export default function PlannedMovements({
           </Form>
         </section>
       )}
-      {selected && (
+      {selected?.external && (
+        <WintouchSettlementForm
+          key={selected.id}
+          row={selected}
+          onCancel={() => setSelected(null)}
+          onDone={async (result) => {
+            setNotice(
+              `${result.message} ${selected.document} · ${money(Math.round(Number(result.amount.replace(",", ".")) * 100))}.`,
+            );
+            setSelected(null);
+            try {
+              await load();
+              await reload();
+            } catch {
+              setError(
+                "A liquidação foi confirmada, mas não foi possível atualizar a lista. Atualize a página.",
+              );
+            }
+            window.dispatchEvent(new Event("gpgest-sales-updated"));
+          }}
+        />
+      )}
+      {selected && !selected.external && (
         <section className="panel" key={selected.id}>
           <h2>
             Liquidar {selected.document} · {selected.entity}
@@ -193,9 +254,11 @@ export default function PlannedMovements({
       )}
       <section className="panel">
         <RecordList
+          plannedFilters
+          startAtOldestPending
           totalField="remaining_cents"
           totalsTitle="Totais por liquidar no período"
-          rows={rows.filter((r) => !store || r.store_id === store)}
+          rows={allRows.filter((r) => !store || r.store_id === store)}
           dateField="due_date"
           dateLabel="Vencimento"
           resetKey={store}
@@ -213,6 +276,7 @@ export default function PlannedMovements({
                     <th>Liquidado</th>
                     <th>Por liquidar</th>
                     <th>Estado</th>
+                    <th>Origem</th>
                     <th>Ações</th>
                   </tr>
                 </thead>
@@ -224,13 +288,36 @@ export default function PlannedMovements({
                       <td>{r.entity}</td>
                       <td>{r.direction === 1 ? "A receber" : "A pagar"}</td>
                       <td>{money(r.amount_cents)}</td>
-                      <td>{money(r.paid_cents)}</td>
+                      <td>
+                        {r.paid_cents === null ? "—" : money(r.paid_cents)}
+                      </td>
                       <td>{money(r.remaining_cents)}</td>
                       <td>
                         <span className="pill">{r.status}</span>
                       </td>
                       <td>
-                        {write && r.remaining_cents > 0 && (
+                        <span className="pill neutral">
+                          {r.external ? "Wintouch" : "GPGest"}
+                        </span>
+                      </td>
+                      <td>
+                        {r.external &&
+                          (boot.user.role === "administrador" ||
+                          boot.user.role === "gestor" ? (
+                            <button
+                              onClick={() => {
+                                setSelected(r);
+                                setCreate(false);
+                              }}
+                            >
+                              Liquidar na Wintouch
+                            </button>
+                          ) : (
+                            <small>
+                              Liquidação pelo administrador ou gestor.
+                            </small>
+                          ))}
+                        {write && !r.external && r.remaining_cents > 0 && (
                           <button
                             onClick={() => {
                               setSelected(r);
@@ -255,7 +342,7 @@ export default function PlannedMovements({
                   ))}
                 </tbody>
               </table>
-              {!rows.length && <p>Sem movimentos previstos registados.</p>}
+              {!allRows.length && <p>Sem movimentos previstos registados.</p>}
             </div>
           )}
         </RecordList>

@@ -5,7 +5,9 @@ Em **Integrações → Importar vendas Wintouch**, escolha loja e datas e execut
 ## Dados disponíveis
 
 - **Movimentos reais**: tabela única com movimentos locais e pagamentos Wintouch, documento, data, entidade, meio, montante e coluna **Origem**. Os filtros e a paginação aplicam-se às duas origens em conjunto. **Ver documentos de venda Wintouch** alterna a mesma tabela para consulta de faturas; **Voltar aos movimentos reais** repõe os pagamentos e movimentos locais.
-- **Movimentos previstos → Saldos a crédito Wintouch**: valores em aberto, vencimento e entidade, obtidos da conta corrente Wintouch. Efetive o recebimento na Wintouch e volte a importar o período; o saldo atualizado substitui o anterior. Estes registos não usam o botão de liquidação dos previstos manuais.
+- **Movimentos previstos**: saldos de vendas e compras em aberto, com vencimento, entidade e origem. Administradores e gestores podem usar **Liquidar na Wintouch**, escolher documento, série, meio de pagamento e montante, e confirmar o envio. O GPGest consulta o saldo atual, cria o documento de liquidação pela API e confirma o identificador e montante na origem antes de atualizar o saldo. A confirmação do formulário escreve na Wintouch, mesmo quando a empresa GPGest está em demonstração. Os testes não enviam liquidações reais.
+
+Cada envio tem um identificador único e auditoria persistida antes da chamada externa. Uma falha com resultado desconhecido bloqueia novas liquidações desse saldo para impedir duplicados; deve verificar o documento na Wintouch antes de resolver a operação. A liquidação suporta EUR e documentos sem retenções. A atualização dos movimentos reais segue a importação de vendas/recebimentos.
 - Faturas, faturas-recibo, faturas simplificadas e notas de crédito de venda são selecionadas pelas classes 5, 3, 40 e 6, confirmadas nos tipos de documentos da instalação. Orçamentos, encomendas, guias e compras ficam excluídos. Os recibos de recebimento são consultados separadamente.
 
 ## Consistência

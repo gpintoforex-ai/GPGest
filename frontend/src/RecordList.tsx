@@ -1,9 +1,9 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import "./RecordList.css";
 
 type Row = Record<string, any>;
 
-function paymentGroup(row: Row) {
+export function paymentGroup(row: Row) {
   const name = String(row.payment || "Não indicado").trim();
   const normalized = name
     .normalize("NFD")
@@ -73,6 +73,9 @@ export default function RecordList({
   totalField,
   paymentSummary = false,
   totalsTitle = "Totais do período selecionado",
+  movementFilters = false,
+  plannedFilters = false,
+  startAtOldestPending = false,
   children,
 }: {
   rows: Row[];
@@ -82,6 +85,9 @@ export default function RecordList({
   totalField?: string;
   paymentSummary?: boolean;
   totalsTitle?: string;
+  movementFilters?: boolean;
+  plannedFilters?: boolean;
+  startAtOldestPending?: boolean;
   children: (pageRows: Row[]) => ReactNode;
 }) {
   const id = useId();
@@ -90,15 +96,67 @@ export default function RecordList({
   const [to, setTo] = useState(initialRange.to);
   const [size, setSize] = useState(10);
   const [page, setPage] = useState(1);
+  const [register, setRegister] = useState("");
+  const [payment, setPayment] = useState("");
+  const [entity, setEntity] = useState("");
+  const [documentGroup, setDocumentGroup] = useState("");
+  const fromEdited = useRef(false);
+  const oldestPending = rows
+    .filter((row) => row.remaining_cents > 0)
+    .map((row) => calendarDay(row[dateField]))
+    .filter(Boolean)
+    .sort()[0] || initialRange.from;
+  const normalize = (value: string) =>
+    value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("pt-PT")
+      .trim();
+  const registers = [
+    ...new Map(
+      rows.map((r) => [
+        r.filter_register || "unassigned",
+        r.filter_register_name || "Sem caixa identificada",
+      ]),
+    ).entries(),
+  ].sort((a, b) => a[1].localeCompare(b[1], "pt-PT"));
+  const payments = [...new Set(rows.map(paymentGroup))].sort((a, b) =>
+    a.localeCompare(b, "pt-PT"),
+  );
   useEffect(() => {
     setPage(1);
+    setRegister("");
+    setPayment("");
+    setEntity("");
+    setDocumentGroup("");
+    fromEdited.current = false;
   }, [resetKey]);
+  useEffect(() => {
+    if (startAtOldestPending && !fromEdited.current) {
+      setFrom(oldestPending);
+      setPage(1);
+    }
+  }, [startAtOldestPending, oldestPending, resetKey]);
   const invalid = Boolean(from && to && from > to);
   const filtered = invalid
     ? []
     : rows.filter((r) => {
         const day = calendarDay(r[dateField]);
-        return (!from || day >= from) && (!to || (day !== "" && day <= to));
+        return (
+          (!from || day >= from) &&
+          (!to || (day !== "" && day <= to)) &&
+          (!plannedFilters ||
+            !documentGroup ||
+            r.document_group === documentGroup) &&
+          (!(movementFilters || plannedFilters) ||
+            !entity ||
+            normalize(String(r.entity || "")).includes(normalize(entity))) &&
+          (!movementFilters ||
+            ((!register || (r.filter_register || "unassigned") === register) &&
+              (!payment || paymentGroup(r) === payment) &&
+              (!entity ||
+                normalize(String(r.entity || "")).includes(normalize(entity)))))
+        );
       });
   const pages = Math.max(1, Math.ceil(filtered.length / size));
   const current = Math.min(page, pages);
@@ -147,6 +205,112 @@ export default function RecordList({
         role="group"
         aria-label={`Filtros: ${dateLabel}`}
       >
+        {plannedFilters && (
+          <>
+            <div className="record-field">
+              <label htmlFor={`${id}-document-group`}>Vendas / compras</label>
+              <select
+                id={`${id}-document-group`}
+                value={documentGroup}
+                onChange={(e) => {
+                  setDocumentGroup(e.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="">Vendas e compras</option>
+                <option value="vendas">Vendas</option>
+                <option value="compras">Compras</option>
+              </select>
+            </div>
+            <div className="record-field">
+              <label htmlFor={`${id}-planned-entity`}>Entidade</label>
+              <input
+                id={`${id}-planned-entity`}
+                type="search"
+                placeholder="Pesquisar entidade"
+                value={entity}
+                onChange={(e) => {
+                  setEntity(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setDocumentGroup("");
+                setEntity("");
+                setPage(1);
+              }}
+            >
+              Limpar filtros
+            </button>
+          </>
+        )}
+        {movementFilters && (
+          <>
+            <div className="record-field">
+              <label htmlFor={`${id}-register`}>Caixa</label>
+              <select
+                id={`${id}-register`}
+                value={register}
+                onChange={(e) => {
+                  setRegister(e.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="">Todas as caixas</option>
+                {registers.map(([key, name]) => (
+                  <option key={key} value={key}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="record-field">
+              <label htmlFor={`${id}-payment`}>Meio de pagamento</label>
+              <select
+                id={`${id}-payment`}
+                value={payment}
+                onChange={(e) => {
+                  setPayment(e.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="">Todos os meios</option>
+                {payments.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="record-field">
+              <label htmlFor={`${id}-entity`}>Entidade</label>
+              <input
+                id={`${id}-entity`}
+                type="search"
+                placeholder="Pesquisar entidade"
+                value={entity}
+                onChange={(e) => {
+                  setEntity(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setRegister("");
+                setPayment("");
+                setEntity("");
+                setPage(1);
+              }}
+            >
+              Limpar filtros
+            </button>
+          </>
+        )}
         <div className="record-field">
           <label htmlFor={`${id}-from`}>{dateLabel} desde</label>
           <input
@@ -155,6 +319,7 @@ export default function RecordList({
             value={from}
             onChange={(e) => {
               setFrom(e.target.value);
+              fromEdited.current = true;
               setPage(1);
             }}
           />
@@ -192,6 +357,7 @@ export default function RecordList({
           type="button"
           onClick={() => {
             setFrom("");
+            fromEdited.current = true;
             setTo("");
             setPage(1);
           }}

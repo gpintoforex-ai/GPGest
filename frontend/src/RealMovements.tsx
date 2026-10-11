@@ -20,10 +20,12 @@ function chronology(value: string) {
 export default function RealMovements({
   localRows,
   store,
+  registers,
   children,
 }: {
   localRows: Row[];
   store: string;
+  registers: Row[];
   children: (rows: Row[]) => ReactNode;
 }) {
   const [sourceRows, setSourceRows] = useState<Row[]>([]);
@@ -62,11 +64,23 @@ export default function RealMovements({
       origin: "wintouch",
       kind: documents ? "documento" : r.direction > 0 ? "cliente" : "reembolso",
     }));
-  const rows = [...(documents ? [] : localRows), ...imported].sort(
-    (a, b) =>
-      chronology(b.occurred_at).localeCompare(chronology(a.occurred_at)) ||
-      a.id.localeCompare(b.id),
-  );
+  const rows = [...(documents ? [] : localRows), ...imported]
+    .map<Row>((r) => ({
+      ...r,
+      filter_register:
+        r.register_id ||
+        (r.account_id ? `wintouch:${r.account_id}` : "unassigned"),
+      filter_register_name:
+        registers.find((register) => register.id === r.register_id)?.name ||
+        (r.account_id
+          ? `${r.account_name || r.account_id} (Wintouch)`
+          : "Sem caixa identificada"),
+    }))
+    .sort(
+      (a, b) =>
+        chronology(b.occurred_at).localeCompare(chronology(a.occurred_at)) ||
+        a.id.localeCompare(b.id),
+    );
   return (
     <section className="panel">
       <div className="actions">
@@ -93,6 +107,7 @@ export default function RealMovements({
         resetKey={`${store}-${documents}`}
         totalField={documents ? undefined : "amount_cents"}
         paymentSummary={!documents}
+        movementFilters
       >
         {children}
       </RecordList>

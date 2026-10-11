@@ -42,6 +42,7 @@ from .models import (
     Register,
     Store,
     User,
+    WintouchCashAccount,
     WintouchSaleRecord,
     now,
     uid,
@@ -65,6 +66,7 @@ from .schemas import (
     Reason,
     RegisterCreate,
     SalesImport,
+    WintouchSettlement,
     Transfer,
     UserCreate,
 )
@@ -661,6 +663,36 @@ def close_session(
     s.closed_at = now()
     s.close_reason = data.reason
     s.denominations = json.dumps(data.counts)
+    difference = counted - expected
+    if difference:
+        # Keep the pre-adjustment snapshot so the closed sheet retains its discrepancy.
+        category = db.scalar(select(Category).order_by(Category.id).limit(1))
+        if category is None:
+            category = Category(name="Diferenças de caixa")
+            db.add(category)
+            db.flush()
+        adjustment = Movement(
+            session_id=s.id,
+            user_id=user.id,
+            category_id=category.id,
+            kind="diferenca_caixa",
+            payment="numerario",
+            amount_cents=abs(difference),
+            direction=1 if difference > 0 else -1,
+            occurred_at=s.closed_at,
+            document=f"Fecho de caixa {s.sheet_day}",
+            reference=s.id,
+            notes=data.reason,
+            origin="fecho_caixa",
+            request_key=uid(),
+        )
+        db.add(adjustment)
+        db.flush()
+        counting["adjustment_id"] = adjustment.id
+        s.count_data = json.dumps(counting, ensure_ascii=False)
+        record(db, user, "diferenca_caixa", adjustment.id,
+               {"session_id": s.id, "difference_cents": difference, "reason": data.reason},
+               r.store_id)
     record(
         db,
         user,
@@ -715,6 +747,23 @@ def reopen_session(
     s.counted_cents = None
     s.expected_cents = None
     counting = json.loads(s.count_data or "{}")
+    adjustment_id = counting.pop("adjustment_id", None)
+    if adjustment_id:
+        adjustment = db.get(Movement, adjustment_id)
+        if adjustment and not adjustment.reversed_by:
+            reversal = Movement(
+                session_id=s.id, user_id=user.id, category_id=adjustment.category_id,
+                kind="diferenca_caixa", payment=adjustment.payment,
+                amount_cents=adjustment.amount_cents, direction=-adjustment.direction,
+                occurred_at=adjustment.occurred_at, origin="fecho_caixa",
+                reference=s.id, notes=f"Reabertura: {data.reason}",
+                request_key=uid(), reversal_of=adjustment.id,
+            )
+            db.add(reversal)
+            db.flush()
+            adjustment.reversed_by = reversal.id
+            record(db, user, "estorno", adjustment.id,
+                   {"reversal": reversal.id, "reason": data.reason}, r.store_id)
     counting.pop("final", None)
     counting.pop("summary", None)
     s.count_data = json.dumps(counting, ensure_ascii=False)
@@ -754,15 +803,15 @@ def handover(
 
 @app.get("/api/movements")
 def movements(user=Depends(current), db: Session = Depends(db_session)):
-    rows = db.scalars(
-        select(Movement)
+    rows = db.execute(
+        select(Movement, CashSession.register_id)
         .join(CashSession)
         .join(Register)
         .where(Register.store_id.in_(scope(user, db)))
         .order_by(Movement.created_at.desc())
         .limit(500)
     )
-    return [serial(m) for m in rows]
+    return [{**serial(m), "register_id": register_id} for m, register_id in rows]
 
 
 @app.post("/api/movements")
@@ -913,6 +962,8 @@ def reverse(
     s, r = cash(db, user, original.session_id, True)
     authorize(user, db, r.store_id, ["administrador", "gestor"])
     db.refresh(original)
+    if original.origin == "fecho_caixa":
+        raise HTTPException(409, "Reabra a folha de caixa para rever a diferença do fecho.")
     if original.reversed_by or original.reversal_of:
         raise HTTPException(409, "O movimento já foi estornado ou é um estorno.")
     if original.transfer_id:
@@ -1203,6 +1254,10 @@ def company_wintouch_status(user=Depends(current), db: Session = Depends(db_sess
 
 @app.get("/api/integrations/wintouch/sales")
 def company_sales_list(user=Depends(current), db: Session = Depends(db_session)):
+    accounts = {
+        (a.enterprise_id, a.external_id): a
+        for a in db.scalars(select(WintouchCashAccount))
+    }
     query = select(WintouchSaleRecord).where(
         WintouchSaleRecord.store_id.in_(scope(user, db)), WintouchSaleRecord.active.is_(True)
     )
@@ -1213,16 +1268,20 @@ def company_sales_list(user=Depends(current), db: Session = Depends(db_session))
             if not company:
                 raise HTTPException(404, "Empresa indisponível.")
             query = query.where(WintouchSaleRecord.enterprise_id == company.api_enterprise)
-    return [
-        {
+    result = []
+    for r in db.scalars(query.order_by(WintouchSaleRecord.document_date.desc())):
+        data = json.loads(r.data)
+        account = accounts.get((r.enterprise_id, data.get("account_id")))
+        result.append({
             "id": r.id,
             "kind": r.kind,
             "store_id": r.store_id,
             "synced_at": r.synced_at,
-            **json.loads(r.data),
-        }
-        for r in db.scalars(query.order_by(WintouchSaleRecord.document_date.desc()))
-    ]
+            **data,
+            "register_id": account.register_id if account else None,
+            "account_name": account.name if account else None,
+        })
+    return result
 
 
 @app.post("/api/integrations/wintouch/sales")
@@ -1268,6 +1327,123 @@ def company_sales_import(
         )
     except SyncError as exc:
         raise HTTPException(409, str(exc)) from None
+
+
+def settlement_context(db, user, record_id):
+    from .platform import cipher, validate_url
+    row = db.get(WintouchSaleRecord, record_id)
+    if not row or row.kind != "previsto" or not row.active:
+        raise HTTPException(404, "Saldo Wintouch em aberto não encontrado.")
+    authorize(user, db, row.store_id, ["administrador", "gestor"])
+    with database.next_platform_session() as core:
+        company = core.get(Company, db.info.get("company", {}).get("id"))
+        if not company or not company.active or not company.api_active or company.api_enterprise != row.enterprise_id:
+            raise HTTPException(409, "Ligação Wintouch indisponível para este saldo.")
+        url = validate_url(company.api_url)
+        key = cipher().decrypt(company.api_key_ciphertext.encode()).decode()
+    return row, url, key
+
+
+@app.get("/api/integrations/wintouch/sales/{record_id}/settlement-options")
+def wintouch_settlement_options(record_id: str, user=Depends(current), db: Session = Depends(db_session)):
+    import httpx
+    from .wintouch_sales import Reader
+    from .wintouch_settlement import options
+    from .wintouch_sync import SyncError
+    row, url, key = settlement_context(db, user, record_id)
+    try:
+        with httpx.Client(timeout=20, follow_redirects=False) as client:
+            return options(Reader(client, url, row.enterprise_id, key), json.loads(row.data)["direction"])
+    except (httpx.HTTPError, SyncError):
+        raise HTTPException(502, "Não foi possível consultar as opções de liquidação Wintouch.") from None
+
+
+@app.post("/api/integrations/wintouch/sales/{record_id}/settle")
+def wintouch_settle(record_id: str, data: WintouchSettlement, user=Depends(current), db: Session = Depends(db_session)):
+    import httpx
+    from uuid import UUID
+    from .wintouch_sales import Reader, amount
+    from .wintouch_settlement import payload, encode_payload, rejection_message
+    from .wintouch_sync import SyncError
+    row, url, key = settlement_context(db, user, record_id)
+    try:
+        settlement_id = str(UUID(data.request_key))
+    except ValueError:
+        raise HTTPException(422, "Identificador de operação inválido.") from None
+    if data.occurred_at.tzinfo is None or data.occurred_at > now() + timedelta(minutes=5):
+        raise HTTPException(422, "Data de liquidação inválida.")
+    # Serialize operations for this pending, and persist intent before the remote write.
+    row = db.scalar(select(WintouchSaleRecord).where(WintouchSaleRecord.id == record_id).with_for_update())
+    previous = db.scalar(select(Audit).where(Audit.target_id == record_id,
+        Audit.action == "liquidacao_wintouch_iniciada").order_by(Audit.created_at.desc()).limit(1))
+    if previous:
+        previous_id = json.loads(previous.detail)["settlement_id"]
+        done = db.scalar(select(Audit).where(Audit.target_id == previous_id,
+            Audit.action == "liquidacao_wintouch_concluida"))
+        rejected = db.scalar(select(Audit).where(Audit.target_id == previous_id,
+            Audit.action == "liquidacao_wintouch_recusada"))
+        if not done and not rejected:
+            raise HTTPException(409, "Existe uma liquidação sem confirmação. Verifique-a na Wintouch antes de repetir.")
+        if done and previous_id == settlement_id:
+            return {"settlement_id": settlement_id, "message": "Liquidação já confirmada."}
+    try:
+        with httpx.Client(timeout=20, follow_redirects=False) as client:
+            reader = Reader(client, url, row.enterprise_id, key)
+            pending_id = row.external_id.removeprefix("pending:")
+            pending = reader.get("payablesreceivables/" + pending_id, {"embed": "CreditAccountState"})
+            state = pending.get("CreditAccountState") or reader.get("credit_account_states/" + pending["CreditAccountStateID"])
+            if state.get("IsFinalStateEnabled") is not False:
+                raise HTTPException(409, "O documento já não tem saldo pendente confirmado.")
+            body = payload(reader, pending, data, json.loads(row.data)["direction"], settlement_id)
+            record(db, user, "liquidacao_wintouch_iniciada", row.id,
+                   {"settlement_id": settlement_id, "amount_cents": amount(data.amount.replace(",", ".")),
+                    "pending_value_cents": amount(pending["StateValue"]), "pending_version": pending.get("Version")}, row.store_id)
+            db.commit()
+            response = client.post(url.rstrip("/") + "/settlement_documents",
+                headers={**reader.headers, "Content-Type": "application/json"},
+                content=encode_payload(body).encode("utf-8"))
+            # Verify the assigned ID at the origin, rather than trusting an HTTP success alone.
+            if response.status_code in (400, 401, 403, 422):
+                message = rejection_message(response)
+                record(db, user, "liquidacao_wintouch_recusada", settlement_id,
+                       {"record_id": row.id, "http_status": response.status_code, "message": message}, row.store_id)
+                db.commit()
+                raise HTTPException(422, f"A Wintouch recusou a liquidação: {message}")
+            if response.status_code not in (200, 201):
+                raise HTTPException(502, "A Wintouch não confirmou a liquidação. Verifique o documento na origem antes de repetir.")
+            try:
+                result = response.json()
+            except ValueError:
+                result = None
+            assigned_id = None
+            if isinstance(result, str):
+                assigned_id = result
+            elif isinstance(result, dict):
+                assigned_id = result.get("ID") or result.get("id")
+            if not assigned_id and response.headers.get("Location"):
+                assigned_id = response.headers["Location"].split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+            try:
+                confirmed_id = str(UUID(assigned_id)) if assigned_id else settlement_id
+            except (ValueError, TypeError, AttributeError):
+                confirmed_id = settlement_id
+            confirmed = reader.get("settlement_documents/" + confirmed_id)
+            if confirmed.get("ID") != confirmed_id or amount(confirmed.get("Amount")) != amount(data.amount.replace(",", ".")):
+                raise HTTPException(502, "A liquidação enviada ainda não pôde ser confirmada na Wintouch.")
+            record(db, user, "liquidacao_wintouch_concluida", settlement_id,
+                   {"record_id": row.id, "wintouch_settlement_id": confirmed_id}, row.store_id)
+            db.commit()
+            # Refresh the actual outstanding balance; never subtract it locally by assumption.
+            refreshed = next((item for item in reader.collection("payablesreceivables", "CreditAccountState")
+                              if item.get("ID") == pending_id), None)
+            values = json.loads(row.data)
+            values["amount_cents"] = abs(amount(refreshed["StateValue"])) if refreshed else 0
+            row.data = json.dumps(values, ensure_ascii=False)
+            row.active = values["amount_cents"] != 0 and (refreshed.get("CreditAccountState") or {}).get("IsFinalStateEnabled") is not True
+            row.synced_at = now()
+            db.commit()
+            return {"settlement_id": confirmed_id, "message": "Liquidação confirmada na Wintouch."}
+    except (httpx.HTTPError, SyncError, KeyError, ValueError):
+        raise HTTPException(502, "Não foi possível confirmar a operação. Verifique a liquidação na Wintouch antes de repetir.") from None
 
 
 @app.post("/api/integrations/wintouch/sync")

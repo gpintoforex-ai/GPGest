@@ -6,6 +6,30 @@ from zoneinfo import ZoneInfo
 from app.cash_sheet import day
 from app.models import CashSession, Movement, Register, WintouchSaleRecord
 from conftest import movement, open_cash
+import pytest
+
+
+@pytest.mark.parametrize("counted,direction", [("95", -1), ("105", 1)])
+def test_close_difference_movement_and_reopen(setup, counted, direction):
+    c, ids, _ = setup
+    session = open_cash(c, ids["registers"][0]).json()["id"]
+    payload = {"cash_total": counted, "reason": "Conferência de caixa"}
+    assert c.post(f"/api/sessions/{session}/close", json=payload).status_code == 200
+    rows = c.get("/api/movements").json()
+    adjustment = next(m for m in rows if m["kind"] == "diferenca_caixa")
+    assert adjustment["direction"] == direction
+    assert adjustment["amount_cents"] == 500
+    assert adjustment["notes"] == payload["reason"]
+    frozen = c.get("/api/sessions").json()[0]
+    assert by_key(frozen)["numerario"]["expected_cents"] == 10000
+    assert c.post(f"/api/sessions/{session}/close", json=payload).status_code == 409
+    assert len(c.get("/api/movements").json()) == 1
+    assert c.post(f"/api/sessions/{session}/reopen", json={"reason": "Recontar"}).status_code == 200
+    assert by_key(c.get("/api/sessions").json()[0])["numerario"]["expected_cents"] == 10000
+    assert c.post(f"/api/sessions/{session}/close", json={"cash_total": "100"}).status_code == 200
+    rows = c.get("/api/movements").json()
+    assert len(rows) == 2
+    assert sum(m["direction"] * m["amount_cents"] for m in rows) == 0
 
 
 def by_key(response):

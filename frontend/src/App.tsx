@@ -23,6 +23,7 @@ import {
   Plus,
   Clock,
   ChevronRight,
+  ChevronDown,
   Receipt,
   X,
 } from "lucide-react";
@@ -30,9 +31,9 @@ import {
 type Row = Record<string, any>;
 import TenantIntegrations from "./TenantIntegrations";
 import PlannedMovements from "./PlannedMovements";
-import WintouchSales from "./WintouchSales";
 import RealMovements from "./RealMovements";
 import CashSheet from "./CashSheet";
+import CashSheetList from "./CashSheetList";
 import OpenCashForm from "./OpenCashForm";
 type Bootstrap = {
   user: Row;
@@ -64,6 +65,7 @@ const labels: Record<string, string> = {
   fornecedor: "Pagamento a fornecedor",
   despesa: "Pequena despesa",
   reembolso: "Reembolso",
+  diferenca_caixa: "Diferença de caixa",
   deposito: "Retirada para depósito",
   reforco: "Reforço de fundo",
   transferencia_caixa: "Transferência entre caixas",
@@ -199,6 +201,7 @@ export default function App() {
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [mobile, setMobile] = useState(false),
+    [financeOpen, setFinanceOpen] = useState(true),
     [store, setStore] = useState(""),
     [requestKey, setRequestKey] = useState(crypto.randomUUID());
   async function reload() {
@@ -341,17 +344,20 @@ export default function App() {
   const open = visibleSessions.filter((s) => !s.closed_at);
   const menu = [
     ["Dashboard", LayoutDashboard],
+    ["Financeira", Wallet],
+    ["Artigos e validades", Package],
+    ["Receitas e despesas", Receipt],
+    ["Relatórios", FileBarChart],
+    ["Integrações", Plug],
+    ["Configurações", Settings],
+  ] as const;
+  const financeMenu = [
     ["Folha de caixa", Wallet],
     ["Movimentos reais", ArrowLeftRight],
     ["Movimentos previstos", Clock],
     ["Depósitos", Landmark],
     ["Bancos", Landmark],
     ["Reconciliação", CheckCircle],
-    ["Artigos e validades", Package],
-    ["Receitas e despesas", Receipt],
-    ["Relatórios", FileBarChart],
-    ["Integrações", Plug],
-    ["Configurações", Settings],
   ] as const;
   const openModal = async (kind: string, row: Row | null = null) => {
     if (kind === "open") {
@@ -375,21 +381,62 @@ export default function App() {
           <small>{boot.company?.name || "GESTÃO DE LOJA"}</small>
         </div>
         <nav>
-          {menu.map(([label, Icon]) => (
-            <button
-              key={label}
-              className={page === label ? "active" : ""}
-              onClick={() => {
-                setPage(label);
-                setMobile(false);
-                setError("");
-              }}
-            >
-              <Icon size={19} />
-              {label}
-              {page === label && <ChevronRight size={15} />}
-            </button>
-          ))}
+          {menu.map(([label, Icon]) =>
+            label === "Financeira" ? (
+              <div className="finance-menu" key={label}>
+                <button
+                  className={
+                    financeMenu.some(([name]) => name === page) ? "active" : ""
+                  }
+                  aria-expanded={financeOpen}
+                  aria-controls="finance-submenu"
+                  onClick={() => setFinanceOpen(!financeOpen)}
+                >
+                  <Icon size={19} /> Financeira
+                  {financeOpen ? (
+                    <ChevronDown size={15} />
+                  ) : (
+                    <ChevronRight size={15} />
+                  )}
+                </button>
+                <div
+                  id="finance-submenu"
+                  className="finance-submenu"
+                  hidden={!financeOpen}
+                >
+                  {financeMenu.map(([name, FinanceIcon]) => (
+                    <button
+                      key={name}
+                      className={page === name ? "active" : ""}
+                      aria-current={page === name ? "page" : undefined}
+                      onClick={() => {
+                        setPage(name);
+                        setMobile(false);
+                        setError("");
+                      }}
+                    >
+                      <FinanceIcon size={17} /> {name}
+                      {page === name && <ChevronRight size={15} />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <button
+                key={label}
+                className={page === label ? "active" : ""}
+                onClick={() => {
+                  setPage(label);
+                  setMobile(false);
+                  setError("");
+                }}
+              >
+                <Icon size={19} />
+                {label}
+                {page === label && <ChevronRight size={15} />}
+              </button>
+            ),
+          )}
         </nav>
         <div className="sidebar-bottom">
           <span className="avatar">
@@ -426,7 +473,12 @@ export default function App() {
             <Menu />
           </button>
           <div>
-            <span className="breadcrumb">GPGest / Gestão</span>
+            <span className="breadcrumb">
+              GPGest /{" "}
+              {financeMenu.some(([name]) => name === page)
+                ? "Financeira"
+                : "Gestão"}
+            </span>
             <h2>{page}</h2>
           </div>
           <div className="header-tools">
@@ -615,8 +667,8 @@ export default function App() {
                   </button>
                 )}
               </div>
-              <div className="cash-sheet-list">
-                {visibleSessions.map((s) => (
+              <CashSheetList rows={visibleSessions} store={store}>
+                {(s) => (
                   <CashSheet
                     key={s.id}
                     session={s}
@@ -629,8 +681,8 @@ export default function App() {
                     reload={reload}
                     onAction={openModal}
                   />
-                ))}
-              </div>
+                )}
+              </CashSheetList>
               {!visibleSessions.length && (
                 <Empty text="Abra a primeira sessão de caixa" />
               )}
@@ -644,7 +696,6 @@ export default function App() {
                 store={store}
                 reload={reload}
               />
-              <WintouchSales kind="previsto" store={store} />
             </>
           )}
           {page === "Movimentos reais" && (
@@ -672,7 +723,11 @@ export default function App() {
                   )}
                 </div>
               </div>
-              <RealMovements localRows={visibleMovements} store={store}>
+              <RealMovements
+                localRows={visibleMovements}
+                store={store}
+                registers={boot.registers}
+              >
                 {(pageRows) => (
                   <MovementTable
                     rows={pageRows}
@@ -1390,6 +1445,7 @@ export default function App() {
                   {m.external && <small>Gerido na Wintouch</small>}
                   {onReverse &&
                     !m.external &&
+                    m.origin !== "fecho_caixa" &&
                     !m.reversed_by &&
                     !m.reversal_of &&
                     !m.transfer_id && (
