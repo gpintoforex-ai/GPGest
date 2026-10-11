@@ -49,6 +49,12 @@ A importação CSV/Excel, depósitos com talões e trânsito, receitas/custos re
 O runner de testes apresenta um aviso de descontinuação do transporte httpx no Starlette instalado. Os testes passam; o aviso não afeta os pedidos da aplicação. As versões usadas estão guardadas em `backend/requirements.lock.txt`.
 # Movimentos reais e previstos — 11/10/2026
 
+## Tabela única de movimentos reais
+
+- Movimentos locais e recebimentos Wintouch reunidos numa tabela, ordenados por data, com coluna Origem e filtros/paginação comuns. Documentos alternam a mesma tabela, sem outro painel.
+- Navegador com 2 movimentos locais e 12 recebimentos simulados: uma tabela, 14 registos, duas páginas, filtro inclusivo, reposição de página, identificação de origem, anexos/estornos apenas locais e layout móvel aprovados.
+- Nenhuma alteração à base de dados, saldos ou relatórios. Compilação TypeScript/Vite aprovada.
+
 ## Filtros e paginação
 
 - Movimentos locais, previstos, pagamentos e documentos Wintouch: componente comum com datas inclusivas e 10/25/50/100 registos por página.

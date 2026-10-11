@@ -31,7 +31,7 @@ type Row = Record<string, any>;
 import TenantIntegrations from "./TenantIntegrations";
 import PlannedMovements from "./PlannedMovements";
 import WintouchSales from "./WintouchSales";
-import RecordList from "./RecordList";
+import RealMovements from "./RealMovements";
 type Bootstrap = {
   user: Row;
   mode: string;
@@ -696,23 +696,16 @@ export default function App() {
                   )}
                 </div>
               </div>
-              <section className="panel">
-                <RecordList
-                  rows={visibleMovements}
-                  dateField="occurred_at"
-                  resetKey={store}
-                >
-                  {(pageRows) => (
-                    <MovementTable
-                      rows={pageRows}
-                      onReverse={
-                        manager ? (r) => openModal("reverse", r) : undefined
-                      }
-                    />
-                  )}
-                </RecordList>
-              </section>
-              <WintouchSales kind="real" store={store} />
+              <RealMovements localRows={visibleMovements} store={store}>
+                {(pageRows) => (
+                  <MovementTable
+                    rows={pageRows}
+                    onReverse={
+                      manager ? (r) => openModal("reverse", r) : undefined
+                    }
+                  />
+                )}
+              </RealMovements>
             </>
           )}
           {page === "Bancos" && (
@@ -1425,6 +1418,7 @@ export default function App() {
               <th>Entidade</th>
               <th>Pagamento</th>
               <th>Montante</th>
+              <th>Origem</th>
               <th>Estado</th>
               <th>Ações</th>
             </tr>
@@ -1432,19 +1426,38 @@ export default function App() {
           <tbody>
             {rows.map((m) => (
               <tr key={m.id}>
-                <td>{date(m.occurred_at)}</td>
                 <td>
-                  <strong>{labels[m.kind] || m.kind}</strong>
+                  {m.external && !/(Z|[+-]\d{2}:?\d{2})$/.test(m.occurred_at)
+                    ? m.occurred_at
+                        .slice(0, 10)
+                        .split("-")
+                        .reverse()
+                        .join("/") +
+                      " " +
+                      m.occurred_at.slice(11, 16)
+                    : date(m.occurred_at)}
+                </td>
+                <td>
+                  <strong>
+                    {m.kind === "documento"
+                      ? "Documento de venda"
+                      : labels[m.kind] || m.kind}
+                  </strong>
                   <small>
                     {m.entity || m.document || m.reference || "Manual"}
                   </small>
                 </td>
                 <td>{m.document || "—"}</td>
                 <td>{m.entity || "—"}</td>
-                <td>{labels[m.payment]}</td>
+                <td>{labels[m.payment] || m.payment || "—"}</td>
                 <td className={m.direction > 0 ? "positive" : "negative"}>
                   {m.direction > 0 ? "+" : "−"}
                   {money(m.amount_cents)}
+                </td>
+                <td>
+                  <span className="pill neutral">
+                    {m.external ? "Wintouch" : "GPGest"}
+                  </span>
                 </td>
                 <td>
                   <span
@@ -1453,18 +1466,26 @@ export default function App() {
                       (m.reversed_by || m.reversal_of ? "neutral" : "")
                     }
                   >
-                    {m.reversed_by
-                      ? "Estornado"
-                      : m.reversal_of
-                        ? "Estorno"
-                        : "Confirmado"}
+                    {m.cancelled
+                      ? "Anulado"
+                      : m.kind === "documento"
+                        ? "Documento"
+                        : m.reversed_by
+                          ? "Estornado"
+                          : m.reversal_of
+                            ? "Estorno"
+                            : "Confirmado"}
                   </span>
                 </td>
                 <td>
-                  <button onClick={() => openModal("attachments", m)}>
-                    Anexos
-                  </button>
+                  {!m.external && (
+                    <button onClick={() => openModal("attachments", m)}>
+                      Anexos
+                    </button>
+                  )}
+                  {m.external && <small>Gerido na Wintouch</small>}
                   {onReverse &&
+                    !m.external &&
                     !m.reversed_by &&
                     !m.reversal_of &&
                     !m.transfer_id && (

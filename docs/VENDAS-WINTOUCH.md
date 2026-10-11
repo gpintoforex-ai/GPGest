@@ -4,7 +4,7 @@ Em **Integrações → Importar vendas Wintouch**, escolha loja e datas e execut
 
 ## Dados disponíveis
 
-- **Movimentos reais → Recebimentos Wintouch**: pagamentos individualizados com documento, data de origem, entidade, meio e montante. **Ver documentos de venda** apresenta as faturas separadamente dos pagamentos.
+- **Movimentos reais**: tabela única com movimentos locais e pagamentos Wintouch, documento, data, entidade, meio, montante e coluna **Origem**. Os filtros e a paginação aplicam-se às duas origens em conjunto. **Ver documentos de venda Wintouch** alterna a mesma tabela para consulta de faturas; **Voltar aos movimentos reais** repõe os pagamentos e movimentos locais.
 - **Movimentos previstos → Saldos a crédito Wintouch**: valores em aberto, vencimento e entidade, obtidos da conta corrente Wintouch. Efetive o recebimento na Wintouch e volte a importar o período; o saldo atualizado substitui o anterior. Estes registos não usam o botão de liquidação dos previstos manuais.
 - Faturas, faturas-recibo, faturas simplificadas e notas de crédito de venda são selecionadas pelas classes 5, 3, 40 e 6, confirmadas nos tipos de documentos da instalação. Orçamentos, encomendas, guias e compras ficam excluídos. Os recibos de recebimento são consultados separadamente.
 
@@ -22,7 +22,7 @@ As datas sem offset mantêm a data de calendário indicada pela origem, sem inve
 
 ## Limites atuais
 
-É um snapshot de consulta dos movimentos Wintouch. Não abre nem fecha caixas, não escreve na Wintouch e não altera saldos, relatórios ou dashboard dos movimentos locais. Não concilia automaticamente um pagamento Wintouch com um lançamento manual. As duas origens são apresentadas em tabelas separadas para que não sejam somadas duas vezes.
+É um snapshot de consulta dos movimentos Wintouch. Não abre nem fecha caixas, não escreve na Wintouch e não altera saldos, relatórios ou dashboard dos movimentos locais. Não concilia automaticamente um pagamento Wintouch com um lançamento manual. A tabela apresenta ambas as origens identificadas, sem gerar um segundo lançamento local. Anexos e estornos locais só estão disponíveis nos registos GPGest; os registos importados são geridos na Wintouch.
 
 Notas de crédito não são consideradas reembolsos pagos sem um pagamento identificado. Anulações com `DeletedDate` são preservadas como documento anulado e os seus pagamentos não são publicados como reais. Recibos com estado de processamento não validado são rejeitados. Descontos, retenções e valores pendentes não são convertidos automaticamente em dinheiro recebido.
 
