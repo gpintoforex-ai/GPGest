@@ -135,6 +135,48 @@ def test_tenant_integration_uses_own_company_without_platform_session(platform):
     assert c.get("/api/integrations/wintouch").json()["id"] == b["id"]
 
 
+def test_sales_import_is_bound_to_current_company(platform, monkeypatch):
+    c, _ = platform
+    a = create(c, "vendas-empresa-a")
+    b = create(c, "vendas-empresa-b")
+    assert (
+        c.post(
+            "/api/platform/companies/" + a["id"] + "/config",
+            json=configuration(
+                a, api_active=True, api_enterprise="sales-source-a", api_key="private-sales-key"
+            ),
+        ).status_code
+        == 200
+    )
+    c.cookies.clear()
+    enter(c, a["slug"])
+    store = c.get("/api/bootstrap").json()["stores"][0]["id"]
+    body = {"store_id": store, "start_date": "2026-10-01", "end_date": "2026-10-11"}
+    assert c.post("/api/integrations/wintouch/sales", json=body).status_code == 422
+    assert (
+        c.post("/api/integrations/wintouch/sales", json={**body, "company_id": b["id"]}).status_code
+        == 422
+    )
+    calls = []
+
+    def sync(bind, enterprise, destination, start, end, url, key):
+        calls.append((enterprise, destination, key))
+        return {"status": "concluida", "read_count": 0, "inserted_count": 0, "updated_count": 0}
+
+    monkeypatch.setattr("app.wintouch_sales.synchronize_sales", sync)
+    response = c.post("/api/integrations/wintouch/sales", json={**body, "confirm_demo": True})
+    assert response.status_code == 200, response.text
+    assert calls == [("sales-source-a", store, "private-sales-key")]
+    assert "private-sales-key" not in response.text
+    assert c.get("/api/integrations/wintouch/sales").json() == []
+    enter(c, b["slug"])
+    assert c.get("/api/integrations/wintouch/sales").json() == []
+    assert (
+        c.post("/api/integrations/wintouch/sales", json={**body, "confirm_demo": True}).status_code
+        == 422
+    )
+
+
 def test_manual_sync_pagination_deduplication_and_demo_confirmation(platform, monkeypatch):
     from app.db import engine
     from app.models import WintouchProduct, WintouchSyncState

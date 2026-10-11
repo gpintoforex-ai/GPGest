@@ -37,3 +37,6 @@ O modelo e a migração foram entregues sem importar dados reais para a demonstr
 Execute `alembic upgrade head` em `backend` com o servidor parado para impedir criação concorrente de empresas durante a migração. O backup inclui todos os esquemas de clientes. Guarde também a chave de encriptação privada conforme [ADMINISTRACAO-PLATAFORMA.md](ADMINISTRACAO-PLATAFORMA.md).
 
 A migração foi testada em dois esquemas PostgreSQL existentes, incluindo criação, inserção com o mesmo ID externo em empresas diferentes e reversão em esquemas temporários. O downgrade remove os dados Wintouch; não é uma operação habitual de manutenção e não altera as tabelas financeiras originais.
+# Snapshot de vendas disponível
+
+A migração `0005` acrescenta `wt_sale_records` às tabelas descritas abaixo. A [importação de vendas](VENDAS-WINTOUCH.md) grava documentos, pagamentos e pendentes normalizados nesse snapshot de consulta, sem gerar movimentos nas caixas locais. Os modelos `wt_documents` e `wt_movements` continuam preparados para uma integração financeira com conciliação e mapeamento de caixas; não são usados para lançar automaticamente o snapshot no livro de caixa.

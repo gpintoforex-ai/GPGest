@@ -76,6 +76,8 @@ A base inclui [11 tabelas de integração Wintouch](docs/TABELAS-WINTOUCH.md) po
 
 A [importação manual de artigos, entidades e caixas](docs/SINCRONIZACAO-WINTOUCH.md) está disponível em **Integrações → Wintouch**, com paginação, atualização sem duplicados e histórico. Apenas o administrador da empresa pode gerir a sincronização da sua empresa. Na demonstração exige confirmação explícita; não arranca automaticamente nem altera saldos financeiros.
 
+A [importação de vendas e recebimentos](docs/VENDAS-WINTOUCH.md) está disponível em **Integrações → Importar vendas Wintouch**. Selecione loja e período. Documentos, pagamentos e saldos a crédito são apresentados nos menus de movimentos, com origem Wintouch, sem alterar as caixas locais.
+
 ## Guia de utilização
 
 1. **Configurações**: crie lojas, caixas, categorias e equipa. Um administrador tem acesso a todas as lojas; os restantes utilizadores recebem acesso explícito. Na criação pela interface escolhe-se uma loja; a API aceita várias `store_ids`.

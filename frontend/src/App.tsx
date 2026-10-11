@@ -30,6 +30,7 @@ import {
 type Row = Record<string, any>;
 import TenantIntegrations from "./TenantIntegrations";
 import PlannedMovements from "./PlannedMovements";
+import WintouchSales from "./WintouchSales";
 type Bootstrap = {
   user: Row;
   mode: string;
@@ -659,12 +660,15 @@ export default function App() {
             </>
           )}
           {page === "Movimentos previstos" && (
-            <PlannedMovements
-              boot={boot}
-              sessions={sessions}
-              store={store}
-              reload={reload}
-            />
+            <>
+              <PlannedMovements
+                boot={boot}
+                sessions={sessions}
+                store={store}
+                reload={reload}
+              />
+              <WintouchSales kind="previsto" store={store} />
+            </>
           )}
           {page === "Movimentos reais" && (
             <>
@@ -699,6 +703,7 @@ export default function App() {
                   }
                 />
               </section>
+              <WintouchSales kind="real" store={store} />
             </>
           )}
           {page === "Bancos" && (

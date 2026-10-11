@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./App";
 import SyncPanel from "./SyncPanel";
+import { SalesImportPanel } from "./WintouchSales";
 
 export default function TenantIntegrations({
   canManage,
@@ -28,7 +29,10 @@ export default function TenantIntegrations({
             {company.api_active ? "Ligação ativada" : "Ligação desativada"}
           </span>
           {canManage ? (
-            <SyncPanel company={company} />
+            <>
+              <SyncPanel company={company} />
+              <SalesImportPanel company={company} />
+            </>
           ) : (
             <p>O administrador da empresa gere as sincronizações.</p>
           )}

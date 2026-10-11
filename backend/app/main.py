@@ -32,6 +32,7 @@ from .models import (
     Register,
     Store,
     User,
+    WintouchSaleRecord,
     now,
     uid,
 )
@@ -51,6 +52,7 @@ from .schemas import (
     PlannedPay,
     Reason,
     RegisterCreate,
+    SalesImport,
     Transfer,
     UserCreate,
 )
@@ -1019,6 +1021,75 @@ def company_wintouch_status(user=Depends(current), db: Session = Depends(db_sess
             "active": bool(company.active),
             "api_active": bool(company.api_active),
         }
+
+
+@app.get("/api/integrations/wintouch/sales")
+def company_sales_list(user=Depends(current), db: Session = Depends(db_session)):
+    query = select(WintouchSaleRecord).where(
+        WintouchSaleRecord.store_id.in_(scope(user, db)), WintouchSaleRecord.active.is_(True)
+    )
+    company_id = db.info.get("company", {}).get("id")
+    if company_id:
+        with database.next_platform_session() as core:
+            company = core.get(Company, company_id)
+            if not company:
+                raise HTTPException(404, "Empresa indisponível.")
+            query = query.where(WintouchSaleRecord.enterprise_id == company.api_enterprise)
+    return [
+        {
+            "id": r.id,
+            "kind": r.kind,
+            "store_id": r.store_id,
+            "synced_at": r.synced_at,
+            **json.loads(r.data),
+        }
+        for r in db.scalars(query.order_by(WintouchSaleRecord.document_date.desc()))
+    ]
+
+
+@app.post("/api/integrations/wintouch/sales")
+def company_sales_import(
+    data: SalesImport, user=Depends(current), db: Session = Depends(db_session)
+):
+    from cryptography.fernet import InvalidToken
+
+    from .platform import cipher, validate_url
+    from .wintouch_sales import synchronize_sales
+    from .wintouch_sync import SyncError
+
+    authorize(user, db, data.store_id, ["administrador"])
+    if not db.get(Store, data.store_id):
+        raise HTTPException(422, "Loja inválida.")
+    if data.start_date > data.end_date or (data.end_date - data.start_date).days > 366:
+        raise HTTPException(422, "Escolha um período válido de até um ano.")
+    company_id = db.info.get("company", {}).get("id")
+    with database.next_platform_session() as core:
+        company = core.get(Company, company_id)
+        if not company or not company.active or not company.api_active:
+            raise HTTPException(409, "Ative a ligação Wintouch desta empresa antes de importar.")
+        if company.mode == "demonstracao" and not data.confirm_demo:
+            raise HTTPException(422, "Confirme a importação para esta empresa de demonstração.")
+        url = validate_url(company.api_url)
+        try:
+            key = cipher().decrypt(company.api_key_ciphertext.encode()).decode()
+        except (InvalidToken, AttributeError):
+            raise HTTPException(503, "Não foi possível decifrar a chave API.") from None
+        enterprise = company.api_enterprise
+    record(
+        db,
+        user,
+        "importacao_vendas_wintouch",
+        company_id,
+        {"start_date": data.start_date.isoformat(), "end_date": data.end_date.isoformat()},
+        data.store_id,
+    )
+    db.commit()
+    try:
+        return synchronize_sales(
+            db.get_bind(), enterprise, data.store_id, data.start_date, data.end_date, url, key
+        )
+    except SyncError as exc:
+        raise HTTPException(409, str(exc)) from None
 
 
 @app.post("/api/integrations/wintouch/sync")

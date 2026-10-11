@@ -27,3 +27,6 @@ Datas `LastUpdate` sem offset não recebem um fuso presumido. O identificador ex
 Esta entrega faz atualização completa por recurso, a pedido. O cursor é reservado para uma futura sincronização incremental confirmada pela API. A periodicidade automática e a execução por fila em produção continuam por configurar conforme os limites do fornecedor.
 
 Documentos, pagamentos, movimentos e turnos financeiros continuam separados e sem importação nesta entrega; exigem validação dos seus campos, anulações e mapeamentos antes de utilização nos saldos. Consulte [TABELAS-WINTOUCH.md](TABELAS-WINTOUCH.md).
+# Vendas e recebimentos
+
+Existe agora uma importação própria em **Integrações → Importar vendas Wintouch**, com escolha de loja e período. Consulte [VENDAS-WINTOUCH.md](VENDAS-WINTOUCH.md). Os dados de venda, pagamentos e crédito podem ser consultados nos menus de movimentos, separados dos lançamentos locais. As limitações financeiras abaixo referem-se à integração no livro de caixa e às tarefas automáticas.

@@ -94,6 +94,13 @@ class PlannedPay(Strict):
     request_key: str = Field(min_length=10, max_length=100)
 
 
+class SalesImport(Strict):
+    store_id: str
+    start_date: date
+    end_date: date
+    confirm_demo: bool = False
+
+
 class Reason(Strict):
     reason: str = Field(min_length=5, max_length=2000)
 

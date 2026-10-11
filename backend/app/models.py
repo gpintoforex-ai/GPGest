@@ -299,6 +299,15 @@ class WintouchWorkshift(WintouchRecord, Base):
     )
 
 
+class WintouchSaleRecord(WintouchRecord, Base):
+    __tablename__ = "wt_sale_records"
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    document_date: Mapped[str] = mapped_column(String(10), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    data: Mapped[str] = mapped_column(Text)
+
+
 class WintouchDocument(WintouchRecord, Base):
     __tablename__ = "wt_documents"
     resource: Mapped[str] = mapped_column(String(80))

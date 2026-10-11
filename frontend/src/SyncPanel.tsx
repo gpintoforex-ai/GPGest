@@ -16,7 +16,12 @@ export default function SyncPanel({
   }
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
-  }, [company.id]);
+    const updated = () => {
+      refresh().catch((e) => setError(e.message));
+    };
+    window.addEventListener("gpgest-sales-updated", updated);
+    return () => window.removeEventListener("gpgest-sales-updated", updated);
+  }, [company.id, apiBase]);
   return (
     <section style={{ marginTop: 24 }}>
       <h3>Importação Wintouch</h3>
@@ -64,8 +69,8 @@ export default function SyncPanel({
           )}
           <p className="footnote">
             A operação pode demorar alguns minutos. A classificação
-            cliente/fornecedor usa os campos explícitos da origem. A importação
-            de movimentos financeiros será tratada separadamente.
+            cliente/fornecedor usa os campos explícitos da origem. Para vendas,
+            use o formulário de importação de vendas abaixo.
           </p>
         </Form>
       ) : (
@@ -100,6 +105,7 @@ export default function SyncPanel({
                       products: "Artigos",
                       entities: "Entidades",
                       cash_accounts: "Caixas",
+                      sales: "Vendas e recebimentos",
                     }[r.resource as string] || r.resource}
                   </td>
                   <td>
