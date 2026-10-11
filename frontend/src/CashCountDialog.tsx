@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import NumericKeypad from "./NumericKeypad";
 
 const money = (cents: number) =>
   new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(
@@ -36,6 +37,7 @@ export default function CashCountDialog({
     ),
   );
   const [total, setTotal] = useState(initial.total);
+  const [keypad, setKeypad] = useState<number | "total" | null>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const element = dialog.current!;
@@ -90,7 +92,15 @@ export default function CashCountDialog({
               min="0"
               max="100000"
               step="1"
-              inputMode="numeric"
+              inputMode="none"
+              aria-haspopup="dialog"
+              onClick={() => setKeypad(value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setKeypad(value);
+                }
+              }}
               value={quantities[value] ?? ""}
               placeholder="0"
               onChange={(e) =>
@@ -190,7 +200,15 @@ export default function CashCountDialog({
               Valor total de numerário (€)
               <input
                 aria-label="Valor total de numerário (€)"
-                inputMode="decimal"
+                inputMode="none"
+                aria-haspopup="dialog"
+                onClick={() => setKeypad("total")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setKeypad("total");
+                  }
+                }}
                 value={total}
                 onChange={(e) => setTotal(e.target.value)}
                 placeholder="0,00"
@@ -229,6 +247,24 @@ export default function CashCountDialog({
           </div>
         </footer>
       </form>
+      {keypad !== null && (
+        <NumericKeypad
+          label={
+            keypad === "total"
+              ? "Valor total de numerário (€)"
+              : `Quantidade de ${money(keypad)}`
+          }
+          value={keypad === "total" ? total : quantities[keypad] || ""}
+          decimal={keypad === "total"}
+          onCancel={() => setKeypad(null)}
+          onConfirm={(value) => {
+            if (keypad === "total") setTotal(value);
+            else
+              setQuantities((previous) => ({ ...previous, [keypad]: value }));
+            setKeypad(null);
+          }}
+        />
+      )}
     </dialog>,
     document.body,
   );

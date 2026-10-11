@@ -20,3 +20,5 @@ Moedas: [faces comuns publicadas pelo BCE](https://www.ecb.europa.eu/euro/coins/
 A janela apresenta imagens proporcionais, quantidades inteiras e subtotais por denominação. No computador, as sete notas ocupam uma linha e as oito moedas outra; no telemóvel, duas listas compactas mostram notas e moedas lado a lado. O total e os botões ficam sempre disponíveis; ecrãs muito baixos ou ampliação de texto mantêm a possibilidade de deslocar o conteúdo.
 
 **Aplicar contagem** atualiza a folha; **Guardar contagem** grava na base de dados. Cancelar ou premir Escape descarta apenas as alterações feitas nessa janela.
+
+Clicar num campo de quantidade ou no valor total abre um teclado numérico com limpar, apagar e confirmar. O valor total inclui vírgula decimal; as quantidades aceitam apenas inteiros até 100000. O primeiro dígito substitui o valor anterior. Cancelar ou Escape fecha apenas o teclado e mantém o campo anterior; confirmar atualiza o cálculo da contagem. Também aceita os números, Backspace, Delete e Enter do teclado físico.

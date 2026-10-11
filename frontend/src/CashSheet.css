@@ -163,12 +163,93 @@
   color: #687c68;
 }
 .cash-denomination input {
+  cursor: pointer;
   width: 100%;
   text-align: center;
   height: 34px;
   padding: 4px;
   appearance: textfield;
   -moz-appearance: textfield;
+}
+.numeric-keypad {
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  padding: 18px;
+  border: 1px solid #dce4df;
+  border-radius: 16px;
+  color: #23483e;
+  box-shadow: 0 20px 80px #0003;
+}
+.numeric-keypad::backdrop {
+  background: #102e2760;
+}
+.numeric-keypad-title {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.numeric-keypad-title h3 {
+  font-size: 18px;
+}
+.numeric-keypad-title p {
+  margin: 4px 0 12px;
+  font-size: 13px;
+}
+.numeric-keypad-title > button {
+  padding: 0 8px;
+  border: 0;
+  font-size: 24px;
+}
+.numeric-keypad-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  margin-bottom: 12px;
+  border: 1px solid #b2c6bc;
+  border-radius: 8px;
+  background: #f5f8f6;
+}
+.numeric-keypad-display output {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  font-size: 28px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.numeric-keypad-display button {
+  padding: 6px;
+  font-size: 12px;
+}
+.numeric-keypad-keys {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.numeric-keypad-keys button {
+  min-height: 52px;
+  padding: 8px;
+  font-size: 23px;
+  background: #f5f8f6;
+}
+.numeric-keypad-keys button:hover {
+  background: #e4eee8;
+}
+.numeric-keypad-keys .numeric-keypad-control {
+  font-size: 13px;
+}
+.numeric-keypad-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.numeric-keypad-actions button {
+  flex: 1;
+  min-height: 42px;
 }
 .cash-denomination input::-webkit-inner-spin-button,
 .cash-denomination input::-webkit-outer-spin-button {
