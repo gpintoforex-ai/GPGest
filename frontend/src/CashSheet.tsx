@@ -169,7 +169,7 @@ export default function CashSheet({
       </div>
       <p className="footnote">
         {s.sheet.include_wintouch
-          ? "Inclui os movimentos desta caixa no GPGest e os recebimentos Wintouch de toda a loja no dia indicado. Os documentos a crédito ficam nos movimentos previstos."
+          ? "Valores calculados automaticamente: movimentos desta caixa no GPGest e recebimentos Wintouch de toda a loja no dia indicado. Os documentos a crédito ficam nos movimentos previstos."
           : "Inclui os movimentos registados nesta caixa no GPGest."}
       </p>
       {s.sheet.include_wintouch && (

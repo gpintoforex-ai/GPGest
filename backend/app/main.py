@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session
 
 from . import db as database
 from .cash_sheet import day as sheet_day_of
+from .cash_sheet import reserve_auto_source, sheet_source_context, validate_count
 from .cash_sheet import summary as sheet_summary
-from .cash_sheet import validate_count
 from .db import db_session
 from .models import (
     Access,
@@ -238,11 +238,12 @@ def cash(db, user, session_id, write=False):
             raise HTTPException(409, "A caixa está fechada. Os movimentos estão bloqueados.")
         if user.role == "operador" and session.operator_id != user.id:
             raise HTTPException(403, "Esta caixa pertence a outro operador.")
+        reserve_auto_source(db, session)
     return session, register
 
 
 def balance(db, session):
-    if session.wintouch_scope:
+    if sheet_source_context(db, session)[0]:
         return next(
             row["expected_cents"] for row in sheet_summary(db, session) if row["key"] == "numerario"
         )
@@ -458,24 +459,10 @@ def sessions(user=Depends(current), db: Session = Depends(db_session)):
         .order_by(CashSession.opened_at.desc())
         .limit(200)
     )
-    result = []
-    for s in rows:
-        totals = {
-            payment: int(total)
-            for payment, total in db.execute(
-                select(
-                    Movement.payment,
-                    func.sum(Movement.direction * Movement.amount_cents),
-                )
-                .where(Movement.session_id == s.id)
-                .group_by(Movement.payment)
-            ).all()
-        }
-        result.append(session_result(db, s, totals))
-    return result
+    return [session_result(db, s) for s in rows]
 
 
-def session_result(db, s, totals=None):
+def session_result(db, s):
     rows = sheet_summary(db, s)
     counting = json.loads(s.count_data or "{}")
     if s.closed_at and not counting:
@@ -489,10 +476,10 @@ def session_result(db, s, totals=None):
         **serial(s),
         "count_data": counting,
         "balance_cents": next(row["expected_cents"] for row in rows if row["key"] == "numerario"),
-        "totals": totals if totals is not None else {row["key"]: row["net_cents"] for row in rows},
+        "totals": {row["key"]: row["net_cents"] for row in rows},
         "sheet": {
             "day": s.sheet_day or sheet_day_of(s.opened_at),
-            "include_wintouch": bool(s.wintouch_scope),
+            "include_wintouch": bool(sheet_source_context(db, s)[0]),
             "rows": rows,
         },
     }
@@ -519,9 +506,12 @@ def open_session(data: OpenCash, user=Depends(current), db: Session = Depends(db
         sheet_day=sheet_day,
         wintouch_scope=wintouch_scope,
         wintouch_enterprise=enterprise,
+        count_data=json.dumps({"wintouch_excluded": data.include_wintouch is False}),
     )
     db.add(s)
     db.flush()
+    if data.include_wintouch is None:
+        reserve_auto_source(db, s)
     record(
         db,
         user,
@@ -530,7 +520,7 @@ def open_session(data: OpenCash, user=Depends(current), db: Session = Depends(db
         {
             "opening_cents": s.opening_cents,
             "sheet_day": sheet_day,
-            "include_wintouch": data.include_wintouch,
+            "include_wintouch": bool(s.wintouch_scope),
         },
         r.store_id,
     )
@@ -570,6 +560,9 @@ def change_sheet_sources(
     previous = {"day": s.sheet_day, "include_wintouch": bool(s.wintouch_scope)}
     s.sheet_day = data.sheet_day.isoformat()
     s.wintouch_scope, s.wintouch_enterprise = token, enterprise
+    counting = json.loads(s.count_data or "{}")
+    counting["wintouch_excluded"] = not data.include_wintouch
+    s.count_data = json.dumps(counting, ensure_ascii=False)
     record(
         db,
         user,
@@ -589,6 +582,7 @@ def save_count(
     s, r = cash(db, user, session_id, True)
     rows = sheet_summary(db, s)
     counting = validate_count(data, rows, cents)
+    counting["wintouch_excluded"] = json.loads(s.count_data or "{}").get("wintouch_excluded", False)
     counting["updated_at"] = now().isoformat()
     s.count_data = json.dumps(counting, ensure_ascii=False)
     record(db, user, "contagem_guardada", s.id, counting, r.store_id)
@@ -604,8 +598,10 @@ def close_session(
     db: Session = Depends(db_session),
 ):
     s, r = cash(db, user, session_id, True)
+    reserve_auto_source(db, s)
     rows = sheet_summary(db, s)
     counting = validate_count(data, rows, cents, closing=True)
+    counting["wintouch_excluded"] = json.loads(s.count_data or "{}").get("wintouch_excluded", False)
     counted = counting["values"]["numerario"]
     expected = next(row["expected_cents"] for row in rows if row["key"] == "numerario")
     counting.update(final=True, summary=rows, updated_at=now().isoformat())

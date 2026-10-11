@@ -238,6 +238,10 @@ export default function App() {
     return () =>
       window.removeEventListener("gpgest-sales-updated", refreshSheets);
   }, []);
+  useEffect(() => {
+    if (page === "Folha de caixa")
+      reload().catch((e) => setError((e as Error).message));
+  }, [page]);
   const save = async (path: string, data: unknown) => {
     await api(path, data);
     await reload();
@@ -590,6 +594,11 @@ export default function App() {
                   <p>
                     Fundo de maneio, movimentos por meio de pagamento e contagem
                     com apuramento de diferenças.
+                  </p>
+                  <p>
+                    Os valores são calculados automaticamente a partir dos
+                    movimentos reais. Introduza apenas o fundo de maneio e a
+                    contagem.
                   </p>
                 </div>
                 {write && (
@@ -1022,14 +1031,7 @@ export default function App() {
               />
             )}
             {modal === "open" && (
-              <Form
-                onSubmit={(v) =>
-                  save("/sessions", {
-                    ...v,
-                    include_wintouch: v.include_wintouch === "on",
-                  })
-                }
-              >
+              <Form onSubmit={(v) => save("/sessions", v)}>
                 <Field label="Caixa">
                   <Select
                     name="register_id"
@@ -1057,18 +1059,11 @@ export default function App() {
                     required
                   />
                 </Field>
-                <Field label="Incluir recebimentos Wintouch do dia e da loja">
-                  <input
-                    type="checkbox"
-                    name="include_wintouch"
-                    defaultChecked
-                  />
-                </Field>
                 <p className="footnote">
                   O fundo de maneio é o numerário disponível no início. Os
-                  recebimentos Wintouch de uma loja e dia podem pertencer a uma
-                  única folha, mesmo depois do fecho. Confirme que estão
-                  importados em Integrações.
+                  movimentos reais GPGest e os recebimentos Wintouch já
+                  importados são calculados automaticamente para a folha. Cada
+                  loja e dia pode incluir Wintouch numa única folha.
                 </p>
               </Form>
             )}

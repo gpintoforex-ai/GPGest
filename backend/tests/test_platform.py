@@ -1,9 +1,11 @@
+import json
 from uuid import uuid4
 
 import httpx
 import pytest
 from app import db as database
 from app.main import app, attempts
+from app.models import CashSession, WintouchSaleRecord
 from app.platform import attempts as platform_attempts
 from app.platform import hasher
 from app.platform_models import Company, PlatformAdmin, PlatformBase
@@ -124,6 +126,7 @@ def test_cash_sheet_wintouch_day_is_unique_and_company_scoped(platform):
         ).status_code
         == 200
     )
+
     assert c.post("/api/sessions", json={**payload, "register_id": second}).status_code == 409
     assert (
         c.post(f"/api/sessions/{session_id}/close", json={"cash_total": "100"}).status_code == 200
@@ -147,6 +150,87 @@ def test_cash_sheet_wintouch_day_is_unique_and_company_scoped(platform):
         ).status_code
         == 200
     )
+
+
+def test_cash_sheet_automatically_uses_real_receipts_and_legacy_open_sheets(platform):
+    c, factory = platform
+    company = create(c, "folha-auto")
+    assert (
+        c.post(
+            "/api/platform/companies/" + company["id"] + "/config",
+            json=configuration(company, api_enterprise="auto-source"),
+        ).status_code
+        == 200
+    )
+    c.cookies.clear()
+    boot = enter(c, company["slug"])
+    store = boot["stores"][0]["id"]
+    register = boot["registers"][0]["id"]
+    with factory() as core:
+        schema = core.get(Company, company["id"]).schema_name
+    tenant_factory = sessionmaker(
+        database.engine.execution_options(schema_translate_map={None: schema}),
+        expire_on_commit=False,
+    )
+    with tenant_factory.begin() as db:
+        for selected_day, value in (("2026-10-02", 500), ("2026-10-03", 900)):
+            db.add(
+                WintouchSaleRecord(
+                    enterprise_id="auto-source",
+                    external_id=str(uuid4()),
+                    store_id=store,
+                    kind="real",
+                    active=True,
+                    document_date=selected_day,
+                    data=json.dumps(
+                        {
+                            "amount_cents": value,
+                            "direction": 1,
+                            "payment": "Numerário",
+                            "payment_code": "NU",
+                            "occurred_at": selected_day + "T12:00:00",
+                        }
+                    ),
+                )
+            )
+    opened = c.post(
+        "/api/sessions", json={"register_id": register, "opening": "100", "sheet_day": "2026-10-02"}
+    )
+    assert opened.status_code == 200 and opened.json()["wintouch_scope"]
+    sheet = c.get("/api/sessions").json()[0]
+    assert sheet["sheet"]["include_wintouch"] and sheet["balance_cents"] == 10500
+    assert (
+        c.post("/api/sessions/" + sheet["id"] + "/close", json={"cash_total": "105"}).status_code
+        == 200
+    )
+    # An existing open sheet from the prior release gains its live projection without a GET write.
+    with tenant_factory.begin() as db:
+        legacy = CashSession(
+            register_id=register,
+            operator_id=boot["user"]["id"],
+            opening_cents=10000,
+            sheet_day="2026-10-03",
+        )
+        db.add(legacy)
+        db.flush()
+        legacy_id = legacy.id
+    sheet = next(s for s in c.get("/api/sessions").json() if s["id"] == legacy_id)
+    assert sheet["sheet"]["include_wintouch"] and sheet["balance_cents"] == 10900
+    with tenant_factory() as db:
+        assert db.get(CashSession, legacy_id).wintouch_scope is None
+    second = c.post("/api/registers", json={"store_id": store, "name": "Caixa segunda"}).json()[
+        "id"
+    ]
+    other = c.post(
+        "/api/sessions", json={"register_id": second, "opening": "0", "sheet_day": "2026-10-03"}
+    )
+    assert other.status_code == 200
+    summaries = {s["id"]: s for s in c.get("/api/sessions").json()}
+    assert not summaries[other.json()["id"]]["sheet"]["include_wintouch"]
+    assert summaries[legacy_id]["balance_cents"] == 10900
+    assert c.post(f"/api/sessions/{legacy_id}/count", json={"cash_total": "109"}).status_code == 200
+    with tenant_factory() as db:
+        assert db.get(CashSession, legacy_id).wintouch_scope
 
 
 def test_company_validation_explains_fields_and_normalizes_slug(platform):

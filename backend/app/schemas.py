@@ -45,7 +45,7 @@ class OpenCash(Strict):
     register_id: str
     opening: str
     sheet_day: date | None = None
-    include_wintouch: bool = False
+    include_wintouch: bool | None = None
 
 
 class CashSources(Strict):

@@ -9,7 +9,9 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from .models import Movement, Register, WintouchSaleRecord
+from . import db as database
+from .models import CashSession, Movement, Register, WintouchSaleRecord
+from .platform_models import Company
 
 LABELS = {
     "numerario": "Numerário",
@@ -60,6 +62,48 @@ def payment_key(row):
     return "wt_" + hashlib.sha256(name.casefold().encode()).hexdigest()[:24], name
 
 
+def sheet_source_context(db, session):
+    """Read-only automatic attribution to one open sheet per store/day."""
+    if session.wintouch_scope:
+        return session.wintouch_scope, session.wintouch_enterprise
+    if session.closed_at or json.loads(session.count_data or "{}").get("wintouch_excluded"):
+        return None, None
+    company_id = db.info.get("company", {}).get("id")
+    if not company_id:
+        return None, None
+    with database.next_platform_session() as core:
+        company = core.get(Company, company_id)
+        enterprise = company.api_enterprise if company else None
+    if not enterprise:
+        return None, None
+    register = db.get(Register, session.register_id)
+    selected_day = session.sheet_day or day(session.opened_at)
+    token = register.store_id + ":" + selected_day
+    if db.scalar(select(CashSession.id).where(CashSession.wintouch_scope == token)):
+        return None, None
+    candidates = db.scalars(
+        select(CashSession)
+        .join(Register)
+        .where(Register.store_id == register.store_id, CashSession.closed_at.is_(None))
+        .order_by(CashSession.opened_at, CashSession.id)
+    )
+    for candidate in candidates:
+        if (candidate.sheet_day or day(candidate.opened_at)) == selected_day and not json.loads(
+            candidate.count_data or "{}"
+        ).get("wintouch_excluded"):
+            return (token, enterprise) if candidate.id == session.id else (None, None)
+    return None, None
+
+
+def reserve_auto_source(db, session):
+    token, enterprise = sheet_source_context(db, session)
+    if token and not session.wintouch_scope:
+        session.wintouch_scope = token
+        session.wintouch_enterprise = enterprise
+        session.sheet_day = session.sheet_day or day(session.opened_at)
+        db.flush()
+
+
 def summary(db, session):
     stored = json.loads(session.count_data or "{}")
     if session.closed_at and stored.get("final"):
@@ -96,19 +140,20 @@ def summary(db, session):
 
     for move in db.scalars(select(Movement).where(Movement.session_id == session.id)):
         add(move.payment, LABELS[move.payment], move.amount_cents, move.direction, "local")
-    if session.wintouch_scope:
+    token, enterprise = sheet_source_context(db, session)
+    if token:
         register = db.get(Register, session.register_id)
         # A receipt date can differ from the source invoice's document_date.
         for record in db.scalars(
             select(WintouchSaleRecord).where(
                 WintouchSaleRecord.store_id == register.store_id,
-                WintouchSaleRecord.enterprise_id == session.wintouch_enterprise,
+                WintouchSaleRecord.enterprise_id == enterprise,
                 WintouchSaleRecord.kind == "real",
                 WintouchSaleRecord.active.is_(True),
             )
         ):
             data = json.loads(record.data)
-            if day(data["occurred_at"]) == session.sheet_day:
+            if day(data["occurred_at"]) == (session.sheet_day or day(session.opened_at)):
                 key, name = payment_key(data)
                 add(key, name, data["amount_cents"], data["direction"], "wintouch")
     for row in rows.values():

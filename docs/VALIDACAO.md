@@ -1,5 +1,11 @@
 # Validação da Fase 1 — 10/10/2026
 
+## Cálculo automático da folha — 11/10/2026
+
+- 34 testes do backend passaram, incluindo inclusão automática Wintouch em novas folhas e folhas antigas abertas, ausência de escrita em consultas, contagens guardadas e atribuição única quando há duas caixas da mesma loja/dia.
+- O teste de navegador confirmou 100 € de fundo + 5 € de recebimento Wintouch apresentados automaticamente como 105 € de numerário esperado, sem ativar ou voltar a introduzir esse recebimento; cartão totalizou 20 € locais + 7 € Wintouch. Contagem, persistência, fecho e layout móvel passaram.
+- TypeScript e compilação de produção passaram. Fechos anteriores preservados; as contagens continuam independentes dos valores esperados.
+
 ## Folha de caixa — 11/10/2026
 
 - Migração `0006` aplicada a todos os esquemas de empresas registadas, após cópia de segurança; folhas antigas e valores existentes preservados.
