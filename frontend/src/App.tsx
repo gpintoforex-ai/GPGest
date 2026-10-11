@@ -596,9 +596,9 @@ export default function App() {
                     com apuramento de diferenças.
                   </p>
                   <p>
-                    Os valores são calculados automaticamente a partir dos
-                    movimentos reais. Introduza apenas o fundo de maneio e a
-                    contagem.
+                    Os valores incluem todos os créditos e débitos reais da loja
+                    nesse dia, manuais e Wintouch. Introduza apenas o fundo de
+                    maneio e a contagem.
                   </p>
                 </div>
                 {write && (

@@ -17,8 +17,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import db as database
+from .cash_sheet import (
+    daily_enterprise,
+    payment_key,
+    real_receipts,
+    reserve_auto_source,
+    sheet_source_context,
+    validate_count,
+)
 from .cash_sheet import day as sheet_day_of
-from .cash_sheet import reserve_auto_source, sheet_source_context, validate_count
 from .cash_sheet import summary as sheet_summary
 from .db import db_session
 from .models import (
@@ -243,11 +250,13 @@ def cash(db, user, session_id, write=False):
 
 
 def balance(db, session):
-    if sheet_source_context(db, session)[0]:
-        return next(
-            row["expected_cents"] for row in sheet_summary(db, session) if row["key"] == "numerario"
+    stored = json.loads(session.count_data or "{}")
+    if session.closed_at and stored.get("final"):
+        return stored.get(
+            "ledger_balance_cents",
+            next(row["expected_cents"] for row in stored["summary"] if row["key"] == "numerario"),
         )
-    return session.opening_cents + int(
+    total = session.opening_cents + int(
         db.scalar(
             select(func.sum(Movement.direction * Movement.amount_cents)).where(
                 Movement.session_id == session.id, Movement.payment == "numerario"
@@ -255,6 +264,15 @@ def balance(db, session):
         )
         or 0
     )
+    token, enterprise = sheet_source_context(db, session)
+    if token:
+        register = db.get(Register, session.register_id)
+        for data in real_receipts(
+            db, register.store_id, session.sheet_day or sheet_day_of(session.opened_at), enterprise
+        ):
+            if payment_key(data)[0] == "numerario":
+                total += data["amount_cents"] * data["direction"]
+    return total
 
 
 def serial(obj):
@@ -475,11 +493,16 @@ def session_result(db, s):
     return {
         **serial(s),
         "count_data": counting,
-        "balance_cents": next(row["expected_cents"] for row in rows if row["key"] == "numerario"),
+        "balance_cents": balance(db, s),
         "totals": {row["key"]: row["net_cents"] for row in rows},
         "sheet": {
             "day": s.sheet_day or sheet_day_of(s.opened_at),
-            "include_wintouch": bool(sheet_source_context(db, s)[0]),
+            "include_wintouch": bool(daily_enterprise(db, s))
+            if not s.closed_at
+            else counting.get("include_wintouch", bool(s.wintouch_scope)),
+            "scope": "store_day"
+            if not s.closed_at or counting.get("scope") == "store_day"
+            else "session",
             "rows": rows,
         },
     }
@@ -554,15 +577,25 @@ def change_sheet_sources(
     session_id: str, data: CashSources, user=Depends(current), db: Session = Depends(db_session)
 ):
     s, r = cash(db, user, session_id, True)
-    token, enterprise = sheet_source(
-        db, r.store_id, data.sheet_day.isoformat(), data.include_wintouch, s.id
-    )
     previous = {"day": s.sheet_day, "include_wintouch": bool(s.wintouch_scope)}
+    if data.include_wintouch is None:
+        token, enterprise = (
+            (s.wintouch_scope, s.wintouch_enterprise)
+            if s.sheet_day == data.sheet_day.isoformat()
+            else (None, None)
+        )
+    else:
+        token, enterprise = sheet_source(
+            db, r.store_id, data.sheet_day.isoformat(), data.include_wintouch, s.id
+        )
     s.sheet_day = data.sheet_day.isoformat()
     s.wintouch_scope, s.wintouch_enterprise = token, enterprise
     counting = json.loads(s.count_data or "{}")
-    counting["wintouch_excluded"] = not data.include_wintouch
+    if data.include_wintouch is not None:
+        counting["wintouch_excluded"] = not data.include_wintouch
     s.count_data = json.dumps(counting, ensure_ascii=False)
+    if data.include_wintouch is None:
+        reserve_auto_source(db, s)
     record(
         db,
         user,
@@ -604,7 +637,14 @@ def close_session(
     counting["wintouch_excluded"] = json.loads(s.count_data or "{}").get("wintouch_excluded", False)
     counted = counting["values"]["numerario"]
     expected = next(row["expected_cents"] for row in rows if row["key"] == "numerario")
-    counting.update(final=True, summary=rows, updated_at=now().isoformat())
+    counting.update(
+        final=True,
+        summary=rows,
+        updated_at=now().isoformat(),
+        scope="store_day",
+        ledger_balance_cents=balance(db, s),
+        include_wintouch=bool(daily_enterprise(db, s)),
+    )
     s.count_data = json.dumps(counting, ensure_ascii=False)
     s.counted_cents = counted
     s.expected_cents = expected

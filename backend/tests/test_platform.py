@@ -226,7 +226,16 @@ def test_cash_sheet_automatically_uses_real_receipts_and_legacy_open_sheets(plat
     )
     assert other.status_code == 200
     summaries = {s["id"]: s for s in c.get("/api/sessions").json()}
-    assert not summaries[other.json()["id"]]["sheet"]["include_wintouch"]
+    assert summaries[other.json()["id"]]["sheet"]["include_wintouch"]
+    assert summaries[other.json()["id"]]["balance_cents"] == 0
+    assert (
+        next(
+            row
+            for row in summaries[other.json()["id"]]["sheet"]["rows"]
+            if row["key"] == "numerario"
+        )["wintouch_cents"]
+        == 900
+    )
     assert summaries[legacy_id]["balance_cents"] == 10900
     assert c.post(f"/api/sessions/{legacy_id}/count", json={"cash_total": "109"}).status_code == 200
     with tenant_factory() as db:

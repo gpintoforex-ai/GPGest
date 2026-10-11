@@ -60,9 +60,6 @@ export default function CashSheet({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [sourceDay, setSourceDay] = useState(s.sheet.day);
-  const [includeWintouch, setIncludeWintouch] = useState(
-    s.sheet.include_wintouch,
-  );
   const editable = writable && !s.closed_at;
   const countedCash = Object.entries(counts).reduce(
     (sum, [key, count]) => sum + Number(key) * count,
@@ -82,11 +79,10 @@ export default function CashSheet({
     try {
       await api(`/sessions/${s.id}/sources`, {
         sheet_day: sourceDay,
-        include_wintouch: includeWintouch,
       });
       await reload();
       setNotice(
-        "Dia e origens atualizados. Confira a contagem com os novos valores esperados.",
+        "Dia atualizado. Confira a contagem com os novos valores esperados.",
       );
     } catch (e) {
       setError((e as Error).message);
@@ -164,13 +160,15 @@ export default function CashSheet({
         </div>
         <div>
           <small>Numerário esperado (fundo + movimentos)</small>
-          <strong className="cash-value">{money(s.balance_cents)}</strong>
+          <strong className="cash-value">
+            {money(rows.find((row) => row.key === "numerario")!.expected_cents)}
+          </strong>
         </div>
       </div>
       <p className="footnote">
-        {s.sheet.include_wintouch
-          ? "Valores calculados automaticamente: movimentos desta caixa no GPGest e recebimentos Wintouch de toda a loja no dia indicado. Os documentos a crédito ficam nos movimentos previstos."
-          : "Inclui os movimentos registados nesta caixa no GPGest."}
+        {s.sheet.scope === "store_day"
+          ? "Totais de todos os movimentos reais da loja neste dia: créditos e débitos, manuais e Wintouch, de todas as sessões de caixa. Os documentos a crédito ficam nos movimentos previstos."
+          : "Fecho anterior: valores guardados dos movimentos desta sessão de caixa."}
       </p>
       {s.sheet.include_wintouch && (
         <p className="footnote">
@@ -180,7 +178,7 @@ export default function CashSheet({
       )}
       {editable && (
         <details className="cash-sheet-sources">
-          <summary>Dia e origens dos movimentos</summary>
+          <summary>Dia dos movimentos reais</summary>
           <Field label="Dia da folha de caixa">
             <input
               type="date"
@@ -188,15 +186,8 @@ export default function CashSheet({
               onChange={(e) => setSourceDay(e.target.value)}
             />
           </Field>
-          <Field label="Incluir recebimentos Wintouch do dia e da loja">
-            <input
-              type="checkbox"
-              checked={includeWintouch}
-              onChange={(e) => setIncludeWintouch(e.target.checked)}
-            />
-          </Field>
           <button disabled={busy || !sourceDay} onClick={updateSources}>
-            Atualizar dia e origens
+            Atualizar dia
           </button>
         </details>
       )}

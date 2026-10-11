@@ -3,7 +3,7 @@
 import hashlib
 import json
 import unicodedata
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
@@ -104,6 +104,32 @@ def reserve_auto_source(db, session):
         db.flush()
 
 
+def daily_enterprise(db, session):
+    company_id = db.info.get("company", {}).get("id")
+    if not company_id:
+        return session.wintouch_enterprise
+    with database.next_platform_session() as core:
+        company = core.get(Company, company_id)
+        return company.api_enterprise if company else None
+
+
+def real_receipts(db, store_id, selected_day, enterprise):
+    if not enterprise:
+        return
+    # Use the payment date, which can differ from the invoice date.
+    for record in db.scalars(
+        select(WintouchSaleRecord).where(
+            WintouchSaleRecord.store_id == store_id,
+            WintouchSaleRecord.enterprise_id == enterprise,
+            WintouchSaleRecord.kind == "real",
+            WintouchSaleRecord.active.is_(True),
+        )
+    ):
+        data = json.loads(record.data)
+        if day(data["occurred_at"]) == selected_day:
+            yield data
+
+
 def summary(db, session):
     stored = json.loads(session.count_data or "{}")
     if session.closed_at and stored.get("final"):
@@ -138,24 +164,35 @@ def summary(db, session):
         row[source + "_cents"] += amount * direction
         row["count"] += 1
 
-    for move in db.scalars(select(Movement).where(Movement.session_id == session.id)):
-        add(move.payment, LABELS[move.payment], move.amount_cents, move.direction, "local")
-    token, enterprise = sheet_source_context(db, session)
-    if token:
-        register = db.get(Register, session.register_id)
-        # A receipt date can differ from the source invoice's document_date.
-        for record in db.scalars(
-            select(WintouchSaleRecord).where(
-                WintouchSaleRecord.store_id == register.store_id,
-                WintouchSaleRecord.enterprise_id == enterprise,
-                WintouchSaleRecord.kind == "real",
-                WintouchSaleRecord.active.is_(True),
+    register = db.get(Register, session.register_id)
+    selected_day = session.sheet_day or day(session.opened_at)
+    query = select(Movement)
+    if session.closed_at:
+        # Legacy closes without a snapshot keep their original session scope.
+        query = query.where(Movement.session_id == session.id)
+    else:
+        selected_date = datetime.fromisoformat(selected_day).date()
+        start = datetime.combine(selected_date, time.min, tzinfo=ZoneInfo("Europe/Lisbon"))
+        end = datetime.combine(
+            selected_date + timedelta(days=1), time.min, tzinfo=ZoneInfo("Europe/Lisbon")
+        )
+        query = (
+            query.join(CashSession)
+            .join(Register)
+            .where(
+                Register.store_id == register.store_id,
+                Movement.occurred_at >= start,
+                Movement.occurred_at < end,
             )
-        ):
-            data = json.loads(record.data)
-            if day(data["occurred_at"]) == (session.sheet_day or day(session.opened_at)):
-                key, name = payment_key(data)
-                add(key, name, data["amount_cents"], data["direction"], "wintouch")
+        )
+    for move in db.scalars(query):
+        add(move.payment, LABELS[move.payment], move.amount_cents, move.direction, "local")
+    enterprise = (
+        daily_enterprise(db, session) if not session.closed_at else session.wintouch_enterprise
+    )
+    for data in real_receipts(db, register.store_id, selected_day, enterprise):
+        key, name = payment_key(data)
+        add(key, name, data["amount_cents"], data["direction"], "wintouch")
     for row in rows.values():
         row["net_cents"] = row["credits_cents"] - row["debits_cents"]
         row["fund_cents"] = session.opening_cents if row["key"] == "numerario" else 0

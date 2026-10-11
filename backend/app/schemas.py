@@ -50,7 +50,7 @@ class OpenCash(Strict):
 
 class CashSources(Strict):
     sheet_day: date
-    include_wintouch: bool
+    include_wintouch: bool | None = None
 
 
 class MovementCreate(Strict):

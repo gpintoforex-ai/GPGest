@@ -1,8 +1,10 @@
 import json
+from datetime import datetime, time, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from app.cash_sheet import day
-from app.models import CashSession, Register, WintouchSaleRecord
+from app.models import CashSession, Movement, Register, WintouchSaleRecord
 from conftest import movement, open_cash
 
 
@@ -115,6 +117,9 @@ def test_wintouch_projection_scope_dates_and_closed_values(setup):
         receipt(9000, "NU", enterprise_id="other-source")
         receipt(9000, "NU", active=False)
     movement(c, ids, session, amount="10")
+    with factory.begin() as db:
+        for move in db.query(Movement).filter_by(session_id=session):
+            move.occurred_at = datetime.fromisoformat("2026-10-02T12:00:00+01:00")
     current = c.get("/api/sessions").json()[0]
     assert current["balance_cents"] == 12230
     rows = by_key(current)
@@ -147,3 +152,67 @@ def test_count_net_refund_can_be_negative(setup):
         ).status_code
         == 200
     )
+
+
+def test_store_day_counts_all_manual_and_wintouch_credits_and_debits(setup):
+    c, ids, factory = setup
+    first = open_cash(c, ids["registers"][0]).json()["id"]
+    second = open_cash(c, ids["registers"][1]).json()["id"]
+    other = open_cash(c, ids["registers"][2]).json()["id"]
+    movement(c, ids, first, amount="10")
+    movement(c, ids, second, amount="20")
+    movement(c, ids, second, amount="5", kind="despesa")
+    movement(c, ids, first, amount="7", payment="cartao")
+    movement(c, ids, second, amount="2", payment="cartao", kind="reembolso")
+    movement(c, ids, other, amount="100")
+    previous_day = movement(c, ids, second, amount="999", payment="cartao").json()["id"]
+    with factory.begin() as db:
+        session = db.get(CashSession, first)
+        store = db.get(Register, session.register_id).store_id
+        selected_day = session.sheet_day
+        start = datetime.combine(
+            datetime.fromisoformat(selected_day).date(), time.min, tzinfo=ZoneInfo("Europe/Lisbon")
+        )
+        db.get(Movement, previous_day).occurred_at = start - timedelta(minutes=1)
+        session.wintouch_scope = store + ":" + selected_day
+        session.wintouch_enterprise = "daily-source"
+        for direction, value in ((1, 1230), (-1, 300)):
+            db.add(
+                WintouchSaleRecord(
+                    enterprise_id="daily-source",
+                    external_id=str(uuid4()),
+                    store_id=store,
+                    kind="real",
+                    active=True,
+                    document_date=selected_day,
+                    data=json.dumps(
+                        {
+                            "payment": "Numerário",
+                            "payment_code": "NU",
+                            "occurred_at": selected_day + "T12:00:00",
+                            "direction": direction,
+                            "amount_cents": value,
+                        }
+                    ),
+                )
+            )
+    result = next(s for s in c.get("/api/sessions").json() if s["id"] == first)
+    rows = by_key(result)
+    assert rows["numerario"]["local_cents"] == 2500
+    assert rows["numerario"]["wintouch_cents"] == 930
+    assert rows["numerario"]["credits_cents"] == 4230 and rows["numerario"]["debits_cents"] == 800
+    assert rows["numerario"]["expected_cents"] == 13430
+    assert rows["cartao"]["credits_cents"] == 700 and rows["cartao"]["debits_cents"] == 200
+    # The store-wide projection does not pool money available to a register for spending.
+    assert result["balance_cents"] == 11930
+    assert (
+        c.post(
+            f"/api/sessions/{first}/close",
+            json={"cash_total": "134.30", "payments": {"cartao": "5"}},
+        ).status_code
+        == 200
+    )
+    assert movement(c, ids, second, amount="1").status_code == 200
+    frozen = next(s for s in c.get("/api/sessions").json() if s["id"] == first)
+    assert by_key(frozen)["numerario"]["expected_cents"] == 13430
+    assert frozen["balance_cents"] == 11930

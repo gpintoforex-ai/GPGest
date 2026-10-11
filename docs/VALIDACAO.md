@@ -1,5 +1,11 @@
 # Validação da Fase 1 — 10/10/2026
 
+## Todos os movimentos reais da loja/dia — 11/10/2026
+
+- 35 testes do backend passaram. A folha calcula todos os créditos e débitos manuais da loja/dia, incluindo movimentos de outras sessões de caixa, e os movimentos reais Wintouch positivos e negativos.
+- Caso com duas caixas da mesma loja: 30 € de créditos manuais e 5 € de débitos em numerário, mais 12,30 € de crédito e 3 € de débito Wintouch, produziram 34,30 € líquidos e 134,30 € esperados com 100 € de fundo. Cartão: 7 € de crédito e 2 € de débito produziram 5 € líquidos.
+- Movimentos de outra loja e do dia anterior foram excluídos. Os saldos disponíveis para gastar de cada caixa ficaram independentes dos totais da loja. Fechar conserva o resumo e o saldo de sessão; novos movimentos noutra caixa não alteraram o fecho.
+
 ## Cálculo automático da folha — 11/10/2026
 
 - 34 testes do backend passaram, incluindo inclusão automática Wintouch em novas folhas e folhas antigas abertas, ausência de escrita em consultas, contagens guardadas e atribuição única quando há duas caixas da mesma loja/dia.
