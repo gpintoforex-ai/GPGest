@@ -27,6 +27,8 @@ from .models import (
     Category,
     LoginSession,
     Movement,
+    PlannedMovement,
+    PlannedSettlement,
     Register,
     Store,
     User,
@@ -45,6 +47,8 @@ from .schemas import (
     Name,
     OpenCash,
     PasswordChange,
+    PlannedCreate,
+    PlannedPay,
     Reason,
     RegisterCreate,
     Transfer,
@@ -600,6 +604,12 @@ def movements(user=Depends(current), db: Session = Depends(db_session)):
 
 @app.post("/api/movements")
 def create_movement(data: MovementCreate, user=Depends(current), db: Session = Depends(db_session)):
+    m = add_movement(data, user, db)
+    db.commit()
+    return serial(m)
+
+
+def add_movement(data, user, db):
     s, r = cash(db, user, data.session_id, True)
     if not db.get(Category, data.category_id):
         raise HTTPException(422, "Categoria inválida.")
@@ -630,8 +640,101 @@ def create_movement(data: MovementCreate, user=Depends(current), db: Session = D
         {"amount_cents": amount, "kind": m.kind, "payment": m.payment},
         r.store_id,
     )
+    return m
+
+
+def planned_summary(db, planned):
+    movements = list(
+        db.scalars(
+            select(Movement)
+            .join(PlannedSettlement, PlannedSettlement.movement_id == Movement.id)
+            .where(PlannedSettlement.planned_id == planned.id)
+        )
+    )
+    paid = sum(m.amount_cents for m in movements if not m.reversed_by)
+    result = serial(planned)
+    result.update(
+        paid_cents=paid,
+        remaining_cents=planned.amount_cents - paid,
+        status="Liquidado" if paid == planned.amount_cents else "Parcial" if paid else "Pendente",
+        settlements=[serial(m) for m in movements],
+    )
+    return result
+
+
+@app.get("/api/planned-movements")
+def planned_list(user=Depends(current), db: Session = Depends(db_session)):
+    rows = db.scalars(
+        select(PlannedMovement)
+        .where(PlannedMovement.store_id.in_(scope(user, db)))
+        .order_by(PlannedMovement.due_date, PlannedMovement.created_at)
+    )
+    return [planned_summary(db, row) for row in rows]
+
+
+@app.post("/api/planned-movements")
+def planned_create(data: PlannedCreate, user=Depends(current), db: Session = Depends(db_session)):
+    authorize(user, db, data.store_id, ["administrador", "gestor", "operador"])
+    if not db.get(Store, data.store_id) or not db.get(Category, data.category_id):
+        raise HTTPException(422, "Loja ou categoria inválida.")
+    row = PlannedMovement(
+        **data.model_dump(exclude={"amount", "due_date"}),
+        due_date=data.due_date.isoformat(),
+        amount_cents=cents(data.amount),
+    )
+    db.add(row)
+    db.flush()
+    record(db, user, "movimento_previsto", row.id, {"amount_cents": row.amount_cents}, row.store_id)
     db.commit()
-    return serial(m)
+    return planned_summary(db, row)
+
+
+@app.post("/api/planned-movements/{planned_id}/settle")
+def planned_settle(
+    planned_id: str, data: PlannedPay, user=Depends(current), db: Session = Depends(db_session)
+):
+    row = db.scalar(
+        select(PlannedMovement).where(PlannedMovement.id == planned_id).with_for_update()
+    )
+    if not row:
+        raise HTTPException(404, "Movimento previsto não encontrado.")
+    authorize(user, db, row.store_id, ["administrador", "gestor", "operador"])
+    previous = db.scalar(select(Movement).where(Movement.request_key == data.request_key))
+    if previous:
+        link = db.scalar(
+            select(PlannedSettlement).where(PlannedSettlement.movement_id == previous.id)
+        )
+        if (
+            not link
+            or link.planned_id != row.id
+            or previous.amount_cents != cents(data.amount)
+            or previous.payment != data.payment
+            or previous.session_id != data.session_id
+        ):
+            raise HTTPException(409, "Referência de pagamento já utilizada.")
+        return planned_summary(db, row)
+    _, register = cash(db, user, data.session_id, True)
+    if register.store_id != row.store_id:
+        raise HTTPException(422, "Selecione uma caixa da loja deste movimento.")
+    if cents(data.amount) > planned_summary(db, row)["remaining_cents"]:
+        raise HTTPException(409, "O valor excede o saldo por liquidar.")
+    movement = add_movement(
+        MovementCreate(
+            **data.model_dump(),
+            category_id=row.category_id,
+            kind="cliente" if row.direction == 1 else "fornecedor",
+            entity=row.entity,
+            document=row.document,
+            reference=row.id,
+        ),
+        user,
+        db,
+    )
+    movement.origin = "previsto"
+    db.add(PlannedSettlement(planned_id=row.id, movement_id=movement.id))
+    record(db, user, "liquidacao_previsto", row.id, {"movement_id": movement.id}, row.store_id)
+    db.commit()
+    return planned_summary(db, row)
 
 
 @app.post("/api/movements/{movement_id}/reverse")

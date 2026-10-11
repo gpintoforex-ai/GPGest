@@ -29,6 +29,7 @@ import {
 
 type Row = Record<string, any>;
 import TenantIntegrations from "./TenantIntegrations";
+import PlannedMovements from "./PlannedMovements";
 type Bootstrap = {
   user: Row;
   mode: string;
@@ -329,7 +330,8 @@ export default function App() {
   const menu = [
     ["Dashboard", LayoutDashboard],
     ["Caixa diária", Wallet],
-    ["Entradas e saídas", ArrowLeftRight],
+    ["Movimentos reais", ArrowLeftRight],
+    ["Movimentos previstos", Clock],
     ["Depósitos", Landmark],
     ["Bancos", Landmark],
     ["Reconciliação", CheckCircle],
@@ -564,7 +566,7 @@ export default function App() {
                   <h3>Últimos movimentos</h3>
                   <button
                     className="text-button"
-                    onClick={() => setPage("Entradas e saídas")}
+                    onClick={() => setPage("Movimentos reais")}
                   >
                     Ver todos <ChevronRight size={16} />
                   </button>
@@ -656,11 +658,19 @@ export default function App() {
               )}
             </>
           )}
-          {page === "Entradas e saídas" && (
+          {page === "Movimentos previstos" && (
+            <PlannedMovements
+              boot={boot}
+              sessions={sessions}
+              store={store}
+              reload={reload}
+            />
+          )}
+          {page === "Movimentos reais" && (
             <>
               <div className="page-intro">
                 <div>
-                  <h1>Movimentos de caixa</h1>
+                  <h1>Movimentos reais</h1>
                   <p>
                     Os estornos preservam o registo original e a justificação.
                   </p>
@@ -1397,6 +1407,8 @@ export default function App() {
             <tr>
               <th>Data</th>
               <th>Movimento</th>
+              <th>Documento</th>
+              <th>Entidade</th>
               <th>Pagamento</th>
               <th>Montante</th>
               <th>Estado</th>
@@ -1413,6 +1425,8 @@ export default function App() {
                     {m.entity || m.document || m.reference || "Manual"}
                   </small>
                 </td>
+                <td>{m.document || "—"}</td>
+                <td>{m.entity || "—"}</td>
                 <td>{labels[m.payment]}</td>
                 <td className={m.direction > 0 ? "positive" : "negative"}>
                   {m.direction > 0 ? "+" : "−"}

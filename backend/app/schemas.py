@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -66,6 +66,31 @@ class MovementCreate(Strict):
     document: str = Field(default="", max_length=200)
     reference: str = Field(default="", max_length=200)
     notes: str = Field(default="", max_length=2000)
+    request_key: str = Field(min_length=10, max_length=100)
+
+
+class PlannedCreate(Strict):
+    store_id: str
+    category_id: str
+    entity: str = Field(min_length=1, max_length=200)
+    document: str = Field(min_length=1, max_length=200)
+    due_date: date
+    amount: str
+    direction: Literal[-1, 1]
+
+    @field_validator("entity", "document")
+    @classmethod
+    def nonempty(cls, value):
+        if not value.strip():
+            raise ValueError("Preencha este campo.")
+        return value.strip()
+
+
+class PlannedPay(Strict):
+    session_id: str
+    amount: str
+    payment: Literal["numerario", "cartao", "transferencia", "outro"]
+    occurred_at: datetime
     request_key: str = Field(min_length=10, max_length=100)
 
 

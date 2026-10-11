@@ -80,7 +80,8 @@ A [importação manual de artigos, entidades e caixas](docs/SINCRONIZACAO-WINTOU
 
 1. **Configurações**: crie lojas, caixas, categorias e equipa. Um administrador tem acesso a todas as lojas; os restantes utilizadores recebem acesso explícito. Na criação pela interface escolhe-se uma loja; a API aceita várias `store_ids`.
 2. **Caixa diária**: abra uma caixa e introduza o fundo que realmente foi contado. Apenas uma sessão pode estar aberta por caixa.
-3. **Entradas e saídas**: escolha a sessão, categoria, tipo, meio de pagamento e montante. Pode juntar cliente/fornecedor, documento, referência e observações. Use **Anexos** para adicionar documentos privados.
+3. **Movimentos reais**: transações efetivadas, com data, documento, entidade e meio de pagamento. Escolha a sessão, categoria, tipo e montante. Use **Anexos** para adicionar documentos privados.
+4. **Movimentos previstos**: registe documentos a crédito de clientes ou fornecedores, indicando loja, categoria, entidade, documento, vencimento e montante. **Liquidar** regista pagamentos parciais ou totais numa caixa aberta da mesma loja e cria o movimento real associado. Os previstos não entram nos totais financeiros antes da liquidação; estornar um pagamento repõe o respetivo saldo por liquidar. A importação automática de documentos financeiros Wintouch continua por implementar.
 4. Registe uma venda de 20 € em cartão: aparece nos totais de cartão, mas não aumenta o numerário esperado. Uma venda de 20 € em numerário aumenta-o.
 5. **Passar caixa**: escolha o novo operador e descreva a passagem. O novo responsável precisa de acesso à loja.
 6. **Fechar caixa**: introduza quantidades de notas e moedas. A aplicação calcula o total e a diferença. Se houver diferença, introduza uma justificação.

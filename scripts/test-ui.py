@@ -90,7 +90,7 @@ try:
         dialog.get_by_label("Fundo inicial (€)").fill("100,00")
         dialog.get_by_role("button", name="Guardar", exact=True).click()
         expect(page.locator(".cash-value")).to_contain_text("100,00")
-        page.get_by_role("button", name="Entradas e saídas", exact=True).click()
+        page.get_by_role("button", name="Movimentos reais", exact=True).click()
         page.get_by_role("button", name="Registar movimento", exact=True).click()
         dialog = page.get_by_role("dialog")
         dialog.get_by_label("Sessão aberta").select_option(label="Caixa de teste")

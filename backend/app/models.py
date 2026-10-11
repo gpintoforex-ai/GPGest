@@ -124,6 +124,27 @@ class Movement(Base):
     transfer_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
 
+class PlannedMovement(Base):
+    __tablename__ = "planned_movements"
+    __table_args__ = (CheckConstraint("amount_cents > 0"), CheckConstraint("direction IN (-1, 1)"))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
+    entity: Mapped[str] = mapped_column(String(200))
+    document: Mapped[str] = mapped_column(String(200))
+    due_date: Mapped[str] = mapped_column(String(10))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    direction: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PlannedSettlement(Base):
+    __tablename__ = "planned_settlements"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    planned_id: Mapped[str] = mapped_column(ForeignKey("planned_movements.id"), index=True)
+    movement_id: Mapped[str] = mapped_column(ForeignKey("movements.id"), unique=True)
+
+
 class Audit(Base):
     __tablename__ = "audit"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)

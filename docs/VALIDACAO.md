@@ -47,3 +47,11 @@ Esta entrega corresponde à **Fase 1 funcional**, com PDF de fecho, anexos e exp
 A importação CSV/Excel, depósitos com talões e trânsito, receitas/custos reconhecidos, lotes e reconciliação ainda não estão implementados. O ambiente foi validado localmente; ainda não foi publicado nem auditado para utilização em produção.
 
 O runner de testes apresenta um aviso de descontinuação do transporte httpx no Starlette instalado. Os testes passam; o aviso não afeta os pedidos da aplicação. As versões usadas estão guardadas em `backend/requirements.lock.txt`.
+# Movimentos reais e previstos — 11/10/2026
+
+- Suite completa: 22 testes aprovados; compilação TypeScript/Vite e Ruff aprovados.
+- Previsto não cria lançamento financeiro; liquidações parciais e totais criam movimentos reais com documento, entidade, data e meio de pagamento, numa transação atómica.
+- Verificados: repetição da mesma referência sem duplicação, rejeição de valores superiores ao saldo, caixa de outra loja, perfil de consulta e reposição do saldo após estorno.
+- Migração 0004 aplicada às empresas existentes. Cópia de segurança posterior restaurada numa base temporária, com verificação das contagens de todas as tabelas.
+- Navegador: dois menus, documento previsto, formulário de criação, painel de liquidação e largura móvel, usando dados simulados sem criar transações nos dados da empresa.
+- Importação automática de documentos financeiros Wintouch ainda não implementada. As liquidações requerem caixa aberta, seguindo o fluxo financeiro existente.
