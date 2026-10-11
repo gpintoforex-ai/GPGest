@@ -31,6 +31,7 @@ type Row = Record<string, any>;
 import TenantIntegrations from "./TenantIntegrations";
 import PlannedMovements from "./PlannedMovements";
 import WintouchSales from "./WintouchSales";
+import RecordList from "./RecordList";
 type Bootstrap = {
   user: Row;
   mode: string;
@@ -696,12 +697,20 @@ export default function App() {
                 </div>
               </div>
               <section className="panel">
-                <MovementTable
+                <RecordList
                   rows={visibleMovements}
-                  onReverse={
-                    manager ? (r) => openModal("reverse", r) : undefined
-                  }
-                />
+                  dateField="occurred_at"
+                  resetKey={store}
+                >
+                  {(pageRows) => (
+                    <MovementTable
+                      rows={pageRows}
+                      onReverse={
+                        manager ? (r) => openModal("reverse", r) : undefined
+                      }
+                    />
+                  )}
+                </RecordList>
               </section>
               <WintouchSales kind="real" store={store} />
             </>

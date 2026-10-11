@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, Field, Form } from "./App";
+import RecordList from "./RecordList";
 type Row = Record<string, any>;
 const money = (value: number) =>
   new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(
@@ -191,62 +192,71 @@ export default function PlannedMovements({
         </section>
       )}
       <section className="panel">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Vencimento</th>
-                <th>Documento</th>
-                <th>Entidade</th>
-                <th>Tipo</th>
-                <th>Total</th>
-                <th>Liquidado</th>
-                <th>Por liquidar</th>
-                <th>Estado</th>
-                <th>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows
-                .filter((r) => !store || r.store_id === store)
-                .map((r) => (
-                  <tr key={r.id}>
-                    <td>{r.due_date.split("-").reverse().join("/")}</td>
-                    <td>{r.document}</td>
-                    <td>{r.entity}</td>
-                    <td>{r.direction === 1 ? "A receber" : "A pagar"}</td>
-                    <td>{money(r.amount_cents)}</td>
-                    <td>{money(r.paid_cents)}</td>
-                    <td>{money(r.remaining_cents)}</td>
-                    <td>
-                      <span className="pill">{r.status}</span>
-                    </td>
-                    <td>
-                      {write && r.remaining_cents > 0 && (
-                        <button
-                          onClick={() => {
-                            setSelected(r);
-                            setKey(crypto.randomUUID());
-                            setCreate(false);
-                          }}
-                        >
-                          Liquidar
-                        </button>
-                      )}
-                      {r.settlements.map((m: Row) => (
-                        <small key={m.id}>
-                          {new Date(m.occurred_at).toLocaleDateString("pt-PT")}{" "}
-                          · {money(m.amount_cents)} · {m.payment}{" "}
-                          {m.reversed_by ? "(estornado)" : ""}
-                        </small>
-                      ))}
-                    </td>
+        <RecordList
+          rows={rows.filter((r) => !store || r.store_id === store)}
+          dateField="due_date"
+          dateLabel="Vencimento"
+          resetKey={store}
+        >
+          {(pageRows) => (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Vencimento</th>
+                    <th>Documento</th>
+                    <th>Entidade</th>
+                    <th>Tipo</th>
+                    <th>Total</th>
+                    <th>Liquidado</th>
+                    <th>Por liquidar</th>
+                    <th>Estado</th>
+                    <th>Ações</th>
                   </tr>
-                ))}
-            </tbody>
-          </table>
-          {!rows.length && <p>Sem movimentos previstos registados.</p>}
-        </div>
+                </thead>
+                <tbody>
+                  {pageRows.map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.due_date.split("-").reverse().join("/")}</td>
+                      <td>{r.document}</td>
+                      <td>{r.entity}</td>
+                      <td>{r.direction === 1 ? "A receber" : "A pagar"}</td>
+                      <td>{money(r.amount_cents)}</td>
+                      <td>{money(r.paid_cents)}</td>
+                      <td>{money(r.remaining_cents)}</td>
+                      <td>
+                        <span className="pill">{r.status}</span>
+                      </td>
+                      <td>
+                        {write && r.remaining_cents > 0 && (
+                          <button
+                            onClick={() => {
+                              setSelected(r);
+                              setKey(crypto.randomUUID());
+                              setCreate(false);
+                            }}
+                          >
+                            Liquidar
+                          </button>
+                        )}
+                        {r.settlements.map((m: Row) => (
+                          <small key={m.id}>
+                            {new Date(m.occurred_at).toLocaleDateString(
+                              "pt-PT",
+                            )}{" "}
+                            · {money(m.amount_cents)} · {m.payment}{" "}
+                            {m.reversed_by ? "(estornado)" : ""}
+                          </small>
+                        ))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!rows.length && <p>Sem movimentos previstos registados.</p>}
+            </div>
+          )}
+        </RecordList>
       </section>
     </>
   );

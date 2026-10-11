@@ -78,6 +78,8 @@ A [importação manual de artigos, entidades e caixas](docs/SINCRONIZACAO-WINTOU
 
 A [importação de vendas e recebimentos](docs/VENDAS-WINTOUCH.md) está disponível em **Integrações → Importar vendas Wintouch**. Selecione loja e período. Documentos, pagamentos e saldos a crédito são apresentados nos menus de movimentos, com origem Wintouch, sem alterar as caixas locais.
 
+As listagens de movimentos reais, previstos e Wintouch têm filtros por datas inclusivas, **Limpar datas** e paginação de 10, 25, 50 ou 100 registos. Nos previstos, a data usada é o vencimento. Cada listagem mantém os seus próprios filtros; mudar a loja, as datas ou o número por página repõe a primeira página. A paginação é aplicada no navegador aos registos carregados.
+
 ## Guia de utilização
 
 1. **Configurações**: crie lojas, caixas, categorias e equipa. Um administrador tem acesso a todas as lojas; os restantes utilizadores recebem acesso explícito. Na criação pela interface escolhe-se uma loja; a API aceita várias `store_ids`.

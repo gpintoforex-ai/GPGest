@@ -49,6 +49,13 @@ A importação CSV/Excel, depósitos com talões e trânsito, receitas/custos re
 O runner de testes apresenta um aviso de descontinuação do transporte httpx no Starlette instalado. Os testes passam; o aviso não afeta os pedidos da aplicação. As versões usadas estão guardadas em `backend/requirements.lock.txt`.
 # Movimentos reais e previstos — 11/10/2026
 
+## Filtros e paginação
+
+- Movimentos locais, previstos, pagamentos e documentos Wintouch: componente comum com datas inclusivas e 10/25/50/100 registos por página.
+- Navegador com 31 registos simulados: navegação, mudança de tamanho e reposição da primeira página, intervalo inclusivo, intervalo inválido, limpeza, vencimentos e layout móvel aprovados. Sem alterações nos dados da empresa.
+- Datas de origem sem offset preservam o dia indicado; timestamps com offset usam o dia em Europe/Lisbon, tanto no filtro como na apresentação.
+- Compilação TypeScript/Vite aprovada. Não foram alteradas rotas nem estruturas da base de dados; a paginação é feita sobre os registos já carregados.
+
 ## Importação de vendas Wintouch
 
 - Suite completa: **28 testes aprovados**. TypeScript/Vite e Ruff aprovados; cópia posterior à importação restaurada numa base temporária, com contagens de todas as tabelas verificadas.

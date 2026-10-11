@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, Field, Form } from "./App";
+import RecordList, { calendarDay } from "./RecordList";
 type Row = Record<string, any>;
 const money = (v: number) =>
   new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(
     v / 100,
   );
-const day = (v: string) =>
-  v?.slice(0, 10).split("-").reverse().join("/") || "—";
+const day = (v: string) => calendarDay(v).split("-").reverse().join("/") || "—";
 
 export function SalesImportPanel({ company }: { company: Row }) {
   const [stores, setStores] = useState<Row[]>([]);
@@ -155,48 +155,58 @@ export default function WintouchSales({
           {error}
         </p>
       )}
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Data</th>
-              <th>Documento</th>
-              <th>Entidade</th>
-              <th>
-                {kind === "previsto" ? "Vencimento" : "Meio de pagamento"}
-              </th>
-              <th>{kind === "previsto" ? "Por liquidar" : "Montante"}</th>
-              <th>Origem / estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((r) => (
-              <tr key={r.id}>
-                <td>{day(r.occurred_at)}</td>
-                <td>{r.document}</td>
-                <td>{r.entity}</td>
-                <td>
-                  {kind === "previsto"
-                    ? day(r.due_date)
-                    : r.payment || "Documento de venda"}
-                </td>
-                <td className={r.direction > 0 ? "positive" : "negative"}>
-                  {r.direction < 0 ? "−" : "+"}
-                  {money(r.amount_cents)}
-                </td>
-                <td>
-                  <span className="pill neutral">
-                    Wintouch{r.cancelled ? " · Anulado" : ""}
-                  </span>
-                  <small>
-                    Atualizado: {new Date(r.synced_at).toLocaleString("pt-PT")}
-                  </small>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <RecordList
+        rows={visible}
+        dateField={kind === "previsto" ? "due_date" : "occurred_at"}
+        dateLabel={kind === "previsto" ? "Vencimento" : "Data Wintouch"}
+        resetKey={`${store}-${documents}`}
+      >
+        {(pageRows) => (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Documento</th>
+                  <th>Entidade</th>
+                  <th>
+                    {kind === "previsto" ? "Vencimento" : "Meio de pagamento"}
+                  </th>
+                  <th>{kind === "previsto" ? "Por liquidar" : "Montante"}</th>
+                  <th>Origem / estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{day(r.occurred_at)}</td>
+                    <td>{r.document}</td>
+                    <td>{r.entity}</td>
+                    <td>
+                      {kind === "previsto"
+                        ? day(r.due_date)
+                        : r.payment || "Documento de venda"}
+                    </td>
+                    <td className={r.direction > 0 ? "positive" : "negative"}>
+                      {r.direction < 0 ? "−" : "+"}
+                      {money(r.amount_cents)}
+                    </td>
+                    <td>
+                      <span className="pill neutral">
+                        Wintouch{r.cancelled ? " · Anulado" : ""}
+                      </span>
+                      <small>
+                        Atualizado:{" "}
+                        {new Date(r.synced_at).toLocaleString("pt-PT")}
+                      </small>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </RecordList>
       {!visible.length && (
         <p>
           Sem{" "}
