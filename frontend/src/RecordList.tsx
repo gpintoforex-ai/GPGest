@@ -25,12 +25,16 @@ export default function RecordList({
   dateField,
   dateLabel = "Data do movimento",
   resetKey,
+  totalField,
+  totalsTitle = "Totais do período selecionado",
   children,
 }: {
   rows: Row[];
   dateField: string;
   dateLabel?: string;
   resetKey: string;
+  totalField?: string;
+  totalsTitle?: string;
   children: (pageRows: Row[]) => ReactNode;
 }) {
   const id = useId();
@@ -51,6 +55,23 @@ export default function RecordList({
   const pages = Math.max(1, Math.ceil(filtered.length / size));
   const current = Math.min(page, pages);
   const start = (current - 1) * size;
+  const credits = totalField
+    ? filtered.reduce(
+        (sum, row) => sum + (row.direction === 1 ? row[totalField] : 0),
+        0,
+      )
+    : 0;
+  const debits = totalField
+    ? filtered.reduce(
+        (sum, row) => sum + (row.direction === -1 ? row[totalField] : 0),
+        0,
+      )
+    : 0;
+  const money = (value: number) =>
+    new Intl.NumberFormat("pt-PT", {
+      style: "currency",
+      currency: "EUR",
+    }).format(value / 100);
   return (
     <>
       <div
@@ -114,6 +135,32 @@ export default function RecordList({
         <p className="error" role="alert">
           A data inicial não pode ser posterior à data final.
         </p>
+      )}
+      {totalField && (
+        <section className="record-totals" aria-label={totalsTitle}>
+          <h3>{totalsTitle}</h3>
+          <dl>
+            <div>
+              <dt>Créditos (entradas)</dt>
+              <dd className="positive">{money(credits)}</dd>
+            </div>
+            <div>
+              <dt>Débitos (saídas)</dt>
+              <dd className="negative">{money(debits)}</dd>
+            </div>
+            <div>
+              <dt>Saldo (créditos − débitos)</dt>
+              <dd className={credits >= debits ? "positive" : "negative"}>
+                {money(credits - debits)}
+              </dd>
+            </div>
+          </dl>
+          <small>
+            {totalsTitle === "Totais por liquidar no período"
+              ? "Valores ainda por receber e pagar, segundo o vencimento selecionado."
+              : "Totais de todos os registos filtrados, incluindo as outras páginas."}
+          </small>
+        </section>
       )}
       {children(filtered.slice(start, start + size))}
       {!filtered.length && rows.length > 0 && !invalid && (

@@ -193,6 +193,8 @@ export default function PlannedMovements({
       )}
       <section className="panel">
         <RecordList
+          totalField="remaining_cents"
+          totalsTitle="Totais por liquidar no período"
           rows={rows.filter((r) => !store || r.store_id === store)}
           dateField="due_date"
           dateLabel="Vencimento"

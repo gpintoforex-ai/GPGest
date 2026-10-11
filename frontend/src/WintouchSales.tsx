@@ -156,6 +156,12 @@ export default function WintouchSales({
         </p>
       )}
       <RecordList
+        totalField={documents ? undefined : "amount_cents"}
+        totalsTitle={
+          kind === "previsto"
+            ? "Totais por liquidar no período"
+            : "Totais do período selecionado"
+        }
         rows={visible}
         dateField={kind === "previsto" ? "due_date" : "occurred_at"}
         dateLabel={kind === "previsto" ? "Vencimento" : "Data Wintouch"}

@@ -49,6 +49,12 @@ A importação CSV/Excel, depósitos com talões e trânsito, receitas/custos re
 O runner de testes apresenta um aviso de descontinuação do transporte httpx no Starlette instalado. Os testes passam; o aviso não afeta os pedidos da aplicação. As versões usadas estão guardadas em `backend/requirements.lock.txt`.
 # Movimentos reais e previstos — 11/10/2026
 
+## Totais do período selecionado
+
+- Créditos, débitos e saldo calculados em cêntimos sobre todos os registos filtrados, antes da paginação. Os previstos usam os saldos por liquidar; a consulta de documentos não mostra totais de recebimentos.
+- Navegador com dados simulados de ambas as origens: 150 € de créditos, 10 € de débitos e 140 € de saldo; mudar a página preserva os totais. Ao restringir o período aos movimentos locais: 40 €, 0 € e 40 €. Documentos não apresentam este resumo. Layout móvel aprovado.
+- Compilação TypeScript/Vite aprovada. Não foram alterados dados, saldos de caixas ou relatórios.
+
 ## Tabela única de movimentos reais
 
 - Movimentos locais e recebimentos Wintouch reunidos numa tabela, ordenados por data, com coluna Origem e filtros/paginação comuns. Documentos alternam a mesma tabela, sem outro painel.
