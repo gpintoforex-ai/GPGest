@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, Field, Form } from "./App";
-import RecordList, { calendarDay } from "./RecordList";
+import RecordList, { calendarDay, currentMonth } from "./RecordList";
 type Row = Record<string, any>;
 const money = (v: number) =>
   new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(
@@ -12,9 +12,7 @@ export function SalesImportPanel({ company }: { company: Row }) {
   const [stores, setStores] = useState<Row[]>([]);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const today = new Date();
-  const localDate = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const [initialRange] = useState(currentMonth);
   useEffect(() => {
     api("/bootstrap")
       .then((b) => setStores(b.stores))
@@ -69,9 +67,7 @@ export function SalesImportPanel({ company }: { company: Row }) {
             <input
               type="date"
               name="start_date"
-              defaultValue={localDate(
-                new Date(today.getFullYear(), today.getMonth(), 1),
-              )}
+              defaultValue={initialRange.from}
               required
             />
           </Field>
@@ -79,7 +75,7 @@ export function SalesImportPanel({ company }: { company: Row }) {
             <input
               type="date"
               name="end_date"
-              defaultValue={localDate(today)}
+              defaultValue={initialRange.to}
               required
             />
           </Field>

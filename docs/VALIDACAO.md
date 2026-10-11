@@ -49,6 +49,12 @@ A importação CSV/Excel, depósitos com talões e trânsito, receitas/custos re
 O runner de testes apresenta um aviso de descontinuação do transporte httpx no Starlette instalado. Os testes passam; o aviso não afeta os pedidos da aplicação. As versões usadas estão guardadas em `backend/requirements.lock.txt`.
 # Movimentos reais e previstos — 11/10/2026
 
+## Mês atual por defeito
+
+- Filtros de movimentos reais/previstos e datas de importação assumem o primeiro e último dia do mês corrente em Europe/Lisbon.
+- Navegador com relógio simulado: fevereiro de 2024 termina a 29; 31/07/2026 às 23:30 UTC já seleciona agosto em Lisboa, mesmo com navegador em Nova Iorque. Limpar datas continua a permitir consulta sem período.
+- Compilação TypeScript/Vite e validação dos três ecrãs aprovadas, sem importações ou alterações nos dados da empresa.
+
 ## Totais do período selecionado
 
 - Créditos, débitos e saldo calculados em cêntimos sobre todos os registos filtrados, antes da paginação. Os previstos usam os saldos por liquidar; a consulta de documentos não mostra totais de recebimentos.

@@ -80,6 +80,8 @@ A [importação de vendas e recebimentos](docs/VENDAS-WINTOUCH.md) está dispon�
 
 As listagens de movimentos reais, previstos e Wintouch têm filtros por datas inclusivas, **Limpar datas** e paginação de 10, 25, 50 ou 100 registos. Nos previstos, a data usada é o vencimento. Cada listagem mantém os seus próprios filtros; mudar a loja, as datas ou o número por página repõe a primeira página. A paginação é aplicada no navegador aos registos carregados.
 
+As datas iniciais dos filtros e da importação de vendas assumem o mês atual completo, do primeiro ao último dia, segundo Europe/Lisbon. Pode alterar o período; **Limpar datas** permite consultar todos os registos carregados.
+
 Os **totais do período selecionado** mostram créditos (entradas), débitos (saídas) e saldo (créditos menos débitos), somando todos os resultados filtrados, independentemente da página. Nos movimentos reais incluem as duas origens apresentadas. Nos previstos os totais usam o saldo ainda por liquidar; documentos de venda não apresentam totais de recebimentos.
 
 ## Guia de utilização

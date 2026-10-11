@@ -20,6 +20,17 @@ export function calendarDay(value: string): string {
     .join("-");
 }
 
+export function currentMonth() {
+  const today = calendarDay(new Date().toISOString());
+  const [year, month] = today.split("-").map(Number);
+  const prefix = today.slice(0, 7);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return {
+    from: `${prefix}-01`,
+    to: `${prefix}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
 export default function RecordList({
   rows,
   dateField,
@@ -38,8 +49,9 @@ export default function RecordList({
   children: (pageRows: Row[]) => ReactNode;
 }) {
   const id = useId();
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [initialRange] = useState(currentMonth);
+  const [from, setFrom] = useState(initialRange.from);
+  const [to, setTo] = useState(initialRange.to);
   const [size, setSize] = useState(10);
   const [page, setPage] = useState(1);
   useEffect(() => {
