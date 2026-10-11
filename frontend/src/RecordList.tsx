@@ -204,90 +204,84 @@ export default function RecordList({
           A data inicial não pode ser posterior à data final.
         </p>
       )}
-      <div
-        className={
-          paymentSummary && totalField ? "record-summary-layout" : undefined
-        }
-      >
-        {totalField && (
-          <section className="record-totals" aria-label={totalsTitle}>
-            <h3>{totalsTitle}</h3>
-            <dl>
-              <div>
-                <dt>Créditos (entradas)</dt>
-                <dd className="positive">{money(credits)}</dd>
-              </div>
-              <div>
-                <dt>Débitos (saídas)</dt>
-                <dd className="negative">{money(debits)}</dd>
-              </div>
-              <div>
-                <dt>Saldo (créditos − débitos)</dt>
-                <dd className={credits >= debits ? "positive" : "negative"}>
-                  {money(credits - debits)}
-                </dd>
-              </div>
-            </dl>
-            <small>
-              {totalsTitle === "Totais por liquidar no período"
-                ? "Valores ainda por receber e pagar, segundo o vencimento selecionado."
-                : "Totais de todos os registos filtrados, incluindo as outras páginas."}
-            </small>
-          </section>
-        )}
-        {paymentSummary && totalField && (
-          <section
-            aria-label="Resumo por meio de pagamento"
-            className="record-payment-summary"
-          >
-            <h3>Resumo por meio de pagamento</h3>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Meio de pagamento</th>
-                    <th>Registos</th>
-                    <th>Créditos</th>
-                    <th>Débitos</th>
-                    <th>Saldo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...groups.values()]
-                    .sort((a, b) => a.name.localeCompare(b.name, "pt-PT"))
-                    .map((group) => (
-                      <tr key={group.name}>
-                        <td>{group.name}</td>
-                        <td>{group.count}</td>
-                        <td className="positive">{money(group.credits)}</td>
-                        <td className="negative">{money(group.debits)}</td>
-                        <td
-                          className={
-                            group.credits >= group.debits
-                              ? "positive"
-                              : "negative"
-                          }
-                        >
-                          {money(group.credits - group.debits)}
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <th>Total</th>
-                    <td>{filtered.length}</td>
-                    <td>{money(credits)}</td>
-                    <td>{money(debits)}</td>
-                    <td>{money(credits - debits)}</td>
-                  </tr>
-                </tfoot>
-              </table>
+      {totalField && (
+        <section className="record-totals" aria-label={totalsTitle}>
+          <h3>{totalsTitle}</h3>
+          <dl>
+            <div>
+              <dt>Créditos (entradas)</dt>
+              <dd className="positive">{money(credits)}</dd>
             </div>
-            {!filtered.length && <p>Sem movimentos no período selecionado.</p>}
-          </section>
-        )}
-      </div>
+            <div>
+              <dt>Débitos (saídas)</dt>
+              <dd className="negative">{money(debits)}</dd>
+            </div>
+            <div>
+              <dt>Saldo (créditos − débitos)</dt>
+              <dd className={credits >= debits ? "positive" : "negative"}>
+                {money(credits - debits)}
+              </dd>
+            </div>
+          </dl>
+          <small>
+            {totalsTitle === "Totais por liquidar no período"
+              ? "Valores ainda por receber e pagar, segundo o vencimento selecionado."
+              : "Totais de todos os registos filtrados, incluindo as outras páginas."}
+          </small>
+        </section>
+      )}
+      {paymentSummary && totalField && (
+        <section
+          aria-label="Resumo por meio de pagamento"
+          className="record-payment-summary"
+        >
+          <h3>Resumo por meio de pagamento</h3>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Meio de pagamento</th>
+                  <th>Registos</th>
+                  <th>Créditos</th>
+                  <th>Débitos</th>
+                  <th>Saldo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...groups.values()]
+                  .sort((a, b) => a.name.localeCompare(b.name, "pt-PT"))
+                  .map((group) => (
+                    <tr key={group.name}>
+                      <td>{group.name}</td>
+                      <td>{group.count}</td>
+                      <td className="positive">{money(group.credits)}</td>
+                      <td className="negative">{money(group.debits)}</td>
+                      <td
+                        className={
+                          group.credits >= group.debits
+                            ? "positive"
+                            : "negative"
+                        }
+                      >
+                        {money(group.credits - group.debits)}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th>Total</th>
+                  <td>{filtered.length}</td>
+                  <td>{money(credits)}</td>
+                  <td>{money(debits)}</td>
+                  <td>{money(credits - debits)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          {!filtered.length && <p>Sem movimentos no período selecionado.</p>}
+        </section>
+      )}
       {children(filtered.slice(start, start + size))}
       {!filtered.length && rows.length > 0 && !invalid && (
         <p>Sem registos para o período selecionado.</p>

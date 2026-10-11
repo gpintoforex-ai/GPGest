@@ -49,25 +49,6 @@
   font-weight: 700;
   background: #f5f8f6;
 }
-.record-summary-layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr);
-  gap: 24px;
-  align-items: start;
-  margin: 18px 0;
-}
-.record-summary-layout > section {
-  min-width: 0;
-  margin: 0;
-}
-.record-summary-layout .record-payment-summary h3 {
-  margin: 0 0 14px;
-}
-@media (max-width: 1000px) {
-  .record-summary-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 .record-totals dl {
   display: flex;
   flex-wrap: wrap;
