@@ -42,6 +42,13 @@
 .record-totals h3 {
   margin: 0 0 14px;
 }
+.record-payment-summary {
+  margin: 22px 0;
+}
+.record-payment-summary tfoot {
+  font-weight: 700;
+  background: #f5f8f6;
+}
 .record-totals dl {
   display: flex;
   flex-wrap: wrap;

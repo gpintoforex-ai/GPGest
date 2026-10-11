@@ -3,6 +3,40 @@ import "./RecordList.css";
 
 type Row = Record<string, any>;
 
+function paymentGroup(row: Row) {
+  const name = String(row.payment || "Não indicado").trim();
+  const normalized = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const codes: Record<string, string> = {
+    NU: "Numerário",
+    MO: "Numerário",
+    CD: "Cartão",
+    CC: "Cartão",
+    TB: "Transferência",
+    CH: "Cheque",
+  };
+  const names: Record<string, string> = {
+    numerario: "Numerário",
+    cartao: "Cartão",
+    "cartao de debito": "Cartão",
+    "cartao de credito": "Cartão",
+    multibanco: "Cartão",
+    transferencia: "Transferência",
+    "transferencia bancaria": "Transferência",
+    outro: "Outro",
+  };
+  const codeLabel = codes[row.payment_code];
+  const nameLabel = names[normalized];
+  return (
+    (typeof codeLabel === "string" ? codeLabel : undefined) ||
+    (typeof nameLabel === "string" ? nameLabel : undefined) ||
+    name ||
+    "Não indicado"
+  );
+}
+
 // Naive source dates retain their calendar day; timestamps with offsets use Lisbon.
 export function calendarDay(value: string): string {
   if (!value) return "";
@@ -37,6 +71,7 @@ export default function RecordList({
   dateLabel = "Data do movimento",
   resetKey,
   totalField,
+  paymentSummary = false,
   totalsTitle = "Totais do período selecionado",
   children,
 }: {
@@ -45,6 +80,7 @@ export default function RecordList({
   dateLabel?: string;
   resetKey: string;
   totalField?: string;
+  paymentSummary?: boolean;
   totalsTitle?: string;
   children: (pageRows: Row[]) => ReactNode;
 }) {
@@ -84,6 +120,26 @@ export default function RecordList({
       style: "currency",
       currency: "EUR",
     }).format(value / 100);
+  const groups = new Map<
+    string,
+    { name: string; count: number; credits: number; debits: number }
+  >();
+  if (paymentSummary && totalField) {
+    for (const row of filtered) {
+      const name = paymentGroup(row);
+      const key = name.toLocaleLowerCase("pt-PT");
+      const group = groups.get(key) || {
+        name,
+        count: 0,
+        credits: 0,
+        debits: 0,
+      };
+      group.count += 1;
+      if (row.direction === 1) group.credits += row[totalField];
+      if (row.direction === -1) group.debits += row[totalField];
+      groups.set(key, group);
+    }
+  }
   return (
     <>
       <div
@@ -172,6 +228,58 @@ export default function RecordList({
               ? "Valores ainda por receber e pagar, segundo o vencimento selecionado."
               : "Totais de todos os registos filtrados, incluindo as outras páginas."}
           </small>
+        </section>
+      )}
+      {paymentSummary && totalField && (
+        <section
+          aria-label="Resumo por meio de pagamento"
+          className="record-payment-summary"
+        >
+          <h3>Resumo por meio de pagamento</h3>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Meio de pagamento</th>
+                  <th>Registos</th>
+                  <th>Créditos</th>
+                  <th>Débitos</th>
+                  <th>Saldo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...groups.values()]
+                  .sort((a, b) => a.name.localeCompare(b.name, "pt-PT"))
+                  .map((group) => (
+                    <tr key={group.name}>
+                      <td>{group.name}</td>
+                      <td>{group.count}</td>
+                      <td className="positive">{money(group.credits)}</td>
+                      <td className="negative">{money(group.debits)}</td>
+                      <td
+                        className={
+                          group.credits >= group.debits
+                            ? "positive"
+                            : "negative"
+                        }
+                      >
+                        {money(group.credits - group.debits)}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th>Total</th>
+                  <td>{filtered.length}</td>
+                  <td>{money(credits)}</td>
+                  <td>{money(debits)}</td>
+                  <td>{money(credits - debits)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          {!filtered.length && <p>Sem movimentos no período selecionado.</p>}
         </section>
       )}
       {children(filtered.slice(start, start + size))}

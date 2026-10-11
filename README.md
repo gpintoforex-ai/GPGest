@@ -84,6 +84,8 @@ As datas iniciais dos filtros e da importação de vendas assumem o mês atual c
 
 Os **totais do período selecionado** mostram créditos (entradas), débitos (saídas) e saldo (créditos menos débitos), somando todos os resultados filtrados, independentemente da página. Nos movimentos reais incluem as duas origens apresentadas. Nos previstos os totais usam o saldo ainda por liquidar; documentos de venda não apresentam totais de recebimentos.
 
+Em **Movimentos reais**, o **Resumo por meio de pagamento** apresenta registos, créditos, débitos e saldo por meio, para todas as páginas do período e loja selecionados. Numerário, cartões e transferências de ambas as origens são agrupados por equivalência conhecida; outros meios mantêm a designação da origem. A linha Total corresponde aos totais do período.
+
 ## Guia de utilização
 
 1. **Configurações**: crie lojas, caixas, categorias e equipa. Um administrador tem acesso a todas as lojas; os restantes utilizadores recebem acesso explícito. Na criação pela interface escolhe-se uma loja; a API aceita várias `store_ids`.

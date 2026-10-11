@@ -92,6 +92,7 @@ export default function RealMovements({
         dateField="occurred_at"
         resetKey={`${store}-${documents}`}
         totalField={documents ? undefined : "amount_cents"}
+        paymentSummary={!documents}
       >
         {children}
       </RecordList>
