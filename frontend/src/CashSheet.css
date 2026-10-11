@@ -1,0 +1,38 @@
+.cash-sheet-list {
+  display: grid;
+  gap: 22px;
+}
+.cash-sheet {
+  min-width: 0;
+}
+.cash-sheet-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px 48px;
+  margin: 18px 0;
+}
+.cash-sheet-overview strong {
+  display: block;
+  font-size: 24px;
+  margin: 6px 0;
+}
+.cash-sheet-table {
+  min-width: 960px;
+}
+.cash-sheet-table input {
+  width: 115px;
+}
+.cash-sheet-table tfoot {
+  background: #f5f8f6;
+  font-weight: 700;
+}
+.cash-sheet-denominations {
+  margin: 18px 0;
+}
+.cash-sheet-sources {
+  margin: 18px 0;
+}
+.cash-sheet-sources summary {
+  cursor: pointer;
+  margin-bottom: 14px;
+}

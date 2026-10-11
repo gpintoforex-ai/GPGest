@@ -32,6 +32,8 @@ import TenantIntegrations from "./TenantIntegrations";
 import PlannedMovements from "./PlannedMovements";
 import WintouchSales from "./WintouchSales";
 import RealMovements from "./RealMovements";
+import CashSheet from "./CashSheet";
+import { calendarDay } from "./RecordList";
 type Bootstrap = {
   user: Row;
   mode: string;
@@ -70,9 +72,6 @@ const labels: Record<string, string> = {
   transferencia: "Transferência",
   outro: "Outro",
 };
-const denominations = [
-  50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1,
-];
 export async function api(path: string, body?: unknown) {
   const r = await fetch("/api" + path, {
     credentials: "same-origin",
@@ -200,7 +199,6 @@ export default function App() {
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [mobile, setMobile] = useState(false),
-    [counts, setCounts] = useState<Record<string, number>>({}),
     [store, setStore] = useState(""),
     [requestKey, setRequestKey] = useState(crypto.randomUUID());
   async function reload() {
@@ -231,6 +229,14 @@ export default function App() {
     reload()
       .catch(() => {})
       .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => {
+    const refreshSheets = () => {
+      reload().catch((e) => setError((e as Error).message));
+    };
+    window.addEventListener("gpgest-sales-updated", refreshSheets);
+    return () =>
+      window.removeEventListener("gpgest-sales-updated", refreshSheets);
   }, []);
   const save = async (path: string, data: unknown) => {
     await api(path, data);
@@ -331,7 +337,7 @@ export default function App() {
   const open = visibleSessions.filter((s) => !s.closed_at);
   const menu = [
     ["Dashboard", LayoutDashboard],
-    ["Caixa diária", Wallet],
+    ["Folha de caixa", Wallet],
     ["Movimentos reais", ArrowLeftRight],
     ["Movimentos previstos", Clock],
     ["Depósitos", Landmark],
@@ -345,7 +351,6 @@ export default function App() {
   ] as const;
   const openModal = (kind: string, row: Row | null = null) => {
     setSelected(row);
-    setCounts({});
     setRequestKey(crypto.randomUUID());
     setModal(kind);
   };
@@ -530,7 +535,7 @@ export default function App() {
                   )}
                   <button
                     className="text-button"
-                    onClick={() => setPage("Caixa diária")}
+                    onClick={() => setPage("Folha de caixa")}
                   >
                     Gerir caixas <ChevronRight size={16} />
                   </button>
@@ -577,82 +582,36 @@ export default function App() {
               </section>
             </>
           )}
-          {page === "Caixa diária" && (
+          {page === "Folha de caixa" && (
             <>
               <div className="page-intro">
                 <div>
-                  <h1>Caixa diária</h1>
+                  <h1>Folha de caixa</h1>
                   <p>
-                    Abertura, responsabilidade e fecho com contagem de
-                    numerário.
+                    Fundo de maneio, movimentos por meio de pagamento e contagem
+                    com apuramento de diferenças.
                   </p>
                 </div>
                 {write && (
                   <button className="primary" onClick={() => openModal("open")}>
-                    <Plus size={18} /> Abrir caixa
+                    <Plus size={18} /> Nova folha de caixa
                   </button>
                 )}
               </div>
-              <div className="cash-grid">
+              <div className="cash-sheet-list">
                 {visibleSessions.map((s) => (
-                  <section className="panel cash-card" key={s.id}>
-                    <div className="panel-title">
-                      <h3>{rname(s.register_id)}</h3>
-                      <span
-                        className={"pill " + (s.closed_at ? "neutral" : "")}
-                      >
-                        {s.closed_at ? "Fechada" : "Aberta"}
-                      </span>
-                    </div>
-                    <p>
-                      {uname(s.operator_id)} · {date(s.opened_at)}
-                    </p>
-                    <strong className="cash-value">
-                      {money(s.balance_cents)}
-                    </strong>
-                    <small>
-                      Saldo esperado em numerário · Fundo{" "}
-                      {money(s.opening_cents)}
-                    </small>
-                    <div className="payment-totals">
-                      {Object.entries(s.totals).map(([k, v]) => (
-                        <span key={k}>
-                          {labels[k]} <b>{money(v as number)}</b>
-                        </span>
-                      ))}
-                    </div>
-                    {s.closed_at && (
-                      <p>
-                        Contado: {money(s.counted_cents)} · Diferença:{" "}
-                        {money(s.counted_cents - s.expected_cents)}
-                      </p>
-                    )}
-                    <div className="actions">
-                      {!s.closed_at && write && (
-                        <>
-                          <button onClick={() => openModal("close", s)}>
-                            Fechar caixa
-                          </button>
-                          <button onClick={() => openModal("handover", s)}>
-                            Passar caixa
-                          </button>
-                        </>
-                      )}
-                      {s.closed_at && (
-                        <a
-                          className="download-link"
-                          href={"/api/sessions/" + s.id + "/report"}
-                        >
-                          Relatório PDF
-                        </a>
-                      )}
-                      {s.closed_at && manager && (
-                        <button onClick={() => openModal("reopen", s)}>
-                          Reabrir
-                        </button>
-                      )}
-                    </div>
-                  </section>
+                  <CashSheet
+                    key={s.id}
+                    session={s}
+                    register={rname(s.register_id)}
+                    operator={uname(s.operator_id)}
+                    writable={
+                      write && (manager || s.operator_id === boot.user.id)
+                    }
+                    manager={manager}
+                    reload={reload}
+                    onAction={openModal}
+                  />
                 ))}
               </div>
               {!visibleSessions.length && (
@@ -983,8 +942,8 @@ export default function App() {
                       ? "A importação de extratos, deteção de duplicados e correspondências agrupadas estão previstas para a fase 4."
                       : "O reconhecimento de receitas, custos e despesas será separado dos movimentos de dinheiro na fase 2."}
               </p>
-              <button onClick={() => setPage("Caixa diária")}>
-                Ir para caixa diária
+              <button onClick={() => setPage("Folha de caixa")}>
+                Ir para folha de caixa
               </button>
             </section>
           )}
@@ -1010,7 +969,7 @@ export default function App() {
               <h2 id="modal-title">
                 {
                   {
-                    open: "Abrir caixa",
+                    open: "Nova folha de caixa",
                     movement: "Novo movimento",
                     close: "Fechar caixa",
                     handover: "Passar responsabilidade",
@@ -1063,7 +1022,14 @@ export default function App() {
               />
             )}
             {modal === "open" && (
-              <Form onSubmit={(v) => save("/sessions", v)}>
+              <Form
+                onSubmit={(v) =>
+                  save("/sessions", {
+                    ...v,
+                    include_wintouch: v.include_wintouch === "on",
+                  })
+                }
+              >
                 <Field label="Caixa">
                   <Select
                     name="register_id"
@@ -1075,7 +1041,7 @@ export default function App() {
                     )}
                   />
                 </Field>
-                <Field label="Fundo inicial (€)">
+                <Field label="Fundo de maneio inicial (€)">
                   <input
                     name="opening"
                     inputMode="decimal"
@@ -1083,6 +1049,27 @@ export default function App() {
                     defaultValue="0,00"
                   />
                 </Field>
+                <Field label="Dia da folha de caixa">
+                  <input
+                    type="date"
+                    name="sheet_day"
+                    defaultValue={calendarDay(new Date().toISOString())}
+                    required
+                  />
+                </Field>
+                <Field label="Incluir recebimentos Wintouch do dia e da loja">
+                  <input
+                    type="checkbox"
+                    name="include_wintouch"
+                    defaultChecked
+                  />
+                </Field>
+                <p className="footnote">
+                  O fundo de maneio é o numerário disponível no início. Os
+                  recebimentos Wintouch de uma loja e dia podem pertencer a uma
+                  única folha, mesmo depois do fecho. Confirme que estão
+                  importados em Integrações.
+                </p>
               </Form>
             )}
             {modal === "movement" && (
@@ -1181,67 +1168,6 @@ export default function App() {
                 <p className="footnote">
                   Apenas numerário altera o saldo físico. Origem: manual. A data
                   introduzida usa o fuso horário do dispositivo.
-                </p>
-              </Form>
-            )}
-            {modal === "close" && selected && (
-              <Form
-                onSubmit={(v) =>
-                  save("/sessions/" + selected.id + "/close", {
-                    counts,
-                    reason: v.reason,
-                  })
-                }
-              >
-                <p>
-                  Saldo esperado: <b>{money(selected.balance_cents)}</b>
-                </p>
-                <div className="denominations">
-                  {denominations.map((d) => (
-                    <Field key={d} label={money(d)}>
-                      <input
-                        aria-label={"Quantidade de " + money(d)}
-                        type="number"
-                        min="0"
-                        max="100000"
-                        value={counts[d] || ""}
-                        onChange={(e) =>
-                          setCounts({ ...counts, [d]: Number(e.target.value) })
-                        }
-                      />
-                    </Field>
-                  ))}
-                </div>
-                <div className="count-result">
-                  <span>
-                    Total contado{" "}
-                    <b>
-                      {money(
-                        Object.entries(counts).reduce(
-                          (s, [k, v]) => s + Number(k) * v,
-                          0,
-                        ),
-                      )}
-                    </b>
-                  </span>
-                  <span>
-                    Diferença{" "}
-                    <b>
-                      {money(
-                        Object.entries(counts).reduce(
-                          (s, [k, v]) => s + Number(k) * v,
-                          0,
-                        ) - selected.balance_cents,
-                      )}
-                    </b>
-                  </span>
-                </div>
-                <Field label="Justificação (obrigatória se existir diferença)">
-                  <textarea name="reason" maxLength={2000} />
-                </Field>
-                <p className="footnote">
-                  O fecho bloqueia alterações. A gestão pode reabrir com motivo
-                  registado.
                 </p>
               </Form>
             )}

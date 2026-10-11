@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 
 class Strict(BaseModel):
@@ -44,6 +44,13 @@ class UserCreate(Name):
 class OpenCash(Strict):
     register_id: str
     opening: str
+    sheet_day: date | None = None
+    include_wintouch: bool = False
+
+
+class CashSources(Strict):
+    sheet_day: date
+    include_wintouch: bool
 
 
 class MovementCreate(Strict):
@@ -105,9 +112,16 @@ class Reason(Strict):
     reason: str = Field(min_length=5, max_length=2000)
 
 
-class CloseCash(Strict):
-    counts: dict[str, int]
+class CashCount(Strict):
+    counts: dict[str, StrictInt] = Field(default_factory=dict, max_length=15)
+    payments: dict[str, str] = Field(default_factory=dict, max_length=30)
+    cash_total: str | None = None
+    cash_mode: Literal["total", "denominations"] | None = None
     reason: str = Field(default="", max_length=2000)
+
+
+class CloseCash(CashCount):
+    pass
 
 
 class Handover(Reason):

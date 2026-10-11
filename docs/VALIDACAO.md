@@ -1,5 +1,15 @@
 # Validação da Fase 1 — 10/10/2026
 
+## Folha de caixa — 11/10/2026
+
+- Migração `0006` aplicada a todos os esquemas de empresas registadas, após cópia de segurança; folhas antigas e valores existentes preservados.
+- 33 testes do backend passaram: contagens persistentes, cêntimos exatos, cartões com reembolsos, notas/moedas, permissões, justificação de diferenças, fecho/reabertura e valores Wintouch por empresa, dia e loja. Pagamentos com data diferente da fatura e mudança de dia em Europe/Lisbon foram verificados.
+- Unicidade dos recebimentos Wintouch por loja/dia, isolamento entre empresas e bloqueio de alterações a origens/contagem depois do fecho verificados.
+- Os valores esperados e contados de uma folha fechada mantêm-se após alterações na origem importada; PDF validado.
+- Teste de navegador em esquema temporário: fundo de maneio, ativação de Wintouch numa folha aberta, soma GPGest + Wintouch, contagem persistente após recarregar, notas/moedas, rejeição de fecho com diferença sem justificação, fecho e ligação ao PDF passaram. Layout a 390 px sem transbordamento da página e sem erros JavaScript.
+- TypeScript, compilação de produção e Ruff passaram.
+- As quatro novas colunas e a unicidade por loja/dia foram verificadas nos dois esquemas locais. Backup após migração restaurado numa base temporária, com todas as tabelas e contagens comparadas.
+
 Ambiente local Windows, Python 3.13, React/TypeScript, FastAPI e PostgreSQL 16.15. Valores monetários em cêntimos inteiros. Base de demonstração própria, sem dados do site Desafio Salutar.
 
 ## Verificações concluídas

@@ -1,10 +1,12 @@
 """Teste local de navegador em esquema PostgreSQL temporário, sem dados da aplicação."""
 
+import json
 import os
 import secrets
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,7 +21,8 @@ sys.path.insert(0, str(root / "backend"))
 load_dotenv(root / ".env")
 if os.getenv("APP_MODE") != "demonstracao":
     raise RuntimeError("Execute testes apenas na base de demonstração.")
-from app.models import Base, Category, Register, Store, User
+from app.models import Base, Category, Register, Store, User, WintouchSaleRecord
+from app.platform_models import Company, PlatformBase
 
 engine = create_engine(os.environ["DATABASE_URL"])
 schema = "ui_" + uuid4().hex
@@ -28,6 +31,7 @@ with engine.begin() as c:
 url = engine.url.update_query_dict({"options": "-csearch_path=" + schema})
 isolated = create_engine(url)
 Base.metadata.create_all(isolated)
+PlatformBase.metadata.create_all(isolated)
 password = secrets.token_urlsafe(24)
 with Session(isolated) as db:
     user = User(
@@ -41,16 +45,42 @@ with Session(isolated) as db:
     db.flush()
     db.add(Register(store_id=store.id, name="Caixa de teste"))
     db.add(Category(name="Vendas"))
+    db.add(
+        Company(
+            name="Empresa UI",
+            slug="demo",
+            schema_name="public",
+            mode="demonstracao",
+            api_enterprise="ui-source",
+        )
+    )
+    for value, code in ((500, "NU"), (700, "CD")):
+        db.add(
+            WintouchSaleRecord(
+                enterprise_id="ui-source",
+                external_id=str(uuid4()),
+                store_id=store.id,
+                kind="real",
+                active=True,
+                document_date="2026-01-01",
+                data=json.dumps(
+                    {
+                        "amount_cents": value,
+                        "direction": 1,
+                        "payment": "Origem UI",
+                        "payment_code": code,
+                        "occurred_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                ),
+            )
+        )
     db.commit()
 log = (root / ".local" / "ui-backend.log").open("w")
 server = subprocess.Popen(
     [
         str(root / ".venv" / "Scripts" / "python.exe"),
-        "-m",
-        "uvicorn",
-        "app.main:app",
-        "--port",
-        "8001",
+        "-c",
+        "from app import db\nfrom app.main import app\nimport uvicorn\ndb.next_platform_session = db.SessionLocal\ndef core():\n    with db.SessionLocal() as session:\n        yield session\napp.dependency_overrides[db.platform_db] = core\nuvicorn.run(app, host='127.0.0.1', port=8001)",
     ],
     cwd=root / "backend",
     env={
@@ -83,11 +113,12 @@ try:
         page.get_by_label("Palavra-passe", exact=True).fill(password)
         page.get_by_role("button", name="Entrar", exact=True).click()
         expect(page.get_by_role("heading", name="Uma visão clara do seu negócio.")).to_be_visible()
-        page.get_by_role("button", name="Caixa diária", exact=True).click()
-        page.get_by_role("button", name="Abrir caixa", exact=True).click()
+        page.get_by_role("button", name="Folha de caixa", exact=True).click()
+        page.get_by_role("button", name="Nova folha de caixa", exact=True).click()
         dialog = page.get_by_role("dialog")
         dialog.get_by_label("Caixa", exact=True).select_option(label="Caixa de teste")
-        dialog.get_by_label("Fundo inicial (€)").fill("100,00")
+        dialog.get_by_label("Fundo de maneio inicial (€)").fill("100,00")
+        dialog.get_by_label("Incluir recebimentos Wintouch do dia e da loja").uncheck()
         dialog.get_by_role("button", name="Guardar", exact=True).click()
         expect(page.locator(".cash-value")).to_contain_text("100,00")
         page.get_by_role("button", name="Movimentos reais", exact=True).click()
@@ -100,12 +131,34 @@ try:
         dialog.get_by_role("button", name="Guardar", exact=True).click()
         expect(page.get_by_role("dialog")).to_have_count(0)
         expect(page.get_by_text("Multibanco / cartão", exact=True)).to_be_visible()
-        page.get_by_role("button", name="Caixa diária", exact=True).click()
-        page.get_by_role("button", name="Fechar caixa", exact=True).click()
-        dialog = page.get_by_role("dialog")
-        dialog.get_by_label("Quantidade de 100,00", exact=False).fill("1")
-        dialog.get_by_role("button", name="Guardar", exact=True).click()
-        expect(page.get_by_role("dialog")).to_have_count(0)
+        page.get_by_role("button", name="Folha de caixa", exact=True).click()
+        page.get_by_text("Dia e origens dos movimentos", exact=True).click()
+        page.get_by_label("Incluir recebimentos Wintouch do dia e da loja", exact=True).check()
+        page.get_by_role("button", name="Atualizar dia e origens", exact=True).click()
+        expect(page.locator(".cash-value")).to_contain_text("105,00")
+        page.get_by_label("Contagem Numerário (€)", exact=True).fill("105,00")
+        page.get_by_label("Contagem Multibanco / cartão (€)", exact=True).fill("27,00")
+        page.get_by_role("button", name="Guardar contagem", exact=True).click()
+        expect(page.locator(".cash-sheet").get_by_role("status")).to_contain_text(
+            "Contagem guardada"
+        )
+        page.reload()
+        page.get_by_role("button", name="Folha de caixa", exact=True).click()
+        expect(page.get_by_label("Contagem Numerário (€)", exact=True)).to_have_value("105,00")
+        expect(page.get_by_label("Contagem Multibanco / cartão (€)", exact=True)).to_have_value(
+            "27,00"
+        )
+        page.get_by_label("Contagem de numerário", exact=True).select_option("denominations")
+        page.get_by_label("Quantidade de 100,00", exact=False).fill("1")
+        page.get_by_label("Quantidade de 5,00", exact=False).fill("1")
+        page.get_by_label("Contagem Multibanco / cartão (€)", exact=True).fill("19,00")
+        page.get_by_role("button", name="Fechar folha de caixa", exact=True).click()
+        expect(page.get_by_role("alert")).to_contain_text("Justifique")
+        page.get_by_label("Contagem Multibanco / cartão (€)", exact=True).fill("27,00")
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        page.set_viewport_size({"width": 1440, "height": 1000})
+        page.get_by_role("button", name="Fechar folha de caixa", exact=True).click()
         expect(page.get_by_role("link", name="Relatório PDF")).to_be_visible()
         page.get_by_role("button", name="Dashboard", exact=True).click()
         page.screenshot(
@@ -127,7 +180,9 @@ try:
         expect(page.get_by_role("heading", name="A sua organização")).to_be_visible()
         assert not errors, errors
         browser.close()
-    print("UI: login, abertura, movimento cartão, fecho, PDF e layout móvel passaram.")
+    print(
+        "UI: folha de caixa, fundo de maneio, contagem persistente, notas/moedas, diferença, fecho, PDF e layout móvel passaram."
+    )
 except Exception as error:
     raise RuntimeError(str(error).replace(password, "[oculto]")) from None
 finally:

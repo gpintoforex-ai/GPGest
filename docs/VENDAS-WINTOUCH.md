@@ -22,7 +22,7 @@ As datas sem offset mantêm a data de calendário indicada pela origem, sem inve
 
 ## Limites atuais
 
-É um snapshot de consulta dos movimentos Wintouch. Não abre nem fecha caixas, não escreve na Wintouch e não altera saldos, relatórios ou dashboard dos movimentos locais. Não concilia automaticamente um pagamento Wintouch com um lançamento manual. A tabela apresenta ambas as origens identificadas, sem gerar um segundo lançamento local. Anexos e estornos locais só estão disponíveis nos registos GPGest; os registos importados são geridos na Wintouch.
+É um snapshot de consulta dos movimentos Wintouch. A importação não abre nem fecha caixas, não escreve na Wintouch e não gera lançamentos locais. Na **Folha de caixa**, pode escolher incluir os recebimentos importados do dia e da loja: os valores entram então no esperado por meio de pagamento e no saldo físico da sessão, e são conservados no relatório ao fechar. Cada loja/dia pode ser incluído numa única folha. Não concilia automaticamente um pagamento Wintouch com um lançamento manual. A tabela apresenta ambas as origens identificadas, sem gerar um segundo lançamento local. Anexos e estornos locais só estão disponíveis nos registos GPGest; os registos importados são geridos na Wintouch.
 
 Notas de crédito não são consideradas reembolsos pagos sem um pagamento identificado. Anulações com `DeletedDate` são preservadas como documento anulado e os seus pagamentos não são publicados como reais. Recibos com estado de processamento não validado são rejeitados. Descontos, retenções e valores pendentes não são convertidos automaticamente em dinheiro recebido.
 

@@ -88,6 +88,10 @@ class CashSession(Base):
     expected_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     close_reason: Mapped[str] = mapped_column(Text, default="")
     denominations: Mapped[str] = mapped_column(Text, default="{}")
+    sheet_day: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    wintouch_scope: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
+    wintouch_enterprise: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    count_data: Mapped[str] = mapped_column(Text, default="{}")
     __table_args__ = (
         Index(
             "one_open_session_per_register",

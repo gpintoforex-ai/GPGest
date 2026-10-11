@@ -93,6 +93,62 @@ def configuration(company, **updates):
     }
 
 
+def test_cash_sheet_wintouch_day_is_unique_and_company_scoped(platform):
+    c, _ = platform
+    a = create(c, "folha-caixa-a")
+    b = create(c, "folha-caixa-b")
+    for company in (a, b):
+        assert (
+            c.post(
+                "/api/platform/companies/" + company["id"] + "/config",
+                json=configuration(company, api_enterprise="source-" + company["slug"]),
+            ).status_code
+            == 200
+        )
+    c.cookies.clear()
+    boot = enter(c, a["slug"])
+    register = boot["registers"][0]["id"]
+    store = boot["stores"][0]["id"]
+    second = c.post("/api/registers", json={"store_id": store, "name": "Caixa segunda"}).json()[
+        "id"
+    ]
+    payload = {"opening": "100", "sheet_day": "2026-10-02", "include_wintouch": True}
+    session = c.post("/api/sessions", json={**payload, "register_id": register})
+    assert session.status_code == 200, session.text
+    assert session.json()["wintouch_enterprise"] == "source-folha-caixa-a"
+    session_id = session.json()["id"]
+    assert (
+        c.post(
+            f"/api/sessions/{session_id}/sources",
+            json={"sheet_day": "2026-10-02", "include_wintouch": True},
+        ).status_code
+        == 200
+    )
+    assert c.post("/api/sessions", json={**payload, "register_id": second}).status_code == 409
+    assert (
+        c.post(f"/api/sessions/{session_id}/close", json={"cash_total": "100"}).status_code == 200
+    )
+    assert (
+        c.post(
+            f"/api/sessions/{session_id}/sources",
+            json={"sheet_day": "2026-10-02", "include_wintouch": False},
+        ).status_code
+        == 409
+    )
+    assert c.post("/api/sessions", json={**payload, "register_id": second}).status_code == 409
+    boot_b = enter(c, b["slug"])
+    assert c.get("/api/sessions").json() == []
+    assert (
+        c.post(f"/api/sessions/{session_id}/count", json={"cash_total": "100"}).status_code == 404
+    )
+    assert (
+        c.post(
+            "/api/sessions", json={**payload, "register_id": boot_b["registers"][0]["id"]}
+        ).status_code
+        == 200
+    )
+
+
 def test_company_validation_explains_fields_and_normalizes_slug(platform):
     c, _ = platform
     payload = {

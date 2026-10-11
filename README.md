@@ -9,11 +9,11 @@ Funciona com React/TypeScript, FastAPI e PostgreSQL persistente:
 - Autenticação com palavras-passe Argon2, cookie HttpOnly, expiração de 8 horas e saída de sessão.
 - Perfis administrador, gestor, operador e consulta, com autorização por loja no servidor.
 - Criação de lojas, caixas, contas bancárias, categorias e utilizadores.
-- Abertura única por caixa, fundo inicial, passagem entre operadores com motivo.
+- Folha de caixa diária, fundo de maneio inicial e passagem entre operadores com motivo.
 - Recebimentos, pagamentos, despesas, reembolsos, reforços e retiradas para depósito.
 - Numerário, cartão, transferência e outros meios separados; apenas numerário altera a caixa física.
 - Transferências atómicas entre caixas, com dois movimentos ligados.
-- Contagem por notas e moedas, diferenças justificadas, fecho e reabertura autorizada com histórico.
+- Contagem guardada por meio de pagamento, numerário por valor total ou notas e moedas, diferenças justificadas, fecho e reabertura autorizada com histórico.
 - Movimentos confirmados imutáveis: estorno com motivo, sem eliminação do original.
 - Anexos privados PDF/JPG/PNG até 5 MB, máximo três por movimento.
 - Relatório de fecho PDF e exportação de movimentos CSV.
@@ -21,6 +21,16 @@ Funciona com React/TypeScript, FastAPI e PostgreSQL persistente:
 - Contratos independentes para futuras integrações Wintouch e bancos.
 
 Dinheiro guardado em **cêntimos inteiros**, sem ponto flutuante. A conversão de entrada usa Decimal. Datas guardadas com fuso horário e apresentadas em Europe/Lisbon.
+
+### Folha de caixa
+
+Em **Folha de caixa → Nova folha de caixa**, escolha caixa e dia, introduza o fundo de maneio inicial e escolha se inclui os recebimentos Wintouch. Nas folhas abertas existentes, **Dia e origens dos movimentos** permite ativar essa inclusão. A tabela calcula créditos, débitos e saldo por meio de pagamento, separa GPGest de Wintouch e adiciona o fundo inicial apenas ao numerário esperado.
+
+Os recebimentos Wintouch são os movimentos reais ativos já importados em **Integrações**, da empresa configurada, loja e dia escolhidos; a data do pagamento é interpretada em Europe/Lisbon quando inclui fuso horário. Sem fuso, conserva-se o dia indicado na origem. Documentos de venda e créditos pendentes não entram nesta contagem. Os recebimentos de uma loja/dia só podem pertencer a uma folha, incluindo depois do fecho. A Wintouch não fornece aqui a associação a uma caixa física: esta inclusão representa todos os recebimentos da loja nesse dia. Não duplique manualmente esses recebimentos no GPGest.
+
+Pode **Guardar contagem** sem fechar, conferir numerário pelo valor total ou por notas e moedas e introduzir valores líquidos conferidos no terminal/extrato para cartão, transferência e restantes meios. As diferenças são contado menos esperado, e exigem justificação no fecho. A interface pede a contagem de todos os meios; o contrato anterior de fecho apenas com numerário continua compatível e identifica os restantes como não contados.
+
+O fecho conserva na base de dados os valores esperados, contagens e origens apurados, também usados no PDF. Importações posteriores não alteram a folha fechada. Reabrir com autorização e motivo volta a calcular os valores atuais e conserva o fecho anterior na auditoria. Esta inclusão é uma projeção na folha e no saldo físico da sessão; não cria cópias dos movimentos Wintouch no livro de movimentos do GPGest.
 
 Não emite documentos fiscais. Não substitui o Wintouch. Cartões são recebimentos registados, não saldos bancários confirmados. O saldo do dashboard corresponde às sessões **abertas**, evitando somar novamente o dinheiro de sessões históricas fechadas.
 
@@ -89,12 +99,12 @@ Em **Movimentos reais**, o **Resumo por meio de pagamento** apresenta registos, 
 ## Guia de utilização
 
 1. **Configurações**: crie lojas, caixas, categorias e equipa. Um administrador tem acesso a todas as lojas; os restantes utilizadores recebem acesso explícito. Na criação pela interface escolhe-se uma loja; a API aceita várias `store_ids`.
-2. **Caixa diária**: abra uma caixa e introduza o fundo que realmente foi contado. Apenas uma sessão pode estar aberta por caixa.
+2. **Folha de caixa**: escolha caixa, dia e origens e introduza o fundo de maneio contado. Apenas uma folha pode estar aberta por caixa.
 3. **Movimentos reais**: transações efetivadas, com data, documento, entidade e meio de pagamento. Escolha a sessão, categoria, tipo e montante. Use **Anexos** para adicionar documentos privados.
 4. **Movimentos previstos**: registe documentos a crédito de clientes ou fornecedores, indicando loja, categoria, entidade, documento, vencimento e montante. **Liquidar** regista pagamentos parciais ou totais numa caixa aberta da mesma loja e cria o movimento real associado. Os previstos não entram nos totais financeiros antes da liquidação; estornar um pagamento repõe o respetivo saldo por liquidar. A importação automática de documentos financeiros Wintouch continua por implementar.
 4. Registe uma venda de 20 € em cartão: aparece nos totais de cartão, mas não aumenta o numerário esperado. Uma venda de 20 € em numerário aumenta-o.
 5. **Passar caixa**: escolha o novo operador e descreva a passagem. O novo responsável precisa de acesso à loja.
-6. **Fechar caixa**: introduza quantidades de notas e moedas. A aplicação calcula o total e a diferença. Se houver diferença, introduza uma justificação.
+6. **Guardar contagem / Fechar folha de caixa**: introduza numerário por total ou notas e moedas e confira os restantes meios. A aplicação calcula diferenças e exige justificação no fecho quando existem.
 7. Após o fecho, descarregue o PDF interno. A gestão pode reabrir com motivo; o fecho anterior fica na auditoria.
 8. Para corrigir um movimento, o gestor usa **Estornar** numa sessão aberta. As transferências são corrigidas com transferência inversa, preservando o par original.
 9. **Relatórios**: consulte auditoria e exporte movimentos CSV. Não são relatórios fiscais nem um resultado contabilístico.

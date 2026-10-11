@@ -17,6 +17,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import db as database
+from .cash_sheet import day as sheet_day_of
+from .cash_sheet import summary as sheet_summary
+from .cash_sheet import validate_count
 from .db import db_session
 from .models import (
     Access,
@@ -41,6 +44,8 @@ from .platform import router as platform_router
 from .platform_models import Company
 from .schemas import (
     BankCreate,
+    CashCount,
+    CashSources,
     CloseCash,
     Handover,
     Login,
@@ -237,6 +242,10 @@ def cash(db, user, session_id, write=False):
 
 
 def balance(db, session):
+    if session.wintouch_scope:
+        return next(
+            row["expected_cents"] for row in sheet_summary(db, session) if row["key"] == "numerario"
+        )
     return session.opening_cents + int(
         db.scalar(
             select(func.sum(Movement.direction * Movement.amount_cents)).where(
@@ -462,8 +471,31 @@ def sessions(user=Depends(current), db: Session = Depends(db_session)):
                 .group_by(Movement.payment)
             ).all()
         }
-        result.append({**serial(s), "balance_cents": balance(db, s), "totals": totals})
+        result.append(session_result(db, s, totals))
     return result
+
+
+def session_result(db, s, totals=None):
+    rows = sheet_summary(db, s)
+    counting = json.loads(s.count_data or "{}")
+    if s.closed_at and not counting:
+        counting = {
+            "values": {"numerario": s.counted_cents},
+            "counts": json.loads(s.denominations),
+            "reason": s.close_reason,
+            "cash_mode": "denominations",
+        }
+    return {
+        **serial(s),
+        "count_data": counting,
+        "balance_cents": next(row["expected_cents"] for row in rows if row["key"] == "numerario"),
+        "totals": totals if totals is not None else {row["key"]: row["net_cents"] for row in rows},
+        "sheet": {
+            "day": s.sheet_day or sheet_day_of(s.opened_at),
+            "include_wintouch": bool(s.wintouch_scope),
+            "rows": rows,
+        },
+    }
 
 
 @app.post("/api/sessions")
@@ -476,12 +508,92 @@ def open_session(data: OpenCash, user=Depends(current), db: Session = Depends(db
         select(CashSession).where(CashSession.register_id == r.id, CashSession.closed_at.is_(None))
     ):
         raise HTTPException(409, "Esta caixa já tem uma sessão aberta.")
-    s = CashSession(register_id=r.id, operator_id=user.id, opening_cents=cents(data.opening, True))
+    from zoneinfo import ZoneInfo
+
+    sheet_day = (data.sheet_day or now().astimezone(ZoneInfo("Europe/Lisbon")).date()).isoformat()
+    wintouch_scope, enterprise = sheet_source(db, r.store_id, sheet_day, data.include_wintouch)
+    s = CashSession(
+        register_id=r.id,
+        operator_id=user.id,
+        opening_cents=cents(data.opening, True),
+        sheet_day=sheet_day,
+        wintouch_scope=wintouch_scope,
+        wintouch_enterprise=enterprise,
+    )
     db.add(s)
     db.flush()
-    record(db, user, "abertura", s.id, {"opening_cents": s.opening_cents}, r.store_id)
+    record(
+        db,
+        user,
+        "abertura",
+        s.id,
+        {
+            "opening_cents": s.opening_cents,
+            "sheet_day": sheet_day,
+            "include_wintouch": data.include_wintouch,
+        },
+        r.store_id,
+    )
     db.commit()
     return serial(s)
+
+
+def sheet_source(db, store_id, sheet_day, include, exclude_id=None):
+    if not include:
+        return None, None
+    with database.next_platform_session() as core:
+        company = core.get(Company, db.info.get("company", {}).get("id"))
+        if not company or not company.api_enterprise:
+            raise HTTPException(
+                422, "Configure a ligação Wintouch desta empresa antes de incluir os recebimentos."
+            )
+        enterprise = company.api_enterprise
+    token = store_id + ":" + sheet_day
+    query = select(CashSession).where(CashSession.wintouch_scope == token)
+    if exclude_id:
+        query = query.where(CashSession.id != exclude_id)
+    if db.scalar(query):
+        raise HTTPException(
+            409, "Os recebimentos Wintouch deste dia já pertencem a outra folha desta loja."
+        )
+    return token, enterprise
+
+
+@app.post("/api/sessions/{session_id}/sources")
+def change_sheet_sources(
+    session_id: str, data: CashSources, user=Depends(current), db: Session = Depends(db_session)
+):
+    s, r = cash(db, user, session_id, True)
+    token, enterprise = sheet_source(
+        db, r.store_id, data.sheet_day.isoformat(), data.include_wintouch, s.id
+    )
+    previous = {"day": s.sheet_day, "include_wintouch": bool(s.wintouch_scope)}
+    s.sheet_day = data.sheet_day.isoformat()
+    s.wintouch_scope, s.wintouch_enterprise = token, enterprise
+    record(
+        db,
+        user,
+        "origens_folha_caixa",
+        s.id,
+        {"before": previous, "after": data.model_dump(mode="json")},
+        r.store_id,
+    )
+    db.commit()
+    return session_result(db, s)
+
+
+@app.post("/api/sessions/{session_id}/count")
+def save_count(
+    session_id: str, data: CashCount, user=Depends(current), db: Session = Depends(db_session)
+):
+    s, r = cash(db, user, session_id, True)
+    rows = sheet_summary(db, s)
+    counting = validate_count(data, rows, cents)
+    counting["updated_at"] = now().isoformat()
+    s.count_data = json.dumps(counting, ensure_ascii=False)
+    record(db, user, "contagem_guardada", s.id, counting, r.store_id)
+    db.commit()
+    return session_result(db, s)
 
 
 @app.post("/api/sessions/{session_id}/close")
@@ -492,15 +604,12 @@ def close_session(
     db: Session = Depends(db_session),
 ):
     s, r = cash(db, user, session_id, True)
-    if any(
-        not k.isdigit() or int(k) not in DENOMINATIONS or v < 0 or v > 100000
-        for k, v in data.counts.items()
-    ):
-        raise HTTPException(422, "Contagem de notas ou moedas inválida.")
-    counted = sum(int(k) * v for k, v in data.counts.items())
-    expected = balance(db, s)
-    if counted != expected and len(data.reason.strip()) < 5:
-        raise HTTPException(422, "Justifique a diferença antes de fechar a caixa.")
+    rows = sheet_summary(db, s)
+    counting = validate_count(data, rows, cents, closing=True)
+    counted = counting["values"]["numerario"]
+    expected = next(row["expected_cents"] for row in rows if row["key"] == "numerario")
+    counting.update(final=True, summary=rows, updated_at=now().isoformat())
+    s.count_data = json.dumps(counting, ensure_ascii=False)
     s.counted_cents = counted
     s.expected_cents = expected
     s.closed_at = now()
@@ -516,6 +625,7 @@ def close_session(
             "expected_cents": expected,
             "difference_cents": counted - expected,
             "reason": data.reason,
+            "payment_counts": counting["values"],
         },
         r.store_id,
     )
@@ -551,12 +661,17 @@ def reopen_session(
             "counted_cents": s.counted_cents,
             "expected_cents": s.expected_cents,
             "denominations": s.denominations,
+            "count_data": json.loads(s.count_data or "{}"),
         },
         r.store_id,
     )
     s.closed_at = None
     s.counted_cents = None
     s.expected_cents = None
+    counting = json.loads(s.count_data or "{}")
+    counting.pop("final", None)
+    counting.pop("summary", None)
+    s.count_data = json.dumps(counting, ensure_ascii=False)
     db.commit()
     return serial(s)
 
@@ -973,7 +1088,7 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
     def euro(v):
         return f"{Decimal(v) / 100:,.2f} EUR"
 
-    line("GPGest - Relatório interno de fecho de caixa")
+    line("GPGest - Folha de caixa / relatório interno de fecho")
     line("NÃO É UM DOCUMENTO FISCAL")
     if os.getenv("APP_MODE") == "demonstracao":
         line("DEMONSTRAÇÃO - dados de teste")
@@ -982,17 +1097,34 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
     line("Operador: " + db.get(User, s.operator_id).name)
     line("Sessão: " + s.id)
     line("Fecho: " + s.closed_at.astimezone(ZoneInfo("Europe/Lisbon")).strftime("%d/%m/%Y %H:%M"))
-    line("Fundo inicial: " + euro(s.opening_cents))
+    line("Dia da folha: " + (s.sheet_day or s.opened_at.date().isoformat()))
+    line("Fundo de maneio inicial: " + euro(s.opening_cents))
     line("Esperado: " + euro(s.expected_cents))
     line("Contado: " + euro(s.counted_cents))
     line("Diferença: " + euro(s.counted_cents - s.expected_cents))
-    totals = db.execute(
-        select(Movement.payment, func.sum(Movement.amount_cents * Movement.direction))
-        .where(Movement.session_id == s.id)
-        .group_by(Movement.payment)
-    ).all()
-    for payment, total in totals:
-        line(payment + ": " + euro(total))
+    counting = json.loads(s.count_data or "{}")
+    counted_values = counting.get("values", {"numerario": s.counted_cents})
+    line("Meios de pagamento (valores líquidos):")
+    for row in sheet_summary(db, s):
+        line(
+            row["name"]
+            + " - GPGest: "
+            + euro(row["local_cents"])
+            + " / Wintouch: "
+            + euro(row["wintouch_cents"])
+        )
+        line(
+            "  Créditos: " + euro(row["credits_cents"]) + " / Débitos: " + euro(row["debits_cents"])
+        )
+        counted_value = counted_values.get(row["key"])
+        line(
+            "  Esperado: "
+            + euro(row["expected_cents"])
+            + " / Conferido: "
+            + (euro(counted_value) if counted_value is not None else "Não contado")
+        )
+        if counted_value is not None:
+            line("  Diferença: " + euro(counted_value - row["expected_cents"]))
     line("Contagem de moedas e notas:")
     for value, count in json.loads(s.denominations).items():
         if count:
