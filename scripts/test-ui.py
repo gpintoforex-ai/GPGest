@@ -44,6 +44,7 @@ with Session(isolated) as db:
     db.add_all([user, store])
     db.flush()
     db.add(Register(store_id=store.id, name="Caixa de teste"))
+    db.add(Register(store_id=store.id, name="Caixa secundária"))
     db.add(Category(name="Vendas"))
     db.add(
         Company(
@@ -117,6 +118,7 @@ try:
         page.get_by_role("button", name="Nova folha de caixa", exact=True).click()
         dialog = page.get_by_role("dialog")
         dialog.get_by_label("Caixa", exact=True).select_option(label="Caixa de teste")
+        expect(dialog.get_by_label("Fundo de maneio inicial (€)")).to_have_value("0,00")
         dialog.get_by_label("Fundo de maneio inicial (€)").fill("100,00")
         dialog.get_by_role("button", name="Guardar", exact=True).click()
         expect(page.locator(".cash-value")).to_contain_text("105,00")
@@ -274,6 +276,20 @@ try:
         page.set_viewport_size({"width": 1440, "height": 1000})
         page.get_by_role("button", name="Fechar folha de caixa", exact=True).click()
         expect(page.get_by_role("link", name="Relatório PDF")).to_be_visible()
+        page.get_by_role("button", name="Nova folha de caixa", exact=True).click()
+        opening_dialog = page.get_by_role("dialog", name="Nova folha de caixa")
+        opening_dialog.get_by_label("Caixa", exact=True).select_option(label="Caixa de teste")
+        expect(opening_dialog.get_by_label("Fundo de maneio inicial (€)")).to_have_value("100,00")
+        opening_dialog.get_by_label("Fundo de maneio inicial (€)").fill("123,45")
+        opening_dialog.get_by_label("Caixa", exact=True).select_option(label="Caixa secundária")
+        expect(opening_dialog.get_by_label("Fundo de maneio inicial (€)")).to_have_value("0,00")
+        opening_dialog.get_by_label("Caixa", exact=True).select_option(label="Caixa de teste")
+        expect(opening_dialog.get_by_label("Fundo de maneio inicial (€)")).to_have_value("100,00")
+        opening_dialog.get_by_label("Fundo de maneio inicial (€)").fill("125,50")
+        opening_dialog.get_by_role("button", name="Guardar", exact=True).click()
+        expect(page.locator(".cash-sheet").first).to_contain_text("125,50")
+        saved_registers = page.request.get("http://127.0.0.1:5174/api/bootstrap").json()["registers"]
+        assert next(row for row in saved_registers if row["name"] == "Caixa de teste")["last_opening_cents"] == 12550
         page.get_by_role("button", name="Dashboard", exact=True).click()
         page.screenshot(
             path=str(root / ".local" / "dashboard-desktop.png"),

@@ -365,6 +365,13 @@ def change_password(
 @app.get("/api/bootstrap")
 def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
     ids = scope(user, db)
+    last_opening = (
+        select(CashSession.opening_cents)
+        .where(CashSession.register_id == Register.id)
+        .order_by(CashSession.opened_at.desc(), CashSession.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
     users = (
         list(db.scalars(select(User)))
         if user.role == "administrador"
@@ -376,7 +383,10 @@ def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
         "company": db.info.get("company", {}),
         "stores": [serial(s) for s in db.scalars(select(Store).where(Store.id.in_(ids)))],
         "registers": [
-            serial(r) for r in db.scalars(select(Register).where(Register.store_id.in_(ids)))
+            {**serial(r), "last_opening_cents": opening}
+            for r, opening in db.execute(
+                select(Register, last_opening).where(Register.store_id.in_(ids))
+            )
         ],
         "accounts": [
             serial(a) for a in db.scalars(select(BankAccount).where(BankAccount.store_id.in_(ids)))

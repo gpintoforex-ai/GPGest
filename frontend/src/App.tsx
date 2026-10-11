@@ -33,7 +33,7 @@ import PlannedMovements from "./PlannedMovements";
 import WintouchSales from "./WintouchSales";
 import RealMovements from "./RealMovements";
 import CashSheet from "./CashSheet";
-import { calendarDay } from "./RecordList";
+import OpenCashForm from "./OpenCashForm";
 type Bootstrap = {
   user: Row;
   mode: string;
@@ -353,7 +353,15 @@ export default function App() {
     ["Integrações", Plug],
     ["Configurações", Settings],
   ] as const;
-  const openModal = (kind: string, row: Row | null = null) => {
+  const openModal = async (kind: string, row: Row | null = null) => {
+    if (kind === "open") {
+      try {
+        await reload();
+      } catch (e) {
+        setError((e as Error).message);
+        return;
+      }
+    }
     setSelected(row);
     setRequestKey(crypto.randomUUID());
     setModal(kind);
@@ -1031,41 +1039,16 @@ export default function App() {
               />
             )}
             {modal === "open" && (
-              <Form onSubmit={(v) => save("/sessions", v)}>
-                <Field label="Caixa">
-                  <Select
-                    name="register_id"
-                    rows={boot.registers.filter(
-                      (r) =>
-                        !sessions.some(
-                          (s) => s.register_id === r.id && !s.closed_at,
-                        ),
-                    )}
-                  />
-                </Field>
-                <Field label="Fundo de maneio inicial (€)">
-                  <input
-                    name="opening"
-                    inputMode="decimal"
-                    required
-                    defaultValue="0,00"
-                  />
-                </Field>
-                <Field label="Dia da folha de caixa">
-                  <input
-                    type="date"
-                    name="sheet_day"
-                    defaultValue={calendarDay(new Date().toISOString())}
-                    required
-                  />
-                </Field>
-                <p className="footnote">
-                  O fundo de maneio é o numerário disponível no início. Os
-                  movimentos reais GPGest e os recebimentos Wintouch já
-                  importados são calculados automaticamente para a folha. Cada
-                  loja e dia pode incluir Wintouch numa única folha.
-                </p>
-              </Form>
+              <OpenCashForm
+                registers={boot.registers.filter(
+                  (r) =>
+                    !sessions.some(
+                      (s) => s.register_id === r.id && !s.closed_at,
+                    ),
+                )}
+                store={store}
+                onSubmit={(v) => save("/sessions", v)}
+              />
             )}
             {modal === "movement" && (
               <Form
