@@ -19,6 +19,7 @@ import {
   FileBarChart,
   Settings,
   Plug,
+  Monitor,
   LogOut,
   Menu,
   CheckCircle,
@@ -437,6 +438,10 @@ export default function App() {
     setModal(kind);
   };
   const filteredCash = open.reduce((sum, s) => sum + s.balance_cents, 0);
+  const integratedMode = boot.integration?.mode === "integrated";
+  const operatingMode = integratedMode
+    ? "Modo integrado com ERP"
+    : "Modo local autónomo";
   return (
     <div className={`shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       {mobile && <button className="sidebar-backdrop" aria-label="Fechar menu" onClick={() => setMobile(false)} />}
@@ -445,6 +450,16 @@ export default function App() {
           <span className="brand-full">GP<span>Gest</span></span>
           <span className="brand-compact" aria-label="GPGest">GP</span>
           <small>{boot.company?.name || "GESTÃO DE LOJA"}</small>
+        </div>
+        <div
+          className={`sidebar-mode ${integratedMode ? "integrated" : "local"}`}
+          role="status"
+          aria-label={`Modo configurado: ${operatingMode}`}
+          title={operatingMode}
+        >
+          {integratedMode ? <Plug size={16} aria-hidden="true" /> : <Monitor size={16} aria-hidden="true" />}
+          <span className="sidebar-mode-label">{operatingMode}</span>
+          <span className="sidebar-mode-compact" aria-hidden="true">{integratedMode ? "ERP" : "Local"}</span>
         </div>
         <button className="sidebar-collapse" aria-label={sidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}><Menu size={18} /><span className="nav-label">Recolher menu</span></button>
         <nav aria-label="Navegação principal">
