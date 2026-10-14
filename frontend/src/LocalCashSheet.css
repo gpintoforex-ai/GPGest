@@ -97,6 +97,16 @@
 .local-cash-context > div > strong {
   margin-top: 6px;
 }
+.local-cash-day-context {
+  align-items: end;
+  row-gap: 12px;
+}
+.local-cash-day-context .field {
+  margin-bottom: 0;
+}
+.local-cash-register-context {
+  flex-basis: 100%;
+}
 .local-cash-badge,
 .local-cash-state {
   display: inline-flex;

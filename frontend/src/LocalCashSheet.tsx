@@ -363,7 +363,7 @@ export default function LocalCashSheet({
         Vendas e recebimentos desta caixa neste dia. Os valores declarados são
         uma referência de conferência; guardar este registo não cria movimentos.
       </p>
-      <div className="local-cash-context">
+      <div className="local-cash-context local-cash-day-context">
         <Field label="Data">
           <input
             type="date"
@@ -372,12 +372,6 @@ export default function LocalCashSheet({
             onChange={(e) => setSourceDay(e.target.value)}
           />
         </Field>
-        <div>
-          <small>Caixa / estabelecimento</small>
-          <strong>
-            {register} · {store}
-          </strong>
-        </div>
         {editable && (
           <button
             disabled={busy || sourceDay === s.sheet.day || dirty}
@@ -399,6 +393,12 @@ export default function LocalCashSheet({
             Atualizar dia
           </button>
         )}
+        <div className="local-cash-register-context">
+          <small>Caixa / estabelecimento</small>
+          <strong>
+            {register} · {store}
+          </strong>
+        </div>
       </div>
       {editable && manager && (
         <div className="local-cash-methods">
