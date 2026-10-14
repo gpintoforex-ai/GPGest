@@ -6,10 +6,14 @@ type Row = Record<string, any>;
 export default function CashSheetList({
   rows,
   store,
+  information,
+  actions,
   children,
 }: {
   rows: Row[];
   store: string;
+  information?: ReactNode;
+  actions?: ReactNode;
   children: (row: Row) => ReactNode;
 }) {
   const [size, setSize] = useState(5);
@@ -23,23 +27,27 @@ export default function CashSheetList({
 
   return (
     <>
-      <div className="record-filters">
-        <label className="record-field">
-          Folhas por página
-          <select
-            value={size}
-            onChange={(e) => {
-              setSize(Number(e.target.value));
-              setPage(1);
-            }}
-          >
-            {[5, 10, 25, 50].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div className="cash-sheet-toolbar">
+        <div className="cash-page-controls">
+          <label className="record-field">
+            Folhas por página
+            <select
+              value={size}
+              onChange={(e) => {
+                setSize(Number(e.target.value));
+                setPage(1);
+              }}
+            >
+              {[5, 10, 25, 50].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          {information}
+        </div>
+        {actions}
       </div>
       <div className="cash-sheet-list">
         {rows.slice(start, start + size).map(children)}

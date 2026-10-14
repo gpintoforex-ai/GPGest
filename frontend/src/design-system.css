@@ -91,10 +91,13 @@ button:disabled { cursor: not-allowed; }
 .user-menu-panel { position: absolute; right: 0; top: calc(100% + 12px); width: 230px; display: grid; gap: 12px; padding: 16px; background: white; border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 8px 24px #14263f22; z-index: 20; }
 main { padding: 24px 28px 0; }
 .page-intro { gap: 20px; }
-.cash-page-heading { display: flex; align-items: center; gap: 10px; position: relative; }
-.cash-page-info > summary { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 6px; color: var(--color-primary); cursor: pointer; list-style: none; }
+.cash-sheet-toolbar { display: flex; align-items: end; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin: 0 0 22px; }
+.cash-page-controls { display: flex; align-items: end; gap: 12px; position: relative; }
+.cash-page-controls .record-field { display: grid; gap: 6px; width: 180px; }
+.cash-page-controls .record-field select { width: 100%; min-height: 42px; }
+.cash-page-info > summary { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border: 1px solid var(--color-primary); border-radius: 8px; color: white; background: var(--color-primary); box-shadow: 0 3px 8px #245fc52b; cursor: pointer; list-style: none; }
 .cash-page-info > summary::-webkit-details-marker { display: none; }
-.cash-page-info > summary:hover, .cash-page-info[open] > summary { background: #edf2fa; }
+.cash-page-info > summary:hover, .cash-page-info[open] > summary { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
 .cash-page-info > summary:focus-visible { outline: 3px solid #adc856; outline-offset: 2px; }
 .cash-page-info-content { position: absolute; top: calc(100% + 10px); left: 0; z-index: 15; width: 440px; max-width: calc(100vw - 60px); padding: 16px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface); box-shadow: var(--shadow-panel); }
 .cash-page-info-content p { margin: 0; font-size: 13px; }

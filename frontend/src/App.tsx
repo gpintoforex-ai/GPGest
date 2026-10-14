@@ -760,43 +760,41 @@ export default function App() {
           )}
           {page === "Folha de caixa" && (
             <>
-              <div className="page-intro">
-                <div>
-                  <div className="cash-page-heading">
-                    <h1>Folha de caixa</h1>
-                    <details
-                      className="cash-page-info"
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") {
-                          e.currentTarget.open = false;
-                          e.currentTarget.querySelector("summary")?.focus();
-                        }
-                      }}
-                    >
-                      <summary aria-label="Informação sobre a folha de caixa" title="Informação sobre a folha de caixa">
-                        <Info size={20} aria-hidden="true" />
-                      </summary>
-                      <div className="cash-page-info-content">
-                        <p>
-                          Fundo de maneio, movimentos por meio de pagamento e contagem
-                          com apuramento de diferenças.
-                        </p>
-                        <p>
-                          {boot.integration?.mode === "local"
-                            ? "Declare o realizado do dia e confira os recebimentos registados. Conte separadamente o numerário físico da gaveta."
-                            : "Os valores incluem os créditos e débitos reais da loja nesse dia, manuais e ERP. Introduza o fundo de maneio e a contagem."}
-                        </p>
-                      </div>
-                    </details>
-                  </div>
-                </div>
-                {write && (
+              <CashSheetList
+                rows={visibleSessions}
+                store={store}
+                information={
+                  <details
+                    className="cash-page-info"
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.currentTarget.open = false;
+                        e.currentTarget.querySelector("summary")?.focus();
+                      }
+                    }}
+                  >
+                    <summary aria-label="Informação sobre a folha de caixa" title="Informação sobre a folha de caixa">
+                      <Info size={22} aria-hidden="true" />
+                    </summary>
+                    <div className="cash-page-info-content">
+                      <p>
+                        Fundo de maneio, movimentos por meio de pagamento e contagem
+                        com apuramento de diferenças.
+                      </p>
+                      <p>
+                        {boot.integration?.mode === "local"
+                          ? "Declare o realizado do dia e confira os recebimentos registados. Conte separadamente o numerário físico da gaveta."
+                          : "Os valores incluem os créditos e débitos reais da loja nesse dia, manuais e ERP. Introduza o fundo de maneio e a contagem."}
+                      </p>
+                    </div>
+                  </details>
+                }
+                actions={write && (
                   <button className="primary" onClick={() => openModal("open")}>
                     <Plus size={18} /> Nova folha de caixa
                   </button>
                 )}
-              </div>
-              <CashSheetList rows={visibleSessions} store={store}>
+              >
                 {(s) => (
                   s.sheet.workflow_mode === "local" ? <LocalCashSheet
                     key={s.id} session={s} register={rname(s.register_id)}
