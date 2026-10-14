@@ -1,0 +1,7 @@
+.integration-settings > .panel { margin-bottom: 20px; }
+.integration-config-grid { border: 0; padding: 0; margin: 0; display: grid; gap: 14px; }
+.integration-resource { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.integration-capabilities { display: grid; gap: 12px; }
+.integration-capabilities > div { display: flex; justify-content: space-between; gap: 16px; }
+.integration-dialog { width: min(850px, calc(100vw - 32px)); }
+.operating-mode-label { display: block; margin-top: 4px; color: var(--color-muted); font-size: 11px; }

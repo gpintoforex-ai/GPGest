@@ -1,5 +1,21 @@
 # Importação de vendas Wintouch
 
+A importação inclui entradas e retiradas manuais de caixa através de
+`GET item_documents`, com `Payments,CEntity`. As classes 21 (entrada) e 22
+(retirada), respetivamente `CashFlowMode=1` e `-1`, foram confirmadas na API
+configurada. Os pagamentos usam os meios e estados já validados e entram nos
+Movimentos reais e na Folha de caixa com a origem Wintouch. Aberturas e fechos
+de caixa são excluídos, tal como documentos anulados ou fora do período.
+Reimportar atualiza os mesmos identificadores de pagamento, sem duplicação.
+
+Ao abrir uma folha de caixa, uma entrada de numerário Wintouch já importada,
+do dia e loja selecionados e ainda não usada noutra abertura, é sugerida como
+fundo inicial. O valor pode ser alterado pelo utilizador. A associação fica
+registada e essa entrada não volta a somar aos créditos da mesma folha nem ao
+saldo disponível da sessão. Com várias entradas possíveis não há seleção
+automática. O mapeamento existente das caixas Wintouch é respeitado; sem entrada
+adequada mantém-se a sugestão da última abertura local.
+
 Em **Integrações → Importar vendas Wintouch**, escolha loja e datas e execute **Importar vendas**. O administrador da empresa pode importar até um ano por execução. Em demonstração, o formulário exige confirmação explícita. A ligação e empresa API vêm exclusivamente da configuração central da empresa autenticada.
 
 ## Dados disponíveis

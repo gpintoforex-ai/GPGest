@@ -55,6 +55,7 @@ class Access(Base):
 
 
 class Register(Base):
+    currency: Mapped[str] = mapped_column(String(3), default="EUR", server_default="EUR")
     __tablename__ = "registers"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"))
@@ -62,6 +63,7 @@ class Register(Base):
 
 
 class BankAccount(Base):
+    currency: Mapped[str] = mapped_column(String(3), default="EUR", server_default="EUR")
     __tablename__ = "bank_accounts"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"))
@@ -70,7 +72,231 @@ class BankAccount(Base):
     iban_last4: Mapped[str] = mapped_column(String(4))
 
 
+class BankTransaction(Base):
+    __tablename__ = "bank_transactions"
+    __table_args__ = (UniqueConstraint("account_id", "fingerprint"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    account_id: Mapped[str] = mapped_column(ForeignKey("bank_accounts.id"), index=True)
+    movement_date: Mapped[str] = mapped_column(String(10))
+    value_date: Mapped[str] = mapped_column(String(10))
+    description: Mapped[str] = mapped_column(Text)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    balance_cents: Mapped[int] = mapped_column(BigInteger)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    source_account: Mapped[str] = mapped_column(String(100))
+    exported_at: Mapped[str] = mapped_column(String(19))
+    source_position: Mapped[int] = mapped_column(Integer)
+    import_id: Mapped[str | None] = mapped_column(ForeignKey("document_imports.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class Purchase(Base):
+    __tablename__ = "purchases"
+    __table_args__ = (UniqueConstraint("supplier_nif", "document_type", "document"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    supplier_nif: Mapped[str] = mapped_column(String(30))
+    supplier_name: Mapped[str] = mapped_column(String(300))
+    document: Mapped[str] = mapped_column(String(100))
+    document_type: Mapped[str] = mapped_column(String(10), default="FT")
+    document_date: Mapped[str] = mapped_column(String(10))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    tax_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    base_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    import_id: Mapped[str | None] = mapped_column(ForeignKey("document_imports.id"), nullable=True)
+    origin: Mapped[str] = mapped_column(String(20), default="manual")
+    validated: Mapped[bool] = mapped_column(Boolean, default=False)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class DocumentImport(Base):
+    __tablename__ = "document_imports"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    filename: Mapped[str] = mapped_column(String(200))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(30))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class DocumentState(Base):
+    __tablename__ = "document_states"
+    purchase_id: Mapped[str] = mapped_column(ForeignKey("purchases.id"), primary_key=True)
+    availability: Mapped[str] = mapped_column(String(30), default="por_verificar")
+    location: Mapped[str] = mapped_column(String(500), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verified_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    treatment: Mapped[str] = mapped_column(String(30), default="por_tratar")
+    treatment_reason: Mapped[str] = mapped_column(Text, default="")
+    accounting: Mapped[str] = mapped_column(String(30), default="por_preparar")
+    accounting_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accounting_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
+
+
+class ERPDocument(Base):
+    __tablename__ = "erp_documents"
+    __table_args__ = (UniqueConstraint("enterprise_id", "external_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    enterprise_id: Mapped[str] = mapped_column(String(100))
+    external_id: Mapped[str] = mapped_column(String(200))
+    supplier_nif: Mapped[str] = mapped_column(String(30))
+    supplier_name: Mapped[str] = mapped_column(String(300))
+    document: Mapped[str] = mapped_column(String(100))
+    internal_document: Mapped[str] = mapped_column(String(200))
+    document_type: Mapped[str] = mapped_column(String(10))
+    document_date: Mapped[str] = mapped_column(String(10))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    base_cents: Mapped[int | None] = mapped_column(BigInteger)
+    tax_cents: Mapped[int | None] = mapped_column(BigInteger)
+    cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class DocumentERPLink(Base):
+    __tablename__ = "document_erp_links"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    purchase_id: Mapped[str] = mapped_column(ForeignKey("purchases.id"), index=True)
+    erp_id: Mapped[str] = mapped_column(ForeignKey("erp_documents.id"), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        Index(
+            "one_active_document_erp_link",
+            "purchase_id",
+            unique=True,
+            postgresql_where=text("undone_at IS NULL"),
+            sqlite_where=text("undone_at IS NULL"),
+        ),
+        Index(
+            "one_active_erp_document_link",
+            "erp_id",
+            unique=True,
+            postgresql_where=text("undone_at IS NULL"),
+            sqlite_where=text("undone_at IS NULL"),
+        ),
+    )
+
+
+class ExpenseDraft(Base):
+    __tablename__ = "expense_drafts"
+    purchase_id: Mapped[str] = mapped_column(ForeignKey("purchases.id"), primary_key=True)
+    payload: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="preparado")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DocumentPayment(Base):
+    __tablename__ = "document_payments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    payment_date: Mapped[str] = mapped_column(String(10))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    direction: Mapped[int] = mapped_column(Integer)
+    entity: Mapped[str] = mapped_column(String(300), default="")
+    reference: Mapped[str] = mapped_column(String(200), default="")
+    kind: Mapped[str] = mapped_column(String(30), default="pagamento")
+    method: Mapped[str] = mapped_column(String(20), default="transferencia")
+    source: Mapped[str] = mapped_column(String(20), default="manual")
+    source_id: Mapped[str | None] = mapped_column(String(36))
+    request_key: Mapped[str] = mapped_column(String(100), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (
+        CheckConstraint("amount_cents > 0"),
+        CheckConstraint("direction IN (-1,1)"),
+        UniqueConstraint("source", "source_id"),
+    )
+
+
+class PaymentDocumentLine(Base):
+    __tablename__ = "payment_document_lines"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    payment_id: Mapped[str] = mapped_column(ForeignKey("document_payments.id"), index=True)
+    purchase_id: Mapped[str] = mapped_column(ForeignKey("purchases.id"), index=True)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    __table_args__ = (
+        UniqueConstraint("payment_id", "purchase_id"),
+        CheckConstraint("amount_cents > 0"),
+    )
+
+
+class PurchaseAttachment(Base):
+    __tablename__ = "purchase_attachments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    purchase_id: Mapped[str] = mapped_column(ForeignKey("purchases.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    mime: Mapped[str] = mapped_column(String(100))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class PurchaseAllocation(Base):
+    __tablename__ = "purchase_allocations"
+    __table_args__ = (
+        UniqueConstraint("purchase_id", "transaction_id"),
+        CheckConstraint("amount_cents > 0"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    purchase_id: Mapped[str] = mapped_column(ForeignKey("purchases.id"), index=True)
+    transaction_id: Mapped[str] = mapped_column(ForeignKey("bank_transactions.id"), index=True)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class Reconciliation(Base):
+    __tablename__ = "reconciliations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    commission_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    difference_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ReconciliationLine(Base):
+    __tablename__ = "reconciliation_lines"
+    __table_args__ = (
+        UniqueConstraint("reconciliation_id", "source", "source_id"),
+        CheckConstraint("amount_cents > 0"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    reconciliation_id: Mapped[str] = mapped_column(ForeignKey("reconciliations.id"), index=True)
+    source: Mapped[str] = mapped_column(String(20))
+    source_id: Mapped[str] = mapped_column(String(36), index=True)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+
+
+class ReconciliationIgnore(Base):
+    __tablename__ = "reconciliation_ignores"
+    __table_args__ = (UniqueConstraint("source", "source_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    source: Mapped[str] = mapped_column(String(20))
+    source_id: Mapped[str] = mapped_column(String(36))
+    reason: Mapped[str] = mapped_column(Text)
+
+
+class EfaturaConfig(Base):
+    __tablename__ = "efatura_config"
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), primary_key=True)
+    nif: Mapped[str] = mapped_column(String(9))
+    username: Mapped[str] = mapped_column(String(40))
+    password_ciphertext: Mapped[str] = mapped_column(Text)
+    environment: Mapped[str] = mapped_column(String(20), default="testes")
+
+
 class Category(Base):
+    cash_difference: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    __table_args__ = (Index("uq_category_cash_difference", "cash_difference", unique=True, postgresql_where=text("cash_difference = true")),)
+    icon: Mapped[str] = mapped_column(String(40), default="tag", server_default="tag")
+    color: Mapped[str] = mapped_column(String(7), default="#245fc5", server_default="#245fc5")
     __tablename__ = "categories"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     name: Mapped[str] = mapped_column(String(100), unique=True)
@@ -106,7 +332,7 @@ class CashSession(Base):
 class Movement(Base):
     __tablename__ = "movements"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    session_id: Mapped[str] = mapped_column(ForeignKey("cash_sessions.id"))
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("cash_sessions.id"), nullable=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
     kind: Mapped[str] = mapped_column(String(40))
@@ -158,6 +384,84 @@ class Audit(Base):
     target_id: Mapped[str] = mapped_column(String(100))
     detail: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class LiquiditySettings(Base):
+    __tablename__ = "liquidity_settings"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default="default")
+    reserves: Mapped[str] = mapped_column(Text, default='{"EUR":0}')
+    stale_days: Mapped[int] = mapped_column(Integer, default=7)
+
+
+class LiquidityManual(Base):
+    __tablename__ = "liquidity_manual"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    data: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class LiquidityAdjustment(Base):
+    __tablename__ = "liquidity_adjustments"
+    source_key: Mapped[str] = mapped_column(String(180), primary_key=True)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    data: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class LiquidityScenario(Base):
+    __tablename__ = "liquidity_scenarios"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String(100))
+    shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    data: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class LiquiditySettlement(Base):
+    __tablename__ = "liquidity_settlements"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    source_key: Mapped[str] = mapped_column(String(180), index=True)
+    target: Mapped[str] = mapped_column(String(80))
+    payment_id: Mapped[str] = mapped_column(ForeignKey("document_payments.id"), unique=True)
+    movement_id: Mapped[str | None] = mapped_column(ForeignKey("movements.id"), nullable=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    origin_data: Mapped[str] = mapped_column(Text)
+    request_key: Mapped[str] = mapped_column(String(100), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class IntegrationBinding(Base):
+    __tablename__ = "integration_bindings"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    company_id: Mapped[str] = mapped_column(String(36))
+    connector: Mapped[str] = mapped_column(String(40))
+    external_kind: Mapped[str] = mapped_column(String(40))
+    external_id: Mapped[str] = mapped_column(String(200))
+    internal_kind: Mapped[str] = mapped_column(String(40))
+    internal_id: Mapped[str] = mapped_column(String(36))
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    external_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="confirmed")
+    local_data: Mapped[str] = mapped_column(Text, default="{}")
+    __table_args__ = (UniqueConstraint("company_id", "connector", "external_kind", "external_id"), UniqueConstraint("company_id", "connector", "internal_kind", "internal_id"))
+
+
+class AccountBalanceReference(Base):
+    __tablename__ = "account_balance_references"
+    target: Mapped[str] = mapped_column(String(80), primary_key=True)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    fund_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    currency: Mapped[str] = mapped_column(String(3), default="EUR")
+    reference_date: Mapped[str] = mapped_column(String(10))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class LoginSession(Base):
@@ -377,3 +681,296 @@ class WintouchMovement(WintouchRecord, Base):
         CheckConstraint("direction IS NULL OR direction IN (-1,1)", name="wt_movement_direction"),
         Index("wt_movements_date", "occurred_at"),
     )
+
+
+class BusinessEntity(Base):
+    __tablename__ = "business_entities"
+    category_id: Mapped[str | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    removed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    wintouch_id: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True)
+    name: Mapped[str] = mapped_column(String(300))
+    tax_number: Mapped[str] = mapped_column(String(40), default="")
+    email: Mapped[str] = mapped_column(String(200), default="")
+    phone: Mapped[str] = mapped_column(String(60), default="")
+    is_customer: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_supplier: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AttachmentIntegrationConfig(Base):
+    __tablename__ = "attachment_integration_config"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
+    outlook_email: Mapped[str] = mapped_column(String(200), default="")
+    google_email: Mapped[str] = mapped_column(String(200), default="")
+    drive_folder: Mapped[str] = mapped_column(String(300), default="")
+    mail_folder: Mapped[str] = mapped_column(String(100), default="inbox")
+
+
+class DocumentScanSettings(Base):
+    __tablename__ = "document_scan_settings"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
+    max_pages: Mapped[int] = mapped_column(Integer, default=20)
+    max_bytes: Mapped[int] = mapped_column(Integer, default=5 * 1024 * 1024)
+    organisation: Mapped[str] = mapped_column(String(30), default="company_period_type")
+
+
+class DocumentScan(Base):
+    __tablename__ = "document_scans"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    request_key: Mapped[str] = mapped_column(String(100), unique=True)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    purchase_id: Mapped[str | None] = mapped_column(ForeignKey("purchases.id"), nullable=True)
+    movement_id: Mapped[str | None] = mapped_column(ForeignKey("movements.id"), nullable=True)
+    attachment_id: Mapped[str | None] = mapped_column(ForeignKey("drive_document_attachments.id"), nullable=True)
+    provider: Mapped[str] = mapped_column(String(40), default="google_drive")
+    account: Mapped[str] = mapped_column(String(200), default="")
+    root_folder: Mapped[str] = mapped_column(String(200), default="")
+    drive_folder: Mapped[str] = mapped_column(String(200), default="")
+    drive_id: Mapped[str] = mapped_column(String(200), default="")
+    name: Mapped[str] = mapped_column(String(200))
+    mime: Mapped[str] = mapped_column(String(100), default="application/pdf")
+    digest: Mapped[str] = mapped_column(String(64), index=True)
+    size: Mapped[int] = mapped_column(Integer)
+    pages: Mapped[int] = mapped_column(Integer)
+    document_date: Mapped[str] = mapped_column(String(10), index=True)
+    data: Mapped[str] = mapped_column(Text)
+    pdf_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="pdf_generated")
+    validation_status: Mapped[str] = mapped_column(String(30), default="por_validar")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ScanCloudFolder(Base):
+    __tablename__ = "scan_cloud_folders"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    account: Mapped[str] = mapped_column(String(200))
+    parent_id: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(String(200))
+    drive_id: Mapped[str] = mapped_column(String(200))
+    __table_args__ = (UniqueConstraint("account", "parent_id", "name"),)
+
+
+class BankDeposit(Base):
+    __tablename__ = "bank_deposits"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    number: Mapped[str] = mapped_column(String(40), unique=True)
+    request_key: Mapped[str] = mapped_column(String(100), unique=True)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    register_id: Mapped[str] = mapped_column(ForeignKey("registers.id"))
+    account_id: Mapped[str] = mapped_column(ForeignKey("bank_accounts.id"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    preparation_date: Mapped[str] = mapped_column(String(10))
+    exit_date: Mapped[str | None] = mapped_column(String(10))
+    delivery_date: Mapped[str | None] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(30), default="rascunho")
+    cash_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
+    cheque_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
+    details: Mapped[str] = mapped_column(Text, default="{}")
+    reference: Mapped[str] = mapped_column(String(200), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    movement_id: Mapped[str | None] = mapped_column(ForeignKey("movements.id"))
+    reversal_id: Mapped[str | None] = mapped_column(ForeignKey("movements.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class DepositCheque(Base):
+    __tablename__ = "deposit_cheques"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    deposit_id: Mapped[str] = mapped_column(ForeignKey("bank_deposits.id"), index=True)
+    identity: Mapped[str] = mapped_column(String(300))
+    number: Mapped[str] = mapped_column(String(100))
+    bank: Mapped[str] = mapped_column(String(100))
+    amount: Mapped[Decimal] = mapped_column(Numeric(16, 2))
+    cheque_date: Mapped[str] = mapped_column(String(10))
+    issuer: Mapped[str] = mapped_column(String(200), default="")
+    receipt_id: Mapped[str | None] = mapped_column(ForeignKey("document_payments.id"))
+    source_receipt: Mapped[str | None] = mapped_column(String(200))
+    notes: Mapped[str] = mapped_column(Text, default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        Index("deposit_cheque_active_identity", "identity", unique=True, postgresql_where=text("active"), sqlite_where=text("active")),
+        Index("deposit_cheque_active_receipt", "receipt_id", unique=True, postgresql_where=text("active AND receipt_id IS NOT NULL"), sqlite_where=text("active AND receipt_id IS NOT NULL")),
+        Index("deposit_cheque_active_source", "source_receipt", unique=True, postgresql_where=text("active AND source_receipt IS NOT NULL"), sqlite_where=text("active AND source_receipt IS NOT NULL")),
+    )
+
+
+class DepositCredit(Base):
+    __tablename__ = "deposit_credits"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    deposit_id: Mapped[str] = mapped_column(ForeignKey("bank_deposits.id"), index=True)
+    transaction_id: Mapped[str] = mapped_column(ForeignKey("bank_transactions.id"), index=True)
+    cheque_id: Mapped[str | None] = mapped_column(ForeignKey("deposit_cheques.id"))
+    amount: Mapped[Decimal] = mapped_column(Numeric(16, 2))
+    kind: Mapped[str] = mapped_column(String(20), default="credito")
+    request_key: Mapped[str] = mapped_column(String(100), unique=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DepositAttachment(Base):
+    __tablename__ = "deposit_attachments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    deposit_id: Mapped[str] = mapped_column(ForeignKey("bank_deposits.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    mime: Mapped[str] = mapped_column(String(100))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    validated_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class CategoryIntegrationLink(Base):
+    __tablename__ = "category_integration_links"
+    __table_args__ = (UniqueConstraint("provider", "enterprise_id", "category_id"), UniqueConstraint("provider", "enterprise_id", "external_id"))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
+    provider: Mapped[str] = mapped_column(String(40))
+    enterprise_id: Mapped[str] = mapped_column(String(100))
+    external_id: Mapped[str] = mapped_column(String(200))
+    external_code: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(30))
+    payload: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class AccountingPeriod(Base):
+    __tablename__ = "accounting_periods"
+    __table_args__ = (UniqueConstraint("vat_period", "year", "number"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    vat_period: Mapped[str] = mapped_column(String(20))
+    year: Mapped[int] = mapped_column(Integer)
+    number: Mapped[int] = mapped_column(Integer)
+    start: Mapped[str] = mapped_column(String(10))
+    end: Mapped[str] = mapped_column(String(10))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+
+
+class CompanyFiscalSettings(Base):
+    __tablename__ = "company_fiscal_settings"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
+    vat_period: Mapped[str] = mapped_column(String(20), default="", server_default="")
+
+
+class GoogleConnection(Base):
+    __tablename__ = "google_connections"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
+    token_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    state_hash: Mapped[str] = mapped_column(String(64), default="")
+    email: Mapped[str] = mapped_column(String(200), default="")
+
+
+class GoogleInvoiceFile(Base):
+    __tablename__ = "google_invoice_files"
+    __table_args__ = (UniqueConstraint("account", "message_id", "part_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    account: Mapped[str] = mapped_column(String(200))
+    message_id: Mapped[str] = mapped_column(String(200))
+    part_id: Mapped[str] = mapped_column(String(200))
+    attachment_key: Mapped[str] = mapped_column(Text, default="")
+    name: Mapped[str] = mapped_column(String(200))
+    sender: Mapped[str] = mapped_column(String(500), default="")
+    subject: Mapped[str] = mapped_column(String(500), default="")
+    received_at: Mapped[str] = mapped_column(String(40), default="")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    mime: Mapped[str] = mapped_column(String(100), default="")
+    digest: Mapped[str] = mapped_column(String(64), default="", index=True)
+    data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    extracted_text: Mapped[str] = mapped_column(Text, default="")
+    drive_id: Mapped[str] = mapped_column(String(200), default="")
+    drive_folder: Mapped[str] = mapped_column(String(200), default="")
+    uploaded: Mapped[bool] = mapped_column(Boolean, default=False)
+    attachment_id: Mapped[str | None] = mapped_column(
+        ForeignKey("purchase_attachments.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class DriveDocumentAttachment(Base):
+    __tablename__ = "drive_document_attachments"
+    __table_args__ = (UniqueConstraint("account", "drive_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    purchase_id: Mapped[str] = mapped_column(ForeignKey("purchases.id"), index=True)
+    account: Mapped[str] = mapped_column(String(200))
+    drive_id: Mapped[str] = mapped_column(String(200))
+    drive_folder: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(String(200))
+    mime: Mapped[str] = mapped_column(String(100))
+    digest: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class InvoiceWorkflowSettings(Base):
+    __tablename__ = "invoice_workflow_settings"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
+    folders: Mapped[str] = mapped_column(Text, default="[]")
+    tolerance_cents: Mapped[int] = mapped_column(Integer, default=2)
+    ocr_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    window_days: Mapped[int] = mapped_column(Integer, default=90)
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    demo_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+
+class InvoiceWorkflowCheck(Base):
+    __tablename__ = "invoice_workflow_checks"
+    purchase_id: Mapped[str] = mapped_column(ForeignKey("purchases.id"), primary_key=True)
+    erp_state: Mapped[str] = mapped_column(String(30), default="unknown")
+    drive_state: Mapped[str] = mapped_column(String(30), default="unknown")
+    erp_candidates: Mapped[str] = mapped_column(Text, default="[]")
+    drive_candidates: Mapped[str] = mapped_column(Text, default="[]")
+    messages: Mapped[str] = mapped_column(Text, default="[]")
+    supplier: Mapped[str] = mapped_column(Text, default="{}")
+    proposal: Mapped[str] = mapped_column(Text, default="{}")
+    proposal_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    proposal_reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class InvoiceEvidenceCache(Base):
+    __tablename__ = "invoice_evidence_cache"
+    __table_args__ = (UniqueConstraint("account", "drive_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    account: Mapped[str] = mapped_column(String(200))
+    drive_id: Mapped[str] = mapped_column(String(200))
+    folder: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(String(200))
+    mime: Mapped[str] = mapped_column(String(100))
+    version: Mapped[str] = mapped_column(String(500))
+    digest: Mapped[str] = mapped_column(String(64), default="")
+    evidence: Mapped[str] = mapped_column(Text, default="{}")
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class InvoiceEvidenceValidation(Base):
+    __tablename__ = "invoice_evidence_validations"
+    purchase_id: Mapped[str] = mapped_column(ForeignKey("purchases.id"), primary_key=True)
+    attachment_key: Mapped[str] = mapped_column(String(240), primary_key=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(20))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class InvoiceWorkflowRun(Base):
+    __tablename__ = "invoice_workflow_runs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    stores: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="em_curso")
+    source: Mapped[str] = mapped_column(String(20), default="manual")
+    start_date: Mapped[str] = mapped_column(String(10))
+    end_date: Mapped[str] = mapped_column(String(10))
+    detail: Mapped[str] = mapped_column(Text, default="{}")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

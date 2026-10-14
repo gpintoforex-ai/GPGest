@@ -1,5 +1,14 @@
 # GPGest
 
+Digitalizar fotografias e PDFs para anexos e dossiês: [guia de digitalização](docs/DIGITALIZACAO-DOCUMENTOS.md).
+Conferir e-Fatura, anexos e ERP: [assistente e-Fatura](docs/ASSISTENTE-EFATURA.md).
+
+Consulte o [guia dos modos local e integrado](docs/MODOS-FUNCIONAMENTO.md) e a
+[arquitetura local e evolução para vários ERP](docs/ARQUITETURA-LOCAL-ERP.md)
+para o contrato comum de conectores, o funcionamento local e os passos necessários
+para suportar várias ligações por empresa. Para arrancar neste computador, execute
+`Iniciar.bat`.
+
 Aplicação de gestão financeira e operacional em português de Portugal. Projeto em `C:\Projetos\Site Loja\GPGest`, independente do site Desafio Salutar.
 
 ## Entrega atual — Fase 1

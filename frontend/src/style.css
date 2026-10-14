@@ -682,8 +682,9 @@ footer {
 }
 .login-story p {
   color: #aac3b3;
-  max-width: 350px;
+  max-width: 480px;
   font-size: 16px;
+  line-height: 1.65;
 }
 .login-note {
   margin-top: 60px;
@@ -836,7 +837,10 @@ footer {
   .login-story h1 {
     font-size: 27px;
   }
-  .login-story p,
+  .login-story p {
+    max-width: none;
+    font-size: 14px;
+  }
   .login-note {
     display: none;
   }
@@ -872,6 +876,81 @@ footer {
 .platform-editor {
   margin-bottom: 24px;
 }
+.company-config-dialog {
+  width: min(920px, calc(100vw - 48px));
+  max-height: min(880px, calc(100dvh - 48px));
+  margin: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 15px;
+  overflow: auto;
+  box-shadow: 0 20px 80px #0003;
+  color: inherit;
+}
+.company-config-dialog::backdrop {
+  background: #102e2770;
+  backdrop-filter: blur(4px);
+}
+.company-config-dialog .platform-editor {
+  margin: 0;
+  padding: 24px;
+  border: 0;
+}
+.company-config-dialog .platform-editor > .panel-title {
+  position: sticky;
+  top: -24px;
+  z-index: 1;
+  margin: -24px -24px 20px;
+  padding: 18px 24px;
+  background: white;
+  border-bottom: 1px solid #e0e7e1;
+}
+.company-config-dialog .platform-editor > form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #e0e7e1;
+}
+.company-config-dialog .platform-editor > form > * {
+  grid-column: 1 / -1;
+}
+.company-config-dialog .platform-editor > form > .field {
+  grid-column: auto;
+  margin-bottom: 0;
+}
+.company-config-dialog .checkbox {
+  margin: 4px 0;
+  align-items: flex-start;
+}
+.company-config-dialog input:not([type="checkbox"]) {
+  min-width: 0;
+}
+.company-config-dialog .footnote {
+  margin: 4px 0;
+}
+.company-removal {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #e0e7e1;
+}
+.company-removal > button {
+  color: #b42318;
+  border-color: #b42318;
+}
+@media (max-width: 640px) {
+  .company-config-dialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+  .company-config-dialog .platform-editor > form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .company-config-dialog .platform-editor {
+    overflow-wrap: anywhere;
+  }
+}
 .checkbox {
   display: flex;
   align-items: center;
@@ -890,3 +969,34 @@ footer {
     padding: 16px;
   }
 }
+
+.erp-status { display: inline-block; padding: 5px 10px; border-radius: 8px; font-weight: 600; line-height: 1.4; }
+.erp-status-confirmada { color: #166534; background: #dcfce7; }
+.erp-status-sem_correspondencia, .erp-status-divergencias { color: #991b1b; background: #fee2e2; }
+.erp-status-sugerida { color: #854d0e; background: #fef3c7; }
+.panel.erp-match-confident { background: #f0fdf4; border: 2px solid #86c99a; border-left: 5px solid #228044; }
+.erp-match-confident h4 { color: #166534; }
+.panel.erp-match-review { background: #fffbeb; border: 2px solid #f4d36b; border-left: 5px solid #d6a000; }
+.erp-match-review h4 { color: #854d0e; }
+.erp-candidate-row { background: #f1f6f3; }
+.erp-candidate-row td:first-child { padding-left: 28px; border-left: 3px solid #8eafa0; }
+.erp-candidate-row td { font-size: .9em; }
+.erp-invoice-box { border: 1px solid #d9dfdc; }
+.erp-invoice-box + .erp-invoice-box { border-top: 8px solid white; }
+.erp-invoice-box td { border-bottom: none; }
+.erp-invoice-box td[rowspan] { vertical-align: middle; }
+.erp-invoice-box .erp-candidate-row td:first-child { border-left: none; }
+.erp-review-button { background: #fee2e2; border-color: #dc2626; color: #991b1b; font-weight: 600; }
+.erp-review-button:hover:not(:disabled) { background: #fecaca; border-color: #b91c1c; }
+
+.erp-confirm-button { background: #166534; border-color: #166534; color: #fff; font-weight: 600; }
+.erp-confirm-button:hover:not(:disabled) { background: #14532d; border-color: #14532d; }
+
+.erp-invoice-safe { background: #f0fdf4; border-color: #86c99a; }
+.erp-invoice-review { background: #fffbeb; border-color: #f4d36b; }
+.erp-invoice-missing { background: #fff1f2; border-color: #f3a6ae; }
+.erp-invoice-box .erp-candidate-row { background: transparent; }
+.field-validation { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-left: 5px; border: 1px solid; border-radius: 50%; font-weight: 700; font-size: 13px; line-height: 1; vertical-align: middle; flex-shrink: 0; }
+.field-valid { color: #166534; background: #dcfce7; border-color: #a7d8b5; }
+.field-invalid { color: #991b1b; background: #fee2e2; border-color: #efb4b4; }
+.erp-confirmation-notice { padding: 12px 16px; border: 1px solid #a7d8b5; border-radius: 8px; background: #dcfce7; color: #166534; font-weight: 600; }

@@ -11,7 +11,7 @@ import pytest
 
 @pytest.mark.parametrize("counted,direction", [("95", -1), ("105", 1)])
 def test_close_difference_movement_and_reopen(setup, counted, direction):
-    c, ids, _ = setup
+    c, ids, factory = setup
     session = open_cash(c, ids["registers"][0]).json()["id"]
     payload = {"cash_total": counted, "reason": "Conferência de caixa"}
     assert c.post(f"/api/sessions/{session}/close", json=payload).status_code == 200
@@ -25,11 +25,64 @@ def test_close_difference_movement_and_reopen(setup, counted, direction):
     assert c.post(f"/api/sessions/{session}/close", json=payload).status_code == 409
     assert len(c.get("/api/movements").json()) == 1
     assert c.post(f"/api/sessions/{session}/reopen", json={"reason": "Recontar"}).status_code == 200
+    assert c.get("/api/movements").json() == []
     assert by_key(c.get("/api/sessions").json()[0])["numerario"]["expected_cents"] == 10000
+    reopened_cash = by_key(c.get("/api/sessions").json()[0])["numerario"]
+    assert reopened_cash["credits_cents"] == 0
+    assert reopened_cash["debits_cents"] == 0
     assert c.post(f"/api/sessions/{session}/close", json={"cash_total": "100"}).status_code == 200
     rows = c.get("/api/movements").json()
-    assert len(rows) == 2
-    assert sum(m["direction"] * m["amount_cents"] for m in rows) == 0
+    assert rows == []
+    with factory() as db:
+        original = db.get(Movement, adjustment["id"])
+        reversal = db.get(Movement, original.reversed_by)
+        assert reversal.reversal_of == original.id
+        assert reversal.direction * reversal.amount_cents + original.direction * original.amount_cents == 0
+    assert c.post(f"/api/sessions/{session}/reopen", json={"reason": "Recontar novamente"}).status_code == 200
+    assert c.post(f"/api/sessions/{session}/close", json=payload).status_code == 200
+    current = c.get("/api/movements").json()
+    assert len(current) == 1 and current[0]["id"] != adjustment["id"]
+
+
+def test_selected_difference_rubric_and_switch_preserve_history(setup):
+    c, ids, factory = setup
+    first = c.post("/api/categories", json={"name": "Sobras e faltas", "cash_difference": True}).json()
+    second = c.post("/api/categories", json={"name": "Acertos de caixa"}).json()
+    session = open_cash(c, ids["registers"][0]).json()["id"]
+    assert c.post(f"/api/sessions/{session}/close", json={"cash_total": "95", "reason": "Diferença confirmada"}).status_code == 200
+    adjustment = next(row for row in c.get("/api/movements").json() if row["kind"] == "diferenca_caixa")
+    assert adjustment["category_id"] == first["id"]
+    result = c.post(f"/api/categories/{second['id']}", json={"name": second["name"], "cash_difference": True})
+    assert result.status_code == 200, result.text
+    categories = c.get("/api/categories").json()
+    assert [row["id"] for row in categories if row["cash_difference"]] == [second["id"]]
+    assert next(row for row in c.get("/api/movements").json() if row["id"] == adjustment["id"])["category_id"] == first["id"]
+
+
+def test_unconfigured_difference_uses_named_rubric(setup):
+    c, ids, factory = setup
+    session = open_cash(c, ids["registers"][0]).json()["id"]
+    assert c.post(f"/api/sessions/{session}/close", json={"cash_total": "105", "reason": "Sobra confirmada"}).status_code == 200
+    adjustment = next(row for row in c.get("/api/movements").json() if row["kind"] == "diferenca_caixa")
+    category = next(row for row in c.get("/api/categories").json() if row["id"] == adjustment["category_id"])
+    assert category["name"] == "Diferenças de caixa" and category["cash_difference"]
+
+
+def test_reopen_difference_without_snapshot_reference(setup):
+    c, ids, factory = setup
+    session = open_cash(c, ids["registers"][0]).json()["id"]
+    assert c.post(f"/api/sessions/{session}/close", json={"cash_total": "102", "reason": "Conferência"}).status_code == 200
+    adjustment = c.get("/api/movements").json()[0]
+    with factory.begin() as db:
+        cash_session = db.get(CashSession, session)
+        snapshot = json.loads(cash_session.count_data)
+        snapshot.pop("adjustment_id")
+        cash_session.count_data = json.dumps(snapshot)
+    assert c.post(f"/api/sessions/{session}/reopen", json={"reason": "Rever fecho antigo"}).status_code == 200
+    assert c.get("/api/movements").json() == []
+    with factory() as db:
+        assert db.get(Movement, adjustment["id"]).reversed_by
+    assert by_key(c.get("/api/sessions").json()[0])["numerario"]["expected_cents"] == 10000
 
 
 def by_key(response):

@@ -11,3 +11,8 @@ python-multipart>=0.0.20,<1
 reportlab>=4.3,<5
 greenlet>=3.1,<4
 cryptography>=44,<50
+
+pypdf>=6,<7
+Pillow>=12.3,<13
+zxing-cpp>=3.1,<4
+pypdfium2>=5,<6

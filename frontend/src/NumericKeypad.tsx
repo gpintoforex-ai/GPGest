@@ -1,15 +1,18 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { calculateMoney } from "./utils/calculator";
 
 export default function NumericKeypad({
   label,
   value,
   decimal = false,
+  calculator = false,
   onConfirm,
   onCancel,
 }: {
   label: string;
   value: string;
   decimal?: boolean;
+  calculator?: boolean;
   onConfirm: (value: string) => void;
   onCancel: () => void;
 }) {
@@ -27,7 +30,8 @@ export default function NumericKeypad({
     };
   }, []);
   const number = draft || "0";
-  const valid = decimal
+  const result = calculator ? calculateMoney(number) : null;
+  const valid = calculator ? result !== null : decimal
     ? /^\d+(,\d{0,2})?$/.test(number) &&
       Number.isSafeInteger(Math.round(Number(number.replace(",", ".")) * 100))
     : /^\d+$/.test(number) && Number(number) <= 100000;
@@ -40,7 +44,21 @@ export default function NumericKeypad({
     setReplace(false);
   }
   function append(key: string) {
-    const current = replace ? "" : draft;
+    const current = replace && !(calculator && /^[+\-*/]$/.test(key)) ? "" : draft;
+    if (calculator) {
+      let next = current + key;
+      const operand = current.split(/[+\-*/]/).at(-1) || "";
+      if (key === ",") {
+        if (operand.includes(",")) return;
+        next = current + (operand ? "" : "0") + ",";
+      }
+      if (/[+\-*/]/.test(key)) {
+        if (!current) return;
+        next = current.replace(/[+\-*/]$/, "") + key;
+      }
+      if (next.length > 120 || (next.split(/[+\-*/]/).at(-1)?.split(",")[1]?.length || 0) > 2) return;
+      setDraft(next); setReplace(false); return;
+    }
     let next = current + key;
     if (key === ",") {
       if (current.includes(",")) return;
@@ -57,7 +75,7 @@ export default function NumericKeypad({
     setReplace(false);
   }
   function confirm() {
-    if (valid) onConfirm(number.replace(/,$/, ""));
+    if (valid) onConfirm(calculator ? result! : number.replace(/,$/, ""));
   }
   return (
     <dialog
@@ -72,6 +90,8 @@ export default function NumericKeypad({
       onKeyDown={(e) => {
         if (/^\d$/.test(e.key)) append(e.key);
         else if (decimal && (e.key === "," || e.key === ".")) append(",");
+        else if (calculator && /^[+\-*/]$/.test(e.key)) append(e.key);
+        else if (calculator && e.key === "=") { if (result !== null) { setDraft(result); setReplace(true); } }
         else if (e.key === "Backspace") backspace();
         else if (e.key === "Delete") clear();
         else if (e.key === "Enter") confirm();
@@ -82,13 +102,18 @@ export default function NumericKeypad({
     >
       <div className="numeric-keypad-title">
         <div>
-          <h3 id={titleId}>Teclado numérico</h3>
+          <h3 id={titleId}>{calculator ? "Calculadora" : "Teclado numérico"}</h3>
           <p>{label}</p>
         </div>
         <button type="button" aria-label="Fechar teclado" onClick={onCancel}>
           ×
         </button>
       </div>
+      {calculator && <div className="numeric-keypad-actions" aria-label="Operações da calculadora">
+        {[ ["+", "+", "Somar"], ["-", "−", "Subtrair"], ["*", "×", "Multiplicar"], ["/", "÷", "Dividir"] ].map(([key, symbol, name]) => <button key={key} type="button" aria-label={name} onClick={() => append(key)}>{symbol}</button>)}
+        <button type="button" aria-label="Calcular resultado" disabled={!valid} onClick={() => { setDraft(result!); setReplace(true); }}>=</button>
+      </div>}
+      {calculator && <p aria-live="polite">Resultado: <strong>{result === null ? "—" : `${result} €`}</strong></p>}
       <div className="numeric-keypad-display">
         <output aria-label="Valor introduzido" aria-live="polite">
           {number}
@@ -135,7 +160,7 @@ export default function NumericKeypad({
       </div>
       {!valid && (
         <p className="error" role="alert">
-          {decimal
+          {calculator ? "Complete a conta. O total deve ser positivo ou zero; não é possível dividir por zero." : decimal
             ? "Introduza um valor válido com até duas casas decimais."
             : "Introduza uma quantidade entre 0 e 100000."}
         </p>
@@ -150,7 +175,7 @@ export default function NumericKeypad({
           disabled={!valid}
           onClick={confirm}
         >
-          Confirmar
+          {calculator ? "Aplicar valor" : "Confirmar"}
         </button>
       </div>
     </dialog>

@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ShieldCheck, Building2, Plus, LogOut, KeyRound } from "lucide-react";
 import { api, Form, Field } from "./App";
 type Company = {
   id: string;
   name: string;
   slug: string;
+  nif: string | null;
   active: boolean;
   mode: string;
   api_active: boolean;
@@ -12,8 +13,17 @@ type Company = {
   api_enterprise: string;
   has_api_key: boolean;
 };
+type CompanyUser = { id: string; name: string; email: string; role: string; active: boolean };
 export default function Platform() {
-  const [admin, setAdmin] = useState<{ email: string } | null>(null),
+  const companyDialog = useRef<HTMLDialogElement>(null);
+  const [users, setUsers] = useState<CompanyUser[]>([]);
+  const [resetUser, setResetUser] = useState<string | null>(null);
+  const [editingEmail, setEditingEmail] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [resettingData, setResettingData] = useState(false);
+  const [previousCompanies, setPreviousCompanies] = useState<Company[]>([]);
+  const [pendingCreation, setPendingCreation] = useState<Record<string, any> | null>(null);
+  const [admin, setAdmin] = useState<{ email: string; mode: string } | null>(null),
     [companies, setCompanies] = useState<Company[]>([]),
     [selected, setSelected] = useState<Company | null>(null),
     [editorVersion, setEditorVersion] = useState(0),
@@ -27,6 +37,29 @@ export default function Platform() {
     setCompanies(await api("/platform/companies"));
     setAudit(await api("/platform/audit"));
   }
+  useEffect(() => {
+    if (!selected || !companyDialog.current) return;
+    const dialog = companyDialog.current;
+    const previousOverflow = document.body.style.overflow;
+    dialog.showModal();
+    document.body.style.overflow = "hidden";
+    return () => {
+      dialog.close();
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [selected?.id]);
+  useEffect(() => {
+    let current = true;
+    setUsers([]);
+    setResetUser(null);
+    setEditingEmail(null);
+    setRemoving(false);
+    setResettingData(false);
+    if (selected) api("/platform/companies/" + selected.id + "/users")
+      .then((rows) => { if (current) setUsers(rows); })
+      .catch((e) => { if (current) setError(e.message); });
+    return () => { current = false; };
+  }, [selected?.id]);
   useEffect(() => {
     api("/platform/me")
       .then(async (a) => {
@@ -67,8 +100,8 @@ export default function Platform() {
           <Form
             submitLabel="Entrar"
             onSubmit={async (v) => {
-              const a = await api("/platform/login", v);
-              setAdmin(a);
+              await api("/platform/login", v);
+              setAdmin(await api("/platform/me"));
               await refresh();
             }}
           >
@@ -123,14 +156,14 @@ export default function Platform() {
           <div>
             <h1>Empresas e ligações</h1>
             <p>
-              Dados isolados por empresa. Chaves API cifradas e nunca devolvidas
-              ao navegador.
+              Crie v?rias empresas, cada uma com o seu NIF, utilizadores, lojas e dados pr?prios.
             </p>
           </div>
           <button
             className="primary"
             onClick={() => {
               setCreating(true);
+              setPendingCreation(null);
               setSelected(null);
               setNotice("");
             }}
@@ -155,8 +188,20 @@ export default function Platform() {
               <h3>Nova empresa</h3>
               <button onClick={() => setCreating(false)}>Cancelar</button>
             </div>
+            <div className="success" role="note">
+              <strong>Modo da nova empresa: {admin.mode === "demonstracao" ? "Demonstração" : "Real"}</strong>
+              <p>{admin.mode === "demonstracao"
+                ? "Esta empresa será criada em modo de demonstração, conforme a configuração atual da plataforma."
+                : "Esta empresa será criada em modo real, conforme a configuração atual da plataforma."}</p>
+            </div>
             <Form
               onSubmit={async (v) => {
+                const previous = await api("/platform/removed-companies/" + v.nif);
+                if (previous.length) {
+                  setPreviousCompanies(previous);
+                  setPendingCreation(v);
+                  return;
+                }
                 await api("/platform/companies", v);
                 setCreating(false);
                 await refresh();
@@ -169,19 +214,8 @@ export default function Platform() {
                 <Field label="Nome da empresa">
                   <input name="name" required minLength={2} maxLength={100} />
                 </Field>
-                <Field label="Identificador para entrar (ex.: loja-salutar)">
-                  <input
-                    name="slug"
-                    required
-                    pattern={"[a-z0-9][a-z0-9\\-]{2,79}"}
-                    minLength={3}
-                    maxLength={80}
-                    onBlur={(e) => {
-                      e.currentTarget.value = e.currentTarget.value
-                        .trim()
-                        .toLowerCase();
-                    }}
-                  />
+                <Field label="NIF da empresa">
+                  <input name="nif" required inputMode="numeric" pattern="[0-9]{9}" minLength={9} maxLength={9} />
                 </Field>
                 <Field label="Nome do primeiro administrador">
                   <input
@@ -211,29 +245,112 @@ export default function Platform() {
                 />
               </Field>
               <p className="footnote">
-                A nova empresa usa o modo deste ambiente. No ambiente local de
-                demonstração, os seus registos também serão de demonstração.
+                O modo é definido na configuração da plataforma. Recuperar uma empresa anterior mantém o modo dessa empresa.
               </p>
             </Form>
+            {pendingCreation && (
+              <section className="panel" style={{ marginTop: 20 }}>
+                <h3>Já existem dados guardados para o NIF {pendingCreation.nif}</h3>
+                <p>Pretende recuperar uma empresa anterior ou criar uma nova empresa?</p>
+                <Form submitLabel="Confirmar escolha" onSubmit={async (v) => {
+                  if (v.action === "restore") {
+                    const recovered = await api("/platform/companies/" + v.previous_company + "/restore", { confirmation: pendingCreation.nif });
+                    setSelected(recovered);
+                    setNotice("Empresa recuperada com os dados e utilizadores anteriores. As palavras-passe anteriores mantêm-se; pode repô-las na configuração. Reveja a ligação Wintouch antes de a ativar.");
+                  } else if (v.action === "new") {
+                    await api("/platform/companies", { ...pendingCreation, removed_action: "new" });
+                    setNotice("Nova empresa criada sem os dados anteriores. Os registos antigos continuam preservados.");
+                  } else throw new Error("Escolha uma opção.");
+                  setPendingCreation(null);
+                  setCreating(false);
+                  await refresh();
+                }}>
+                  <label className="checkbox"><input type="radio" name="action" value="restore" required /> Recuperar os dados e utilizadores anteriores</label>
+                  <Field label="Empresa a recuperar (mais recente primeiro)">
+                    <select name="previous_company">{previousCompanies.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.id.slice(0, 8)}</option>)}</select>
+                  </Field>
+                  <label className="checkbox"><input type="radio" name="action" value="new" required /> Criar uma nova empresa, sem recuperar os dados</label>
+                  <p>Ao recuperar, os dados e credenciais preenchidos para a nova empresa não substituem os anteriores.</p>
+                </Form>
+              </section>
+            )}
           </section>
         )}
         {selected && (
+          <dialog
+            ref={companyDialog}
+            className="company-config-dialog"
+            aria-labelledby="company-config-title"
+            onCancel={() => setSelected(null)}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                const bounds = e.currentTarget.getBoundingClientRect();
+                if (e.clientX < bounds.left || e.clientX > bounds.right || e.clientY < bounds.top || e.clientY > bounds.bottom) setSelected(null);
+              }
+            }}
+          >
           <section
             className="panel platform-editor"
             key={selected.id + editorVersion}
           >
             <div className="panel-title">
-              <h3>{selected.name} · Configuração</h3>
+              <h3 id="company-config-title">{selected.name} · Configuração</h3>
               <button onClick={() => setSelected(null)}>Fechar</button>
             </div>
+            {notice && <div className="success" role="status">{notice}</div>}
+            {error && <p className="error" role="alert">{error}</p>}
+            <h3>Utilizadores e acesso</h3>
+            {users.map((u) => (
+              <div key={u.id}>
+                <p><b>{u.name}</b> · {u.email} · {u.role} · {u.active ? "Ativo" : "Desativado"}</p>
+                <button type="button" onClick={() => setEditingEmail(editingEmail === u.id ? null : u.id)}>
+                  {editingEmail === u.id ? "Cancelar edição do email" : "Editar email"}
+                </button>
+                {editingEmail === u.id && (
+                  <Form submitLabel="Guardar email" onSubmit={async (v) => {
+                    await api("/platform/companies/" + selected.id + "/users/" + u.id + "/email", { email: v.email });
+                    setUsers(await api("/platform/companies/" + selected.id + "/users"));
+                    setEditingEmail(null);
+                    await refresh();
+                    setNotice("Email atualizado. Use o novo email para entrar; a palavra-passe mantém-se.");
+                  }}>
+                    <Field label="Email do utilizador"><input name="email" type="email" defaultValue={u.email} required maxLength={200} /></Field>
+                  </Form>
+                )}
+                <button type="button" onClick={() => setResetUser(resetUser === u.id ? null : u.id)}>
+                  {resetUser === u.id ? "Cancelar reposição" : "Repor palavra-passe"}
+                </button>
+                {resetUser === u.id && (
+                  <Form submitLabel="Guardar nova palavra-passe" onSubmit={async (v) => {
+                    if (v.new_password !== v.confirm_password) throw new Error("As palavras-passe não coincidem.");
+                    await api("/platform/companies/" + selected.id + "/users/" + u.id + "/reset-password", { new_password: v.new_password });
+                    setResetUser(null);
+                    await refresh();
+                    setNotice("Palavra-passe reposta para " + u.email + ". As sessões anteriores foram terminadas.");
+                  }}>
+                    <Field label="Nova palavra-passe (mínimo 12 caracteres)">
+                      <input name="new_password" type="password" autoComplete="new-password" required minLength={12} maxLength={200} />
+                    </Field>
+                    <Field label="Confirmar nova palavra-passe">
+                      <input name="confirm_password" type="password" autoComplete="new-password" required minLength={12} maxLength={200} />
+                    </Field>
+                    <p>A reposição termina as sessões deste utilizador. Entregue-lhe a nova palavra-passe.</p>
+                  </Form>
+                )}
+              </div>
+            ))}
             <Form
               onSubmit={async (v) => {
                 const c = await api(
                   "/platform/companies/" + selected.id + "/config",
                   {
                     name: v.name,
+                    nif: v.nif,
+                    mode: v.mode,
                     active: v.active === "on",
                     api_active: v.api_active === "on",
+                    erp_provider: v.erp_provider,
+                    rubric_code_prefix: v.rubric_code_prefix,
                     api_url: v.api_url,
                     api_enterprise: v.api_enterprise,
                     api_key: v.api_key || null,
@@ -254,6 +371,16 @@ export default function Platform() {
                   minLength={2}
                 />
               </Field>
+              <Field label="NIF da empresa">
+                <input name="nif" defaultValue={selected.nif || ""} required inputMode="numeric" pattern="[0-9]{9}" minLength={9} maxLength={9} />
+              </Field>
+              <Field label="Modo da empresa">
+                <select name="mode" defaultValue={selected.mode} required>
+                  <option value="real">Empresa real</option>
+                  <option value="demonstracao">Empresa de demonstração</option>
+                </select>
+              </Field>
+              <p className="footnote">Alterar o modo mantém os dados e utilizadores existentes. Os dados de demonstração não são apagados ao mudar para real.</p>
               <label className="checkbox">
                 <input
                   type="checkbox"
@@ -262,6 +389,15 @@ export default function Platform() {
                 />{" "}
                 Empresa ativa (desativar impede o acesso dos seus utilizadores)
               </label>
+              <Field label="ERP para sincronização">
+                <select name="erp_provider" defaultValue={(selected as any).erp_provider || "wintouch"}>
+                  <option value="none">Sem ERP — gestão local</option>
+                  <option value="wintouch">Wintouch</option>
+                </select>
+              </Field>
+              <Field label="Prefixo dos códigos de rubricas no ERP">
+                <input name="rubric_code_prefix" maxLength={30} pattern="[A-Za-z0-9_-]*" defaultValue={(selected as any).rubric_code_prefix ?? "RUB"} />
+              </Field>
               <Field label="URL da API Wintouch">
                 <input
                   name="api_url"
@@ -332,7 +468,45 @@ export default function Platform() {
             >
               {testing ? "A testar…" : "Testar ligação de leitura"}
             </button>
+            <div className="company-removal">
+              <button type="button" onClick={() => setResettingData(!resettingData)}>
+                {resettingData ? "Cancelar reinicialização" : "Reinicializar dados"}
+              </button>
+              {resettingData && (
+                <Form submitLabel="Confirmar reinicialização dos dados" onSubmit={async (v) => {
+                  await api("/platform/companies/" + selected.id + "/reset-data", {
+                    confirmation: v.confirmation, acknowledged: v.acknowledged === "on",
+                  });
+                  setResettingData(false);
+                  await refresh();
+                  setNotice("Dados reinicializados. Utilizadores e configuração mantidos. As sessões anteriores terminaram; os dados anteriores ficaram numa cópia interna.");
+                }}>
+                  <p>Retira os movimentos, importações, documentos, pagamentos, reconciliações e histórico operacional da empresa. Mantém utilizadores, palavras-passe, lojas, caixas, categorias e ligação Wintouch. Os dados anteriores ficam guardados numa cópia interna, sem recuperação automática nesta janela.</p>
+                  <Field label={"Escreva " + (selected.nif || selected.name) + " para confirmar"}>
+                    <input name="confirmation" required autoComplete="off" />
+                  </Field>
+                  <label className="checkbox"><input name="acknowledged" type="checkbox" required /> Confirmo que pretendo reinicializar os dados desta empresa e terminar as sessões atuais.</label>
+                </Form>
+              )}
+              <button type="button" onClick={() => setRemoving(!removing)}>
+                {removing ? "Cancelar remoção" : "Remover empresa"}
+              </button>
+              {removing && (
+                <Form submitLabel="Confirmar remoção da empresa" onSubmit={async (v) => {
+                  await api("/platform/companies/" + selected.id + "/remove", { confirmation: v.confirmation });
+                  setSelected(null);
+                  await refresh();
+                  setNotice("Empresa removida da lista e acesso bloqueado. Os dados e o histórico foram preservados.");
+                }}>
+                  <p>A empresa deixará de aparecer na lista e os seus utilizadores perderão o acesso. Os dados e o histórico serão preservados.</p>
+                  <Field label={"Escreva " + (selected.nif || selected.name) + " para confirmar"}>
+                    <input name="confirmation" required autoComplete="off" />
+                  </Field>
+                </Form>
+              )}
+            </div>
           </section>
+          </dialog>
         )}
         <div className="cash-grid">
           {companies.map((c) => (
@@ -345,7 +519,7 @@ export default function Platform() {
               </div>
               <h3>{c.name}</h3>
               <p>
-                Identificador: <b>{c.slug}</b> · {c.mode}
+                NIF: <b>{c.nif || "Por definir na configura??o"}</b> · {c.mode}
               </p>
               <p>
                 <KeyRound size={15} />{" "}
@@ -353,7 +527,7 @@ export default function Platform() {
                 {c.api_active ? "Ligação ativada" : "Ligação desativada"}
               </p>
               <p>
-                <a href={"/?empresa=" + encodeURIComponent(c.slug)}>
+                <a href={c.nif ? "/?nif=" + encodeURIComponent(c.nif) : "/?empresa=" + encodeURIComponent(c.slug)}>
                   Abrir acesso desta empresa
                 </a>
               </p>

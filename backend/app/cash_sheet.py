@@ -10,7 +10,14 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from . import db as database
-from .models import CashSession, Movement, Register, WintouchSaleRecord
+from .models import (
+    CashSession,
+    Movement,
+    Register,
+    WintouchSaleRecord,
+    BankDeposit,
+    DocumentPayment,
+)
 from .platform_models import Company
 
 LABELS = {
@@ -19,6 +26,21 @@ LABELS = {
     "transferencia": "Transferência",
     "outro": "Outro",
 }
+
+
+def is_real_cash_movement(data):
+    """Opening funds and shift totals carry balances rather than new money."""
+    names = {
+        " ".join(unicodedata.normalize("NFKD", name).casefold().split())
+        for name in str(data.get("category_name") or "").split(" / ")
+    }
+    if "valor do turno" in names or data.get("source_kind") == "opening_balance":
+        return False
+    return not (
+        data.get("source_kind") == "cash_movement"
+        and data.get("direction") == 1
+        and "fundo de maneio" in names
+    )
 DENOMINATIONS = {1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000}
 
 
@@ -126,6 +148,9 @@ def real_receipts(db, store_id, selected_day, enterprise):
         )
     ):
         data = json.loads(record.data)
+        if not is_real_cash_movement(data):
+            continue
+        data["_record_id"] = record.id
         if day(data["occurred_at"]) == selected_day:
             yield data
 
@@ -166,7 +191,10 @@ def summary(db, session):
 
     register = db.get(Register, session.register_id)
     selected_day = session.sheet_day or day(session.opened_at)
-    query = select(Movement)
+    query = select(Movement).where(
+        (Movement.origin == "deposito_modulo")
+        | (Movement.reversed_by.is_(None) & Movement.reversal_of.is_(None)),
+    )
     if session.closed_at:
         # Legacy closes without a snapshot keep their original session scope.
         query = query.where(Movement.session_id == session.id)
@@ -186,13 +214,46 @@ def summary(db, session):
             )
         )
     for move in db.scalars(query):
+        if move.origin == "deposito_modulo":
+            deposit = db.scalar(
+                select(BankDeposit).where(
+                    (BankDeposit.movement_id == move.id) | (BankDeposit.reversal_id == move.id)
+                )
+            )
+            if deposit:
+                if deposit.cash_amount:
+                    add(
+                        "numerario",
+                        "Numerário",
+                        int(deposit.cash_amount * 100),
+                        move.direction,
+                        "local",
+                    )
+                if deposit.cheque_amount:
+                    key, label = payment_key({"payment_code": "CH"})
+                    add(key, label, int(deposit.cheque_amount * 100), move.direction, "local")
+            continue
         add(move.payment, LABELS[move.payment], move.amount_cents, move.direction, "local")
     enterprise = (
         daily_enterprise(db, session) if not session.closed_at else session.wintouch_enterprise
     )
     for data in real_receipts(db, register.store_id, selected_day, enterprise):
+        from .opening_fund import included_as_opening
+
+        if included_as_opening(session, data):
+            continue
         key, name = payment_key(data)
         add(key, name, data["amount_cents"], data["direction"], "wintouch")
+    for receipt in db.scalars(
+        select(DocumentPayment).where(
+            DocumentPayment.store_id == register.store_id,
+            DocumentPayment.payment_date == selected_day,
+            DocumentPayment.source == "manual",
+            DocumentPayment.method == "cheque",
+        )
+    ):
+        key, label = payment_key({"payment_code": "CH"})
+        add(key, label, receipt.amount_cents, receipt.direction, "local")
     for row in rows.values():
         row["net_cents"] = row["credits_cents"] - row["debits_cents"]
         row["fund_cents"] = session.opening_cents if row["key"] == "numerario" else 0

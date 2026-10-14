@@ -6,10 +6,12 @@ export default function WintouchSettlementForm({
   row,
   onDone,
   onCancel,
+  beforeSubmit,
 }: {
   row: Row;
   onDone: (result: { message: string; amount: string }) => Promise<void>;
   onCancel: () => void;
+  beforeSubmit?: () => Promise<void>;
 }) {
   const [options, setOptions] = useState<Row | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -74,6 +76,7 @@ export default function WintouchSettlementForm({
           {error}
         </p>
       )}
+      {row.proposed_bank && <p>Banco previsto: <b>{row.proposed_bank}</b>. Confirme que o meio de pagamento escolhido utiliza esta conta na configuração ERP.</p>}
       {!options && !error && <p>A consultar opções Wintouch…</p>}
       {options &&
         (!options.types.length ||
@@ -90,6 +93,7 @@ export default function WintouchSettlementForm({
           onSubmit={async (values) => {
             if (values.confirm !== "on")
               throw new Error("Confirme a liquidação antes de enviar.");
+            if (beforeSubmit) await beforeSubmit();
             const { confirm, ...fields } = values;
             const result = await api(
               `/integrations/wintouch/sales/${recordId}/settle`,
@@ -156,12 +160,13 @@ export default function WintouchSettlementForm({
           <Field label="Valor a liquidar (€)">
             <input
               name="amount"
+              readOnly={row.proposed_cents !== undefined}
               type="number"
               required
               min="0.01"
               step="0.01"
               max={row.remaining_cents / 100}
-              defaultValue={(row.remaining_cents / 100).toFixed(2)}
+              defaultValue={((row.proposed_cents ?? row.remaining_cents) / 100).toFixed(2)}
             />
           </Field>
           <Field label="Observações">

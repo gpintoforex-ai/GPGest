@@ -5,6 +5,7 @@ import secrets
 from collections import defaultdict, deque
 from datetime import timedelta, timezone
 from time import monotonic
+from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -12,11 +13,11 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pwdlib import PasswordHash
 from pydantic import Field, field_validator
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from .db import engine, platform_db
-from .models import Base, Category, Register, Store, User, WintouchSyncRun, now, uid
+from .models import Base, Category, LoginSession, Register, Store, User, WintouchSyncRun, now, uid
 from .platform_models import Company, PlatformAdmin, PlatformAudit, PlatformSession
 from .schemas import Login, Name, Strict
 from .wintouch_sync import RESOURCES, SyncError, synchronize
@@ -28,7 +29,9 @@ attempts = defaultdict(deque)
 
 
 class CompanyCreate(Name):
-    slug: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,79}$")
+    removed_action: Literal["new"] | None = None
+    nif: str = Field(pattern=r"^[0-9]{9}$")
+    slug: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{2,79}$")
     admin_name: str = Field(min_length=2, max_length=100)
     admin_email: str = Field(min_length=3, max_length=200)
     admin_password: str = Field(min_length=12, max_length=200)
@@ -40,6 +43,10 @@ class CompanyCreate(Name):
 
 
 class CompanyConfig(Name):
+    erp_provider: Literal["wintouch", "none"] = "wintouch"
+    rubric_code_prefix: str = Field(default="RUB", max_length=30, pattern=r"^[A-Za-z0-9_-]*$")
+    mode: Literal["real", "demonstracao"] | None = None
+    nif: str | None = Field(default=None, pattern=r"^[0-9]{9}$")
     active: bool
     api_active: bool
     api_url: str = Field(max_length=300)
@@ -49,12 +56,37 @@ class CompanyConfig(Name):
 
 
 class CompanySelect(Strict):
-    slug: str = Field(max_length=80)
+    nif: str | None = Field(default=None, pattern=r"^[0-9]{9}$")
+    slug: str | None = Field(default=None, max_length=80)
 
 
 class SyncRequest(Strict):
     resource: str
     confirm_demo: bool = False
+
+
+class PasswordReset(Strict):
+    new_password: str = Field(min_length=12, max_length=200)
+
+
+class UserEmailEdit(Strict):
+    email: str = Field(min_length=3, max_length=200)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value):
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+            raise ValueError("Email inválido")
+        return value
+
+
+class CompanyRemoval(Strict):
+    confirmation: str = Field(max_length=100)
+
+
+class CompanyDataReset(CompanyRemoval):
+    acknowledged: Literal[True]
 
 
 def cipher():
@@ -98,9 +130,14 @@ def view(c):
         "id": c.id,
         "name": c.name,
         "slug": c.slug,
+        "nif": c.nif,
         "active": bool(c.active),
         "mode": c.mode,
         "api_active": bool(c.api_active),
+        "erp_provider": c.erp_provider,
+        "operating_mode": c.operating_mode,
+        "connector_writes": bool(c.connector_writes),
+        "rubric_code_prefix": c.rubric_code_prefix,
         "api_url": c.api_url,
         "api_enterprise": c.api_enterprise,
         "has_api_key": bool(c.api_key_ciphertext),
@@ -183,7 +220,159 @@ def logout(
 
 @router.get("/companies")
 def companies(admin=Depends(require_platform), db: Session = Depends(platform_db)):
-    return [view(c) for c in db.scalars(select(Company).order_by(Company.created_at))]
+    return [
+        view(c)
+        for c in db.scalars(
+            select(Company).where(Company.removed_at.is_(None)).order_by(Company.created_at)
+        )
+    ]
+
+
+@router.post("/companies/{company_id}/remove")
+def remove_company(
+    company_id: str,
+    data: CompanyRemoval,
+    admin=Depends(require_platform),
+    db: Session = Depends(platform_db),
+):
+    company = db.scalar(select(Company).where(Company.id == company_id).with_for_update())
+    if not company or company.removed_at:
+        raise HTTPException(404, "Empresa não encontrada.")
+    if data.confirmation.strip() != (company.nif or company.name):
+        raise HTTPException(422, "A confirmação não corresponde à empresa.")
+    company.active = 0
+    company.api_active = 0
+    company.removed_at = now()
+    db.add(PlatformAudit(admin_id=admin.id, company_id=company.id, action="empresa_removida"))
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/companies/{company_id}/reset-data")
+def reset_company_data(
+    company_id: str,
+    data: CompanyDataReset,
+    admin=Depends(require_platform),
+    db: Session = Depends(platform_db),
+):
+    company = db.scalar(select(Company).where(Company.id == company_id).with_for_update())
+    if not company or company.removed_at:
+        raise HTTPException(404, "Empresa não encontrada.")
+    if data.confirmation.strip() != (company.nif or company.name):
+        raise HTTPException(422, "A confirmação não corresponde à empresa.")
+    original = company.schema_name
+    if original != "public" and not re.fullmatch(r"gpgest_c_[a-f0-9]{32}", original):
+        raise HTTPException(409, "Esquema da empresa inválido.")
+    replacement = "gpgest_c_" + uid().replace("-", "")
+    connection = db.connection()
+    central_schema = db.info.get("platform_schema", "public")
+    try:
+        connection.execute(text(f'CREATE SCHEMA "{replacement}"'))
+        connection.execution_options(schema_translate_map={None: replacement})
+        Base.metadata.create_all(connection)
+        # Preserve configuration and credentials, but no business records or sessions.
+        for name in ("users", "stores", "store_access", "registers", "categories"):
+            columns = ", ".join(
+                '"' + column.name + '"' for column in Base.metadata.tables[name].columns
+            )
+            connection.execute(
+                text(
+                    f'INSERT INTO "{replacement}"."{name}" ({columns}) SELECT {columns} FROM "{original}"."{name}"'
+                )
+            )
+    finally:
+        connection.execution_options(schema_translate_map={None: central_schema})
+    company.schema_name = replacement
+    db.add(
+        PlatformAudit(
+            admin_id=admin.id, company_id=company.id, action="dados_reinicializados:" + original
+        )
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/companies/{company_id}/users")
+def company_users(
+    company_id: str, admin=Depends(require_platform), db: Session = Depends(platform_db)
+):
+    company = db.get(Company, company_id)
+    if not company:
+        raise HTTPException(404, "Empresa não encontrada.")
+    with Session(
+        engine.execution_options(schema_translate_map={None: company.schema_name})
+    ) as tenant:
+        return [
+            {"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": bool(u.active)}
+            for u in tenant.scalars(select(User).order_by(User.name))
+        ]
+
+
+@router.post("/companies/{company_id}/users/{user_id}/email")
+def edit_company_user_email(
+    company_id: str,
+    user_id: str,
+    data: UserEmailEdit,
+    admin=Depends(require_platform),
+    db: Session = Depends(platform_db),
+):
+    company = db.get(Company, company_id)
+    if not company or company.removed_at:
+        raise HTTPException(404, "Empresa não encontrada.")
+    connection = db.connection()
+    central_schema = db.info.get("platform_schema", "public")
+    try:
+        connection.execution_options(schema_translate_map={None: company.schema_name})
+        with Session(bind=connection) as tenant:
+            user = tenant.scalar(select(User).where(User.id == user_id).with_for_update())
+            if not user:
+                raise HTTPException(404, "Utilizador não encontrado nesta empresa.")
+            if tenant.scalar(select(User).where(User.email == data.email, User.id != user_id)):
+                raise HTTPException(409, "Este email já pertence a outro utilizador desta empresa.")
+            user.email = data.email
+            tenant.flush()
+    finally:
+        connection.execution_options(schema_translate_map={None: central_schema})
+    db.add(
+        PlatformAudit(
+            admin_id=admin.id, company_id=company.id, action="email_utilizador_alterado:" + user_id
+        )
+    )
+    db.commit()
+    return {"ok": True, "email": data.email}
+
+
+@router.post("/companies/{company_id}/users/{user_id}/reset-password")
+def reset_company_password(
+    company_id: str,
+    user_id: str,
+    data: PasswordReset,
+    admin=Depends(require_platform),
+    db: Session = Depends(platform_db),
+):
+    company = db.get(Company, company_id)
+    if not company:
+        raise HTTPException(404, "Empresa não encontrada.")
+    connection = db.connection()
+    central_schema = db.info.get("platform_schema", "public")
+    try:
+        connection.execution_options(schema_translate_map={None: company.schema_name})
+        with Session(bind=connection) as tenant:
+            user = tenant.scalar(select(User).where(User.id == user_id).with_for_update())
+            if not user:
+                raise HTTPException(404, "Utilizador não encontrado nesta empresa.")
+            user.password_hash = hasher.hash(data.new_password)
+            tenant.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
+            tenant.flush()
+    finally:
+        connection.execution_options(schema_translate_map={None: central_schema})
+    db.add(
+        PlatformAudit(
+            admin_id=admin.id, company_id=company.id, action="palavra_passe_reposta:" + user_id
+        )
+    )
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/companies")
@@ -192,11 +381,24 @@ def create_company(
 ):
     if "@" not in data.admin_email:
         raise HTTPException(422, "Email do administrador inválido.")
-    if db.scalar(select(Company).where(Company.slug == data.slug)):
+    if db.scalar(select(Company).where(Company.nif == data.nif, Company.removed_at.is_(None))):
+        raise HTTPException(409, "Já existe uma empresa com este NIF.")
+    if data.removed_action != "new" and db.scalar(
+        select(Company).where(Company.nif == data.nif, Company.removed_at.is_not(None))
+    ):
+        raise HTTPException(
+            409,
+            "Existe uma empresa removida com este NIF. Escolha recuperar os dados ou criar uma nova empresa.",
+        )
+    if data.slug and db.scalar(select(Company).where(Company.slug == data.slug)):
         raise HTTPException(409, "O identificador da empresa já existe.")
     schema = "gpgest_c_" + uid().replace("-", "")
     company = Company(
-        name=data.name, slug=data.slug, schema_name=schema, mode=os.getenv("APP_MODE", "real")
+        name=data.name,
+        nif=data.nif,
+        slug=data.slug or "empresa-" + uid(),
+        schema_name=schema,
+        mode=os.getenv("APP_MODE", "real"),
     )
     db.add(company)
     db.flush()
@@ -238,6 +440,44 @@ def create_company(
     return view(company)
 
 
+@router.get("/removed-companies/{nif}")
+def removed_companies(
+    nif: str, admin=Depends(require_platform), db: Session = Depends(platform_db)
+):
+    return [
+        view(c)
+        for c in db.scalars(
+            select(Company)
+            .where(Company.nif == nif, Company.removed_at.is_not(None))
+            .order_by(Company.removed_at.desc())
+        )
+    ]
+
+
+@router.post("/companies/{company_id}/restore")
+def restore_company(
+    company_id: str,
+    data: CompanyRemoval,
+    admin=Depends(require_platform),
+    db: Session = Depends(platform_db),
+):
+    company = db.scalar(select(Company).where(Company.id == company_id).with_for_update())
+    if not company or not company.removed_at:
+        raise HTTPException(404, "Empresa removida não encontrada.")
+    if data.confirmation != (company.nif or company.name):
+        raise HTTPException(422, "A confirmação não corresponde à empresa.")
+    if db.scalar(select(Company).where(Company.nif == company.nif, Company.removed_at.is_(None))):
+        raise HTTPException(
+            409, "Já existe uma empresa atual com este NIF. Remova-a antes de recuperar a anterior."
+        )
+    company.removed_at = None
+    company.active = 1
+    # Integration remains disabled until explicitly reviewed in configuration.
+    db.add(PlatformAudit(admin_id=admin.id, company_id=company.id, action="empresa_recuperada"))
+    db.commit()
+    return view(company)
+
+
 @router.post("/companies/{company_id}/config")
 def configure(
     company_id: str,
@@ -246,22 +486,43 @@ def configure(
     db: Session = Depends(platform_db),
 ):
     company = db.scalar(select(Company).where(Company.id == company_id).with_for_update())
-    if not company:
+    if not company or company.removed_at:
         raise HTTPException(404, "Empresa não encontrada.")
+    if data.nif is not None:
+        if db.scalar(
+            select(Company).where(
+                Company.nif == data.nif, Company.id != company.id, Company.removed_at.is_(None)
+            )
+        ):
+            raise HTTPException(409, "Já existe uma empresa com este NIF.")
+        company.nif = data.nif
     company.api_url = validate_url(data.api_url)
     if data.clear_api_key:
         company.api_key_ciphertext = ""
     elif data.api_key:
         company.api_key_ciphertext = cipher().encrypt(data.api_key.encode()).decode()
-    if data.api_active and (not company.api_key_ciphertext or not data.api_enterprise.strip()):
+    if data.api_active and data.erp_provider != "none" and (not company.api_key_ciphertext or not data.api_enterprise.strip()):
         raise HTTPException(
             422,
             "Configure a chave e o identificador da empresa Wintouch antes de ativar a ligação.",
         )
     company.name = data.name
+    if data.mode is not None and data.mode != company.mode:
+        previous_mode = company.mode
+        company.mode = data.mode
+        db.add(
+            PlatformAudit(
+                admin_id=admin.id,
+                company_id=company.id,
+                action=f"modo_alterado:{previous_mode}:{data.mode}",
+            )
+        )
     company.active = int(data.active)
-    company.api_active = int(data.api_active)
+    company.erp_provider = data.erp_provider
+    company.rubric_code_prefix = data.rubric_code_prefix.strip()
+    company.api_active = int(data.api_active and data.erp_provider != "none")
     company.api_enterprise = data.api_enterprise.strip()
+    company.integration_revision += 1
     db.add(PlatformAudit(admin_id=admin.id, company_id=company.id, action="configuracao_alterada"))
     db.commit()
     return view(company)
@@ -335,11 +596,15 @@ def sync_company(
     company = db.get(Company, company_id)
     if not company or not company.active or not company.api_active:
         raise HTTPException(409, "Ative a empresa e a ligação Wintouch antes de importar.")
+    from .operating_modes import company_policy
+    config = company_policy(company)
     if data.resource not in RESOURCES:
         raise HTTPException(
             422,
             "Escolha artigos, entidades ou caixas. A importação financeira exige validação própria.",
         )
+    if config["mode"] != "integrated" or data.resource not in config["resources"]:
+        raise HTTPException(409, "A empresa está em modo local ou este recurso não está autorizado para sincronização.")
     if company.mode == "demonstracao" and not data.confirm_demo:
         raise HTTPException(
             422,
@@ -399,11 +664,25 @@ def sync_history(
 selection_router = APIRouter()
 
 
+@selection_router.post("/api/company/clear")
+def clear_company(response: Response):
+    response.delete_cookie("gpgest_company", path="/")
+    response.delete_cookie("gpgest_session", path="/")
+    return {"ok": True}
+
+
 @selection_router.post("/api/company/select")
-def select_company(data: CompanySelect, response: Response, db: Session = Depends(platform_db)):
-    c = db.scalar(
-        select(Company).where(Company.slug == data.slug.strip().lower(), Company.active == 1)
-    )
+def select_company(
+    data: CompanySelect, request: Request, response: Response, db: Session = Depends(platform_db)
+):
+    if data.nif:
+        identity = Company.nif == data.nif
+    elif data.slug:
+        # Acesso transit?rio apenas para empresas antigas ainda sem NIF.
+        identity = (Company.slug == data.slug.strip().lower()) & Company.nif.is_(None)
+    else:
+        raise HTTPException(422, "Introduza o NIF da empresa (9 d?gitos).")
+    c = db.scalar(select(Company).where(identity, Company.active == 1))
     if not c:
         raise HTTPException(404, "Empresa indisponível ou identificador incorreto.")
     response.set_cookie(
@@ -414,5 +693,6 @@ def select_company(data: CompanySelect, response: Response, db: Session = Depend
         samesite="strict",
         max_age=28800,
     )
-    response.delete_cookie("gpgest_session")
-    return {"name": c.name, "slug": c.slug}
+    if request.cookies.get("gpgest_company") != c.id:
+        response.delete_cookie("gpgest_session")
+    return {"name": c.name, "slug": c.slug, "nif": c.nif}

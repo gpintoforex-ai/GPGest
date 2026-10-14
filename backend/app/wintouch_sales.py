@@ -174,13 +174,18 @@ def payment_record(payment, common, methods, states):
                 "Meio de pagamento não validado. Configure o estado de liquidação na Wintouch."
             )
     value = amount(payment.get("Amount"))
-    if value < 0:
-        raise SyncError("Pagamento negativo exige validação própria; importação anulada.")
+    if value < 0 and common.get("direction") not in (-1, 1):
+        raise SyncError("Não foi possível validar o sentido do documento do pagamento.")
     if value == 0:
         return None
     return {
         **common,
-        "amount_cents": value,
+        # A signed payment is a separate cash-flow line. A negative line is an
+        # outflow even on a positive invoice (e.g. change or a payment reversal).
+        # Credit-note payments remain outgoing whether Amount is signed or unsigned.
+        "amount_cents": abs(value),
+        "direction": -1 if value < 0 else common.get("direction", 1),
+        "source_payment_amount_cents": value,
         "payment": string(method.get("Name"), 200, True),
         "payment_code": string(method.get("SaftPaymentMechanism"), 40),
         "occurred_at": payment.get("PaymentMethodDate") or common["occurred_at"],
@@ -225,7 +230,9 @@ def sales_snapshot(reader, start, end):
         )
         return {
             "document": document_label(row, types, series),
+            "document_reference": string(row.get("ExternalDocument"), 200) or "",
             "document_group": "compras" if types.get(row.get("DocumentTypeID"), {}).get("Class") in (32, 33, 34, 35) else "vendas",
+            "category_name": "Vendas" if types.get(row.get("DocumentTypeID"), {}).get("Class") not in (32, 33, 34, 35) else None,
             "entity": string(entity, 300, True),
             "occurred_at": row["Date"],
             "currency": "EUR",
@@ -341,6 +348,46 @@ def sales_snapshot(reader, start, end):
             if data:
                 source_date(data["occurred_at"])
                 save("payment", payment.get("ID"), "real", day, data)
+    # Cash entries/withdrawals are item documents, not product sales or receipts.
+    # Classes 21/22 and their CashFlowMode were confirmed in the configured API.
+    for row in reader.collection("item_documents", "Payments,CEntity,Item_Document_Details.Item"):
+        scanned += 1
+        typ = types.get(row.get("DocumentTypeID"), {})
+        cls = typ.get("Class")
+        if cls not in (21, 22):
+            continue  # Opening/closing balances are not money movements.
+        day = source_date(row.get("Date"))
+        if not start <= day <= end or row.get("DeletedDate"):
+            continue
+        direction = 1 if cls == 21 else -1
+        if typ.get("CashFlowMode") != direction:
+            raise SyncError("O sentido da entrada/retirada de caixa Wintouch não está validado.")
+        if "Payments" not in row:
+            row = reader.get(
+                "item_documents/" + string(row["ID"], 150, True),
+                {"embed": "Payments,CEntity,Item_Document_Details.Item"},
+            )
+        if not isinstance(row, dict) or not isinstance(row.get("Payments"), list) or not row["Payments"]:
+            raise SyncError("A Wintouch não disponibilizou os pagamentos do movimento de caixa.")
+        if row.get("ProcessStatus") not in (None, ""):
+            raise SyncError("O movimento de caixa tem um estado de processamento não validado.")
+        values = common(row, direction)
+        category_names = []
+        for detail in row.get("ItemDocumentDetails") or []:
+            name = string((detail.get("Item") or {}).get("Name") or detail.get("Name"), 500)
+            if name and name not in category_names:
+                category_names.append(name)
+        values.update(
+            document_group="caixa", source_kind="cash_movement", cancelled=False,
+            category_name="Fundo de maneio" if direction == 1 else " / ".join(category_names) or None,
+            type=string(typ.get("Code"), 40, True),
+            description=string(row.get("Notes"), 5000) or "",
+        )
+        for payment in row["Payments"]:
+            data = payment_record(payment, values, methods, states)
+            if data:
+                source_date(data["occurred_at"])
+                save("payment", payment.get("ID"), "real", day, data)
     return list(result.values()), scanned
 
 
@@ -373,18 +420,31 @@ def synchronize_sales(bind, enterprise, store_id, start: date, end: date, url, k
                 values, scanned = sales_snapshot(
                     Reader(client, url, enterprise, key), start.isoformat(), end.isoformat()
                 )
+            # Match the allocation API's order when a bank batch includes several receipts.
+            list(db.scalars(select(WintouchSaleRecord).where(
+                WintouchSaleRecord.enterprise_id == enterprise,
+                WintouchSaleRecord.store_id == store_id,
+            ).order_by(WintouchSaleRecord.id).with_for_update()))
             for values_row in values:
                 row = db.scalar(
                     select(WintouchSaleRecord).where(
                         WintouchSaleRecord.enterprise_id == enterprise,
                         WintouchSaleRecord.external_id == values_row["external_id"],
-                    )
+                    ).with_for_update()
                 )
                 if row:
                     if row.store_id != store_id:
                         raise SyncError(
                             "Existem documentos já associados a outra loja. Use a loja da primeira importação."
                         )
+                    from .reconciliation import identified, used
+                    previous = json.loads(row.data)
+                    incoming = json.loads(values_row["data"])
+                    associated = used(db, "wintouch", row.id)
+                    if identified(db, "wintouch", row.id) and any(incoming.get(field) != previous.get(field) for field in ("amount_cents", "direction", "payment_code", "occurred_at")):
+                        raise SyncError("Um pagamento distribuído por documentos foi alterado. Reveja a distribuição antes de sincronizar.")
+                    if associated and (incoming.get("direction") != previous.get("direction") or int(incoming.get("amount_cents", 0)) < associated or values_row["kind"] != row.kind or incoming.get("payment_code") != previous.get("payment_code")):
+                        raise SyncError("Um recebimento reconciliado foi alterado. Desfaça a reconciliação antes de sincronizar.")
                     run.updated_count += 1
                     for field, value in values_row.items():
                         setattr(row, field, value)
@@ -399,6 +459,16 @@ def synchronize_sales(bind, enterprise, store_id, start: date, end: date, url, k
                 row.synced_at = now()
             db.flush()
             # Desaparecimento/anulação/liquidação confirmado por snapshot completo do período.
+            missing = list(db.scalars(select(WintouchSaleRecord).where(
+                WintouchSaleRecord.enterprise_id == enterprise,
+                WintouchSaleRecord.store_id == store_id,
+                or_(WintouchSaleRecord.kind == "previsto", and_(
+                    WintouchSaleRecord.document_date >= start.isoformat(), WintouchSaleRecord.document_date <= end.isoformat())),
+                WintouchSaleRecord.sync_run_id != run.id,
+            ).order_by(WintouchSaleRecord.id).with_for_update()))
+            from .reconciliation import identified, used
+            if any(used(db, "wintouch", r.id) or identified(db, "wintouch", r.id) for r in missing):
+                raise SyncError("Um recebimento reconciliado desapareceu da Wintouch. Desfaça a reconciliação antes de sincronizar.")
             db.execute(
                 update(WintouchSaleRecord)
                 .where(

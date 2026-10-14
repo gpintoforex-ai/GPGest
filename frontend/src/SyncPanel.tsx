@@ -1,13 +1,20 @@
 import { useEffect, useState } from "react";
-import { api, Form, Field } from "./App";
+import { api, Form } from "./App";
+
+const resources = [
+  { id: "products", label: "Artigos" },
+  { id: "entities", label: "Clientes / fornecedores (entidades)" },
+  { id: "cash_accounts", label: "Caixas Wintouch" },
+];
 
 export default function SyncPanel({
   company,
   apiBase = "/integrations/wintouch",
 }: {
-  company: { id: string; mode: string; active: boolean; api_active: boolean };
+  company: { id: string; mode: string; active: boolean; api_active: boolean; operating_mode?: string; resources?: string[] };
   apiBase?: string;
 }) {
+  const [selectedResources, setSelectedResources] = useState<string[]>([]);
   const [history, setHistory] = useState<any[]>([]),
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
@@ -15,6 +22,7 @@ export default function SyncPanel({
     setHistory(await api(apiBase + "/sync-history"));
   }
   useEffect(() => {
+    setSelectedResources([]);
     refresh().catch((e) => setError(e.message));
     const updated = () => {
       refresh().catch((e) => setError(e.message));
@@ -35,31 +43,43 @@ export default function SyncPanel({
         </p>
       )}
       {notice && <p role="status">{notice}</p>}
-      {company.active && company.api_active ? (
+      {company.active && company.api_active && company.operating_mode !== "local" ? (
         <Form
-          submitLabel="Sincronizar agora"
+          submitLabel="Importar selecionados"
           onSubmit={async (v) => {
             setNotice("");
-            const r = await api(apiBase + "/sync", {
-              resource: v.resource,
-              confirm_demo: v.confirm_demo === "on",
-            });
+            setError("");
+            if (!selectedResources.length) throw new Error("Selecione pelo menos um tipo de dados a importar.");
+            const results: string[] = [];
+            const failures: string[] = [];
+            for (const resource of resources.filter((item) => selectedResources.includes(item.id) && (!company.resources || company.resources.includes(item.id)))) {
+              try {
+                const r = await api(apiBase + "/sync", {
+                  resource: resource.id,
+                  confirm_demo: v.confirm_demo === "on",
+                });
+                if (r.status !== "concluida") throw new Error(r.error_message || "Importação falhou.");
+                results.push(`${resource.label}: ${r.read_count} registos, ${r.inserted_count} novos e ${r.updated_count} atualizados.`);
+              } catch (e) {
+                failures.push(`${resource.label}: ${(e as Error).message}`);
+              }
+            }
+            setNotice(results.join(" "));
             await refresh();
-            if (r.status !== "concluida") throw new Error(r.error_message);
-            setNotice(
-              `Sincronização concluída: ${r.read_count} registos, ${r.inserted_count} novos e ${r.updated_count} atualizados.`,
-            );
+            if (failures.length) throw new Error(failures.join(" "));
           }}
         >
-          <Field label="Dados a importar">
-            <select name="resource">
-              <option value="products">Artigos</option>
-              <option value="entities">
-                Clientes / fornecedores (entidades)
-              </option>
-              <option value="cash_accounts">Caixas Wintouch</option>
-            </select>
-          </Field>
+          <fieldset>
+            <legend>Dados a importar</legend>
+            {resources.map((resource) => (
+              <label className="checkbox" key={resource.id}>
+                <input type="checkbox" disabled={!!company.resources && !company.resources.includes(resource.id)} checked={selectedResources.includes(resource.id)}
+                  onChange={(e) => setSelectedResources((current) => e.target.checked
+                    ? [...current, resource.id] : current.filter((id) => id !== resource.id))} />
+                {resource.label}
+              </label>
+            ))}
+          </fieldset>
           {company.mode === "demonstracao" && (
             <label className="checkbox">
               <input name="confirm_demo" type="checkbox" required />

@@ -64,6 +64,7 @@ def create(client, slug):
         json={
             "name": slug,
             "slug": slug,
+            "nif": str(500000000 + sum((i + 1) * ord(ch) for i, ch in enumerate(slug))),
             "admin_name": "Administrador",
             "admin_email": "admin@test.pt",
             "admin_password": "TenantPassword123!",
@@ -74,7 +75,8 @@ def create(client, slug):
 
 
 def enter(client, slug):
-    assert client.post("/api/company/select", json={"slug": slug}).status_code == 200
+    nif = str(500000000 + sum((i + 1) * ord(ch) for i, ch in enumerate(slug)))
+    assert client.post("/api/company/select", json={"nif": nif}).status_code == 200
     assert (
         client.post(
             "/api/auth/login", json={"email": "admin@test.pt", "password": "TenantPassword123!"}
@@ -246,6 +248,7 @@ def test_company_validation_explains_fields_and_normalizes_slug(platform):
     c, _ = platform
     payload = {
         "name": "Empresa de teste",
+        "nif": "500000000",
         "slug": "identificador inválido",
         "admin_name": "Administrador",
         "admin_email": "ADMIN@test.pt",
@@ -278,14 +281,14 @@ def test_tenant_integration_uses_own_company_without_platform_session(platform):
         c.post(
             "/api/integrations/wintouch/sync", json={"resource": "products", "company_id": b["id"]}
         ).status_code
-        == 422
+        == 409
     )
     enter(c, b["slug"])
     assert c.get("/api/integrations/wintouch").json()["id"] == b["id"]
 
 
 def test_sales_import_is_bound_to_current_company(platform, monkeypatch):
-    c, _ = platform
+    c, factory = platform
     a = create(c, "vendas-empresa-a")
     b = create(c, "vendas-empresa-b")
     assert (
@@ -297,6 +300,8 @@ def test_sales_import_is_bound_to_current_company(platform, monkeypatch):
         ).status_code
         == 200
     )
+    with factory.begin() as core:
+        core.get(Company, a["id"]).operating_mode = "integrated"
     c.cookies.clear()
     enter(c, a["slug"])
     store = c.get("/api/bootstrap").json()["stores"][0]["id"]
@@ -322,7 +327,7 @@ def test_sales_import_is_bound_to_current_company(platform, monkeypatch):
     assert c.get("/api/integrations/wintouch/sales").json() == []
     assert (
         c.post("/api/integrations/wintouch/sales", json={**body, "confirm_demo": True}).status_code
-        == 422
+        == 409
     )
 
 
@@ -338,6 +343,8 @@ def test_manual_sync_pagination_deduplication_and_demo_confirmation(platform, mo
         company, api_active=True, api_enterprise="api-sync", api_key="secret-sync-key"
     )
     assert c.post(url + "/config", json=config).status_code == 200
+    with factory.begin() as core:
+        core.get(Company, company["id"]).operating_mode = "integrated"
     assert c.post(url + "/sync", json={"resource": "products"}).status_code == 422
     assert (
         c.post(
@@ -481,3 +488,464 @@ def test_encrypted_credentials_readonly_test_and_deactivation(platform, monkeypa
     )
     assert c.get("/api/bootstrap").status_code == 401
     assert c.post("/api/company/select", json={"slug": company["slug"]}).status_code == 404
+
+
+def test_nif_unique_creation_selection_and_update(platform):
+    c, factory = platform
+    payload = {
+        "name": "Empresa NIF",
+        "nif": "501234567",
+        "admin_name": "Administrador",
+        "admin_email": "admin@test.pt",
+        "admin_password": "TenantPassword123!",
+    }
+    first = c.post("/api/platform/companies", json=payload)
+    assert first.status_code == 200, first.text
+    a = first.json()
+    assert a["nif"] == payload["nif"]
+    assert c.post("/api/platform/companies", json=payload).status_code == 409
+    assert c.post("/api/platform/companies", json={**payload, "nif": "ABC"}).status_code == 422
+    assert c.post("/api/company/select", json={"nif": "999999999"}).status_code == 404
+    assert c.post("/api/company/select", json={"slug": a["slug"]}).status_code == 404
+    assert c.post("/api/company/select", json={"nif": a["nif"]}).status_code == 200
+    assert (
+        c.post(
+            "/api/auth/login", json={"email": "admin@test.pt", "password": "TenantPassword123!"}
+        ).status_code
+        == 200
+    )
+    assert c.get("/api/bootstrap").json()["company"]["nif"] == a["nif"]
+    b = c.post("/api/platform/companies", json={**payload, "nif": "502345678"}).json()
+    url = "/api/platform/companies/" + a["id"] + "/config"
+    assert c.post(url, json=configuration(a, nif=b["nif"])).status_code == 409
+    assert c.post(url, json=configuration(a, nif="503456789")).status_code == 200
+    assert c.post("/api/company/select", json={"nif": a["nif"]}).status_code == 404
+    assert c.post("/api/company/select", json={"nif": "503456789"}).status_code == 200
+    # Preserve data when assigning the NIF to an existing company.
+    with factory.begin() as db:
+        db.get(Company, a["id"]).nif = None
+    assert c.post("/api/company/select", json={"slug": a["slug"]}).status_code == 200
+    assert c.post(url, json=configuration(a, nif="503456789")).status_code == 200
+    assert c.post("/api/company/select", json={"slug": a["slug"]}).status_code == 404
+    assert c.post(url, json=configuration(a, active=False)).status_code == 200
+    assert c.post("/api/company/select", json={"nif": "503456789"}).status_code == 404
+
+
+def test_platform_reset_scoped_audited_and_revokes_sessions(platform):
+    c, _ = platform
+    a, b = create(c, "reset-a"), create(c, "reset-b")
+    users = c.get("/api/platform/companies/" + a["id"] + "/users")
+    assert users.status_code == 200
+    assert "password_hash" not in users.text
+    user = users.json()[0]
+    assert user["email"] == "admin@test.pt"
+    enter(c, a["slug"])
+    url = "/api/platform/companies/" + a["id"] + "/users/" + user["id"] + "/reset-password"
+    new_password = "NewTenantPassword123!"
+    assert c.post(url, json={"new_password": "short"}).status_code == 422
+    wrong = url.replace(a["id"], b["id"])
+    assert c.post(wrong, json={"new_password": new_password}).status_code == 404
+    assert c.post(url, json={"new_password": new_password}).status_code == 200
+    assert c.get("/api/bootstrap").status_code == 401
+    assert (
+        c.post(
+            "/api/auth/login", json={"email": user["email"], "password": "TenantPassword123!"}
+        ).status_code
+        == 401
+    )
+    assert (
+        c.post(
+            "/api/auth/login", json={"email": user["email"], "password": new_password}
+        ).status_code
+        == 200
+    )
+    audit = c.get("/api/platform/audit")
+    assert "palavra_passe_reposta" in audit.text
+    assert new_password not in audit.text
+    c.post("/api/platform/logout", json={})
+    assert c.get("/api/platform/companies/" + a["id"] + "/users").status_code == 401
+    assert c.post(url, json={"new_password": new_password}).status_code == 401
+
+
+def test_company_removal_blocks_access_preserves_data_and_audit(platform):
+    c, factory = platform
+    a = create(c, "remove-a")
+    b = create(c, "remove-b")
+    enter(c, a["slug"])
+    url = "/api/platform/companies/" + a["id"]
+    assert c.post(url + "/remove", json={"confirmation": "wrong"}).status_code == 422
+    assert c.post(url + "/remove", json={"confirmation": a["nif"]}).status_code == 200
+    assert c.get("/api/bootstrap").status_code == 401
+    assert c.post("/api/company/select", json={"nif": a["nif"]}).status_code == 404
+    assert a["id"] not in [x["id"] for x in c.get("/api/platform/companies").json()]
+    assert c.post(url + "/config", json=configuration(a)).status_code == 404
+    assert c.post(url + "/remove", json={"confirmation": a["nif"]}).status_code == 404
+    assert "empresa_removida" in c.get("/api/platform/audit").text
+    with factory() as db:
+        saved = db.get(Company, a["id"])
+        assert saved.removed_at and not saved.active
+        with database.engine.connect() as connection:
+            assert (
+                connection.scalar(text('SELECT count(*) FROM "' + saved.schema_name + '".users'))
+                == 1
+            )
+    assert enter(c, b["slug"])["company"]["id"] == b["id"]
+    c.post("/api/platform/logout", json={})
+    assert (
+        c.post(
+            "/api/platform/companies/" + b["id"] + "/remove", json={"confirmation": b["nif"]}
+        ).status_code
+        == 401
+    )
+
+
+def test_reuse_removed_company_nif_starts_with_separate_data(platform):
+    c, factory = platform
+    old = create(c, "reuse-old")
+    enter(c, old["slug"])
+    assert c.post("/api/stores", json={"name": "Old store"}).status_code == 200
+    assert (
+        c.post(
+            "/api/platform/companies/" + old["id"] + "/remove", json={"confirmation": old["nif"]}
+        ).status_code
+        == 200
+    )
+    payload = {
+        "name": "Replacement",
+        "removed_action": "new",
+        "nif": old["nif"],
+        "admin_name": "Admin",
+        "admin_email": "admin@test.pt",
+        "admin_password": "TenantPassword123!",
+    }
+    r = c.post("/api/platform/companies", json=payload)
+    assert r.status_code == 200, r.text
+    new = r.json()
+    assert new["id"] != old["id"]
+    assert c.post("/api/company/select", json={"nif": old["nif"]}).status_code == 200
+    assert (
+        c.post(
+            "/api/auth/login", json={"email": "admin@test.pt", "password": "TenantPassword123!"}
+        ).status_code
+        == 200
+    )
+    boot = c.get("/api/bootstrap").json()
+    assert boot["company"]["id"] == new["id"] and len(boot["stores"]) == 1
+    duplicate = c.post("/api/platform/companies", json=payload)
+    assert duplicate.status_code == 409
+    assert "J\u00e1 existe" in duplicate.json()["detail"]
+    with factory() as db:
+        assert db.get(Company, old["id"]).nif == old["nif"]
+        assert db.get(Company, old["id"]).schema_name != db.get(Company, new["id"]).schema_name
+
+
+def test_restore_removed_company_keeps_stores_users_and_requires_choice(platform):
+    c, factory = platform
+    a = create(c, "restore-a")
+    enter(c, a["slug"])
+    assert c.post("/api/stores", json={"name": "Preserved store"}).status_code == 200
+    url = "/api/platform/companies/" + a["id"]
+    assert c.post(url + "/remove", json={"confirmation": a["nif"]}).status_code == 200
+    assert c.get("/api/platform/removed-companies/" + a["nif"]).json()[0]["id"] == a["id"]
+    payload = {
+        "name": "New",
+        "nif": a["nif"],
+        "admin_name": "Admin",
+        "admin_email": "admin@test.pt",
+        "admin_password": "TenantPassword123!",
+    }
+    assert c.post("/api/platform/companies", json=payload).status_code == 409
+    assert c.post(url + "/restore", json={"confirmation": "wrong"}).status_code == 422
+    assert c.post(url + "/restore", json={"confirmation": a["nif"]}).status_code == 200
+    boot = enter(c, a["slug"])
+    assert boot["company"]["id"] == a["id"] and len(boot["stores"]) == 2
+    assert c.post(url + "/remove", json={"confirmation": a["nif"]}).status_code == 200
+    assert (
+        c.post("/api/platform/companies", json={**payload, "removed_action": "new"}).status_code
+        == 200
+    )
+    assert c.post(url + "/restore", json={"confirmation": a["nif"]}).status_code == 409
+    assert "empresa_recuperada" in c.get("/api/platform/audit").text
+    c.post("/api/platform/logout", json={})
+    assert c.get("/api/platform/removed-companies/" + a["nif"]).status_code == 401
+    assert c.post(url + "/restore", json={"confirmation": a["nif"]}).status_code == 401
+
+
+def test_company_mode_edit_is_validated_scoped_and_audited(platform):
+    c, _ = platform
+    a, b = create(c, "mode-a"), create(c, "mode-b")
+    url = "/api/platform/companies/" + a["id"] + "/config"
+    assert c.post(url, json=configuration(a, mode="invalid")).status_code == 422
+    r = c.post(url, json=configuration(a, mode="real"))
+    assert r.status_code == 200 and r.json()["mode"] == "real"
+    assert enter(c, a["slug"])["mode"] == "real"
+    assert enter(c, b["slug"])["mode"] == b["mode"]
+    assert c.post(url, json=configuration(a)).json()["mode"] == "real"
+    assert c.post(url, json=configuration(a, mode="demonstracao")).json()["mode"] == "demonstracao"
+    assert "modo_alterado:demonstracao:real" in c.get("/api/platform/audit").text
+    c.post("/api/platform/logout", json={})
+    assert c.post(url, json=configuration(a, mode="real")).status_code == 401
+
+
+def test_edit_company_email_is_scoped_and_preserves_password(platform):
+    c, _ = platform
+    a, b = create(c, "email-a"), create(c, "email-b")
+    enter(c, a["slug"])
+    user = c.get("/api/platform/companies/" + a["id"] + "/users").json()[0]
+    url = "/api/platform/companies/" + a["id"] + "/users/" + user["id"] + "/email"
+    assert c.post(url, json={"email": "invalid"}).status_code == 422
+    assert c.post(url.replace(a["id"], b["id"]), json={"email": "new@test.pt"}).status_code == 404
+    assert c.post(url, json={"email": " NEW@test.pt "}).json()["email"] == "new@test.pt"
+    assert (
+        c.post(
+            "/api/auth/login", json={"email": "admin@test.pt", "password": "TenantPassword123!"}
+        ).status_code
+        == 401
+    )
+    assert (
+        c.post(
+            "/api/auth/login", json={"email": "new@test.pt", "password": "TenantPassword123!"}
+        ).status_code
+        == 200
+    )
+    assert "email_utilizador_alterado" in c.get("/api/platform/audit").text
+    enter(c, b["slug"])
+    c.post("/api/platform/logout", json={})
+    assert c.post(url, json={"email": "other@test.pt"}).status_code == 401
+
+
+def test_clear_stale_company_and_reselect_preserves_current_session(platform):
+    c, _ = platform
+    a = create(c, "stale-company")
+    enter(c, a["slug"])
+    assert c.post("/api/company/select", json={"nif": a["nif"]}).status_code == 200
+    assert c.get("/api/bootstrap").status_code == 200
+    assert c.post("/api/company/clear", json={}).status_code == 200
+    assert "gpgest_company" not in c.cookies and "gpgest_session" not in c.cookies
+    assert enter(c, a["slug"])["company"]["id"] == a["id"]
+
+
+def test_reset_data_preserves_configuration_and_archives_records(platform):
+    c, factory = platform
+    a, b = create(c, "reset-data-a"), create(c, "reset-data-b")
+    boot = enter(c, a["slug"])
+    assert (
+        c.post(
+            "/api/sessions", json={"register_id": boot["registers"][0]["id"], "opening": "100"}
+        ).status_code
+        == 200
+    )
+    with factory() as db:
+        original = db.get(Company, a["id"]).schema_name
+    url = "/api/platform/companies/" + a["id"] + "/reset-data"
+    assert c.post(url, json={"confirmation": "wrong", "acknowledged": True}).status_code == 422
+    assert c.post(url, json={"confirmation": a["nif"], "acknowledged": False}).status_code == 422
+    assert c.post(url, json={"confirmation": a["nif"], "acknowledged": True}).status_code == 200
+    assert c.get("/api/bootstrap").status_code == 401
+    new_boot = enter(c, a["slug"])
+    assert new_boot["user"]["id"] == boot["user"]["id"]
+    assert new_boot["stores"] == boot["stores"]
+    assert c.get("/api/sessions").json() == []
+    with factory() as db:
+        assert db.get(Company, a["id"]).schema_name != original
+    with database.engine.begin() as connection:
+        assert connection.scalar(text('SELECT count(*) FROM "' + original + '".cash_sessions')) == 1
+        connection.execute(text('DROP SCHEMA "' + original + '" CASCADE'))
+    assert "dados_reinicializados" in c.get("/api/platform/audit").text
+    assert enter(c, b["slug"])["company"]["id"] == b["id"]
+    c.post("/api/platform/logout", json={})
+    assert c.post(url, json={"confirmation": a["nif"], "acknowledged": True}).status_code == 401
+
+
+def test_entities_create_edit_and_company_isolation(platform):
+    c, _ = platform
+    a, b = create(c, "entities-a"), create(c, "entities-b")
+    enter(c, a["slug"])
+    data = {
+        "name": "Cliente fornecedor",
+        "tax_number": "510774318",
+        "email": "entity@test.pt",
+        "phone": "",
+        "is_customer": True,
+        "is_supplier": True,
+        "active": True,
+    }
+    assert (
+        c.post(
+            "/api/entities", json={**data, "is_customer": False, "is_supplier": False}
+        ).status_code
+        == 422
+    )
+    r = c.post("/api/entities", json=data)
+    assert r.status_code == 200, r.text
+    key = r.json()["id"]
+    assert c.get("/api/entities").json()[0]["name"] == data["name"]
+    assert (
+        c.post("/api/entities/" + key, json={**data, "name": "Updated", "active": False}).json()[
+            "name"
+        ]
+        == "Updated"
+    )
+    enter(c, b["slug"])
+    assert c.get("/api/entities").json() == []
+    assert c.post("/api/entities/" + key, json=data).status_code == 404
+    enter(c, a["slug"])
+    assert not c.get("/api/entities").json()[0]["active"]
+    c.post("/api/auth/logout", json={})
+    assert c.post("/api/entities", json=data).status_code == 401
+
+
+def test_wintouch_entity_edits_are_local_and_survive_source_updates(platform):
+    from app.models import WintouchEntity
+
+    c, factory = platform
+    a = create(c, "entities-wt")
+    c.post(
+        "/api/platform/companies/" + a["id"] + "/config",
+        json=configuration(a, api_enterprise="entities-source"),
+    )
+    with factory() as core:
+        schema = core.get(Company, a["id"]).schema_name
+    tenant_factory = sessionmaker(
+        database.engine.execution_options(schema_translate_map={None: schema}),
+        expire_on_commit=False,
+    )
+    with tenant_factory.begin() as db:
+        imported = WintouchEntity(
+            enterprise_id="entities-source",
+            external_id="external-entity",
+            name="Imported",
+            is_customer=True,
+            is_supplier=False,
+        )
+        db.add(imported)
+        db.flush()
+        original_id = imported.id
+    enter(c, a["slug"])
+    key = "wt:" + original_id
+    assert c.get("/api/entities").json()[0]["name"] == "Imported"
+    category = c.post("/api/categories", json={"name": "Serviços fornecedor"}).json()
+    payload = {"name": "Local edit", "is_customer": True, "is_supplier": True, "category_id": category["id"]}
+    assert c.post("/api/entities/" + key, json={**payload, "category_id": "missing"}).status_code == 422
+    assert c.post("/api/entities/" + key, json=payload).status_code == 200
+    with tenant_factory.begin() as db:
+        imported = db.get(WintouchEntity, original_id)
+        assert imported.name == "Imported"
+        imported.name = "Source updated"
+    rows = c.get("/api/entities").json()
+    assert len(rows) == 1 and rows[0]["name"] == "Local edit"
+    assert rows[0]["category_id"] == category["id"]
+    assert c.post("/api/entities/" + key, json={**payload, "category_id": None}).status_code == 200
+    assert c.get("/api/entities").json()[0]["category_id"] is None
+
+
+def test_fiscal_settings_are_validated_and_isolated(platform):
+    c, _ = platform
+    a = create(c, "fiscal-a")
+    b = create(c, "fiscal-b")
+    enter(c, a["slug"])
+    assert c.get("/api/settings/fiscal").json()["vat_period"] == ""
+    assert c.post("/api/settings/fiscal", json={"vat_period": "mensal"}).status_code == 200
+    assert c.get("/api/settings/fiscal").json()["vat_period"] == "mensal"
+    assert c.post("/api/settings/fiscal", json={"vat_period": "invalid"}).status_code == 422
+    enter(c, b["slug"])
+    assert c.get("/api/settings/fiscal").json()["vat_period"] == ""
+    assert c.post("/api/settings/fiscal", json={"vat_period": "trimestral"}).status_code == 200
+    enter(c, a["slug"])
+    assert c.get("/api/settings/fiscal").json()["vat_period"] == "mensal"
+
+
+def test_entity_removal_hides_and_preserves_record(platform):
+    from app.models import BusinessEntity
+
+    c, factory = platform
+    a = create(c, "entity-removal")
+    enter(c, a["slug"])
+    entity = c.post(
+        "/api/entities", json={"name": "To remove", "is_customer": True, "is_supplier": True}
+    ).json()
+    url = "/api/entities/" + entity["id"] + "/remove"
+    assert c.post(url, json={}).status_code == 200
+    assert c.get("/api/entities").json() == []
+    assert c.post(url, json={}).status_code == 404
+    assert "entidade_removida" in c.get("/api/audit").text
+    with factory() as core:
+        schema = core.get(Company, a["id"]).schema_name
+    with database.SessionLocal(
+        bind=database.engine.execution_options(schema_translate_map={None: schema})
+    ) as tenant:
+        assert tenant.get(BusinessEntity, entity["id"].split(":")[1]).removed
+    c.post("/api/auth/logout", json={})
+    assert c.post(url, json={}).status_code == 401
+
+
+def test_attachment_settings_are_company_scoped_and_validate_folder(platform):
+    c, _ = platform
+    a, b = create(c, "attachment-a"), create(c, "attachment-b")
+    enter(c, a["slug"])
+    data = {
+        "outlook_email": "mail@hotmail.com",
+        "google_email": "mail@gmail.com",
+        "drive_folder": "https://drive.google.com/drive/folders/1OV1fH8lEFrvlTa7P7-OzgkVxgFmMZ5pJ?usp=sharing",
+        "mail_folder": "inbox",
+    }
+    assert c.post("/api/settings/attachments", json=data).status_code == 200
+    settings = c.get("/api/settings/attachments").json()
+    assert (
+        not settings["connected"]
+        and settings["config"]["drive_folder"] == "1OV1fH8lEFrvlTa7P7-OzgkVxgFmMZ5pJ"
+    )
+    assert (
+        c.post(
+            "/api/settings/attachments", json={**data, "drive_folder": "https://other.example"}
+        ).status_code
+        == 422
+    )
+    enter(c, b["slug"])
+    assert c.get("/api/settings/attachments").json()["config"] == {}
+
+
+def test_google_authorization_is_scoped_expiring_and_browser_bound(platform, monkeypatch):
+    from urllib.parse import urlsplit, parse_qs
+
+    c, _ = platform
+    a = create(c, "google-a")
+    enter(c, a["slug"])
+    c.post(
+        "/api/settings/attachments",
+        json={
+            "outlook_email": "",
+            "google_email": "mail@gmail.com",
+            "drive_folder": "123456789012345",
+            "mail_folder": "inbox",
+        },
+    )
+    monkeypatch.setattr(
+        "app.google_integration.credentials",
+        lambda: {"client_id": "test-client", "client_secret": "private-test-secret"},
+    )
+    url = "/api/integrations/attachments/google"
+    assert c.post(url + "/connect", json={}).status_code == 422
+    r = c.post(url + "/connect", json={}, headers={"host": "127.0.0.1:8001", "origin": "http://localhost:5174"})
+    assert r.status_code == 200, r.text
+    assert "private-test-secret" not in r.text
+    state = parse_qs(urlsplit(r.json()["url"]).query)["state"][0]
+    assert (
+        c.get(url + "/callback", params={"state": state, "error": "access_denied"}).status_code
+        == 400
+    )
+    nonce = c.cookies.get("gpgest_google_nonce")
+    headers = {"cookie": "gpgest_google_nonce=" + nonce}
+    assert (
+        c.get(
+            url + "/callback", params={"state": state, "error": "access_denied"}, headers=headers
+        ).status_code
+        == 400
+    )
+    assert (
+        c.get(
+            url + "/callback", params={"state": state, "code": "replay"}, headers=headers
+        ).status_code
+        == 400
+    )
+    assert not c.get(url + "/status").json()["connected"]

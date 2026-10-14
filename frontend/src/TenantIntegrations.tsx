@@ -28,13 +28,13 @@ export default function TenantIntegrations({
           <span className="pill">
             {company.api_active ? "Ligação ativada" : "Ligação desativada"}
           </span>
-          {canManage ? (
+          {canManage && company.api_active ? (
             <>
               <SyncPanel company={company} />
-              <SalesImportPanel company={company} />
+              {(company.capabilities?.read_documents ?? true) && company.resources?.includes("sales") !== false && <SalesImportPanel company={company} />}
             </>
           ) : (
-            <p>O administrador da empresa gere as sincronizações.</p>
+            <p>Consulte o modo e as permissões em Configurações &gt; Integrações. Os dados já guardados permanecem acessíveis.</p>
           )}
         </>
       ) : (

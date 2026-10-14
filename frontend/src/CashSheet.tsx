@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowLeftRight, Banknote, CreditCard, FileText, LockKeyhole, LockKeyholeOpen, Wallet } from "lucide-react";
 import { api, Field } from "./App";
 import CashCountDialog from "./CashCountDialog";
+import SupplierPicker from "./components/SupplierPicker";
 import "./CashSheet.css";
 
 type Row = Record<string, any>;
@@ -25,6 +27,8 @@ export default function CashSheet({
   operator,
   writable,
   manager,
+  canImportErp = false,
+  demo = false,
   reload,
   onAction,
 }: {
@@ -33,10 +37,15 @@ export default function CashSheet({
   operator: string;
   writable: boolean;
   manager: boolean;
+  canImportErp?: boolean;
+  demo?: boolean;
   reload: () => Promise<void>;
   onAction: (kind: string, row: Row) => void;
 }) {
   const stored = s.count_data || {};
+  const [importPrompt, setImportPrompt] = useState(false), [confirmDemo, setConfirmDemo] = useState(false);
+  const importDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { if (importPrompt && !importDialog.current?.open) importDialog.current?.showModal(); }, [importPrompt]);
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       s.sheet.rows.map((row: Row) => [
@@ -59,6 +68,20 @@ export default function CashSheet({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [sourceDay, setSourceDay] = useState(s.sheet.day);
+  const [supplierPrompt, setSupplierPrompt] = useState(false);
+  const [supplierAnswer, setSupplierAnswer] = useState(stored.debit_supplier?.answer || "");
+  const [supplierName, setSupplierName] = useState(stored.debit_supplier?.name || "");
+  const [supplierId, setSupplierId] = useState(stored.debit_supplier?.id || "");
+  const [suppliers, setSuppliers] = useState<Row[]>([]);
+  const [supplierLoading, setSupplierLoading] = useState(false);
+  useEffect(() => {
+    if (!supplierPrompt) return;
+    let active = true; setSupplierLoading(true);
+    api("/entities").then(result => { if (active) setSuppliers(result.filter((entity: Row) => entity.is_supplier && entity.active)); }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setSupplierLoading(false); });
+    return () => { active = false; };
+  }, [supplierPrompt]);
+  const supplierDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { if (supplierPrompt && !supplierDialog.current?.open) supplierDialog.current?.showModal(); }, [supplierPrompt]);
   const editable = writable && !s.closed_at;
   const countedCash = Object.entries(counts).reduce(
     (sum, [key, count]) => sum + Number(key) * count,
@@ -103,13 +126,17 @@ export default function CashSheet({
         : amountFor(row.key)! - row.expected_cents),
     0,
   );
-  async function save(closing: boolean) {
+  async function save(closing: boolean, supplier?: { answer: string; name: string; id?: string }) {
     setError("");
     setNotice("");
     if (closing && rows.some((row) => amountFor(row.key) === null)) {
       setError(
         "Introduza a contagem de todos os meios de pagamento antes de fechar.",
       );
+      return;
+    }
+    if (closing && rows.some(row => row.debits_cents > 0) && !supplier) {
+      setSupplierPrompt(true);
       return;
     }
     const payments: Record<string, string> = {};
@@ -127,8 +154,11 @@ export default function CashSheet({
             ? values.numerario
             : null,
         reason,
+        ...(closing && supplier ? { supplier_answer: supplier.answer, supplier_name: supplier.name, supplier_id: supplier.id || null } : {}),
       });
       await reload();
+      setSupplierPrompt(false);
+      if (closing) window.dispatchEvent(new Event("gpgest-sales-updated"));
       setNotice(
         closing
           ? "Folha de caixa fechada."
@@ -154,9 +184,12 @@ export default function CashSheet({
             {operator} · {s.closed_at ? "Fechada" : "Em aberto"}
           </p>
         </div>
-        <span className={"pill " + (s.closed_at ? "neutral" : "")}>
+        <div className="actions">{canImportErp && <button disabled={busy || !!s.closed_at} title={s.closed_at ? "Reabra a folha para atualizar a conferência." : undefined} onClick={() => { setConfirmDemo(false); setImportPrompt(true); }}>Importar movimentos do ERP</button>}
+        <span className={`cash-sheet-status ${s.closed_at ? "closed" : "open"}`}>
+          {s.closed_at ? <LockKeyhole size={16} aria-hidden="true" /> : <LockKeyholeOpen size={16} aria-hidden="true" />}
           {s.closed_at ? "Fechada" : "Aberta"}
         </span>
+        </div>
       </div>
       <div
         className={`cash-reconciliation ${cashDifference === null ? "pending" : cashDifference === 0 ? "balanced" : "unbalanced"}`}
@@ -190,7 +223,7 @@ export default function CashSheet({
             <small>Diferença de caixa (contado − esperado)</small>
             <strong>{cashDifference === null ? "Por contar" : money(cashDifference)}</strong>
           </div>
-          <div>
+          <div className={`cash-withdrawal-highlight ${cashToWithdraw === null ? "pending" : cashToWithdraw < 0 ? "replenish" : ""}`}>
             <small>{cashToWithdraw !== null && cashToWithdraw < 0 ? "Valor a repor no fundo" : "Valor a retirar"}</small>
             <strong>{cashToWithdraw === null ? "Por contar" : money(Math.abs(cashToWithdraw))}</strong>
           </div>
@@ -204,13 +237,15 @@ export default function CashSheet({
       </p>
       {s.sheet.include_wintouch && (
         <p className="footnote">
-          Os recebimentos Wintouch devem estar importados em Integrações. Evite
+          Importe os movimentos do ERP para atualizar a conferência. Evite
           registar novamente no GPGest os mesmos recebimentos.
         </p>
       )}
+      {importPrompt && <dialog className="doc-dialog" ref={importDialog} aria-label="Importar movimentos do ERP" onCancel={e => { e.preventDefault(); if (!busy) setImportPrompt(false); }}><div className="panel-title"><h2>Importar movimentos do ERP</h2><button disabled={busy} aria-label="Fechar" onClick={() => setImportPrompt(false)}>×</button></div><p>Importar os movimentos do estabelecimento para {s.sheet.day.split("-").reverse().join("/")}, usando o ERP configurado na empresa.</p>{error && <p className="error" role="alert">{error}</p>}{demo && <label className="doc-check"><input type="checkbox" checked={confirmDemo} onChange={e => setConfirmDemo(e.target.checked)} disabled={busy} />Confirmo a importação de dados reais do ERP para esta empresa de demonstração.</label>}<button className="primary" disabled={busy || (demo && !confirmDemo)} onClick={async () => { setBusy(true); setError(""); setNotice(""); try { const result = await api(`/sessions/${s.id}/import-erp`, { confirm_demo: confirmDemo }, { timeoutMs: 120000 }); await reload(); window.dispatchEvent(new Event("gpgest-sales-updated")); setImportPrompt(false); setNotice(result.closed ? "Movimentos importados. A folha foi fechada entretanto; os valores do fecho foram preservados." : `Movimentos importados com sucesso: ${result.import.read_count} registos, ${result.import.inserted_count} novos e ${result.import.updated_count} atualizados.`); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>{busy ? "A importar…" : "Importar movimentos"}</button></dialog>}
       {editable && (
-        <details className="cash-sheet-sources">
-          <summary>Dia dos movimentos reais</summary>
+        <div className="cash-sheet-sources">
+          <strong>Dia dos movimentos reais: {String(s.sheet.day).split("-").reverse().join("/")}</strong>
+          <p className="footnote">A conferência inclui apenas os movimentos desta data. Se uma entrada ou saída estiver registada noutro dia no ERP, selecione esse dia e clique em Atualizar dia.</p>
           <Field label="Dia da folha de caixa">
             <input
               type="date"
@@ -221,7 +256,7 @@ export default function CashSheet({
           <button disabled={busy || !sourceDay} onClick={updateSources}>
             Atualizar dia
           </button>
-        </details>
+        </div>
       )}
       <div className="table-wrap">
         <table className="cash-sheet-table">
@@ -240,10 +275,17 @@ export default function CashSheet({
           <tbody>
             {rows.map((row) => {
               const counted = amountFor(row.key);
+              const PaymentIcon = row.key === "numerario" ? Banknote
+                : row.key === "cartao" ? CreditCard
+                : row.key === "transferencia" ? ArrowLeftRight
+                : String(row.key).startsWith("cheque") ? FileText : Wallet;
               return (
                 <tr key={row.key}>
                   <td>
-                    <strong>{row.name}</strong>
+                    <strong className="cash-payment-label">
+                      <PaymentIcon size={18} aria-hidden="true" />
+                      <span>{row.name}</span>
+                    </strong>
                     {row.key === "numerario" && (
                       <small>Inclui o fundo de maneio no esperado</small>
                     )}
@@ -365,6 +407,7 @@ export default function CashSheet({
         </Field>
       )}
       {s.closed_at && s.close_reason && <p>Justificação: {s.close_reason}</p>}
+      {s.closed_at && stored.debit_supplier && <p>Fornecedor dos débitos: <strong>{stored.debit_supplier.answer === "indicado" ? stored.debit_supplier.name : stored.debit_supplier.answer === "desconhecido" ? "Não identificado" : "Não aplicável"}</strong></p>}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -398,6 +441,21 @@ export default function CashSheet({
           <button onClick={() => onAction("reopen", s)}>Reabrir</button>
         )}
       </div>
+      {supplierPrompt && <dialog ref={supplierDialog} className="doc-dialog" aria-label="Fornecedor dos débitos" style={{ maxWidth: 560 }} onCancel={e => { e.preventDefault(); if (!busy) setSupplierPrompt(false); }}>
+        <div className="panel-title"><h2>Identificar fornecedor</h2><button disabled={busy} aria-label="Fechar pergunta do fornecedor" onClick={() => setSupplierPrompt(false)}>×</button></div>
+        <p>Existem {money(rows.reduce((sum, row) => sum + row.debits_cents, 0))} em débitos nesta folha.</p>
+        <form className="doc-form" onSubmit={e => { e.preventDefault(); save(true, { answer: supplierAnswer, name: supplierName, id: supplierAnswer === "indicado" ? supplierId : undefined }); }}>
+          <fieldset><legend>Sabe indicar o fornecedor dos débitos?</legend>
+            {[["indicado", "Sim, indicar fornecedor"], ["desconhecido", "Não sei indicar"], ["nao_aplicavel", "Não se aplica a um fornecedor"]].map(([value, label]) => <label className="doc-check" key={value}><input type="radio" name="supplier_answer" value={value} checked={supplierAnswer === value} onChange={() => setSupplierAnswer(value)} />{label}</label>)}
+          </fieldset>
+          {supplierAnswer === "indicado" && <>
+            <SupplierPicker items={suppliers as { id: string; name: string; tax_number?: string }[]} selectedName={supplierName} loading={supplierLoading} canCreate={manager} onSelect={entity => { setSupplierId(entity?.id || ""); setSupplierName(entity?.name || ""); }} onCreated={entity => setSuppliers(previous => [...previous, entity])} />
+          </>}
+          <p className="footnote">A indicação fica guardada no fecho. Os movimentos e o registo na Wintouch mantêm os seus dados.</p>
+          {error && <p className="error" role="alert">{error}</p>}
+          <div className="actions"><button type="button" disabled={busy} onClick={() => setSupplierPrompt(false)}>Cancelar</button><button className="primary" disabled={busy || !supplierAnswer || (supplierAnswer === "indicado" && !supplierId)}>Confirmar e fechar caixa</button></div>
+        </form>
+      </dialog>}
     </section>
   );
 }

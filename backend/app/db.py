@@ -44,7 +44,12 @@ def db_session(request: Request):
             "id": company.id,
             "name": company.name,
             "slug": company.slug,
+            "nif": company.nif,
             "mode": company.mode,
+            "operating_mode": company.operating_mode,
+            "erp_provider": company.erp_provider,
+            "erp_active": bool(company.api_active and company.operating_mode == "integrated"),
+            "connector_writes": bool(company.connector_writes),
         }
         yield db
 

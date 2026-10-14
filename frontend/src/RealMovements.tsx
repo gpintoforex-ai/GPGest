@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "./App";
-import RecordList, { calendarDay } from "./RecordList";
+import RecordList, { calendarDay, paymentGroup } from "./RecordList";
 
 type Row = Record<string, any>;
 
@@ -29,19 +29,25 @@ export default function RealMovements({
   children: (rows: Row[]) => ReactNode;
 }) {
   const [sourceRows, setSourceRows] = useState<Row[]>([]);
+  const [allLocalRows, setAllLocalRows] = useState<Row[]>([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState(false);
   useEffect(() => {
     let active = true;
     const load = async () => {
+      if (active) setLoading(true);
       try {
-        const result = await api("/integrations/wintouch/sales");
+        const [result, local] = await Promise.all([api("/integrations/wintouch/sales"), api("/movements?all_records=true")]);
         if (active) {
           setSourceRows(result);
+          setAllLocalRows(local);
           setError("");
         }
       } catch (e) {
         if (active) setError((e as Error).message);
+      } finally {
+        if (active) setLoading(false);
       }
     };
     load();
@@ -50,7 +56,7 @@ export default function RealMovements({
       active = false;
       window.removeEventListener("gpgest-sales-updated", load);
     };
-  }, []);
+  }, [localRows]);
   const imported = sourceRows
     .filter(
       (r) =>
@@ -62,10 +68,21 @@ export default function RealMovements({
       id: `wintouch:${r.id}`,
       external: true,
       origin: "wintouch",
-      kind: documents ? "documento" : r.direction > 0 ? "cliente" : "reembolso",
+      kind: documents ? "documento" : r.source_kind === "cash_movement" ? r.direction > 0 ? "entrada_caixa" : "saida_caixa" : r.direction > 0 ? "cliente" : "reembolso",
+      category_name: r.category_name || (r.source_kind === "cash_movement" ? r.direction > 0 ? "Fundo de maneio" : null : r.document_group === "vendas" ? "Vendas" : null),
     }));
-  const rows = [...(documents ? [] : localRows), ...imported]
-    .map<Row>((r) => ({
+  const local = [...new Map([...allLocalRows, ...localRows].map(row => [row.id, row])).values()]
+    .filter(row => !store || registers.find(register => register.id === row.register_id)?.store_id === store);
+  const rows = [...(documents ? [] : local), ...imported]
+    .map<Row>((r) => {
+      const physical = ["Numerário", "Cheque", "Cheques", "Numerário e cheques"].includes(paymentGroup(r));
+      const bankId = r.bank_account_id;
+      if (!documents && !physical) return {
+        ...r,
+        filter_register: bankId ? `bank:${bankId}` : "bank:unassigned",
+        filter_register_name: bankId ? `Banco · ${r.bank_account_name || r.bank_name || "Conta bancária"}` : "Bancos · conta por associar",
+      };
+      return {
       ...r,
       filter_register:
         r.register_id ||
@@ -75,7 +92,8 @@ export default function RealMovements({
         (r.account_id
           ? `${r.account_name || r.account_id} (Wintouch)`
           : "Sem caixa identificada"),
-    }))
+      };
+    })
     .sort(
       (a, b) =>
         chronology(b.occurred_at).localeCompare(chronology(a.occurred_at)) ||
@@ -98,15 +116,17 @@ export default function RealMovements({
       )}
       {error && (
         <p className="error" role="alert">
-          Não foi possível carregar os registos Wintouch: {error}
+          Não foi possível carregar todos os movimentos: {error}
         </p>
       )}
+      {loading && <p role="status">A carregar movimentos…</p>}
       <RecordList
         rows={rows}
         dateField="occurred_at"
         resetKey={`${store}-${documents}`}
         totalField={documents ? undefined : "amount_cents"}
         paymentSummary={!documents}
+        accumulatedTotal={!documents && !error && !loading}
         movementFilters
       >
         {children}

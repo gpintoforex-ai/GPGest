@@ -20,11 +20,11 @@ export function SalesImportPanel({ company }: { company: Row }) {
   }, []);
   return (
     <section className="panel">
-      <h3>Importar vendas Wintouch</h3>
+      <h3>Importar vendas e movimentos de caixa Wintouch</h3>
       <p>
         Escolha o período e a loja a que pertence a ligação. Importa faturas,
         faturas-recibo, faturas simplificadas, notas de crédito, pagamentos
-        identificados e saldos a crédito.
+        identificados, entradas e retiradas manuais de caixa e saldos a crédito.
       </p>
       <p>
         Os recebimentos Wintouch ficam nos movimentos reais e os saldos em

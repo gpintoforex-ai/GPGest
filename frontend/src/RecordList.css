@@ -133,6 +133,11 @@
   opacity: 0.45;
   cursor: default;
 }
+.record-accumulated { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 14px 16px; margin-top: 16px; background: var(--color-nav, #14263f); border: 2px solid var(--color-nav, #14263f); border-radius: var(--radius-panel, 10px); color: #fff; box-shadow: 0 5px 14px rgb(20 38 63 / 18%); }
+.record-accumulated div { display: grid; gap: 6px; flex: 1 1 240px; }
+.record-accumulated b { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.record-accumulated strong { font-size: 30px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.record-totals .record-accumulated small { color: #e2e9f3; }
 .record-totals {
   margin: 18px 0;
   padding: 18px;
@@ -175,4 +180,13 @@
     justify-content: space-between;
     width: 100%;
   }
+}
+.record-payment-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.record-payment-label svg {
+  flex-shrink: 0;
+  color: var(--color-nav, #14263f);
 }

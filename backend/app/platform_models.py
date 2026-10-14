@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .models import now, uid
@@ -12,11 +12,21 @@ class PlatformBase(DeclarativeBase):
 
 class Company(PlatformBase):
     __tablename__ = "platform_companies"
+    __table_args__ = (
+        Index(
+            "platform_companies_current_nif_key",
+            "nif",
+            unique=True,
+            postgresql_where=text("removed_at IS NULL"),
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     name: Mapped[str] = mapped_column(String(100))
+    nif: Mapped[str | None] = mapped_column(String(9), nullable=True)
     slug: Mapped[str] = mapped_column(String(80), unique=True)
     schema_name: Mapped[str] = mapped_column(String(80), unique=True)
     active: Mapped[int] = mapped_column(Integer, default=1)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mode: Mapped[str] = mapped_column(String(20), default="demonstracao")
     api_url: Mapped[str] = mapped_column(
         String(300), default="https://api.wintouchcloud.com/api/v1"
@@ -24,6 +34,15 @@ class Company(PlatformBase):
     api_enterprise: Mapped[str] = mapped_column(String(100), default="")
     api_key_ciphertext: Mapped[str] = mapped_column(Text, default="")
     api_active: Mapped[int] = mapped_column(Integer, default=0)
+    erp_provider: Mapped[str] = mapped_column(String(40), default="wintouch", server_default="wintouch")
+    rubric_code_prefix: Mapped[str] = mapped_column(String(30), default="RUB", server_default="RUB")
+    operating_mode: Mapped[str] = mapped_column(String(20), default="local", server_default="local")
+    connector_writes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    sync_resources: Mapped[str] = mapped_column(Text, default='["products","entities","cash_accounts","sales","purchase_documents","rubrics"]', server_default='["products","entities","cash_accounts","sales","purchase_documents","rubrics"]')
+    data_authority: Mapped[str] = mapped_column(Text, default='{}', server_default='{}')
+    integration_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    sync_interval_minutes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 

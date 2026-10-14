@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, Field, Form } from "./App";
 import RecordList from "./RecordList";
+import { StatusBadge } from "./components/BusinessUI";
 import WintouchSettlementForm from "./WintouchSettlementForm";
 import SettlementConfirmation from "./SettlementConfirmation";
 type Row = Record<string, any>;
@@ -25,6 +26,7 @@ export default function PlannedMovements({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [create, setCreate] = useState(false);
+  const [editing, setEditing] = useState<Row | null>(null);
   const [selected, setSelected] = useState<Row | null>(null);
   const [key, setKey] = useState(crypto.randomUUID());
   const load = async () => {
@@ -89,6 +91,7 @@ export default function PlannedMovements({
             className="primary"
             onClick={() => {
               setCreate(!create);
+              setEditing(null);
               setSelected(null);
             }}
           >
@@ -106,10 +109,10 @@ export default function PlannedMovements({
       )}
       {create && (
         <section className="panel">
-          <h2>Novo documento a crédito</h2>
-          <Form
+          <h2>{editing ? "Editar documento de gest\u00e3o" : "Novo documento a cr\u00e9dito"}</h2>
+          <Form key={editing?.id || "new"}
             onSubmit={async (v) => {
-              await api("/planned-movements", {
+              await api(editing ? `/planned-movements/${editing.id}/edit` : "/planned-movements", {
                 ...v,
                 direction: Number(v.direction),
               });
@@ -120,7 +123,7 @@ export default function PlannedMovements({
             <Field label="Loja">
               <select
                 name="store_id"
-                defaultValue={store || boot.stores[0]?.id}
+                defaultValue={editing?.store_id || store || boot.stores[0]?.id}
                 required
               >
                 {boot.stores.map((r: Row) => (
@@ -131,23 +134,24 @@ export default function PlannedMovements({
               </select>
             </Field>
             <Field label="Tipo">
-              <select name="direction">
+              <select name="direction" defaultValue={editing?.direction || 1}>
                 <option value="1">A receber de cliente</option>
                 <option value="-1">A pagar a fornecedor</option>
               </select>
             </Field>
             <Field label="Entidade">
-              <input name="entity" required maxLength={200} />
+              <input defaultValue={editing?.entity || ""} name="entity" required maxLength={200} />
             </Field>
             <Field label="Documento">
-              <input name="document" required maxLength={200} />
+              <input defaultValue={editing?.document || ""} name="document" required maxLength={200} />
             </Field>
             <Field label="Vencimento">
-              <input name="due_date" type="date" required />
+              <input defaultValue={editing?.due_date || ""} name="due_date" type="date" required />
             </Field>
             <Field label="Montante (€)">
               <input
                 name="amount"
+                defaultValue={editing ? (editing.amount_cents / 100).toFixed(2) : ""}
                 type="number"
                 min="0.01"
                 step="0.01"
@@ -155,7 +159,7 @@ export default function PlannedMovements({
               />
             </Field>
             <Field label="Categoria">
-              <select name="category_id" required>
+              <select name="category_id" defaultValue={editing?.category_id || ""} required>
                 {boot.categories.map((r: Row) => (
                   <option key={r.id} value={r.id}>
                     {r.name}
@@ -270,6 +274,7 @@ export default function PlannedMovements({
                   <tr>
                     <th>Vencimento</th>
                     <th>Documento</th>
+                    <th>Doc. de referência</th>
                     <th>Entidade</th>
                     <th>Tipo</th>
                     <th>Total</th>
@@ -285,6 +290,7 @@ export default function PlannedMovements({
                     <tr key={r.id}>
                       <td>{r.due_date.split("-").reverse().join("/")}</td>
                       <td>{r.document}</td>
+                      <td>{r.document_reference || "—"}</td>
                       <td>{r.entity}</td>
                       <td>{r.direction === 1 ? "A receber" : "A pagar"}</td>
                       <td>{money(r.amount_cents)}</td>
@@ -293,7 +299,7 @@ export default function PlannedMovements({
                       </td>
                       <td>{money(r.remaining_cents)}</td>
                       <td>
-                        <span className="pill">{r.status}</span>
+                        <StatusBadge tone={r.status === "Liquidado" ? "success" : "warning"}>{r.status}</StatusBadge>
                       </td>
                       <td>
                         <span className="pill neutral">
@@ -301,9 +307,10 @@ export default function PlannedMovements({
                         </span>
                       </td>
                       <td>
+                        {!r.external && ["administrador", "gestor"].includes(boot.user.role) && <button onClick={() => { setEditing(r); setCreate(true); setSelected(null); }}>Editar</button>}
                         {r.external &&
-                          (boot.user.role === "administrador" ||
-                          boot.user.role === "gestor" ? (
+                          ((boot.integration?.capabilities?.write_settlements ?? true) && (boot.user.role === "administrador" ||
+                          boot.user.role === "gestor") ? (
                             <button
                               onClick={() => {
                                 setSelected(r);

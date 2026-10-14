@@ -46,6 +46,7 @@ class OpenCash(Strict):
     opening: str
     sheet_day: date | None = None
     include_wintouch: bool | None = None
+    opening_wintouch_id: str | None = None
 
 
 class CashSources(Strict):
@@ -132,7 +133,9 @@ class CashCount(Strict):
 
 
 class CloseCash(CashCount):
-    pass
+    supplier_answer: Literal["indicado", "desconhecido", "nao_aplicavel"] | None = None
+    supplier_name: str = Field(default="", max_length=300)
+    supplier_id: str | None = Field(default=None, max_length=100)
 
 
 class Handover(Reason):

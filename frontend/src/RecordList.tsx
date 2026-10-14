@@ -1,7 +1,16 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { ArrowLeftRight, Banknote, CreditCard, FileText, Wallet } from "lucide-react";
 import "./RecordList.css";
 
 type Row = Record<string, any>;
+
+function PaymentLabel({ name }: { name: string }) {
+  const Icon = name === "Numerário" ? Banknote
+    : name === "Cartão" ? CreditCard
+    : name === "Transferência" ? ArrowLeftRight
+    : name === "Cheque" || name === "Cheques" ? FileText : Wallet;
+  return <span className="record-payment-label"><Icon size={18} aria-hidden="true" /><span>{name}</span></span>;
+}
 
 export function paymentGroup(row: Row) {
   const name = String(row.payment || "Não indicado").trim();
@@ -26,6 +35,8 @@ export function paymentGroup(row: Row) {
     transferencia: "Transferência",
     "transferencia bancaria": "Transferência",
     outro: "Outro",
+    cheque: "Cheques",
+    misto: "Numerário e cheques",
   };
   const codeLabel = codes[row.payment_code];
   const nameLabel = names[normalized];
@@ -72,10 +83,12 @@ export default function RecordList({
   resetKey,
   totalField,
   paymentSummary = false,
+  accumulatedTotal = false,
   totalsTitle = "Totais do período selecionado",
   movementFilters = false,
   plannedFilters = false,
   startAtOldestPending = false,
+  defaultToToday = false,
   children,
 }: {
   rows: Row[];
@@ -84,14 +97,22 @@ export default function RecordList({
   resetKey: string;
   totalField?: string;
   paymentSummary?: boolean;
+  accumulatedTotal?: boolean;
   totalsTitle?: string;
   movementFilters?: boolean;
   plannedFilters?: boolean;
   startAtOldestPending?: boolean;
+  defaultToToday?: boolean;
   children: (pageRows: Row[]) => ReactNode;
 }) {
   const id = useId();
-  const [initialRange] = useState(currentMonth);
+  const [initialRange] = useState(() => {
+    if (defaultToToday) {
+      const today = calendarDay(new Date().toISOString());
+      return { from: today, to: today };
+    }
+    return currentMonth();
+  });
   const [from, setFrom] = useState(initialRange.from);
   const [to, setTo] = useState(initialRange.to);
   const [size, setSize] = useState(10);
@@ -138,12 +159,10 @@ export default function RecordList({
     }
   }, [startAtOldestPending, oldestPending, resetKey]);
   const invalid = Boolean(from && to && from > to);
-  const filtered = invalid
-    ? []
-    : rows.filter((r) => {
+  const matching = (r: Row, includeStart = true) => {
         const day = calendarDay(r[dateField]);
         return (
-          (!from || day >= from) &&
+          (!includeStart || !from || day >= from) &&
           (!to || (day !== "" && day <= to)) &&
           (!plannedFilters ||
             !documentGroup ||
@@ -157,7 +176,11 @@ export default function RecordList({
               (!entity ||
                 normalize(String(r.entity || "")).includes(normalize(entity)))))
         );
-      });
+      };
+  const filtered = invalid ? [] : rows.filter(r => matching(r));
+  const accumulated = totalField && accumulatedTotal && !invalid
+    ? rows.filter(r => matching(r, false)).reduce((sum, row) => sum + (row.direction === 1 ? 1 : row.direction === -1 ? -1 : 0) * Number(row[totalField] || 0), 0)
+    : 0;
   const pages = Math.max(1, Math.ceil(filtered.length / size));
   const current = Math.min(page, pages);
   const start = (current - 1) * size;
@@ -250,7 +273,7 @@ export default function RecordList({
         {movementFilters && (
           <>
             <div className="record-field">
-              <label htmlFor={`${id}-register`}>Caixa</label>
+              <label htmlFor={`${id}-register`}>Caixas / bancos</label>
               <select
                 id={`${id}-register`}
                 value={register}
@@ -259,7 +282,7 @@ export default function RecordList({
                   setPage(1);
                 }}
               >
-                <option value="">Todas as caixas</option>
+                <option value="">Todas as caixas e bancos</option>
                 {registers.map(([key, name]) => (
                   <option key={key} value={key}>
                     {name}
@@ -389,6 +412,7 @@ export default function RecordList({
               </dd>
             </div>
           </dl>
+          {accumulatedTotal && <div className="record-accumulated"><div><b>Valor acumulado</b><small>Entradas menos saídas até à data final, incluindo movimentos anteriores ao período. Mantém os filtros de caixas / bancos, meio de pagamento e entidade.</small></div><strong>{invalid ? "—" : money(accumulated)}</strong></div>}
           <small>
             {totalsTitle === "Totais por liquidar no período"
               ? "Valores ainda por receber e pagar, segundo o vencimento selecionado."
@@ -418,7 +442,7 @@ export default function RecordList({
                   .sort((a, b) => a.name.localeCompare(b.name, "pt-PT"))
                   .map((group) => (
                     <tr key={group.name}>
-                      <td>{group.name}</td>
+                      <td><PaymentLabel name={group.name} /></td>
                       <td>{group.count}</td>
                       <td className="positive">{money(group.credits)}</td>
                       <td className="negative">{money(group.debits)}</td>

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Field, Form } from "./App";
+import { useEffect, useRef, useState } from "react";
+import { api, Field, Form } from "./App";
 import { calendarDay } from "./RecordList";
 
 type Row = Record<string, any>;
@@ -24,8 +24,27 @@ export default function OpenCashForm({
   );
   const register = registers.find((row) => row.id === registerId);
   const [opening, setOpening] = useState(() => openingFor(register));
+  const [sheetDay, setSheetDay] = useState(() => calendarDay(new Date().toISOString()));
+  const [source, setSource] = useState<Row | null>(null);
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState("");
+  const edited = useRef(false);
+  useEffect(() => {
+    if (!registerId) return;
+    let active = true;
+    setPending(true); setSource(null); setMessage(""); edited.current = false;
+    setOpening(openingFor(registers.find(row => row.id === registerId)));
+    api(`/registers/${registerId}/opening-suggestion?sheet_day=${sheetDay}`).then(result => {
+      if (!active) return;
+      setSource(result.candidate);
+      if (!edited.current) setOpening(((result.candidate?.amount_cents ?? result.last_opening_cents ?? 0) / 100).toFixed(2).replace(".", ","));
+      setMessage(result.candidate ? `Fundo sugerido pela entrada Wintouch ${result.candidate.document}. Esta entrada não será somada novamente aos movimentos da folha.` : result.ambiguous ? "Existem várias entradas Wintouch neste dia. Confira os movimentos antes de definir o fundo; não foi escolhida uma entrada automaticamente." : "");
+    }).catch(() => { if (active) setMessage("Não foi possível consultar o fundo Wintouch. Pode usar o valor da última abertura."); }).finally(() => { if (active) setPending(false); });
+    return () => { active = false; };
+  }, [registerId, sheetDay]);
   return (
-    <Form onSubmit={onSubmit}>
+    <Form onSubmit={async value => { if (pending) throw new Error("Aguarde a consulta do fundo de abertura."); await onSubmit(value); }}>
+      {source && <input type="hidden" name="opening_wintouch_id" value={source.id} />}
       <Field label="Caixa">
         <select
           name="register_id"
@@ -52,10 +71,12 @@ export default function OpenCashForm({
           inputMode="decimal"
           required
           value={opening}
-          onChange={(e) => setOpening(e.target.value)}
+          onChange={(e) => { edited.current = true; setOpening(e.target.value); }}
         />
       </Field>
-      {register && (
+      {pending && <p role="status">A consultar o fundo de abertura…</p>}
+      {message && <p className="footnote">{message}</p>}
+      {register && !source && (
         <p className="footnote">
           {register.last_opening_cents != null
             ? "Valor sugerido a partir da última abertura desta caixa. Pode alterá-lo."
@@ -66,7 +87,8 @@ export default function OpenCashForm({
         <input
           type="date"
           name="sheet_day"
-          defaultValue={calendarDay(new Date().toISOString())}
+          value={sheetDay}
+          onChange={e => setSheetDay(e.target.value)}
           required
         />
       </Field>
