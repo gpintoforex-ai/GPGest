@@ -13,6 +13,7 @@ import {
 import {
   LayoutDashboard,
   Wallet,
+  CreditCard,
   ArrowLeftRight,
   Landmark,
   Package,
@@ -424,6 +425,8 @@ export default function App() {
     ["Fornecedores", Landmark],
     ["Artigos e validades", Package],
     ["Rubricas", FileBarChart],
+    ["Caixas", Wallet],
+    ["Meios de pagamento", CreditCard],
   ] as const;
   const openModal = async (kind: string, row: Row | null = null) => {
     if (kind === "open") {
@@ -443,6 +446,9 @@ export default function App() {
   const operatingMode = integratedMode
     ? "Modo integrado com ERP"
     : "Modo local autónomo";
+  const paymentMethods = boot.payment_methods || Object.fromEntries(
+    ["numerario", "cartao", "transferencia", "outro"].map(key => [key, labels[key]]),
+  );
   return (
     <div className={`shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       {mobile && <button className="sidebar-backdrop" aria-label="Fechar menu" onClick={() => setMobile(false)} />}
@@ -1054,6 +1060,68 @@ export default function App() {
           {page === "Rubricas" && (
             <Rubrics policy={boot.integration} manager={manager} admin={boot.user.role === "administrador"} reload={reload} />
           )}
+          {page === "Caixas" && (
+            <>
+              <div className="page-intro">
+                <div>
+                  <h1>Caixas</h1>
+                  <p>Caixas configuradas por estabelecimento.</p>
+                </div>
+                {manager && (
+                  <button className="primary" onClick={() => openModal("register")}>
+                    <Plus size={18} /> Nova caixa
+                  </button>
+                )}
+              </div>
+              <section className="panel">
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Caixa</th><th>Estabelecimento</th></tr></thead>
+                    <tbody>
+                      {boot.registers.filter(r => !store || r.store_id === store).map(r => (
+                        <tr key={r.id}>
+                          <td><span className="cash-payment-label"><Wallet size={18} aria-hidden="true" />{r.name}</span></td>
+                          <td>{boot.stores.find(s => s.id === r.store_id)?.name || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {!boot.registers.some(r => !store || r.store_id === store) && <Empty text="Ainda não existem caixas nesta seleção" />}
+              </section>
+            </>
+          )}
+          {page === "Meios de pagamento" && (
+            <>
+              <div className="page-intro">
+                <div>
+                  <h1>Meios de pagamento</h1>
+                  <p>Meios disponíveis no registo manual de movimentos.</p>
+                </div>
+                {manager && boot.integration?.mode === "local" && (
+                  <button className="primary" onClick={() => openModal("payment-method")}>
+                    <Plus size={18} /> Novo meio de pagamento
+                  </button>
+                )}
+              </div>
+              <section className="panel">
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Meio de pagamento</th><th>Tipo</th></tr></thead>
+                    <tbody>
+                      {Object.entries(paymentMethods).map(([key, name]) => (
+                        <tr key={key}>
+                          <td>{name}</td>
+                          <td><span className="pill neutral">{key.startsWith("pm_") ? "Personalizado" : "Base"}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {integratedMode && <p className="footnote">Os meios dos documentos importados são definidos pelo ERP. Pode configurar meios personalizados no modo local autónomo.</p>}
+              </section>
+            </>
+          )}
           {page === "Configurações" && (
             <>
               <div className="page-intro">
@@ -1191,6 +1259,7 @@ export default function App() {
                     transfer: "Transferência entre caixas",
                     store: "Nova loja",
                     register: "Nova caixa",
+                    "payment-method": "Novo meio de pagamento",
                     account: "Nova conta bancária",
                     category: "Nova categoria",
                     user: "Novo utilizador",
@@ -1294,10 +1363,10 @@ export default function App() {
                   </Field>
                   <Field label="Meio de pagamento">
                     <select name="payment">
-                      {Object.keys(boot.payment_methods || { numerario: "", cartao: "", transferencia: "", outro: "" }).map(
-                        (k) => (
+                      {Object.entries(paymentMethods).map(
+                        ([k, name]) => (
                           <option key={k} value={k}>
-                            {boot.payment_methods?.[k] || labels[k]}
+                            {name}
                           </option>
                         ),
                       )}
@@ -1418,7 +1487,7 @@ export default function App() {
                 </p>
               </Form>
             )}
-            {["store", "category", "register", "account"].includes(modal) && (
+            {["store", "category", "register", "account", "payment-method"].includes(modal) && (
               <Form
                 onSubmit={(v) =>
                   save(
@@ -1427,6 +1496,7 @@ export default function App() {
                         store: "stores",
                         category: "categories",
                         register: "registers",
+                        "payment-method": "cash/payment-methods",
                         account: "accounts",
                       }[modal],
                     v,
