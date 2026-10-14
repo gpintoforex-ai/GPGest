@@ -5,6 +5,23 @@
 .cash-sheet {
   min-width: 0;
 }
+.cash-sheet-details {
+  margin-top: 18px;
+}
+.cash-sheet-details > summary {
+  cursor: pointer;
+  width: fit-content;
+  padding: 10px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  font-size: 13px;
+  font-weight: 600;
+}
+.cash-sheet-details[open] > summary {
+  margin-bottom: 20px;
+}
 .supplier-picker { position: relative; display: grid; gap: 6px; }
 .supplier-picker-input { display: flex; border: 1px solid var(--color-border); border-radius: 6px; background: white; }
 .supplier-picker-input input { flex: 1; width: 100%; border: 0; }

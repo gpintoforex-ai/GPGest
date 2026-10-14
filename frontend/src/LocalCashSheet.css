@@ -1,29 +1,9 @@
-.local-cash-sheet > h3 {
+.local-cash-sheet > .cash-sheet-details > h3 {
   margin-top: 28px;
 }
-.local-cash-totals {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
-  margin: 20px 0 28px;
-}
-.local-cash-metric {
-  padding: 16px;
-  border: 1px solid;
-  border-radius: 8px;
-}
-.local-cash-metric small,
-.local-cash-metric strong,
-.local-drawer-totals small,
-.local-drawer-totals strong,
 .local-cash-context small,
 .local-cash-context strong {
   display: block;
-}
-.local-cash-metric strong {
-  font-size: 23px;
-  margin-top: 8px;
-  font-variant-numeric: tabular-nums;
 }
 .local-cash-sheet .matched {
   color: #176747;
@@ -147,36 +127,7 @@
   flex-wrap: wrap;
   gap: 10px;
 }
-.local-drawer-totals {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 15px;
-  padding: 16px;
-  background: #f5f8fb;
-  border: 1px solid #d7e0ec;
-  border-radius: 8px;
-  margin: 20px 0;
-}
-.local-drawer-totals strong {
-  margin-top: 8px;
-  font-size: 18px;
-}
-@media (max-width: 1100px) {
-  .local-cash-totals {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
 @media (max-width: 650px) {
-  .local-cash-totals,
-  .local-drawer-totals {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .local-cash-metric {
-    padding: 12px;
-  }
-  .local-cash-metric strong {
-    font-size: 19px;
-  }
   .local-cash-context .field {
     width: 100%;
   }

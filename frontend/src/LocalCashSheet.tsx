@@ -9,9 +9,12 @@ import {
   Pencil,
   Plus,
   X,
+  LockKeyhole,
+  LockKeyholeOpen,
 } from "lucide-react";
 import { api, Field } from "./App";
 import CashCountDialog from "./CashCountDialog";
+import CashReconciliation from "./CashReconciliation";
 import "./CashSheet.css";
 import "./LocalCashSheet.css";
 
@@ -316,106 +319,58 @@ export default function LocalCashSheet({
             {register} · {s.sheet.day.split("-").reverse().join("/")}
           </h3>
           <p>
-            {store} · {operator}
+            {operator} · {s.closed_at ? "Fechada" : "Em aberto"}
           </p>
         </div>
         <span
           className={`cash-sheet-status ${s.closed_at ? "closed" : "open"}`}
         >
-          {s.closed_at ? "Fechada" : "Aberta"} · Modo local autónomo
+          {s.closed_at ? (
+            <LockKeyhole size={16} aria-hidden="true" />
+          ) : (
+            <LockKeyholeOpen size={16} aria-hidden="true" />
+          )}
+          {s.closed_at ? "Fechada" : "Aberta"}
         </span>
       </div>
-      <div className="local-cash-totals" aria-label="Resumo da conferência">
-        {[
-          ["Total realizado", money(declaredTotal), tone(difference, checked)],
-          [
-            "Total registado",
-            money(registeredTotal),
-            tone(difference, checked),
-          ],
-          [
-            "Diferença da conferência",
-            difference === null ? "Por conferir" : money(difference),
-            tone(difference, checked),
-          ],
-          [
-            "Saldo esperado em numerário",
-            money(cashRow.expected_cents),
-            tone(cashDifference),
-          ],
-          [
-            "Numerário contado",
-            counted === null ? "Por contar" : money(counted),
-            tone(cashDifference),
-          ],
-        ].map(([label, value, state]) => (
-          <div className={`local-cash-metric ${state}`} key={label}>
-            <small>{label}</small>
-            <strong>{value}</strong>
-          </div>
-        ))}
-      </div>
-      <div className="panel-title">
-        <h3>Realizado do dia</h3>
-        <span className="local-cash-badge">Origem: Manual</span>
-      </div>
-      <p className="footnote">
-        Vendas e recebimentos desta caixa neste dia. Os valores declarados são
-        uma referência de conferência; guardar este registo não cria movimentos.
-      </p>
-      <div className="local-cash-context local-cash-day-context">
-        <Field label="Data">
-          <input
-            type="date"
-            disabled={!editable || busy}
-            value={sourceDay}
-            onChange={(e) => setSourceDay(e.target.value)}
-          />
-        </Field>
-        {editable && (
-          <button
-            disabled={busy || sourceDay === s.sheet.day || dirty}
-            onClick={async () => {
-              setBusy(true);
-              setError("");
-              try {
-                await api(`/sessions/${s.id}/sources`, {
-                  sheet_day: sourceDay,
-                });
-                await reload();
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Atualizar dia
-          </button>
-        )}
-        <div className="local-cash-register-context">
-          <small>Caixa / estabelecimento</small>
-          <strong>
-            {register} · {store}
-          </strong>
+      <CashReconciliation
+        opening={s.opening_cents}
+        expected={cashRow.expected_cents}
+        counted={counted}
+      />
+      <details className="cash-sheet-details">
+        <summary>
+          {s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"}
+        </summary>
+        <div className="panel-title">
+          <h3>Realizado do dia</h3>
+          <span className="local-cash-badge">Origem: Manual</span>
         </div>
-      </div>
-      {editable && manager && (
-        <div className="local-cash-methods">
-          {newMethod === null ? (
-            <button disabled={busy || dirty} onClick={() => setNewMethod("")}>
-              Adicionar meio de pagamento
-            </button>
-          ) : (
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
+        <p className="footnote">
+          Vendas e recebimentos desta caixa neste dia. Os valores declarados são
+          uma referência de conferência; guardar este registo não cria
+          movimentos.
+        </p>
+        <div className="local-cash-context local-cash-day-context">
+          <Field label="Data">
+            <input
+              type="date"
+              disabled={!editable || busy}
+              value={sourceDay}
+              onChange={(e) => setSourceDay(e.target.value)}
+            />
+          </Field>
+          {editable && (
+            <button
+              disabled={busy || sourceDay === s.sheet.day || dirty}
+              onClick={async () => {
                 setBusy(true);
                 setError("");
                 try {
-                  await api("/cash/payment-methods", { name: newMethod });
+                  await api(`/sessions/${s.id}/sources`, {
+                    sheet_day: sourceDay,
+                  });
                   await reload();
-                  setNewMethod(null);
                 } catch (e) {
                   setError((e as Error).message);
                 } finally {
@@ -423,323 +378,349 @@ export default function LocalCashSheet({
                 }
               }}
             >
-              <Field label="Nome do meio de pagamento">
-                <input
-                  maxLength={100}
-                  value={newMethod}
-                  onChange={(e) => setNewMethod(e.target.value)}
-                />
-              </Field>
-              <button disabled={busy || !newMethod.trim()}>Guardar meio</button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setNewMethod(null)}
-              >
-                Cancelar
-              </button>
-            </form>
+              Atualizar dia
+            </button>
           )}
+          <div className="local-cash-register-context">
+            <small>Caixa / estabelecimento</small>
+            <strong>
+              {register} · {store}
+            </strong>
+          </div>
         </div>
-      )}
-      <h3>Conferência das vendas e recebimentos</h3>
-      <p className="footnote">
-        Diferença = registado − realizado. Exclui fundos iniciais,
-        transferências internas, retiradas, depósitos e despesas. Os reembolsos
-        de vendas reduzem os recebimentos.
-      </p>
-      <div className="table-wrap">
-        <table className="cash-sheet-table local-cash-table">
-          <thead>
-            <tr>
-              <th>Meio de pagamento</th>
-              <th>Realizado declarado</th>
-              <th>Registado nos movimentos</th>
-              <th>Diferença</th>
-              <th>Estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const declared = amount(form.values[row.key] || "");
-              const Icon = icon(row.key);
-              const diff =
-                declared === null ? null : row.registered_cents - declared;
-              const status =
-                diff === null
-                  ? "Por conferir"
-                  : diff !== 0
-                    ? "Com diferença"
-                    : checked
-                      ? "Conferido"
-                      : "Por conferir";
-              return (
-                <tr key={row.key}>
-                  <td>
-                    <span className="cash-payment-label">
-                      <Icon size={18} aria-hidden="true" /> {row.name}
-                    </span>
-                  </td>
-                  <td>
-                    {editable ? (
-                      <button
-                        className={`local-realized-button ${tone(diff, checked)}`}
-                        disabled={busy}
-                        aria-haspopup="dialog"
-                        aria-label={`${declared === null ? "Registar" : "Alterar"} valor de ${row.name}`}
-                        onClick={() => setRealizedMethod(row.key)}
+        {editable && manager && (
+          <div className="local-cash-methods">
+            {newMethod === null ? (
+              <button disabled={busy || dirty} onClick={() => setNewMethod("")}>
+                Adicionar meio de pagamento
+              </button>
+            ) : (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setBusy(true);
+                  setError("");
+                  try {
+                    await api("/cash/payment-methods", { name: newMethod });
+                    await reload();
+                    setNewMethod(null);
+                  } catch (e) {
+                    setError((e as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                <Field label="Nome do meio de pagamento">
+                  <input
+                    maxLength={100}
+                    value={newMethod}
+                    onChange={(e) => setNewMethod(e.target.value)}
+                  />
+                </Field>
+                <button disabled={busy || !newMethod.trim()}>
+                  Guardar meio
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setNewMethod(null)}
+                >
+                  Cancelar
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+        <h3>Conferência das vendas e recebimentos</h3>
+        <p className="footnote">
+          Diferença = registado − realizado. Exclui fundos iniciais,
+          transferências internas, retiradas, depósitos e despesas. Os
+          reembolsos de vendas reduzem os recebimentos.
+        </p>
+        <div className="table-wrap">
+          <table className="cash-sheet-table local-cash-table">
+            <thead>
+              <tr>
+                <th>Meio de pagamento</th>
+                <th>Realizado declarado</th>
+                <th>Registado nos movimentos</th>
+                <th>Diferença</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const declared = amount(form.values[row.key] || "");
+                const Icon = icon(row.key);
+                const diff =
+                  declared === null ? null : row.registered_cents - declared;
+                const status =
+                  diff === null
+                    ? "Por conferir"
+                    : diff !== 0
+                      ? "Com diferença"
+                      : checked
+                        ? "Conferido"
+                        : "Por conferir";
+                return (
+                  <tr key={row.key}>
+                    <td>
+                      <span className="cash-payment-label">
+                        <Icon size={18} aria-hidden="true" /> {row.name}
+                      </span>
+                    </td>
+                    <td>
+                      {editable ? (
+                        <button
+                          className={`local-realized-button ${tone(diff, checked)}`}
+                          disabled={busy}
+                          aria-haspopup="dialog"
+                          aria-label={`${declared === null ? "Registar" : "Alterar"} valor de ${row.name}`}
+                          onClick={() => setRealizedMethod(row.key)}
+                        >
+                          {declared === null ? (
+                            <Plus size={16} aria-hidden="true" />
+                          ) : (
+                            <Pencil size={16} aria-hidden="true" />
+                          )}
+                          {declared === null
+                            ? "Registar valor"
+                            : money(declared)}
+                        </button>
+                      ) : declared === null ? (
+                        "Por preencher"
+                      ) : (
+                        money(declared)
+                      )}
+                      <small>Manual</small>
+                    </td>
+                    <td>
+                      {money(row.registered_cents)}
+                      <small>
+                        {row.sources?.includes("ERP")
+                          ? `Manual: ${money(row.manual_cents)} · ERP: ${money(row.erp_cents)}`
+                          : "Manual"}
+                      </small>
+                    </td>
+                    <td className={`local-cash-amount ${tone(diff, checked)}`}>
+                      {diff === null ? "—" : money(diff)}
+                    </td>
+                    <td>
+                      <span
+                        className={`local-cash-state ${tone(diff, checked)}`}
                       >
-                        {declared === null ? (
-                          <Plus size={16} aria-hidden="true" />
-                        ) : (
-                          <Pencil size={16} aria-hidden="true" />
-                        )}
-                        {declared === null ? "Registar valor" : money(declared)}
-                      </button>
-                    ) : declared === null ? (
-                      "Por preencher"
-                    ) : (
-                      money(declared)
-                    )}
-                    <small>Manual</small>
-                  </td>
-                  <td>
-                    {money(row.registered_cents)}
-                    <small>
-                      {row.sources?.includes("ERP")
-                        ? `Manual: ${money(row.manual_cents)} · ERP: ${money(row.erp_cents)}`
-                        : "Manual"}
-                    </small>
-                  </td>
-                  <td className={`local-cash-amount ${tone(diff, checked)}`}>
-                    {diff === null ? "—" : money(diff)}
-                  </td>
-                  <td>
-                    <span className={`local-cash-state ${tone(diff, checked)}`}>
-                      {status}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr>
-              <th>Total</th>
-              <td>
-                {money(declaredTotal)}
-                {!complete && <small>Realizado incompleto</small>}
-              </td>
-              <td>{money(registeredTotal)}</td>
-              <td>
-                {difference === null ? "Por conferir" : money(difference)}
-              </td>
-              <td>
-                {!complete || !checked
-                  ? "Por conferir"
-                  : hasDifference
-                    ? "Com diferença"
-                    : "Conferido"}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      {!editable && (form.notes || form.pos) && (
-        <details className="local-realized-details">
-          <summary>Observações do dia e referência POS</summary>
-          {form.notes && <p>{form.notes}</p>}
-          {form.pos && <p>Referência ao fecho do POS: {form.pos}</p>}
-        </details>
-      )}
-      {editable && realizedMethod !== null && (
-        <RealizedDialog
-          key={realizedMethod}
-          row={rows.find((row) => row.key === realizedMethod)!}
-          initial={{
-            value: form.values[realizedMethod] || "",
-            notes: form.notes,
-            pos: form.pos,
-          }}
-          onCancel={() => setRealizedMethod(null)}
-          onApply={(draft) => {
-            update({
-              values: { ...form.values, [realizedMethod]: draft.value },
-              notes: draft.notes,
-              pos: draft.pos,
-            });
-            setRealizedMethod(null);
-          }}
-        />
-      )}
-      <h3>Conferência do numerário físico</h3>
-      <p className="footnote">
-        Saldo esperado = fundo inicial + entradas em numerário − saídas em
-        numerário. Inclui retiradas e depósitos efetivamente retirados da
-        gaveta. O realizado declarado não é somado a este saldo.
-      </p>
-      <div className="local-drawer-totals">
-        <div>
-          <small>Fundo inicial</small>
-          <strong>{money(s.opening_cents)}</strong>
+                        {status}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr>
+                <th>Total</th>
+                <td>
+                  {money(declaredTotal)}
+                  {!complete && <small>Realizado incompleto</small>}
+                </td>
+                <td>{money(registeredTotal)}</td>
+                <td>
+                  {difference === null ? "Por conferir" : money(difference)}
+                </td>
+                <td>
+                  {!complete || !checked
+                    ? "Por conferir"
+                    : hasDifference
+                      ? "Com diferença"
+                      : "Conferido"}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
-        <div>
-          <small>Entradas em numerário</small>
-          <strong>{money(cashRow.credits_cents)}</strong>
+        {!editable && (form.notes || form.pos) && (
+          <details className="local-realized-details">
+            <summary>Observações do dia e referência POS</summary>
+            {form.notes && <p>{form.notes}</p>}
+            {form.pos && <p>Referência ao fecho do POS: {form.pos}</p>}
+          </details>
+        )}
+        {editable && realizedMethod !== null && (
+          <RealizedDialog
+            key={realizedMethod}
+            row={rows.find((row) => row.key === realizedMethod)!}
+            initial={{
+              value: form.values[realizedMethod] || "",
+              notes: form.notes,
+              pos: form.pos,
+            }}
+            onCancel={() => setRealizedMethod(null)}
+            onApply={(draft) => {
+              update({
+                values: { ...form.values, [realizedMethod]: draft.value },
+                notes: draft.notes,
+                pos: draft.pos,
+              });
+              setRealizedMethod(null);
+            }}
+          />
+        )}
+        <h3>Conferência do numerário físico</h3>
+        <p className="footnote">
+          Saldo esperado = fundo inicial + entradas em numerário − saídas em
+          numerário. Inclui retiradas e depósitos efetivamente retirados da
+          gaveta. O realizado declarado não é somado a este saldo.
+        </p>
+        <p className="footnote">
+          Entradas em numerário: {money(cashRow.credits_cents)} · Saídas em
+          numerário: {money(cashRow.debits_cents)}
+        </p>
+        <div className="local-cash-context">
+          <Field label="Numerário contado (€)">
+            <input
+              className={tone(cashDifference)}
+              inputMode="decimal"
+              disabled={!editable || busy}
+              placeholder="Por contar"
+              value={
+                counted === null
+                  ? form.cash
+                  : form.mode === "denominations"
+                    ? euros(counted)
+                    : form.cash
+              }
+              onChange={(e) =>
+                update({ cash: e.target.value, mode: "total", counts: {} })
+              }
+            />
+          </Field>
+          {editable && (
+            <button disabled={busy} onClick={() => setCountDialog(true)}>
+              Contar notas e moedas
+            </button>
+          )}
+          <div className={`local-cash-amount ${tone(cashDifference)}`}>
+            <small>Diferença de numerário (contado − esperado)</small>
+            <strong>
+              {cashDifference === null ? "Por contar" : money(cashDifference)}
+            </strong>
+            {cashDifference !== null && cashDifference < 0 && (
+              <small>Falta de {money(-cashDifference)}</small>
+            )}
+            {cashDifference !== null && cashDifference > 0 && (
+              <small>Sobra de {money(cashDifference)}</small>
+            )}
+          </div>
         </div>
-        <div>
-          <small>Saídas em numerário</small>
-          <strong>{money(cashRow.debits_cents)}</strong>
-        </div>
-        <div>
-          <small>Saldo esperado</small>
-          <strong>{money(cashRow.expected_cents)}</strong>
-        </div>
-      </div>
-      <div className="local-cash-context">
-        <Field label="Numerário contado (€)">
-          <input
-            className={tone(cashDifference)}
-            inputMode="decimal"
+        {editable && countDialog && (
+          <CashCountDialog
+            initial={{
+              mode: form.mode as "total" | "denominations",
+              counts: form.counts,
+              total: form.cash,
+            }}
+            expected={cashRow.expected_cents}
+            onCancel={() => setCountDialog(false)}
+            onApply={(draft) => {
+              update({
+                mode: draft.mode,
+                counts: draft.counts,
+                cash: draft.total,
+              });
+              setCountDialog(false);
+            }}
+          />
+        )}
+        <Field
+          label={
+            hasDifference
+              ? "Justificação das diferenças (obrigatória para fechar)"
+              : "Justificação / observações da conferência"
+          }
+        >
+          <textarea
             disabled={!editable || busy}
-            placeholder="Por contar"
-            value={
-              counted === null
-                ? form.cash
-                : form.mode === "denominations"
-                  ? euros(counted)
-                  : form.cash
-            }
-            onChange={(e) =>
-              update({ cash: e.target.value, mode: "total", counts: {} })
-            }
+            maxLength={2000}
+            value={form.reason}
+            onChange={(e) => update({ reason: e.target.value })}
           />
         </Field>
-        {editable && (
-          <button disabled={busy} onClick={() => setCountDialog(true)}>
-            Contar notas e moedas
-          </button>
+        {stored.updated_at && (
+          <p className="footnote">
+            Última alteração: {stored.updated_by_name || "Utilizador registado"}{" "}
+            · {date(stored.updated_at)}
+          </p>
         )}
-        <div className={`local-cash-amount ${tone(cashDifference)}`}>
-          <small>Diferença de numerário (contado − esperado)</small>
-          <strong>
-            {cashDifference === null ? "Por contar" : money(cashDifference)}
-          </strong>
-          {cashDifference !== null && cashDifference < 0 && (
-            <small>Falta de {money(-cashDifference)}</small>
-          )}
-          {cashDifference !== null && cashDifference > 0 && (
-            <small>Sobra de {money(cashDifference)}</small>
-          )}
-        </div>
-      </div>
-      {editable && countDialog && (
-        <CashCountDialog
-          initial={{
-            mode: form.mode as "total" | "denominations",
-            counts: form.counts,
-            total: form.cash,
-          }}
-          expected={cashRow.expected_cents}
-          onCancel={() => setCountDialog(false)}
-          onApply={(draft) => {
-            update({
-              mode: draft.mode,
-              counts: draft.counts,
-              cash: draft.total,
-            });
-            setCountDialog(false);
-          }}
-        />
-      )}
-      <Field
-        label={
-          hasDifference
-            ? "Justificação das diferenças (obrigatória para fechar)"
-            : "Justificação / observações da conferência"
-        }
-      >
-        <textarea
-          disabled={!editable || busy}
-          maxLength={2000}
-          value={form.reason}
-          onChange={(e) => update({ reason: e.target.value })}
-        />
-      </Field>
-      {stored.updated_at && (
-        <p className="footnote">
-          Última alteração: {stored.updated_by_name || "Utilizador registado"} ·{" "}
-          {date(stored.updated_at)}
-        </p>
-      )}
-      {rec.check && checked && (
-        <p className="footnote">
-          Conferido por {rec.check.checked_by_name} ·{" "}
-          {date(rec.check.checked_at)}
-        </p>
-      )}
-      {s.closed_at && (
-        <p className="footnote">
-          Fechado por {stored.closed_by_name} · {date(s.closed_at)}
-        </p>
-      )}
-      {stored.reopened_at && (
-        <p className="footnote">
-          Reaberto por {stored.reopened_by_name} · {date(stored.reopened_at)} ·
-          Motivo: {stored.reopen_reason}
-        </p>
-      )}
-      {dirty && <p className="footnote">Há alterações por guardar.</p>}
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      {notice && <p role="status">{notice}</p>}
-      {editable && (!complete || counted === null) && (
-        <p className="footnote">
-          Para conferir e fechar, preencha todos os meios, incluindo zero nos
-          meios sem recebimentos, e indique o numerário contado.
-        </p>
-      )}
-      <div className="actions">
-        {editable && (
-          <>
-            <button disabled={busy} onClick={() => save("count")}>
-              Guardar rascunho
-            </button>
-            <button
-              disabled={busy || !complete || counted === null}
-              onClick={() => save("reconcile")}
-            >
-              Conferir
-            </button>
-            <button
-              className="primary"
-              disabled={
-                busy ||
-                !complete ||
-                counted === null ||
-                (hasDifference && form.reason.trim().length < 5)
-              }
-              onClick={() => save("close")}
-            >
-              Fechar caixa
-            </button>
-            <button disabled={busy} onClick={() => onAction("handover", s)}>
-              Passar caixa
-            </button>
-          </>
+        {rec.check && checked && (
+          <p className="footnote">
+            Conferido por {rec.check.checked_by_name} ·{" "}
+            {date(rec.check.checked_at)}
+          </p>
         )}
         {s.closed_at && (
-          <a className="download-link" href={`/api/sessions/${s.id}/report`}>
-            Relatório PDF
-          </a>
+          <p className="footnote">
+            Fechado por {stored.closed_by_name} · {date(s.closed_at)}
+          </p>
         )}
-        {s.closed_at && manager && (
-          <button onClick={() => onAction("reopen", s)}>Reabrir</button>
+        {stored.reopened_at && (
+          <p className="footnote">
+            Reaberto por {stored.reopened_by_name} · {date(stored.reopened_at)}{" "}
+            · Motivo: {stored.reopen_reason}
+          </p>
         )}
-      </div>
+        {dirty && <p className="footnote">Há alterações por guardar.</p>}
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        {notice && <p role="status">{notice}</p>}
+        {editable && (!complete || counted === null) && (
+          <p className="footnote">
+            Para conferir e fechar, preencha todos os meios, incluindo zero nos
+            meios sem recebimentos, e indique o numerário contado.
+          </p>
+        )}
+        <div className="actions">
+          {editable && (
+            <>
+              <button disabled={busy} onClick={() => save("count")}>
+                Guardar rascunho
+              </button>
+              <button
+                disabled={busy || !complete || counted === null}
+                onClick={() => save("reconcile")}
+              >
+                Conferir
+              </button>
+              <button
+                className="primary"
+                disabled={
+                  busy ||
+                  !complete ||
+                  counted === null ||
+                  (hasDifference && form.reason.trim().length < 5)
+                }
+                onClick={() => save("close")}
+              >
+                Fechar caixa
+              </button>
+              <button disabled={busy} onClick={() => onAction("handover", s)}>
+                Passar caixa
+              </button>
+            </>
+          )}
+          {s.closed_at && (
+            <a className="download-link" href={`/api/sessions/${s.id}/report`}>
+              Relatório PDF
+            </a>
+          )}
+          {s.closed_at && manager && (
+            <button onClick={() => onAction("reopen", s)}>Reabrir</button>
+          )}
+        </div>
+      </details>
     </section>
   );
 }

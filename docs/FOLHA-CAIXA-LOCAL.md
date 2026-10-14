@@ -2,6 +2,10 @@
 
 Em **Configurações > Integrações**, uma empresa em modo local pode conferir a folha sem ligação ERP. As folhas já fechadas preservam o funcionamento e os valores históricos do respetivo fecho.
 
+A folha apresenta a identificação da caixa, o estado e um único quadro de **Apuramento de numerário**: fundo a manter, movimentos líquidos, total esperado, diferença e valor a retirar ou a repor. Este resumo usa o numerário físico contado; o realizado declarado não é somado novamente. O mesmo quadro é apresentado no modo integrado.
+
+Abra **Conferência e fecho** para declarar o realizado, contar o numerário, justificar diferenças e fechar. Numa folha fechada, **Ver detalhes do fecho** permite consultar os valores, obter o PDF e reabrir com permissão e motivo. Estes detalhes ficam recolhidos ao abrir a página.
+
 ## Realizado do dia
 
 Na coluna **Realizado declarado**, use **Registar valor** no respetivo meio de pagamento (numerário, Multibanco/TPA, MB WAY, transferência e outros meios). A janela permite introduzir o valor e, opcionalmente, as observações do dia e a referência POS, comuns a todos os meios. **Aplicar valor** atualiza o rascunho; use **Guardar rascunho** na folha para o guardar. Para alterar um valor, carregue no montante; **Deixar por preencher** remove a declaração desse meio sem a substituir por zero.

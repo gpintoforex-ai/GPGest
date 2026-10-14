@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeftRight, Banknote, CreditCard, FileText, LockKeyhole, LockKeyholeOpen, Wallet } from "lucide-react";
 import { api, Field } from "./App";
 import CashCountDialog from "./CashCountDialog";
+import CashReconciliation from "./CashReconciliation";
 import SupplierPicker from "./components/SupplierPicker";
 import "./CashSheet.css";
 
@@ -96,10 +97,6 @@ export default function CashSheet({
   const rows: Row[] = s.sheet.rows;
   const cashRow = rows.find((row) => row.key === "numerario")!;
   const cashCount = amountFor("numerario");
-  const cashDifference =
-    cashCount === null ? null : cashCount - cashRow.expected_cents;
-  const cashToWithdraw =
-    cashCount === null ? null : cashCount - s.opening_cents;
   async function updateSources() {
     setError("");
     setNotice("");
@@ -184,52 +181,15 @@ export default function CashSheet({
             {operator} · {s.closed_at ? "Fechada" : "Em aberto"}
           </p>
         </div>
-        <div className="actions">{canImportErp && <button disabled={busy || !!s.closed_at} title={s.closed_at ? "Reabra a folha para atualizar a conferência." : undefined} onClick={() => { setConfirmDemo(false); setImportPrompt(true); }}>Importar movimentos do ERP</button>}
         <span className={`cash-sheet-status ${s.closed_at ? "closed" : "open"}`}>
           {s.closed_at ? <LockKeyhole size={16} aria-hidden="true" /> : <LockKeyholeOpen size={16} aria-hidden="true" />}
           {s.closed_at ? "Fechada" : "Aberta"}
         </span>
-        </div>
       </div>
-      <div
-        className={`cash-reconciliation ${cashDifference === null ? "pending" : cashDifference === 0 ? "balanced" : "unbalanced"}`}
-        role="status"
-        aria-label="Apuramento de numerário"
-      >
-        <div className="cash-reconciliation-heading">
-          <b>Apuramento de numerário</b>
-          <span>
-            {cashDifference === null
-              ? "Por contar"
-              : cashDifference === 0
-                ? "Caixa correta"
-                : "Caixa com diferença"}
-          </span>
-        </div>
-        <div className="cash-reconciliation-values">
-          <div>
-            <small>Fundo de maneio a manter</small>
-            <strong>{money(s.opening_cents)}</strong>
-          </div>
-          <div>
-            <small>Movimentos de numerário (entradas − saídas)</small>
-            <strong>{money(cashRow.expected_cents - s.opening_cents)}</strong>
-          </div>
-          <div>
-            <small>Total esperado (fundo + movimentos)</small>
-            <strong>{money(cashRow.expected_cents)}</strong>
-          </div>
-          <div>
-            <small>Diferença de caixa (contado − esperado)</small>
-            <strong>{cashDifference === null ? "Por contar" : money(cashDifference)}</strong>
-          </div>
-          <div className={`cash-withdrawal-highlight ${cashToWithdraw === null ? "pending" : cashToWithdraw < 0 ? "replenish" : ""}`}>
-            <small>{cashToWithdraw !== null && cashToWithdraw < 0 ? "Valor a repor no fundo" : "Valor a retirar"}</small>
-            <strong>{cashToWithdraw === null ? "Por contar" : money(Math.abs(cashToWithdraw))}</strong>
-          </div>
-        </div>
-        <p>Valor a retirar = numerário contado − fundo de maneio. Se faltar dinheiro para o fundo, é apresentado o valor a repor.</p>
-      </div>
+      <CashReconciliation opening={s.opening_cents} expected={cashRow.expected_cents} counted={cashCount} />
+      <details className="cash-sheet-details">
+        <summary>{s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"}</summary>
+        {canImportErp && <button disabled={busy || !!s.closed_at} title={s.closed_at ? "Reabra a folha para atualizar a conferência." : undefined} onClick={() => { setConfirmDemo(false); setImportPrompt(true); }}>Importar movimentos do ERP</button>}
       <p className="footnote">
         Origem dos valores: Manual (GPGest) e ERP (Wintouch).
       </p>
@@ -459,6 +419,7 @@ export default function CashSheet({
           <div className="actions"><button type="button" disabled={busy} onClick={() => setSupplierPrompt(false)}>Cancelar</button><button className="primary" disabled={busy || !supplierAnswer || (supplierAnswer === "indicado" && !supplierId)}>Confirmar e fechar caixa</button></div>
         </form>
       </dialog>}
+      </details>
     </section>
   );
 }
