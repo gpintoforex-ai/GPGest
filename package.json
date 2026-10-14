@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "npm --prefix frontend ci && npm --prefix frontend run build",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "npm ci && npm run build && wrangler deploy",
     "check:deploy": "wrangler deploy --dry-run",
     "test:cloudflare": "node --test scripts/test-cloudflare-worker.mjs"
   },

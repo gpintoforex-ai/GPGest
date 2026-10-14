@@ -10,12 +10,15 @@ Em **Workers e Pages > gpgest > Configurações > Build**, configurar:
 | --- | --- |
 | Branch de produção | `main` |
 | Diretório raiz | `/` (raiz do repositório) |
+| Variável da build | `SKIP_DEPENDENCY_INSTALL=1` |
 | Comando da build | Nenhum |
 | Comando de implantação | `npm run deploy` |
 
-`npm run deploy` instala as dependências do frontend a partir do seu lockfile, executa TypeScript/Vite e publica `frontend/dist` com Wrangler. O `package.json` e o lockfile da raiz fixam a versão do Wrangler. Depois de guardar, iniciar uma implantação com o commit que inclui `wrangler.jsonc`.
+Adicione `SKIP_DEPENDENCY_INSTALL` com valor `1` em **Configurações > Build > Variáveis e segredos da build**. É uma variável da fase de build: impede a instalação automática que estava a executar `pip` antes do comando de implantação. Referência: [Build image — Skip dependency install](https://developers.cloudflare.com/workers/ci-cd/builds/build-image/#skip-dependency-install).
 
-Em alternativa, usar **Comando da build** `npm run build` e **Comando de implantação** `npx wrangler deploy`. Não combinar `npm run build` com `npm run deploy`, pois compilaria duas vezes. O Worker deve manter o nome `gpgest`, igual ao projeto do painel.
+`npm run deploy` instala explicitamente as dependências Node da raiz e do frontend a partir dos seus lockfiles, executa TypeScript/Vite e publica `frontend/dist` com Wrangler. O `package.json` e o lockfile da raiz fixam a versão do Wrangler. Depois de guardar, iniciar uma implantação do commit mais recente de `main`. O Worker deve manter o nome `gpgest`, igual ao projeto do painel.
+
+Em alternativa, usar **Comando da build** `npm ci && npm run build` e **Comando de implantação** `npx wrangler deploy`, com a mesma variável `SKIP_DEPENDENCY_INSTALL=1`. Não combinar `npm run build` com `npm run deploy`, pois compilaria duas vezes.
 
 As builds Cloudflare não executam o campo de custom build do Wrangler; os comandos acima são explícitos no painel. Referência: [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/).
 
@@ -25,17 +28,17 @@ Se o log mostrar `Failed to build 'file:///opt/buildhome/repo' when getting requ
 
 A raiz é o projeto Node.js que publica o frontend. A configuração do Ruff está em `ruff.toml`; o antigo `pyproject.toml`, usado apenas para configurar esse analisador, foi removido para não desencadear a instalação Python. As dependências da API mantêm-se em `backend/requirements.txt`, instaladas no PC.
 
-Inicie uma **nova build do commit mais recente de `main`**. Repetir uma build de um commit antigo volta a usar o `pyproject.toml` anterior. Confirme o diretório raiz `/`, o comando de build vazio e a implantação `npm run deploy`.
+Inicie uma **nova build do commit mais recente de `main`**. Repetir uma build de um commit antigo volta a usar o `pyproject.toml` anterior. Confirme o diretório raiz `/`, o comando de build vazio, a implantação `npm run deploy` e a variável da build `SKIP_DEPENDENCY_INSTALL=1`.
 
-Se precisar de desativar a instalação automática, configure em **Configurações > Build > Variáveis e segredos da build**:
+Se o erro persistir depois de atualizar o commit, desative a instalação automática em **Configurações > Build > Variáveis e segredos da build**:
 
 | Campo | Valor |
 | --- | --- |
 | Variável de build | `SKIP_DEPENDENCY_INSTALL=1` |
 | Comando da build | Nenhum |
-| Comando de implantação | `npm ci && npm run deploy` |
+| Comando de implantação | `npm run deploy` |
 
-Nesta alternativa, `npm ci` instala explicitamente o Wrangler da raiz antes de compilar e publicar. Não use só `npm run deploy` com a instalação automática desativada: o Wrangler ainda não estaria instalado. Referência: [Build image — Skip dependency install](https://developers.cloudflare.com/workers/ci-cd/builds/build-image/#skip-dependency-install).
+O comando `npm run deploy` já executa `npm ci` para instalar explicitamente o Wrangler da raiz antes de compilar e publicar. A variável precisa de estar guardada antes de iniciar a nova build, pois a falha acontece antes de executar qualquer comando do repositório.
 
 ## Ligar a API
 
