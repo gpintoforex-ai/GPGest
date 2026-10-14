@@ -47,6 +47,23 @@ def test_document_migration_preserves_existing_schema_and_supports_new_install(
                     "reconciliation_ignores",
                 }
             )
+        # Newer modules can reference the tables being removed to recreate the
+        # old schema. Use the actual constraints: import_id was just removed
+        # from the existing purchases and bank_transactions tables above.
+        inspector = inspect(connection)
+        references = {
+            table.name: {
+                foreign_key["referred_table"]
+                for foreign_key in inspector.get_foreign_keys(table.name, schema=schema)
+                if foreign_key["referred_schema"] in (None, schema)
+            }
+            for table in Base.metadata.sorted_tables
+        }
+        while True:
+            dependents = {name for name, parents in references.items() if parents & targets}
+            if dependents <= targets:
+                break
+            targets.update(dependents)
         for table in reversed(Base.metadata.sorted_tables):
             if table.name in targets:
                 connection.execute(text(f"DROP TABLE {schema}.{table.name}"))
