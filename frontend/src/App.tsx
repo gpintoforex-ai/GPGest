@@ -451,16 +451,6 @@ export default function App() {
           <span className="brand-compact" aria-label="GPGest">GP</span>
           <small>{boot.company?.name || "GESTÃO DE LOJA"}</small>
         </div>
-        <div
-          className={`sidebar-mode ${integratedMode ? "integrated" : "local"}`}
-          role="status"
-          aria-label={`Modo configurado: ${operatingMode}`}
-          title={operatingMode}
-        >
-          {integratedMode ? <Plug size={16} aria-hidden="true" /> : <Monitor size={16} aria-hidden="true" />}
-          <span className="sidebar-mode-label">{operatingMode}</span>
-          <span className="sidebar-mode-compact" aria-hidden="true">{integratedMode ? "ERP" : "Local"}</span>
-        </div>
         <button className="sidebar-collapse" aria-label={sidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}><Menu size={18} /><span className="nav-label">Recolher menu</span></button>
         <nav aria-label="Navegação principal">
           {menu.map(([label, Icon]) => {
@@ -538,29 +528,41 @@ export default function App() {
             );
           })}
         </nav>
-        <div className="sidebar-bottom">
-          <span className="avatar">
-            {boot.user.name.slice(0, 2).toUpperCase()}
-          </span>
-          <div>
-            <strong>{boot.user.name}</strong>
-            <small>{boot.user.role}</small>
-          </div>
-          <button
-            aria-label="Terminar sessão"
-            onClick={() =>
-              act(async () => {
-                await api("/auth/logout", {});
-                setBoot(null);
-                setSessions([]);
-                setMovements([]);
-                setAudit([]);
-                setModal("");
-              })
-            }
+        <div className="sidebar-footer">
+          <div
+            className={`sidebar-mode ${integratedMode ? "integrated" : "local"}`}
+            role="status"
+            aria-label={`Modo configurado: ${operatingMode}`}
+            title={operatingMode}
           >
-            <LogOut size={18} />
-          </button>
+            {integratedMode ? <Plug size={16} aria-hidden="true" /> : <Monitor size={16} aria-hidden="true" />}
+            <span className="sidebar-mode-label">{operatingMode}</span>
+            <span className="sidebar-mode-compact" aria-hidden="true">{integratedMode ? "ERP" : "Local"}</span>
+          </div>
+          <div className="sidebar-bottom">
+            <span className="avatar">
+              {boot.user.name.slice(0, 2).toUpperCase()}
+            </span>
+            <div>
+              <strong>{boot.user.name}</strong>
+              <small>{boot.user.role}</small>
+            </div>
+            <button
+              aria-label="Terminar sessão"
+              onClick={() =>
+                act(async () => {
+                  await api("/auth/logout", {});
+                  setBoot(null);
+                  setSessions([]);
+                  setMovements([]);
+                  setAudit([]);
+                  setModal("");
+                })
+              }
+            >
+              <LogOut size={18} />
+            </button>
+          </div>
         </div>
       </aside>
       <div className="workspace">

@@ -61,7 +61,8 @@ button:disabled { cursor: not-allowed; }
 .brand .brand-full > span, .brand-compact { color: #9ebff4; }
 .brand-compact { display: none; }
 .brand small { color: #b0c0d6; letter-spacing: .05em; font-size: 10px; }
-.sidebar-mode { display: flex; align-items: center; gap: 8px; margin: 14px 12px 0; padding: 9px 10px; border: 1px solid; border-radius: 7px; font-size: 12px; font-weight: 600; line-height: 1.4; }
+.sidebar-footer { margin-top: auto; padding-top: 20px; flex-shrink: 0; }
+.sidebar-mode { display: flex; align-items: center; gap: 8px; margin: 0 12px 18px; padding: 9px 10px; border: 1px solid; border-radius: 7px; font-size: 12px; font-weight: 600; line-height: 1.4; }
 .sidebar-mode svg { flex-shrink: 0; }
 .sidebar-mode.local { color: #c6f5e8; background: #244c47; border-color: #447f72; }
 .sidebar-mode.integrated { color: #d8e6ff; background: #253f64; border-color: #517bb2; }
@@ -72,7 +73,7 @@ button:disabled { cursor: not-allowed; }
 .sidebar nav button[aria-current="page"] { box-shadow: inset 3px 0 #82aff8; }
 .finance-submenu { border-color: #3b5272; }
 .sidebar-collapse { background: transparent; border-color: #3b5272; color: #c0cde0; margin: 20px 12px 0; font-size: 12px; }
-.sidebar-bottom { border-color: #3b5272; margin-top: auto; }
+.sidebar-bottom { border-color: #3b5272; margin-top: 0; }
 .sidebar-bottom small { color: #b0c0d6; }
 .sidebar-bottom button { color: #b0c0d6; }
 .avatar { background: #e8effb; color: #254f91; flex-shrink: 0; }
@@ -160,7 +161,7 @@ a { color: var(--color-primary); }
   .sidebar-collapsed .sidebar nav button svg:last-child:not(:first-child) { display: none; }
   .sidebar-collapsed .finance-submenu { margin-left: 0; padding-left: 0; }
   .sidebar-collapsed .sidebar-collapse { margin: 20px 0 0; }
-  .sidebar-collapsed .sidebar-mode { flex-direction: column; gap: 4px; margin: 14px 0 0; padding: 8px 4px; }
+  .sidebar-collapsed .sidebar-mode { flex-direction: column; gap: 4px; margin: 0 0 18px; padding: 8px 4px; }
   .sidebar-collapsed .sidebar-mode-label { display: none; }
   .sidebar-collapsed .sidebar-mode-compact { display: block; font-size: 11px; }
 }
