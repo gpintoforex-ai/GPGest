@@ -20,6 +20,7 @@ import {
   Settings,
   Plug,
   Monitor,
+  Info,
   LogOut,
   Menu,
   CheckCircle,
@@ -761,16 +762,33 @@ export default function App() {
             <>
               <div className="page-intro">
                 <div>
-                  <h1>Folha de caixa</h1>
-                  <p>
-                    Fundo de maneio, movimentos por meio de pagamento e contagem
-                    com apuramento de diferenças.
-                  </p>
-                  <p>
-                    {boot.integration?.mode === "local"
-                      ? "Declare o realizado do dia e confira os recebimentos registados. Conte separadamente o numerário físico da gaveta."
-                      : "Os valores incluem os créditos e débitos reais da loja nesse dia, manuais e ERP. Introduza o fundo de maneio e a contagem."}
-                  </p>
+                  <div className="cash-page-heading">
+                    <h1>Folha de caixa</h1>
+                    <details
+                      className="cash-page-info"
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          e.currentTarget.open = false;
+                          e.currentTarget.querySelector("summary")?.focus();
+                        }
+                      }}
+                    >
+                      <summary aria-label="Informação sobre a folha de caixa" title="Informação sobre a folha de caixa">
+                        <Info size={20} aria-hidden="true" />
+                      </summary>
+                      <div className="cash-page-info-content">
+                        <p>
+                          Fundo de maneio, movimentos por meio de pagamento e contagem
+                          com apuramento de diferenças.
+                        </p>
+                        <p>
+                          {boot.integration?.mode === "local"
+                            ? "Declare o realizado do dia e confira os recebimentos registados. Conte separadamente o numerário físico da gaveta."
+                            : "Os valores incluem os créditos e débitos reais da loja nesse dia, manuais e ERP. Introduza o fundo de maneio e a contagem."}
+                        </p>
+                      </div>
+                    </details>
+                  </div>
                 </div>
                 {write && (
                   <button className="primary" onClick={() => openModal("open")}>
