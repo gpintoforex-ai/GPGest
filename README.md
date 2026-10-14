@@ -149,6 +149,8 @@ erDiagram
 
 ## Dados reais e alojamento
 
+Para publicar a interface no Cloudflare Workers e ligá-la ao servidor Python, consulte [Publicação no Cloudflare](docs/CLOUDFLARE.md).
+
 Antes de usar em produção, crie **outra base PostgreSQL**, configure um `.env` com `APP_MODE=real`, credenciais próprias e `COOKIE_SECURE=true` atrás de HTTPS. Execute as migrações e `seed.py` nessa base nova: não será criada a loja fictícia. **Não transforme a base de demonstração em real mudando apenas a etiqueta.**
 
 Use um utilizador de base de dados com os privilégios necessários apenas nesta base, um proxy HTTPS que sirva o frontend e encaminhe `/api` para FastAPI, backups externos e controlo de acesso aos ficheiros `.env` e backups. Não publique Vite dev nem PostgreSQL na Internet. O PostgreSQL local de desenvolvimento usa um administrador próprio apenas para facilitar a inicialização e testes; não copie este perfil de acesso para produção.

@@ -8,3 +8,6 @@ dist/
 *.db
 backups/
 *.tsbuildinfo
+.wrangler/
+.dev.vars
+.dev.vars.*
