@@ -1,18 +1,18 @@
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import HTTPException, Request
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
+from .database_url import database_url, load_database_environment
 from .platform_models import Company
 
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+load_database_environment(Path(__file__).resolve().parents[2])
 url = os.environ.get("DATABASE_URL")
 if not url:
     raise RuntimeError("Configure DATABASE_URL no ficheiro .env na raiz do projeto.")
-engine = create_engine(url, pool_pre_ping=True)
+engine = create_engine(database_url(url), pool_pre_ping=True)
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 

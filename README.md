@@ -151,6 +151,8 @@ erDiagram
 
 Para publicar a interface no Cloudflare Workers e ligá-la ao servidor Python, consulte [Publicação no Cloudflare](docs/CLOUDFLARE.md).
 
+Para copiar a base de dados atual do PC para o Neon, mantendo o ambiente de testes e os dados locais, consulte [Dados no Neon](docs/NEON.md).
+
 Antes de usar em produção, crie **outra base PostgreSQL**, configure um `.env` com `APP_MODE=real`, credenciais próprias e `COOKIE_SECURE=true` atrás de HTTPS. Execute as migrações e `seed.py` nessa base nova: não será criada a loja fictícia. **Não transforme a base de demonstração em real mudando apenas a etiqueta.**
 
 Use um utilizador de base de dados com os privilégios necessários apenas nesta base, um proxy HTTPS que sirva o frontend e encaminhe `/api` para FastAPI, backups externos e controlo de acesso aos ficheiros `.env` e backups. Não publique Vite dev nem PostgreSQL na Internet. O PostgreSQL local de desenvolvimento usa um administrador próprio apenas para facilitar a inicialização e testes; não copie este perfil de acesso para produção.
@@ -184,7 +186,7 @@ Guarda um ficheiro `.dump` em `backups`. Copie-o para armazenamento protegido fo
 
 Para testar a recuperação no ambiente de demonstração, execute `.\.venv\Scripts\python.exe scripts\test-restore.py` depois de criar um backup. Restaura para uma base temporária nova, compara contagens e remove apenas essa base temporária.
 
-Para recuperar, crie uma **nova base vazia** com `createdb.exe` e use `.local\pgsql\bin\pg_restore.exe -h 127.0.0.1 -p 55432 -U gpgest -d NOME_DA_NOVA_BASE --clean --if-exists caminho\backup.dump`. Use este comando apenas na nova base vazia: prepara o esquema antes de restaurar. A ferramenta pede a palavra-passe da base (presente no `.env`). Altere `DATABASE_URL` para a base recuperada, inicie e verifique utilizadores, sessões e movimentos antes de substituir a base original. Nunca apague a base original para testar a recuperação. O backup inclui o esquema `public` da aplicação e exclui esquemas temporários de teste.
+Para recuperar, crie uma **nova base vazia** com `createdb.exe` e use `.local\pgsql\bin\pg_restore.exe -h 127.0.0.1 -p 55432 -U gpgest -d NOME_DA_NOVA_BASE --clean --if-exists caminho\backup.dump`. Use este comando apenas na nova base vazia: prepara o esquema antes de restaurar. A ferramenta pede a palavra-passe da base (presente no `.env`). Altere `DATABASE_URL` para a base recuperada, inicie e verifique utilizadores, sessões e movimentos antes de substituir a base original. Nunca apague a base original para testar a recuperação. O backup inclui `public` e os esquemas das empresas e exclui esquemas temporários de teste. Preserve também o `.env`, em particular `PLATFORM_ENCRYPTION_KEY`, e os ficheiros privados das integrações.
 
 ## Fases seguintes e dependências
 
