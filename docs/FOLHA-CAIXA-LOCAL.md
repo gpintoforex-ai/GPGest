@@ -4,7 +4,9 @@ Em **Configurações > Integrações**, uma empresa em modo local pode conferir 
 
 ## Realizado do dia
 
-Na Folha de Caixa, indique as vendas/recebimentos do dia por numerário, Multibanco/TPA, MB WAY, transferência e outros meios. Administradores e gestores podem adicionar meios locais. Estes meios também ficam disponíveis no registo de movimentos reais da empresa.
+Na coluna **Realizado declarado**, use **Registar valor** no respetivo meio de pagamento (numerário, Multibanco/TPA, MB WAY, transferência e outros meios). A janela permite introduzir o valor e, opcionalmente, as observações do dia e a referência POS, comuns a todos os meios. **Aplicar valor** atualiza o rascunho; use **Guardar rascunho** na folha para o guardar. Para alterar um valor, carregue no montante; **Deixar por preencher** remove a declaração desse meio sem a substituir por zero.
+
+Administradores e gestores podem adicionar meios locais. Estes meios também ficam disponíveis no registo de movimentos reais da empresa.
 
 O realizado é uma referência manual: guardar ou alterar valores não cria entradas, saídas ou ajustes. Campos vazios ficam **Por conferir**; um zero só é declarado quando introduzido pelo utilizador. A referência ao fecho do POS e as observações são opcionais.
 

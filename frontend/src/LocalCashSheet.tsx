@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Banknote,
   CreditCard,
   Smartphone,
   ArrowLeftRight,
   Wallet,
+  Pencil,
+  Plus,
+  X,
 } from "lucide-react";
 import { api, Field } from "./App";
 import CashCountDialog from "./CashCountDialog";
@@ -44,6 +48,120 @@ const icon = (key: string) =>
         : key === "transferencia"
           ? ArrowLeftRight
           : Wallet;
+
+function RealizedDialog({
+  row,
+  initial,
+  onApply,
+  onCancel,
+}: {
+  row: Row;
+  initial: { value: string; notes: string; pos: string };
+  onApply: (value: { value: string; notes: string; pos: string }) => void;
+  onCancel: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const [draft, setDraft] = useState(initial);
+  const cents = amount(draft.value);
+  const Icon = icon(row.key);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const element = dialog.current!;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    element.showModal();
+    element.querySelector("input")?.focus();
+    return () => {
+      element.close();
+      document.body.style.overflow = overflow;
+      previous?.focus();
+    };
+  }, []);
+  return createPortal(
+    <dialog
+      ref={dialog}
+      className="local-realized-dialog"
+      aria-labelledby={titleId}
+      onCancel={(e) => {
+        e.preventDefault();
+        onCancel();
+      }}
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (cents !== null) onApply({ ...draft, value: euros(cents) });
+        }}
+      >
+        <div className="panel-title">
+          <h2 id={titleId}>Registar realizado</h2>
+          <button type="button" aria-label="Fechar" onClick={onCancel}>
+            <X size={20} aria-hidden="true" />
+          </button>
+        </div>
+        <p className="cash-payment-label">
+          <Icon size={20} aria-hidden="true" /> {row.name}
+        </p>
+        <Field label={`Realizado ${row.name} (€)`}>
+          <input
+            inputMode="decimal"
+            placeholder="Introduza o valor"
+            value={draft.value}
+            onChange={(e) => setDraft({ ...draft, value: e.target.value })}
+          />
+        </Field>
+        {draft.value.trim() && cents === null && (
+          <p className="error" role="alert">
+            Introduza um valor válido em euros, com até duas casas decimais.
+          </p>
+        )}
+        <p className="footnote">
+          Introduza zero para confirmar que não houve recebimentos neste meio.
+          Depois de aplicar, escolha «Guardar rascunho» na folha para guardar o
+          valor. Este registo não cria movimentos.
+        </p>
+        <details className="local-realized-details">
+          <summary>Observações do dia e referência POS</summary>
+          <p className="footnote">
+            Informação comum a todos os meios de pagamento.
+          </p>
+          <Field label="Observações do realizado">
+            <textarea
+              maxLength={2000}
+              value={draft.notes}
+              onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+            />
+          </Field>
+          <Field label="Referência ao fecho do POS (opcional)">
+            <input
+              maxLength={200}
+              value={draft.pos}
+              onChange={(e) => setDraft({ ...draft, pos: e.target.value })}
+            />
+          </Field>
+        </details>
+        <div className="actions">
+          <button className="primary" disabled={cents === null}>
+            Aplicar valor
+          </button>
+          {initial.value.trim() && (
+            <button
+              type="button"
+              onClick={() => onApply({ ...draft, value: "" })}
+            >
+              Deixar por preencher
+            </button>
+          )}
+          <button type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+        </div>
+      </form>
+    </dialog>,
+    document.body,
+  );
+}
 
 export default function LocalCashSheet({
   session: s,
@@ -88,11 +206,13 @@ export default function LocalCashSheet({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [countDialog, setCountDialog] = useState(false);
+  const [realizedMethod, setRealizedMethod] = useState<string | null>(null);
   const [newMethod, setNewMethod] = useState<string | null>(null);
   useEffect(() => {
     setForm(hydrate());
     setDirty(false);
     setSourceDay(s.sheet.day);
+    setRealizedMethod(null);
   }, [s.id, stored.updated_at, s.sheet.day]);
   const editable = writable && !s.closed_at;
   const update = (patch: Partial<typeof form>) => {
@@ -280,59 +400,6 @@ export default function LocalCashSheet({
           </button>
         )}
       </div>
-      <div className="local-realized-inputs">
-        {rows.map((row) => {
-          const Icon = icon(row.key);
-          return (
-            <Field
-              key={row.key}
-              label={
-                <span className="cash-payment-label">
-                  <Icon size={18} aria-hidden="true" />
-                  {row.name} (€)
-                </span>
-              }
-            >
-              <input
-                className={tone(
-                  amount(form.values[row.key] || "") === null
-                    ? null
-                    : row.registered_cents - amount(form.values[row.key])!,
-                  checked,
-                )}
-                inputMode="decimal"
-                aria-label={`Realizado ${row.name} (€)`}
-                placeholder="Por preencher"
-                disabled={!editable || busy}
-                value={form.values[row.key] || ""}
-                onChange={(e) =>
-                  update({
-                    values: { ...form.values, [row.key]: e.target.value },
-                  })
-                }
-              />
-            </Field>
-          );
-        })}
-      </div>
-      <div className="local-realized-inputs">
-        <Field label="Observações do realizado">
-          <textarea
-            maxLength={2000}
-            disabled={!editable || busy}
-            value={form.notes}
-            onChange={(e) => update({ notes: e.target.value })}
-          />
-        </Field>
-        <Field label="Referência ao fecho do POS (opcional)">
-          <input
-            maxLength={200}
-            disabled={!editable || busy}
-            value={form.pos}
-            onChange={(e) => update({ pos: e.target.value })}
-          />
-        </Field>
-      </div>
       {editable && manager && (
         <div className="local-cash-methods">
           {newMethod === null ? (
@@ -395,6 +462,7 @@ export default function LocalCashSheet({
           <tbody>
             {rows.map((row) => {
               const declared = amount(form.values[row.key] || "");
+              const Icon = icon(row.key);
               const diff =
                 declared === null ? null : row.registered_cents - declared;
               const status =
@@ -407,9 +475,32 @@ export default function LocalCashSheet({
                       : "Por conferir";
               return (
                 <tr key={row.key}>
-                  <td>{row.name}</td>
                   <td>
-                    {declared === null ? "Por preencher" : money(declared)}
+                    <span className="cash-payment-label">
+                      <Icon size={18} aria-hidden="true" /> {row.name}
+                    </span>
+                  </td>
+                  <td>
+                    {editable ? (
+                      <button
+                        className={`local-realized-button ${tone(diff, checked)}`}
+                        disabled={busy}
+                        aria-haspopup="dialog"
+                        aria-label={`${declared === null ? "Registar" : "Alterar"} valor de ${row.name}`}
+                        onClick={() => setRealizedMethod(row.key)}
+                      >
+                        {declared === null ? (
+                          <Plus size={16} aria-hidden="true" />
+                        ) : (
+                          <Pencil size={16} aria-hidden="true" />
+                        )}
+                        {declared === null ? "Registar valor" : money(declared)}
+                      </button>
+                    ) : declared === null ? (
+                      "Por preencher"
+                    ) : (
+                      money(declared)
+                    )}
                     <small>Manual</small>
                   </td>
                   <td>
@@ -454,6 +545,33 @@ export default function LocalCashSheet({
           </tfoot>
         </table>
       </div>
+      {!editable && (form.notes || form.pos) && (
+        <details className="local-realized-details">
+          <summary>Observações do dia e referência POS</summary>
+          {form.notes && <p>{form.notes}</p>}
+          {form.pos && <p>Referência ao fecho do POS: {form.pos}</p>}
+        </details>
+      )}
+      {editable && realizedMethod !== null && (
+        <RealizedDialog
+          key={realizedMethod}
+          row={rows.find((row) => row.key === realizedMethod)!}
+          initial={{
+            value: form.values[realizedMethod] || "",
+            notes: form.notes,
+            pos: form.pos,
+          }}
+          onCancel={() => setRealizedMethod(null)}
+          onApply={(draft) => {
+            update({
+              values: { ...form.values, [realizedMethod]: draft.value },
+              notes: draft.notes,
+              pos: draft.pos,
+            });
+            setRealizedMethod(null);
+          }}
+        />
+      )}
       <h3>Conferência do numerário físico</h3>
       <p className="footnote">
         Saldo esperado = fundo inicial + entradas em numerário − saídas em
