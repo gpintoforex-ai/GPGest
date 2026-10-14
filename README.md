@@ -33,7 +33,11 @@ Dinheiro guardado em **cêntimos inteiros**, sem ponto flutuante. A conversão d
 
 ### Folha de caixa
 
-Em **Folha de caixa → Nova folha de caixa**, escolha caixa e dia e introduza o fundo de maneio inicial. A tabela calcula automaticamente **todos os movimentos reais da loja nesse dia**: créditos e débitos manuais GPGest, de todas as sessões/caixas, e movimentos reais Wintouch já importados. Não é necessário voltar a introduzir os montantes. **Dia dos movimentos reais** permite ajustar o dia. Créditos, débitos e saldo são separados por meio de pagamento e origem; o fundo inicial entra apenas no numerário esperado. Entrar no menu e concluir uma importação atualiza os valores calculados.
+Em **Folha de caixa → Nova folha de caixa**, escolha caixa e dia e introduza o fundo de maneio inicial.
+
+No **modo local autónomo**, declare o **Realizado do dia** por numerário, Multibanco/TPA, MB WAY, transferência e meios locais configurados. A conferência compara apenas as vendas/recebimentos da caixa e data escolhidas; o numerário físico é conferido separadamente. Campos vazios diferem de zeros confirmados. Guardar o realizado não cria movimentos. O fecho exige valores completos e justificação das diferenças, sem ajustes automáticos. Consulte [Conferência local da Folha de Caixa](docs/FOLHA-CAIXA-LOCAL.md).
+
+No **modo integrado**, a tabela mantém o cálculo de **todos os movimentos reais da loja nesse dia**: créditos e débitos manuais GPGest, de todas as sessões/caixas, e movimentos ERP já importados. **Dia dos movimentos reais** permite ajustar o dia. Créditos, débitos e saldo são separados por meio de pagamento e origem; o fundo inicial entra apenas no numerário esperado. Entrar no menu e concluir uma importação atualiza os valores calculados. Os parágrafos seguintes descrevem esta conferência integrada.
 
 Ao abrir uma nova folha, o fundo de maneio assume o valor da **última abertura da caixa selecionada**, mesmo que essa abertura já não esteja na lista das 200 sessões recentes. Pode alterá-lo antes de guardar; mudar de caixa atualiza a sugestão. Sem aberturas anteriores, começa em `0,00`.
 

@@ -231,6 +231,9 @@ export default function CashSheet({
         <p>Valor a retirar = numerário contado − fundo de maneio. Se faltar dinheiro para o fundo, é apresentado o valor a repor.</p>
       </div>
       <p className="footnote">
+        Origem dos valores: Manual (GPGest) e ERP (Wintouch).
+      </p>
+      <p className="footnote">
         {s.sheet.scope === "store_day"
           ? "Totais de todos os movimentos reais da loja neste dia: créditos e débitos, manuais e Wintouch, de todas as sessões de caixa. Os documentos a crédito ficam nos movimentos previstos."
           : "Fecho anterior: valores guardados dos movimentos desta sessão de caixa."}

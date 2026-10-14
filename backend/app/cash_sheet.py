@@ -7,7 +7,7 @@ from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from . import db as database
 from .models import (
@@ -17,6 +17,8 @@ from .models import (
     WintouchSaleRecord,
     BankDeposit,
     DocumentPayment,
+    WintouchCashAccount,
+    LocalPaymentMethod,
 )
 from .platform_models import Company
 
@@ -155,7 +157,20 @@ def real_receipts(db, store_id, selected_day, enterprise):
             yield data
 
 
-def summary(db, session):
+def belongs_to_register(db, session, register, data):
+    account_id = data.get("account_id")
+    if account_id:
+        account = db.scalar(select(WintouchCashAccount).where(
+            WintouchCashAccount.enterprise_id == daily_enterprise(db, session),
+            WintouchCashAccount.external_id == account_id,
+        ))
+        if account and account.register_id:
+            return account.register_id == register.id
+    registers = list(db.scalars(select(Register.id).where(Register.store_id == register.store_id)))
+    return len(registers) == 1 or bool(session.wintouch_scope)
+
+
+def summary(db, session, register_only=False, methods=None):
     stored = json.loads(session.count_data or "{}")
     if session.closed_at and stored.get("final"):
         return stored["summary"]
@@ -169,7 +184,7 @@ def summary(db, session):
             "wintouch_cents": 0,
             "count": 0,
         }
-        for key, name in LABELS.items()
+        for key, name in (methods or LABELS).items()
     }
 
     def add(key, name, amount, direction, source):
@@ -213,6 +228,15 @@ def summary(db, session):
                 Movement.occurred_at < end,
             )
         )
+        if register_only:
+            query = select(Movement).outerjoin(CashSession).outerjoin(
+                BankDeposit, (BankDeposit.movement_id == Movement.id) | (BankDeposit.reversal_id == Movement.id)
+            ).where(
+                func.coalesce(CashSession.register_id, BankDeposit.register_id) == register.id,
+                Movement.occurred_at >= start, Movement.occurred_at < end,
+                (Movement.origin == "deposito_modulo") | (Movement.reversed_by.is_(None) & Movement.reversal_of.is_(None)),
+                Movement.origin != "fecho_caixa", Movement.origin != "opening_balance",
+            )
     for move in db.scalars(query):
         if move.origin == "deposito_modulo":
             deposit = db.scalar(
@@ -233,7 +257,12 @@ def summary(db, session):
                     key, label = payment_key({"payment_code": "CH"})
                     add(key, label, int(deposit.cheque_amount * 100), move.direction, "local")
             continue
-        add(move.payment, LABELS[move.payment], move.amount_cents, move.direction, "local")
+        name = (methods or LABELS).get(move.payment, "MB WAY" if move.payment == "mbway" else move.payment)
+        if methods is None and move.payment.startswith("pm_"):
+            configured = db.get(LocalPaymentMethod, move.payment)
+            if configured:
+                name = configured.name
+        add(move.payment, name, move.amount_cents, move.direction, "local")
     enterprise = (
         daily_enterprise(db, session) if not session.closed_at else session.wintouch_enterprise
     )
@@ -242,7 +271,11 @@ def summary(db, session):
 
         if included_as_opening(session, data):
             continue
+        if register_only and not belongs_to_register(db, session, register, data):
+            continue
         key, name = payment_key(data)
+        if register_only and str(data.get("payment", "")).casefold().replace(" ", "") == "mbway":
+            key, name = "mbway", "MB WAY"
         add(key, name, data["amount_cents"], data["direction"], "wintouch")
     for receipt in db.scalars(
         select(DocumentPayment).where(
@@ -252,6 +285,9 @@ def summary(db, session):
             DocumentPayment.method == "cheque",
         )
     ):
+        if register_only and len(list(db.scalars(select(Register.id).where(Register.store_id == register.store_id)))) > 1:
+            # A store-level cheque without a register cannot be attributed to a drawer.
+            continue
         key, label = payment_key({"payment_code": "CH"})
         add(key, label, receipt.amount_cents, receipt.direction, "local")
     for row in rows.values():

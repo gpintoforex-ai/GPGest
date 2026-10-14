@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import db as database
+from . import cash_local
 from .operating_modes import policy as integration_policy
 from .cash_sheet import (
     daily_enterprise,
@@ -45,6 +46,7 @@ from .models import (
     Category,
     LoginSession,
     Movement,
+    LocalPaymentMethod,
     PlannedMovement,
     PlannedSettlement,
     Register,
@@ -284,6 +286,8 @@ def balance(db, session):
             "ledger_balance_cents",
             next(row["expected_cents"] for row in stored["summary"] if row["key"] == "numerario"),
         )
+    if cash_local.is_local(db, session, integration_policy):
+        return next(row["expected_cents"] for row in cash_local.drawer_rows(db, session) if row["key"] == "numerario")
     total = session.opening_cents + int(
         db.scalar(
             select(func.sum(Movement.direction * Movement.amount_cents)).where(
@@ -414,6 +418,7 @@ def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
     )
     return {
         "integration": integration_policy(db),
+        "payment_methods": cash_local.methods(db) if integration_policy(db)["mode"] == "local" else None,
         "user": serial(user),
         "mode": db.info.get("company", {}).get("mode", os.getenv("APP_MODE", "real")),
         "company": db.info.get("company", {}),
@@ -620,7 +625,8 @@ def sessions(user=Depends(current), db: Session = Depends(db_session)):
 
 
 def session_result(db, s):
-    rows = sheet_summary(db, s)
+    local = cash_local.is_local(db, s, integration_policy)
+    rows = cash_local.drawer_rows(db, s) if local else sheet_summary(db, s)
     counting = json.loads(s.count_data or "{}")
     if s.closed_at and not counting:
         counting = {
@@ -632,17 +638,19 @@ def session_result(db, s):
     return {
         **serial(s),
         "count_data": counting,
-        "balance_cents": balance(db, s),
+        "balance_cents": next(row["expected_cents"] for row in rows if row["key"] == "numerario") if local else balance(db, s),
         "totals": {row["key"]: row["net_cents"] for row in rows},
         "sheet": {
+            "workflow_mode": "local" if local else "integrated",
             "day": s.sheet_day or sheet_day_of(s.opened_at),
             "include_wintouch": bool(daily_enterprise(db, s))
             if not s.closed_at
             else counting.get("include_wintouch", bool(s.wintouch_scope)),
-            "scope": "store_day"
-            if not s.closed_at or counting.get("scope") == "store_day"
-            else "session",
+            "scope": "register_day" if local else (
+                "store_day" if not s.closed_at or counting.get("scope") == "store_day" else "session"
+            ),
             "rows": rows,
+            "reconciliation": cash_local.reconciliation(db, s, rows) if local else None,
         },
     }
 
@@ -740,6 +748,10 @@ def change_sheet_sources(
     session_id: str, data: CashSources, user=Depends(current), db: Session = Depends(db_session)
 ):
     s, r = cash(db, user, session_id, True)
+    saved = json.loads(s.count_data or "{}")
+    if (data.sheet_day.isoformat() != (s.sheet_day or sheet_day_of(s.opened_at))
+            and any(value is not None for value in saved.get("realized", {}).get("values", {}).values())):
+        raise HTTPException(409, "Esta folha já tem realizado manual guardado. Limpe os valores e guarde o rascunho antes de alterar o dia, ou crie outra folha.")
     previous = {"day": s.sheet_day, "include_wintouch": bool(s.wintouch_scope)}
     if data.include_wintouch is None:
         token, enterprise = (
@@ -776,15 +788,49 @@ def save_count(
     session_id: str, data: CashCount, user=Depends(current), db: Session = Depends(db_session)
 ):
     s, r = cash(db, user, session_id, True)
-    rows = sheet_summary(db, s)
-    counting = validate_count(data, rows, cents)
+    local = cash_local.is_local(db, s, integration_policy)
+    rows = cash_local.drawer_rows(db, s) if local else sheet_summary(db, s)
+    if local:
+        counting = cash_local.validate(db, s, data, rows, cents, user)
+    else:
+        if data.realized is not None:
+            raise HTTPException(409, "O realizado manual está disponível no modo local. Os valores ERP foram preservados.")
+        counting = {**json.loads(s.count_data or "{}"), **validate_count(data, rows, cents)}
     counting["opening_wintouch_id"] = json.loads(s.count_data or "{}").get("opening_wintouch_id")
     counting["wintouch_excluded"] = json.loads(s.count_data or "{}").get("wintouch_excluded", False)
     counting["updated_at"] = now().isoformat()
+    counting.update(updated_by=user.id, updated_by_name=user.name)
     s.count_data = json.dumps(counting, ensure_ascii=False)
     record(db, user, "contagem_guardada", s.id, counting, r.store_id)
     db.commit()
     return session_result(db, s)
+
+
+@app.post("/api/sessions/{session_id}/reconcile")
+def reconcile_cash(session_id: str, data: CashCount, user=Depends(current), db: Session = Depends(db_session)):
+    s, r = cash(db, user, session_id, True)
+    if not cash_local.is_local(db, s, integration_policy):
+        raise HTTPException(409, "Use a conferência de valores ERP no modo integrado.")
+    counting = cash_local.validate(db, s, data, cash_local.drawer_rows(db, s), cents, user, complete=True)
+    s.count_data = json.dumps(counting, ensure_ascii=False)
+    record(db, user, "conferencia_folha_caixa", s.id, counting, r.store_id)
+    db.commit()
+    return session_result(db, s)
+
+
+@app.post("/api/cash/payment-methods")
+def create_cash_payment_method(data: Name, user=Depends(current), db: Session = Depends(db_session)):
+    authorize(user, db, roles=["administrador", "gestor"])
+    if integration_policy(db)["mode"] != "local":
+        raise HTTPException(409, "Configure os meios locais no modo local autónomo.")
+    name = data.name.strip()
+    if not name or name.casefold() in {label.casefold() for label in cash_local.methods(db).values()}:
+        raise HTTPException(422, "Indique um nome distinto para o meio de pagamento.")
+    method = LocalPaymentMethod(id="pm_" + uid().replace("-", "")[:16], name=name)
+    db.add(method)
+    record(db, user, "meio_pagamento_local_criado", method.id, {"name": name})
+    db.commit()
+    return serial(method)
 
 
 @app.post("/api/sessions/{session_id}/close")
@@ -796,8 +842,14 @@ def close_session(
 ):
     s, r = cash(db, user, session_id, True)
     reserve_auto_source(db, s)
-    rows = sheet_summary(db, s)
-    counting = validate_count(data, rows, cents, closing=True)
+    local = cash_local.is_local(db, s, integration_policy)
+    rows = cash_local.drawer_rows(db, s) if local else sheet_summary(db, s)
+    if local:
+        counting = cash_local.validate(db, s, data, rows, cents, user, closing=True)
+    else:
+        if data.realized is not None:
+            raise HTTPException(409, "Os valores ERP não podem ser substituídos por realizado manual no modo integrado.")
+        counting = {**json.loads(s.count_data or "{}"), **validate_count(data, rows, cents, closing=True)}
     supplier = None
     if data.supplier_id:
         if data.supplier_answer != "indicado":
@@ -842,10 +894,17 @@ def close_session(
         final=True,
         summary=rows,
         updated_at=now().isoformat(),
-        scope="store_day",
-        ledger_balance_cents=balance(db, s),
+        updated_by=user.id,
+        updated_by_name=user.name,
+        closed_by=user.id,
+        closed_by_name=user.name,
+        workflow_mode="local" if local else "integrated",
+        scope="register_day" if local else "store_day",
+        ledger_balance_cents=expected if local else balance(db, s),
         include_wintouch=bool(daily_enterprise(db, s)),
     )
+    if local:
+        counting["local_reconciliation"] = cash_local.reconciliation(db, s, rows, counting)
     s.count_data = json.dumps(counting, ensure_ascii=False)
     s.counted_cents = counted
     s.expected_cents = expected
@@ -853,7 +912,7 @@ def close_session(
     s.close_reason = data.reason
     s.denominations = json.dumps(data.counts)
     difference = counted - expected
-    if difference:
+    if difference and not local:
         # Keep the pre-adjustment snapshot so the closed sheet retains its discrepancy.
         category = cash_difference_category(db)
         adjustment = Movement(
@@ -978,6 +1037,10 @@ def reopen_session(
             )
     counting.pop("final", None)
     counting.pop("summary", None)
+    counting.pop("local_reconciliation", None)
+    counting.pop("reconciliation_check", None)
+    counting.update(reopened_by=user.id, reopened_by_name=user.name,
+                    reopened_at=now().isoformat(), reopen_reason=data.reason)
     s.count_data = json.dumps(counting, ensure_ascii=False)
     db.commit()
     return serial(s)
@@ -1028,7 +1091,11 @@ def movements(all_records: bool = False, user=Depends(current), db: Session = De
         .order_by(Movement.created_at.desc())
         .limit(None if all_records else 500)
     )
-    return [{**serial(m), "register_id": register_id} for m, register_id in rows]
+    payment_names = cash_local.methods(db)
+    if integration_policy(db)["mode"] != "local":
+        from .cash_sheet import LABELS
+        payment_names.update(LABELS)
+    return [{**serial(m), "register_id": register_id, "payment_name": payment_names.get(m.payment)} for m, register_id in rows]
 
 
 @app.post("/api/movements")
@@ -1040,6 +1107,9 @@ def create_movement(data: MovementCreate, user=Depends(current), db: Session = D
 
 def add_movement(data, user, db):
     s, r = cash(db, user, data.session_id, True)
+    allowed = cash_local.methods(db) if integration_policy(db)["mode"] == "local" else {"numerario", "cartao", "transferencia", "outro"}
+    if data.payment not in allowed:
+        raise HTTPException(422, "Escolha um meio de pagamento configurado nesta empresa.")
     if not db.get(Category, data.category_id):
         raise HTTPException(422, "Categoria inválida.")
     amount = cents(data.amount)
@@ -1462,6 +1532,19 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
     line("Contado: " + euro(s.counted_cents))
     line("Diferença: " + euro(s.counted_cents - s.expected_cents))
     counting = json.loads(s.count_data or "{}")
+    local_reconciliation = counting.get("local_reconciliation")
+    if local_reconciliation:
+        line("Realizado do dia - origem Manual:")
+        line("Referência POS: " + local_reconciliation["realized"].get("pos_reference", ""))
+        for row in local_reconciliation["rows"]:
+            line(row["name"] + " - Declarado: " + euro(row["declared_cents"])
+                 + " / Registado: " + euro(row["registered_cents"])
+                 + " / Diferença: " + euro(row["difference_cents"]))
+        line("Total realizado: " + euro(local_reconciliation["declared_total_cents"]))
+        line("Total registado: " + euro(local_reconciliation["registered_total_cents"]))
+        line("Diferença da conferência: " + euro(local_reconciliation["difference_cents"]))
+        line("Conferido por: " + counting.get("reconciliation_check", {}).get("checked_by_name", ""))
+        line("Fechado por: " + counting.get("closed_by_name", ""))
     counted_values = counting.get("values", {"numerario": s.counted_cents})
     line("Meios de pagamento (valores líquidos):")
     for row in sheet_summary(db, s):

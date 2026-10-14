@@ -53,6 +53,7 @@ with Session(isolated) as db:
             schema_name="public",
             mode="demonstracao",
             api_enterprise="ui-source",
+            operating_mode="integrated",
         )
     )
     for value, code in ((500, "NU"), (700, "CD")):

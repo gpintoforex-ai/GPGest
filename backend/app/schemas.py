@@ -67,7 +67,7 @@ class MovementCreate(Strict):
         "deposito",
         "reforco",
     ]
-    payment: Literal["numerario", "cartao", "transferencia", "outro"]
+    payment: str = Field(min_length=1, max_length=20)
     amount: str
     occurred_at: datetime
     entity: str = Field(default="", max_length=200)
@@ -124,12 +124,19 @@ class Reason(Strict):
     reason: str = Field(min_length=5, max_length=2000)
 
 
+class CashRealized(Strict):
+    values: dict[str, str | None] = Field(default_factory=dict, max_length=50)
+    notes: str = Field(default="", max_length=2000)
+    pos_reference: str = Field(default="", max_length=200)
+
+
 class CashCount(Strict):
     counts: dict[str, StrictInt] = Field(default_factory=dict, max_length=15)
     payments: dict[str, str] = Field(default_factory=dict, max_length=30)
     cash_total: str | None = None
     cash_mode: Literal["total", "denominations"] | None = None
     reason: str = Field(default="", max_length=2000)
+    realized: CashRealized | None = None
 
 
 class CloseCash(CashCount):

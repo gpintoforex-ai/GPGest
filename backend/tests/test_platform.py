@@ -98,7 +98,7 @@ def configuration(company, **updates):
 
 
 def test_cash_sheet_wintouch_day_is_unique_and_company_scoped(platform):
-    c, _ = platform
+    c, factory = platform
     a = create(c, "folha-caixa-a")
     b = create(c, "folha-caixa-b")
     for company in (a, b):
@@ -109,6 +109,8 @@ def test_cash_sheet_wintouch_day_is_unique_and_company_scoped(platform):
             ).status_code
             == 200
         )
+        with factory.begin() as core:
+            core.get(Company, company["id"]).operating_mode = "integrated"
     c.cookies.clear()
     boot = enter(c, a["slug"])
     register = boot["registers"][0]["id"]
@@ -164,6 +166,8 @@ def test_cash_sheet_automatically_uses_real_receipts_and_legacy_open_sheets(plat
         ).status_code
         == 200
     )
+    with factory.begin() as core:
+        core.get(Company, company["id"]).operating_mode = "integrated"
     c.cookies.clear()
     boot = enter(c, company["slug"])
     store = boot["stores"][0]["id"]

@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { ArrowLeftRight, Banknote, CreditCard, FileText, Wallet } from "lucide-react";
+import { ArrowLeftRight, Banknote, CreditCard, FileText, Smartphone, Wallet } from "lucide-react";
 import "./RecordList.css";
 
 type Row = Record<string, any>;
 
 function PaymentLabel({ name }: { name: string }) {
   const Icon = name === "Numerário" ? Banknote
+    : name === "MB WAY" ? Smartphone
     : name === "Cartão" ? CreditCard
     : name === "Transferência" ? ArrowLeftRight
     : name === "Cheque" || name === "Cheques" ? FileText : Wallet;
@@ -13,6 +14,7 @@ function PaymentLabel({ name }: { name: string }) {
 }
 
 export function paymentGroup(row: Row) {
+  if (String(row.payment).startsWith("pm_") && row.payment_name) return String(row.payment_name);
   const name = String(row.payment || "Não indicado").trim();
   const normalized = name
     .normalize("NFD")
@@ -28,6 +30,8 @@ export function paymentGroup(row: Row) {
   };
   const names: Record<string, string> = {
     numerario: "Numerário",
+    mbway: "MB WAY",
+    "mb way": "MB WAY",
     cartao: "Cartão",
     "cartao de debito": "Cartão",
     "cartao de credito": "Cartão",

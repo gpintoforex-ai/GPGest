@@ -37,6 +37,7 @@ import TenantIntegrations from "./TenantIntegrations";
 import PlannedMovements from "./PlannedMovements";
 import RealMovements from "./RealMovements";
 import CashSheet from "./CashSheet";
+import LocalCashSheet from "./LocalCashSheet";
 import CashSheetList from "./CashSheetList";
 import OpenCashForm from "./OpenCashForm";
 import BankStatements from "./BankStatements";
@@ -52,6 +53,7 @@ import { InvoiceWorkflowSettings } from "./InvoiceWorkflow";
 import Rubrics from "./Rubrics";
 import RubricBadge from "./components/RubricBadge";
 type Bootstrap = {
+  payment_methods?: Record<string, string>;
   integration?: Row;
   user: Row;
   mode: string;
@@ -87,6 +89,7 @@ const labels: Record<string, string> = {
   transferencia_caixa: "Transferência entre caixas",
   numerario: "Numerário",
   cartao: "Multibanco / cartão",
+  mbway: "MB WAY",
   transferencia: "Transferência",
   outro: "Outro",
   cheque: "Cheques",
@@ -162,7 +165,7 @@ export function Field({
   label,
   children,
 }: {
-  label: string;
+  label: React.ReactNode;
   children: React.ReactNode;
 }) {
   const id = useId();
@@ -747,9 +750,9 @@ export default function App() {
                     com apuramento de diferenças.
                   </p>
                   <p>
-                    Os valores incluem todos os créditos e débitos reais da loja
-                    nesse dia, manuais e Wintouch. Introduza apenas o fundo de
-                    maneio e a contagem.
+                    {boot.integration?.mode === "local"
+                      ? "Declare o realizado do dia e confira os recebimentos registados. Conte separadamente o numerário físico da gaveta."
+                      : "Os valores incluem os créditos e débitos reais da loja nesse dia, manuais e ERP. Introduza o fundo de maneio e a contagem."}
                   </p>
                 </div>
                 {write && (
@@ -760,7 +763,12 @@ export default function App() {
               </div>
               <CashSheetList rows={visibleSessions} store={store}>
                 {(s) => (
-                  <CashSheet
+                  s.sheet.workflow_mode === "local" ? <LocalCashSheet
+                    key={s.id} session={s} register={rname(s.register_id)}
+                    store={boot.stores.find(store => store.id === boot.registers.find(r => r.id === s.register_id)?.store_id)?.name || "Estabelecimento"}
+                    operator={uname(s.operator_id)} writable={write && (manager || s.operator_id === boot.user.id)}
+                    manager={manager} reload={reload} onAction={openModal}
+                  /> : <CashSheet
                     key={s.id}
                     session={s}
                     register={rname(s.register_id)}
@@ -907,7 +915,7 @@ export default function App() {
                             ?.register_id,
                         ),
                         labels[m.kind],
-                        labels[m.payment],
+                        m.payment_name || labels[m.payment] || m.payment,
                         ((m.amount_cents * m.direction) / 100).toFixed(2),
                         m.origin,
                       ]),
@@ -1253,10 +1261,10 @@ export default function App() {
                   </Field>
                   <Field label="Meio de pagamento">
                     <select name="payment">
-                      {["numerario", "cartao", "transferencia", "outro"].map(
+                      {Object.keys(boot.payment_methods || { numerario: "", cartao: "", transferencia: "", outro: "" }).map(
                         (k) => (
                           <option key={k} value={k}>
-                            {labels[k]}
+                            {boot.payment_methods?.[k] || labels[k]}
                           </option>
                         ),
                       )}
@@ -1511,7 +1519,7 @@ export default function App() {
                 <td>{(() => { const category = boot?.categories.find(row => row.id === m.category_id || (m.category_name && row.name.toLocaleLowerCase("pt-PT") === m.category_name.toLocaleLowerCase("pt-PT"))); return <RubricBadge name={m.category_name || category?.name || (m.external ? "Não indicada na origem" : "—")} icon={category?.icon} color={category?.color} />; })()}</td>
                 <td>{m.document || "—"}</td>
                 <td>{m.entity || "—"}</td>
-                <td>{labels[m.payment] || m.payment || "—"}</td>
+                <td>{m.payment_name || labels[m.payment] || m.payment || "—"}</td>
                 <td className={m.direction > 0 ? "positive" : "negative"}>
                   {m.direction > 0 ? "+" : "−"}
                   {money(m.amount_cents)}

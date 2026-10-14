@@ -1,0 +1,201 @@
+"""Real browser/API test, exclusively in a disposable local database and schema."""
+
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from urllib.parse import urlsplit
+from uuid import uuid4
+
+import httpx
+from dotenv import dotenv_values
+from playwright.sync_api import expect, sync_playwright
+from pwdlib import PasswordHash
+from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session
+
+root = Path(__file__).resolve().parents[1]
+settings = dotenv_values(root / ".local/test-cash.env", interpolate=False)
+url = make_url(settings["DATABASE_URL"])
+assert (
+    url.host == "127.0.0.1" and url.port == 55432 and url.database.startswith("gpgest_test_cash_")
+)
+os.environ.update({key: value for key, value in settings.items() if value is not None})
+os.environ.pop("GPGEST_ENV_FILE", None)
+sys.path.insert(0, str(root / "backend"))
+from app.models import Base, CashSession, Category, Movement, Register, Store, User, now
+from app.platform_models import Company, PlatformBase
+
+schema = "ui_cash_" + uuid4().hex
+master = create_engine(url)
+with master.begin() as connection:
+    connection.execute(text("CREATE SCHEMA " + schema))
+test_url = url.update_query_dict({"options": "-csearch_path=" + schema})
+engine = create_engine(test_url)
+Base.metadata.create_all(engine)
+PlatformBase.metadata.create_all(engine)
+password = "PasswordForIsolatedBrowser123!"
+with Session(engine) as db:
+    store = Store(name="Loja de demonstração")
+    user = User(
+        name="Utilizador de demonstração",
+        email="ui@gpgest.local",
+        role="administrador",
+        password_hash=PasswordHash.recommended().hash(password),
+    )
+    db.add_all(
+        [
+            store,
+            user,
+            Company(
+                name="Empresa UI",
+                slug="demo",
+                nif="500000001",
+                schema_name="public",
+                mode="demonstracao",
+                operating_mode="local",
+            ),
+        ]
+    )
+    db.flush()
+    register = Register(name="Caixa de demonstração", store_id=store.id)
+    category = Category(name="Vendas")
+    db.add_all([register, category])
+    db.flush()
+    cash = CashSession(
+        register_id=register.id, operator_id=user.id, opening_cents=10000, count_data="{}"
+    )
+    db.add(cash)
+    db.flush()
+    for method, kind, value, direction in [
+        ("numerario", "venda", 30000, 1),
+        ("numerario", "despesa", 5000, -1),
+        ("cartao", "venda", 98000, 1),
+    ]:
+        db.add(
+            Movement(
+                session_id=cash.id,
+                user_id=user.id,
+                category_id=category.id,
+                payment=method,
+                kind=kind,
+                amount_cents=value,
+                direction=direction,
+                occurred_at=now(),
+                request_key=str(uuid4()),
+            )
+        )
+    db.commit()
+server_code = "from app import db\nfrom app.main import app\nimport uvicorn\ndb.next_platform_session = db.SessionLocal\ndef core():\n    with db.SessionLocal() as session:\n        yield session\napp.dependency_overrides[db.platform_db] = core\nuvicorn.run(app, host='127.0.0.1', port=8013)"
+log = (root / ".local/ui-cash-backend.log").open("wb")
+env = {
+    **os.environ,
+    "DATABASE_URL": test_url.render_as_string(hide_password=False),
+    "ALLOWED_ORIGINS": "http://127.0.0.1:5174",
+    "COOKIE_SECURE": "false",
+}
+server = subprocess.Popen(
+    [str(root / ".venv/Scripts/python.exe"), "-c", server_code],
+    cwd=root / "backend",
+    env=env,
+    stdout=log,
+    stderr=log,
+    creationflags=subprocess.CREATE_NO_WINDOW,
+)
+output = root / ".local/cash-local-ui"
+output.mkdir(exist_ok=True)
+errors = []
+try:
+    for _ in range(40):
+        try:
+            if httpx.get("http://127.0.0.1:8013/api/health", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.3)
+    else:
+        raise RuntimeError("A API isolada não iniciou; consulte o log privado.")
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 1000}, locale="pt-PT")
+        page.set_default_timeout(30000)
+        page.on("pageerror", lambda error: errors.append(str(error)))
+
+        def proxy(route):
+            parsed = urlsplit(route.request.url)
+            response = route.fetch(
+                url="http://127.0.0.1:8013"
+                + parsed.path
+                + ("?" + parsed.query if parsed.query else "")
+            )
+            route.fulfill(response=response)
+
+        page.route("**/api/**", proxy)
+        page.goto("http://127.0.0.1:5174", timeout=60000)
+        page.get_by_label("NIF da empresa", exact=True).fill("500000001")
+        page.get_by_label("Email", exact=True).fill("ui@gpgest.local")
+        page.get_by_label("Palavra-passe", exact=True).fill(password)
+        page.get_by_role("button", name="Entrar", exact=True).click()
+        page.get_by_role("button", name="Tesouraria", exact=True).click()
+        page.get_by_role("button", name="Folha de caixa", exact=True).click()
+        expect(page.get_by_role("heading", name="Realizado do dia", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="Fechar caixa", exact=True)).to_be_disabled()
+        for label, value in [
+            ("Numerário", "300,00"),
+            ("Multibanco / TPA", "1000,00"),
+            ("MB WAY", "0,00"),
+            ("Transferência", "0,00"),
+            ("Outros meios", "0,00"),
+        ]:
+            page.get_by_label(f"Realizado {label} (€)", exact=True).fill(value)
+        page.get_by_label("Numerário contado (€)", exact=True).fill("340,00")
+        page.get_by_label("Referência ao fecho do POS (opcional)", exact=True).fill("POS TESTE 001")
+        page.get_by_role("button", name="Guardar rascunho", exact=True).click()
+        expect(page.get_by_text("Rascunho guardado.", exact=True)).to_be_visible()
+        page.reload()
+        page.get_by_role("button", name="Tesouraria", exact=True).click()
+        page.get_by_role("button", name="Folha de caixa", exact=True).click()
+        expect(page.get_by_label("Realizado Multibanco / TPA (€)", exact=True)).to_have_value(
+            "1000,00"
+        )
+        expect(page.get_by_label("Numerário contado (€)", exact=True)).to_have_value("340,00")
+        expect(page.get_by_text("Falta de 10,00", exact=False)).to_be_visible()
+        expect(page.get_by_role("button", name="Fechar caixa", exact=True)).to_be_disabled()
+        page.get_by_role("button", name="Conferir", exact=True).click()
+        expect(page.get_by_text("Conferência guardada.", exact=True)).to_be_visible()
+        page.get_by_label("Justificação das diferenças (obrigatória para fechar)", exact=True).fill(
+            "Conferência de demonstração: diferenças por identificar"
+        )
+        page.screenshot(path=str(output / "desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=str(output / "mobile.png"), full_page=True)
+        page.get_by_role("button", name="Fechar caixa", exact=True).click()
+        expect(page.get_by_role("link", name="Relatório PDF", exact=True)).to_be_visible()
+        expect(page.get_by_label("Realizado Numerário (€)", exact=True)).to_be_disabled()
+        with Session(engine) as db:
+            assert db.scalar(select(func.count()).select_from(Movement)) == 3
+        page.set_viewport_size({"width": 1440, "height": 1000})
+        page.get_by_role("button", name="Reabrir", exact=True).click()
+        dialog = page.get_by_role("dialog")
+        dialog.get_by_label("Motivo", exact=True).fill(
+            "Recontagem autorizada de demonstração"
+        )
+        dialog.get_by_role("button", name="Guardar", exact=True).click()
+        expect(page.get_by_label("Realizado Numerário (€)", exact=True)).to_be_enabled()
+        expect(page.get_by_label("Realizado Numerário (€)", exact=True)).to_have_value("300,00")
+        assert not errors, errors
+        browser.close()
+    print(
+        "PASS: interface real, rascunho, atualização, conferência, fecho sem ajustes, reabertura e vista móvel"
+    )
+finally:
+    subprocess.run(["taskkill", "/PID", str(server.pid), "/T", "/F"], capture_output=True)
+    log.close()
+    engine.dispose()
+    assert schema.startswith("ui_cash_") and len(schema) == 40
+    with master.begin() as connection:
+        connection.execute(text("DROP SCHEMA " + schema + " CASCADE"))
+    master.dispose()

@@ -302,6 +302,12 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True)
 
 
+class LocalPaymentMethod(Base):
+    __tablename__ = "local_payment_methods"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+
+
 class CashSession(Base):
     __tablename__ = "cash_sessions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)

@@ -1,0 +1,139 @@
+.local-cash-sheet > h3 {
+  margin-top: 28px;
+}
+.local-cash-totals {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin: 20px 0 28px;
+}
+.local-cash-metric {
+  padding: 16px;
+  border: 1px solid;
+  border-radius: 8px;
+}
+.local-cash-metric small,
+.local-cash-metric strong,
+.local-drawer-totals small,
+.local-drawer-totals strong,
+.local-cash-context small,
+.local-cash-context strong {
+  display: block;
+}
+.local-cash-metric strong {
+  font-size: 23px;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.local-cash-sheet .matched {
+  color: #176747;
+  background: #edf8f1;
+  border-color: #9fcfb8;
+}
+.local-cash-sheet .pending {
+  color: #965100;
+  background: #fff4e5;
+  border-color: #edc18b;
+}
+.local-cash-sheet .difference {
+  color: #b42332;
+  background: #fff0f1;
+  border-color: #e6a5ac;
+}
+.local-realized-inputs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 18px 0;
+}
+.local-cash-context {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin: 20px 0;
+}
+.local-cash-context .field {
+  min-width: 200px;
+}
+.local-cash-context > div > strong {
+  margin-top: 6px;
+}
+.local-cash-badge,
+.local-cash-state {
+  display: inline-flex;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.local-cash-badge {
+  color: #245fc5;
+  background: #eef3ff;
+}
+.local-cash-table td:nth-child(2),
+.local-cash-table td:nth-child(3),
+.local-cash-table td:nth-child(4),
+.local-cash-table th:nth-child(2),
+.local-cash-table th:nth-child(3),
+.local-cash-table th:nth-child(4) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.local-cash-table td small {
+  display: block;
+  font-size: 11px;
+  margin-top: 4px;
+}
+.local-cash-amount {
+  padding: 10px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.local-cash-methods form {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.local-drawer-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 15px;
+  padding: 16px;
+  background: #f5f8fb;
+  border: 1px solid #d7e0ec;
+  border-radius: 8px;
+  margin: 20px 0;
+}
+.local-drawer-totals strong {
+  margin-top: 8px;
+  font-size: 18px;
+}
+@media (max-width: 1100px) {
+  .local-cash-totals {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 650px) {
+  .local-cash-totals,
+  .local-realized-inputs,
+  .local-drawer-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .local-cash-metric {
+    padding: 12px;
+  }
+  .local-cash-metric strong {
+    font-size: 19px;
+  }
+  .local-cash-context .field {
+    width: 100%;
+  }
+  .local-cash-sheet .panel-title {
+    flex-wrap: wrap;
+  }
+}
