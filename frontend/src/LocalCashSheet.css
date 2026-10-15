@@ -84,9 +84,6 @@
 .local-cash-day-context .field {
   margin-bottom: 0;
 }
-.local-cash-register-context {
-  flex-basis: 100%;
-}
 .local-cash-badge,
 .local-cash-state {
   display: inline-flex;

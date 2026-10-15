@@ -383,6 +383,8 @@ export default function App() {
     write = boot.user.role !== "consulta";
   const rname = (id: string) =>
     boot.registers.find((r) => r.id === id)?.name ?? "Caixa";
+  const registerStore = (id: string) =>
+    boot.stores.find(s => s.id === boot.registers.find(r => r.id === id)?.store_id)?.name || "Estabelecimento";
   const uname = (id: string) =>
     boot.users.find((u) => u.id === id)?.name ?? "Utilizador";
   const visibleSessions = sessions.filter(
@@ -804,13 +806,14 @@ export default function App() {
                 {(s) => (
                   s.sheet.workflow_mode === "local" ? <LocalCashSheet
                     key={s.id} session={s} register={rname(s.register_id)}
-                    store={boot.stores.find(store => store.id === boot.registers.find(r => r.id === s.register_id)?.store_id)?.name || "Estabelecimento"}
+                    store={registerStore(s.register_id)}
                     operator={uname(s.operator_id)} writable={write && (manager || s.operator_id === boot.user.id)}
                     manager={manager} reload={reload} onAction={openModal}
                   /> : <CashSheet
                     key={s.id}
                     session={s}
                     register={rname(s.register_id)}
+                    store={registerStore(s.register_id)}
                     operator={uname(s.operator_id)}
                     writable={
                       write && (manager || s.operator_id === boot.user.id)

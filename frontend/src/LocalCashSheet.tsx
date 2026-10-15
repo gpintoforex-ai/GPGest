@@ -316,10 +316,11 @@ export default function LocalCashSheet({
       <div className="panel-title">
         <div>
           <h3>
-            {register} · {s.sheet.day.split("-").reverse().join("/")}
+            {register} · {store}
           </h3>
           <p>
-            {operator} · {s.closed_at ? "Fechada" : "Em aberto"}
+            {s.sheet.day.split("-").reverse().join("/")} · {operator} ·{" "}
+            {s.closed_at ? "Fechada" : "Em aberto"}
           </p>
         </div>
         <span
@@ -380,12 +381,6 @@ export default function LocalCashSheet({
               Atualizar dia
             </button>
           )}
-          <div className="local-cash-register-context">
-            <small>Caixa / estabelecimento</small>
-            <strong>
-              {register} · {store}
-            </strong>
-          </div>
         </div>
         {editable && manager && (
           <div className="local-cash-methods">

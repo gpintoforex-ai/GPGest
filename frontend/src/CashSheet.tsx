@@ -25,6 +25,7 @@ function readAmount(value: string): number | null {
 export default function CashSheet({
   session: s,
   register,
+  store,
   operator,
   writable,
   manager,
@@ -35,6 +36,7 @@ export default function CashSheet({
 }: {
   session: Row;
   register: string;
+  store: string;
   operator: string;
   writable: boolean;
   manager: boolean;
@@ -175,10 +177,10 @@ export default function CashSheet({
       <div className="panel-title">
         <div>
           <h3>
-            {register} · {s.sheet.day.split("-").reverse().join("/")}
+            {register} · {store}
           </h3>
           <p>
-            {operator} · {s.closed_at ? "Fechada" : "Em aberto"}
+            {s.sheet.day.split("-").reverse().join("/")} · {operator} · {s.closed_at ? "Fechada" : "Em aberto"}
           </p>
         </div>
         <span className={`cash-sheet-status ${s.closed_at ? "closed" : "open"}`}>
