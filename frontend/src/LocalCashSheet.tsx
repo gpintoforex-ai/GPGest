@@ -493,7 +493,6 @@ export default function LocalCashSheet({
                       ) : (
                         money(declared)
                       )}
-                      <small>Manual</small>
                     </td>
                     <td>
                       {money(row.registered_cents)}
