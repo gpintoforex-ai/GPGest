@@ -272,6 +272,27 @@ def test_receipts_only_edit_preserves_count(local):
     assert saved.status_code == 200 and saved.json()["count_data"]["values"]["numerario"] == 10000
 
 
+def test_other_payment_counts_persist_and_require_difference_reason(local):
+    c, ids, factory = local
+    identifier = open_cash(c, ids["registers"][0], "40").json()["id"]
+    assert movement(c, ids, identifier, payment="cartao", amount="50").status_code == 200
+    payload = {**declared(cartao="50"), "cash_total": "40", "payments": {"cartao": "45"}}
+    saved = c.post(f"/api/sessions/{identifier}/count", json=payload)
+    assert saved.status_code == 200, saved.text
+    assert sheet(c, identifier)["count_data"]["values"] == {"numerario": 4000, "cartao": 4500}
+    assert sheet(c, identifier)["sheet"]["reconciliation"]["difference_cents"] == 0
+    assert c.post(f"/api/sessions/{identifier}/close", json=payload).status_code == 422
+    closed = c.post(
+        f"/api/sessions/{identifier}/close",
+        json={**payload, "reason": "Diferença de cinco euros no terminal"},
+    )
+    assert closed.status_code == 200, closed.text
+    assert sheet(c, identifier)["count_data"]["values"]["cartao"] == 4500
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(Movement)) == 1
+        assert not db.scalar(select(Movement.id).where(Movement.kind == "diferenca_caixa"))
+
+
 def test_deposit_without_session_only_reduces_drawer_after_cash_exit(local):
     c, ids, factory = local
     identifier = open_cash(c, ids["registers"][0]).json()["id"]

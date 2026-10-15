@@ -233,10 +233,14 @@ def validate(db, session, data, drawer, parse_money, user, complete=False, closi
                 422, "Indique o numerário contado, incluindo zero quando a gaveta estiver vazia."
             )
     if closing:
-        expected = next(row["expected_cents"] for row in drawer if row["key"] == "numerario")
+        expected = {row["key"]: row["expected_cents"] for row in drawer}
         if (
             any(row["difference_cents"] != 0 for row in result["rows"])
-            or counting["values"]["numerario"] != expected
+            or any(
+                value != expected[key]
+                for key, value in counting["values"].items()
+                if key in expected
+            )
         ) and len(data.reason.strip()) < 5:
             raise HTTPException(
                 422,

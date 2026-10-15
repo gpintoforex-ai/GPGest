@@ -26,6 +26,8 @@ As saídas incluem retiradas para depósito, depósitos confirmados e transferê
 
 Introduza o numerário contado ou use a contagem por notas e moedas. Aplicar uma contagem de zero confirma explicitamente uma gaveta vazia.
 
+Na tabela, **Contado / conferido** abre a contagem de notas e moedas na linha do numerário. Nos restantes meios pode registar o valor líquido conferido no terminal, extrato ou comprovativos. A coluna **Diferença** compara cada valor contado/conferido com o esperado indicado na mesma linha; a **Diferença do realizado** continua a comparar os movimentos de vendas/recebimentos com o realizado declarado. Os valores conferidos são guardados no rascunho e no fecho. Qualquer diferença num valor conferido exige justificação para fechar, sem criar ajustes automáticos.
+
 **Diferença de numerário = contado − esperado.**
 
 ## Guardar, conferir e fechar

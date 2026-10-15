@@ -113,11 +113,21 @@
 .local-cash-table td:nth-child(2),
 .local-cash-table td:nth-child(3),
 .local-cash-table td:nth-child(4),
+.local-cash-table td:nth-child(6),
+.local-cash-table td:nth-child(7),
 .local-cash-table th:nth-child(2),
 .local-cash-table th:nth-child(3),
-.local-cash-table th:nth-child(4) {
+.local-cash-table th:nth-child(4),
+.local-cash-table th:nth-child(6),
+.local-cash-table th:nth-child(7) {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.local-cash-table .cash-count-trigger {
+  margin-left: auto;
+}
+.local-cash-table td:last-child {
+  font-weight: 600;
 }
 .local-cash-table td small {
   display: block;

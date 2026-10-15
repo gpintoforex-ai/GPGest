@@ -194,6 +194,14 @@ export default function LocalCashSheet({
         row.declared_cents == null ? "" : euros(row.declared_cents),
       ]),
     ) as Record<string, string>,
+    confirmed: Object.fromEntries(
+      rec.rows
+        .filter((row: Row) => row.key !== "numerario")
+        .map((row: Row) => [
+          row.key,
+          stored.values?.[row.key] == null ? "" : euros(stored.values[row.key]),
+        ]),
+    ) as Record<string, string>,
     notes: rec.realized.notes || "",
     pos: rec.realized.pos_reference || "",
     cash:
@@ -243,6 +251,17 @@ export default function LocalCashSheet({
   const difference = complete ? registeredTotal - declaredTotal : null;
   const cashDifference =
     counted === null ? null : counted - cashRow.expected_cents;
+  const expectedFor = (key: string) =>
+    s.sheet.rows.find((row: Row) => row.key === key)?.expected_cents ?? 0;
+  const countFor = (key: string) =>
+    key === "numerario" ? counted : amount(form.confirmed[key] || "");
+  const countsComplete = rows.every((row) => countFor(row.key) !== null);
+  const countedTotal = rows.reduce(
+    (sum, row) => sum + (countFor(row.key) ?? 0),
+    0,
+  );
+  const countDifference =
+    countedTotal - rows.reduce((sum, row) => sum + expectedFor(row.key), 0);
   const checked = rec.checked && !dirty;
   const hasDifference =
     rows.some(
@@ -250,7 +269,11 @@ export default function LocalCashSheet({
         amount(form.values[row.key] || "") !== null &&
         row.registered_cents !== amount(form.values[row.key]),
     ) ||
-    (cashDifference !== null && cashDifference !== 0);
+    rows.some(
+      (row) =>
+        countFor(row.key) !== null &&
+        countFor(row.key) !== expectedFor(row.key),
+    );
   const tone = (diff: number | null, confirmed = true) =>
     diff === null
       ? "pending"
@@ -266,6 +289,9 @@ export default function LocalCashSheet({
       rows.some(
         (row) =>
           form.values[row.key]?.trim() && amount(form.values[row.key]) === null,
+      ) ||
+      Object.values(form.confirmed).some(
+        (value) => value.trim() && amount(value) === null,
       ) ||
       (form.cash.trim() && amount(form.cash) === null) ||
       (counted !== null && counted < 0)
@@ -288,6 +314,9 @@ export default function LocalCashSheet({
         cash_total:
           form.mode === "total" && form.cash.trim() ? form.cash : null,
         counts: form.mode === "denominations" ? form.counts : {},
+        payments: Object.fromEntries(
+          Object.entries(form.confirmed).filter(([, value]) => value.trim()),
+        ),
         cash_mode: form.mode,
         reason: form.reason,
       });
@@ -444,14 +473,19 @@ export default function LocalCashSheet({
                 </th>
                 <th>Realizado declarado</th>
                 <th>Registado nos movimentos</th>
-                <th>Diferença</th>
+                <th>Diferença do realizado</th>
                 <th>Estado</th>
+                <th>Contado / conferido</th>
+                <th>Diferença</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => {
                 const declared = amount(form.values[row.key] || "");
                 const Icon = icon(row.key);
+                const confirmed = countFor(row.key);
+                const confirmedDifference =
+                  confirmed === null ? null : confirmed - expectedFor(row.key);
                 const diff =
                   declared === null ? null : row.registered_cents - declared;
                 const status =
@@ -511,6 +545,58 @@ export default function LocalCashSheet({
                         {status}
                       </span>
                     </td>
+                    <td>
+                      {editable && row.key === "numerario" ? (
+                        <button
+                          className="cash-count-trigger"
+                          aria-label="Contar numerário"
+                          aria-haspopup="dialog"
+                          disabled={busy}
+                          onClick={() => setCountDialog(true)}
+                        >
+                          <span>
+                            {confirmed === null
+                              ? "Por contar"
+                              : money(confirmed)}
+                          </span>
+                          <small>Contar notas e moedas</small>
+                        </button>
+                      ) : editable ? (
+                        <input
+                          aria-label={`Contagem ${row.name} (€)`}
+                          inputMode="decimal"
+                          placeholder="Por conferir"
+                          disabled={busy}
+                          value={form.confirmed[row.key] || ""}
+                          onChange={(e) =>
+                            update({
+                              confirmed: {
+                                ...form.confirmed,
+                                [row.key]: e.target.value,
+                              },
+                            })
+                          }
+                        />
+                      ) : confirmed === null ? (
+                        "Por conferir"
+                      ) : (
+                        money(confirmed)
+                      )}
+                      <small>Esperado: {money(expectedFor(row.key))}</small>
+                    </td>
+                    <td
+                      className={
+                        confirmedDifference === null
+                          ? ""
+                          : confirmedDifference === 0
+                            ? "positive"
+                            : "negative"
+                      }
+                    >
+                      {confirmedDifference === null
+                        ? "Por conferir"
+                        : money(confirmedDifference)}
+                    </td>
                   </tr>
                 );
               })}
@@ -533,10 +619,21 @@ export default function LocalCashSheet({
                       ? "Com diferença"
                       : "Conferido"}
                 </td>
+                <td>
+                  {countsComplete ? money(countedTotal) : "Contagem incompleta"}
+                </td>
+                <td>
+                  {countsComplete ? money(countDifference) : "Por conferir"}
+                </td>
               </tr>
             </tfoot>
           </table>
         </div>
+        <p className="footnote">
+          Contado / conferido: numerário físico, incluindo o fundo de maneio, ou
+          valor líquido conferido no terminal, extrato ou comprovativos nos
+          restantes meios. Diferença = contado / conferido − esperado.
+        </p>
         {!editable && (form.notes || form.pos) && (
           <details className="local-realized-details">
             <summary>Observações do dia e referência POS</summary>
@@ -575,29 +672,6 @@ export default function LocalCashSheet({
           numerário: {money(cashRow.debits_cents)}
         </p>
         <div className="local-cash-context">
-          <Field label="Numerário contado (€)">
-            <input
-              className={tone(cashDifference)}
-              inputMode="decimal"
-              disabled={!editable || busy}
-              placeholder="Por contar"
-              value={
-                counted === null
-                  ? form.cash
-                  : form.mode === "denominations"
-                    ? euros(counted)
-                    : form.cash
-              }
-              onChange={(e) =>
-                update({ cash: e.target.value, mode: "total", counts: {} })
-              }
-            />
-          </Field>
-          {editable && (
-            <button disabled={busy} onClick={() => setCountDialog(true)}>
-              Contar notas e moedas
-            </button>
-          )}
           <div className={`local-cash-amount ${tone(cashDifference)}`}>
             <small>Diferença de numerário (contado − esperado)</small>
             <strong>

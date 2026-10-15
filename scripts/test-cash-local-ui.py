@@ -154,7 +154,7 @@ try:
             )
 
         def open_realized(label):
-            realized_row(label).get_by_role("button").click()
+            realized_row(label).locator(".local-realized-button").click()
             return page.get_by_role("dialog", name="Registar realizado", exact=True)
 
         # Cancelling keeps the declaration unfilled, and the empty value cannot be applied.
@@ -162,7 +162,7 @@ try:
         expect(dialog.get_by_role("button", name="Aplicar valor", exact=True)).to_be_disabled()
         dialog.get_by_label("Realizado Numerário (€)", exact=True).fill("999,00")
         dialog.get_by_role("button", name="Cancelar", exact=True).click()
-        expect(realized_row("Numerário").get_by_role("button")).to_have_text("Registar valor")
+        expect(realized_row("Numerário").locator(".local-realized-button")).to_have_text("Registar valor")
         for label, value in [
             ("Numerário", "300,00"),
             ("Multibanco / TPA", "1000,00"),
@@ -189,7 +189,16 @@ try:
         expect(dialog.get_by_role("button", name="Aplicar valor", exact=True)).to_be_disabled()
         dialog.get_by_label("Realizado MB WAY (€)", exact=True).fill("0,00")
         dialog.get_by_role("button", name="Aplicar valor", exact=True).click()
-        page.get_by_label("Numerário contado (€)", exact=True).fill("340,00")
+        page.get_by_role("button", name="Contar numerário", exact=True).click()
+        counter = page.get_by_role("dialog", name="Contar numerário", exact=True)
+        counter.get_by_role("button", name="Notas e moedas", exact=True).click()
+        counter.get_by_label("Quantidade de 50,00 €", exact=True).fill("6")
+        counter.get_by_label("Quantidade de 20,00 €", exact=True).fill("2")
+        counter.get_by_role("button", name="Aplicar contagem", exact=True).click()
+        expect(page.get_by_role("button", name="Contar numerário", exact=True)).to_contain_text("340,00")
+        page.get_by_label("Contagem Multibanco / TPA (€)", exact=True).fill("980,00")
+        for label in ("MB WAY", "Transferência", "Outros meios"):
+            page.get_by_label(f"Contagem {label} (€)", exact=True).fill("0,00")
         page.get_by_role("button", name="Guardar rascunho", exact=True).click()
         expect(page.get_by_text("Rascunho guardado.", exact=True)).to_be_visible()
         page.reload()
@@ -211,7 +220,10 @@ try:
             re.compile(r"1\s?000,00")
         )
         expect(realized_row("Multibanco / TPA").get_by_role("button")).to_be_focused()
-        expect(page.get_by_label("Numerário contado (€)", exact=True)).to_have_value("340,00")
+        expect(page.get_by_role("button", name="Contar numerário", exact=True)).to_contain_text("340,00")
+        expect(page.get_by_label("Contagem Multibanco / TPA (€)", exact=True)).to_have_value("980,00")
+        cash_cells = realized_row("Numerário").locator("td")
+        expect(cash_cells.nth(6)).to_contain_text("-10,00")
         expect(page.get_by_text("Falta de 10,00", exact=False)).to_be_visible()
         expect(page.get_by_role("button", name="Fechar caixa", exact=True)).to_be_disabled()
         page.get_by_role("button", name="Conferir", exact=True).click()
