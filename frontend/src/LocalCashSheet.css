@@ -99,8 +99,7 @@
 .local-cash-day-context button {
   white-space: nowrap;
 }
-.local-cash-badge,
-.local-cash-state {
+.local-cash-badge {
   display: inline-flex;
   padding: 7px 12px;
   border: 1px solid transparent;
@@ -128,13 +127,13 @@
 .local-cash-table td:nth-child(2),
 .local-cash-table td:nth-child(3),
 .local-cash-table td:nth-child(4),
+.local-cash-table td:nth-child(5),
 .local-cash-table td:nth-child(6),
-.local-cash-table td:nth-child(7),
 .local-cash-table th:nth-child(2),
 .local-cash-table th:nth-child(3),
 .local-cash-table th:nth-child(4),
-.local-cash-table th:nth-child(6),
-.local-cash-table th:nth-child(7) {
+.local-cash-table th:nth-child(5),
+.local-cash-table th:nth-child(6) {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }

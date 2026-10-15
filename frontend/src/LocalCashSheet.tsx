@@ -471,7 +471,6 @@ export default function LocalCashSheet({
                 <th>Realizado declarado</th>
                 <th>Registado nos movimentos</th>
                 <th>Diferença do realizado</th>
-                <th>Estado</th>
                 <th>Contado / conferido</th>
                 <th>Diferença</th>
               </tr>
@@ -485,14 +484,6 @@ export default function LocalCashSheet({
                   confirmed === null ? null : confirmed - expectedFor(row.key);
                 const diff =
                   declared === null ? null : row.registered_cents - declared;
-                const status =
-                  diff === null
-                    ? "Por conferir"
-                    : diff !== 0
-                      ? "Com diferença"
-                      : checked
-                        ? "Conferido"
-                        : "Por conferir";
                 return (
                   <tr key={row.key}>
                     <td>
@@ -534,13 +525,6 @@ export default function LocalCashSheet({
                     </td>
                     <td className={`local-cash-amount ${tone(diff, checked)}`}>
                       {diff === null ? "—" : money(diff)}
-                    </td>
-                    <td>
-                      <span
-                        className={`local-cash-state ${tone(diff, checked)}`}
-                      >
-                        {status}
-                      </span>
                     </td>
                     <td>
                       {editable && row.key === "numerario" ? (
@@ -608,13 +592,6 @@ export default function LocalCashSheet({
                 <td>{money(registeredTotal)}</td>
                 <td>
                   {difference === null ? "Por conferir" : money(difference)}
-                </td>
-                <td>
-                  {!complete || !checked
-                    ? "Por conferir"
-                    : hasDifference
-                      ? "Com diferença"
-                      : "Conferido"}
                 </td>
                 <td>
                   {countsComplete ? money(countedTotal) : "Contagem incompleta"}

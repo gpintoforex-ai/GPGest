@@ -223,7 +223,7 @@ try:
         expect(page.get_by_role("button", name="Contar numerário", exact=True)).to_contain_text("340,00")
         expect(page.get_by_label("Contagem Multibanco / TPA (€)", exact=True)).to_have_value("980,00")
         cash_cells = realized_row("Numerário").locator("td")
-        expect(cash_cells.nth(6)).to_contain_text("-10,00")
+        expect(cash_cells.last).to_contain_text("-10,00")
         expect(page.get_by_text("Falta de 10,00", exact=False)).to_be_visible()
         expect(page.get_by_role("button", name="Fechar caixa", exact=True)).to_be_disabled()
         page.get_by_role("button", name="Conferir", exact=True).click()
