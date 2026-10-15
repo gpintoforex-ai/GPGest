@@ -344,7 +344,6 @@ export default function LocalCashSheet({
         </summary>
         <div className="panel-title">
           <h3>Realizado do dia</h3>
-          <span className="local-cash-badge">Origem: Manual</span>
         </div>
         <p className="footnote">
           Vendas e recebimentos desta caixa neste dia. Os valores declarados são
@@ -442,7 +441,12 @@ export default function LocalCashSheet({
           <table className="cash-sheet-table local-cash-table">
             <thead>
               <tr>
-                <th>Meio de pagamento</th>
+                <th>
+                  <span className="local-cash-payment-heading">
+                    Meio de pagamento
+                    <span className="local-cash-badge">Origem: Manual</span>
+                  </span>
+                </th>
                 <th>Realizado declarado</th>
                 <th>Registado nos movimentos</th>
                 <th>Diferença</th>

@@ -101,6 +101,18 @@
   color: #245fc5;
   background: #eef3ff;
 }
+.local-cash-payment-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.local-cash-payment-heading .local-cash-badge {
+  padding: 5px 8px;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: normal;
+}
 .local-cash-table td:nth-child(2),
 .local-cash-table td:nth-child(3),
 .local-cash-table td:nth-child(4),
