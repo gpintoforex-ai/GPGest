@@ -77,12 +77,27 @@
 .local-cash-context > div > strong {
   margin-top: 6px;
 }
-.local-cash-day-context {
+.local-realized-toolbar {
+  display: flex;
   align-items: end;
-  row-gap: 12px;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+}
+.local-realized-toolbar > h3 {
+  margin: 0;
+  padding-bottom: 12px;
+}
+.local-realized-toolbar .local-cash-day-context {
+  align-items: end;
+  gap: 12px;
+  margin: 0;
 }
 .local-cash-day-context .field {
+  width: 200px;
   margin-bottom: 0;
+}
+.local-cash-day-context button {
+  white-space: nowrap;
 }
 .local-cash-badge,
 .local-cash-state {
@@ -146,7 +161,14 @@
   flex-wrap: wrap;
   gap: 10px;
 }
+.local-cash-methods .field {
+  margin-bottom: 0;
+}
 @media (max-width: 650px) {
+  .local-realized-toolbar > h3 {
+    width: 100%;
+    padding-bottom: 0;
+  }
   .local-cash-context .field {
     width: 100%;
   }

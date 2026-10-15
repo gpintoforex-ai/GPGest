@@ -372,61 +372,28 @@ export default function LocalCashSheet({
         <summary>
           {s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"}
         </summary>
-        <div className="panel-title">
+        <div className="local-realized-toolbar">
           <h3>Realizado do dia</h3>
-        </div>
-        <p className="footnote">
-          Vendas e recebimentos desta caixa neste dia. Os valores declarados são
-          uma referência de conferência; guardar este registo não cria
-          movimentos.
-        </p>
-        <div className="local-cash-context local-cash-day-context">
-          <Field label="Data">
-            <input
-              type="date"
-              disabled={!editable || busy}
-              value={sourceDay}
-              onChange={(e) => setSourceDay(e.target.value)}
-            />
-          </Field>
-          {editable && (
-            <button
-              disabled={busy || sourceDay === s.sheet.day || dirty}
-              onClick={async () => {
-                setBusy(true);
-                setError("");
-                try {
-                  await api(`/sessions/${s.id}/sources`, {
-                    sheet_day: sourceDay,
-                  });
-                  await reload();
-                } catch (e) {
-                  setError((e as Error).message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              Atualizar dia
-            </button>
-          )}
-        </div>
-        {editable && manager && (
-          <div className="local-cash-methods">
-            {newMethod === null ? (
-              <button disabled={busy || dirty} onClick={() => setNewMethod("")}>
-                Adicionar meio de pagamento
-              </button>
-            ) : (
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
+          <div className="local-cash-context local-cash-day-context">
+            <Field label="Data">
+              <input
+                type="date"
+                disabled={!editable || busy}
+                value={sourceDay}
+                onChange={(e) => setSourceDay(e.target.value)}
+              />
+            </Field>
+            {editable && (
+              <button
+                disabled={busy || sourceDay === s.sheet.day || dirty}
+                onClick={async () => {
                   setBusy(true);
                   setError("");
                   try {
-                    await api("/cash/payment-methods", { name: newMethod });
+                    await api(`/sessions/${s.id}/sources`, {
+                      sheet_day: sourceDay,
+                    });
                     await reload();
-                    setNewMethod(null);
                   } catch (e) {
                     setError((e as Error).message);
                   } finally {
@@ -434,25 +401,55 @@ export default function LocalCashSheet({
                   }
                 }}
               >
-                <Field label="Nome do meio de pagamento">
-                  <input
-                    maxLength={100}
-                    value={newMethod}
-                    onChange={(e) => setNewMethod(e.target.value)}
-                  />
-                </Field>
-                <button disabled={busy || !newMethod.trim()}>
-                  Guardar meio
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setNewMethod(null)}
-                >
-                  Cancelar
-                </button>
-              </form>
+                Atualizar dia
+              </button>
             )}
+            {editable && manager && newMethod === null && (
+              <button disabled={busy || dirty} onClick={() => setNewMethod("")}>
+                Adicionar meio de pagamento
+              </button>
+            )}
+          </div>
+        </div>
+        <p className="footnote">
+          Vendas e recebimentos desta caixa neste dia. Os valores declarados são
+          uma referência de conferência; guardar este registo não cria
+          movimentos.
+        </p>
+        {editable && manager && newMethod !== null && (
+          <div className="local-cash-methods">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setBusy(true);
+                setError("");
+                try {
+                  await api("/cash/payment-methods", { name: newMethod });
+                  await reload();
+                  setNewMethod(null);
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <Field label="Nome do meio de pagamento">
+                <input
+                  maxLength={100}
+                  value={newMethod}
+                  onChange={(e) => setNewMethod(e.target.value)}
+                />
+              </Field>
+              <button disabled={busy || !newMethod.trim()}>Guardar meio</button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setNewMethod(null)}
+              >
+                Cancelar
+              </button>
+            </form>
           </div>
         )}
         <h3>Conferência das vendas e recebimentos</h3>
