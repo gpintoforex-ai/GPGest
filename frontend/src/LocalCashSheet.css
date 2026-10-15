@@ -124,16 +124,20 @@
   text-transform: none;
   letter-spacing: normal;
 }
+.local-cash-table,
+.local-cash-movements-table {
+  min-width: 680px;
+}
 .local-cash-table td:nth-child(2),
 .local-cash-table td:nth-child(3),
 .local-cash-table td:nth-child(4),
 .local-cash-table td:nth-child(5),
-.local-cash-table td:nth-child(6),
 .local-cash-table th:nth-child(2),
 .local-cash-table th:nth-child(3),
 .local-cash-table th:nth-child(4),
 .local-cash-table th:nth-child(5),
-.local-cash-table th:nth-child(6) {
+.local-cash-movements-table td:not(:first-child),
+.local-cash-movements-table th:not(:first-child) {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -143,7 +147,8 @@
 .local-cash-table td:last-child {
   font-weight: 600;
 }
-.local-cash-table td small {
+.local-cash-table td small,
+.local-cash-movements-table td small {
   display: block;
   font-size: 11px;
   margin-top: 4px;

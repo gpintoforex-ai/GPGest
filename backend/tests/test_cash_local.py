@@ -1,4 +1,5 @@
 from decimal import Decimal
+from io import BytesIO
 
 import pytest
 from app import main
@@ -13,6 +14,7 @@ from app.models import (
     now,
 )
 from conftest import movement, open_cash
+from pypdf import PdfReader
 from sqlalchemy import func, select
 
 
@@ -43,7 +45,7 @@ def test_declared_1000_registered_980_persists_without_new_money(local):
     identifier = open_cash(c, ids["registers"][0]).json()["id"]
     assert movement(c, ids, identifier, payment="cartao", amount="980").status_code == 200
     before = sheet(c, identifier)["balance_cents"]
-    payload = {**declared(cartao="1000"), "cash_total": "100"}
+    payload = {**declared(cartao="1000"), "cash_total": "100", "payments": {"cartao": "980"}}
     for value in ("1000", "1100", "1000"):
         payload["realized"]["values"]["cartao"] = value
         result = c.post(f"/api/sessions/{identifier}/count", json=payload)
@@ -53,6 +55,8 @@ def test_declared_1000_registered_980_persists_without_new_money(local):
     rec = result["sheet"]["reconciliation"]
     assert rec["declared_total_cents"] == 100000 and rec["registered_total_cents"] == 98000
     assert rec["difference_cents"] == -2000
+    card = next(row for row in rec["rows"] if row["key"] == "cartao")
+    assert card["expected_cents"] == 100000 and card["count_difference_cents"] == -2000
     assert result["count_data"]["realized"]["updated_by"]
     assert result["count_data"]["realized"]["updated_at"]
     assert c.post(f"/api/sessions/{identifier}/close", json=payload).status_code == 422
@@ -138,10 +142,9 @@ def test_blank_and_zero_confirmed_are_distinct(local):
         f"/api/sessions/{identifier}/reconcile", json={**declared(), "cash_total": "0"}
     )
     assert response.status_code == 200, response.text
-    assert all(
-        row["status"] == "Conferido"
-        for row in sheet(c, identifier)["sheet"]["reconciliation"]["rows"]
-    )
+    checked = sheet(c, identifier)["sheet"]["reconciliation"]["rows"]
+    assert next(row for row in checked if row["key"] == "numerario")["status"] == "Conferido"
+    assert all(row["status"] == "Por conferir" for row in checked if row["key"] != "numerario")
     assert (
         c.post(
             f"/api/sessions/{identifier}/close",
@@ -216,7 +219,11 @@ def test_row_differences_cannot_cancel_without_justification(local):
     identifier = open_cash(c, ids["registers"][0]).json()["id"]
     movement(c, ids, identifier, amount="120")
     movement(c, ids, identifier, payment="cartao", amount="80")
-    payload = {**declared(numerario="100", cartao="100"), "cash_total": "220"}
+    payload = {
+        **declared(numerario="100", cartao="100"),
+        "cash_total": "220",
+        "payments": {"cartao": "80"},
+    }
     assert (
         c.post(f"/api/sessions/{identifier}/count", json=payload).json()["sheet"]["reconciliation"][
             "difference_cents"
@@ -340,3 +347,91 @@ def test_deposit_without_session_only_reduces_drawer_after_cash_exit(local):
     result = sheet(c, identifier)
     assert result["balance_cents"] == 35000
     assert result["sheet"]["reconciliation"]["registered_total_cents"] == 30000
+
+
+def test_declared_sales_are_expected_without_duplicate_receipts_or_ledger_changes(local):
+    c, ids, factory = local
+    identifier = open_cash(c, ids["registers"][0], "40").json()["id"]
+    movement(c, ids, identifier, amount="10")
+    payload = {
+        **declared(numerario="200", cartao="50"),
+        "cash_total": "50",
+        "payments": {"cartao": "50"},
+    }
+    saved = c.post(f"/api/sessions/{identifier}/reconcile", json=payload)
+    assert saved.status_code == 200, saved.text
+    result = sheet(c, identifier)
+    rows = {row["key"]: row for row in result["sheet"]["reconciliation"]["rows"]}
+    assert rows["numerario"]["expected_cents"] == 24000
+    assert rows["numerario"]["count_difference_cents"] == -19000
+    assert rows["cartao"]["expected_cents"] == 5000
+    assert rows["cartao"]["count_difference_cents"] == 0
+    assert result["balance_cents"] == 5000
+    assert c.post(f"/api/sessions/{identifier}/close", json=payload).status_code == 422
+    # Correct cash count closes without requiring fictitious sale movements.
+    payload["cash_total"] = "240"
+    closed = c.post(f"/api/sessions/{identifier}/close", json=payload)
+    assert closed.status_code == 200, closed.text
+    result = sheet(c, identifier)
+    assert result["expected_cents"] == 24000
+    assert result["balance_cents"] == 5000
+    assert result["count_data"]["ledger_balance_cents"] == 5000
+    assert result["sheet"]["reconciliation"]["expectation_basis"] == "declared_sales"
+    report = c.get(f"/api/sessions/{identifier}/report").content
+    report_text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(report)).pages)
+    assert "Esperado: 240,00 EUR" in report_text
+    assert "Esperado: 50,00 EUR" in report_text
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(Movement)) == 1
+
+
+def test_declared_replaces_receipts_but_preserves_expenses_deposits_and_pending(local):
+    c, ids, _ = local
+    identifier = open_cash(c, ids["registers"][0], "100").json()["id"]
+    movement(c, ids, identifier, amount="300")
+    movement(c, ids, identifier, kind="despesa", amount="50")
+    movement(c, ids, identifier, kind="deposito", amount="20")
+    payload = {**declared(numerario="400"), "cash_total": "430"}
+    response = c.post(f"/api/sessions/{identifier}/reconcile", json=payload)
+    assert response.status_code == 200, response.text
+    row = next(
+        r for r in response.json()["sheet"]["reconciliation"]["rows"] if r["key"] == "numerario"
+    )
+    assert row["other_movements_cents"] == -7000
+    assert row["expected_cents"] == 43000 and row["count_difference_cents"] == 0
+    payload["realized"]["values"]["numerario"] = None
+    response = c.post(f"/api/sessions/{identifier}/count", json=payload)
+    row = next(
+        r for r in response.json()["sheet"]["reconciliation"]["rows"] if r["key"] == "numerario"
+    )
+    assert row["expected_cents"] is None and row["count_difference_cents"] is None
+    assert c.post(f"/api/sessions/{identifier}/close", json=payload).status_code == 422
+
+
+def test_previous_closed_snapshot_is_not_recalculated(local):
+    import json
+
+    c, ids, factory = local
+    identifier = open_cash(c, ids["registers"][0], "40").json()["id"]
+    payload = {**declared(numerario="200"), "cash_total": "240"}
+    assert c.post(f"/api/sessions/{identifier}/close", json=payload).status_code == 200
+    with factory.begin() as db:
+        session = db.get(CashSession, identifier)
+        stored = json.loads(session.count_data)
+        snapshot = stored["local_reconciliation"]
+        snapshot.pop("expectation_basis")
+        for row in snapshot["rows"]:
+            for key in (
+                "expected_cents",
+                "counted_cents",
+                "count_difference_cents",
+                "fund_cents",
+                "other_movements_cents",
+            ):
+                row.pop(key)
+        session.count_data = json.dumps(stored)
+        session.expected_cents = 4000
+    result = sheet(c, identifier)
+    assert result["sheet"]["reconciliation"] == snapshot
+    assert result["expected_cents"] == 4000
+    assert c.get(f"/api/sessions/{identifier}/report").content.startswith(b"%PDF")

@@ -9,12 +9,15 @@ export default function CashReconciliation({
   opening,
   expected,
   counted,
+  declaredSales = false,
 }: {
   opening: number;
-  expected: number;
+  expected: number | null;
   counted: number | null;
+  declaredSales?: boolean;
 }) {
-  const difference = counted === null ? null : counted - expected;
+  const difference =
+    counted === null || expected === null ? null : counted - expected;
   const withdrawal = counted === null ? null : counted - opening;
   return (
     <div
@@ -25,11 +28,13 @@ export default function CashReconciliation({
       <div className="cash-reconciliation-heading">
         <b>Apuramento de numerário</b>
         <span>
-          {difference === null
-            ? "Por contar"
-            : difference === 0
-              ? "Caixa correta"
-              : "Caixa com diferença"}
+          {expected === null
+            ? "Faturado por preencher"
+            : difference === null
+              ? "Por contar"
+              : difference === 0
+                ? "Caixa correta"
+                : "Caixa com diferença"}
         </span>
       </div>
       <div className="cash-reconciliation-values">
@@ -38,17 +43,33 @@ export default function CashReconciliation({
           <strong>{money(opening)}</strong>
         </div>
         <div>
-          <small>Movimentos de numerário (entradas − saídas)</small>
-          <strong>{money(expected - opening)}</strong>
+          <small>
+            {declaredSales
+              ? "Faturado em numerário + outros movimentos"
+              : "Movimentos de numerário (entradas − saídas)"}
+          </small>
+          <strong>
+            {expected === null ? "Por preencher" : money(expected - opening)}
+          </strong>
         </div>
         <div>
-          <small>Total esperado (fundo + movimentos)</small>
-          <strong>{money(expected)}</strong>
+          <small>
+            {declaredSales
+              ? "Total esperado na gaveta"
+              : "Total esperado (fundo + movimentos)"}
+          </small>
+          <strong>
+            {expected === null ? "Por preencher" : money(expected)}
+          </strong>
         </div>
         <div>
           <small>Diferença de caixa (contado − esperado)</small>
           <strong>
-            {difference === null ? "Por contar" : money(difference)}
+            {difference === null
+              ? expected === null
+                ? "Por conferir"
+                : "Por contar"
+              : money(difference)}
           </strong>
         </div>
         <div

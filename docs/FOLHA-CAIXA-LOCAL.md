@@ -2,31 +2,31 @@
 
 Em **Configurações > Integrações**, uma empresa em modo local pode conferir a folha sem ligação ERP. As folhas já fechadas preservam o funcionamento e os valores históricos do respetivo fecho.
 
-A folha apresenta a identificação da caixa, o estado e um único quadro de **Apuramento de numerário**: fundo a manter, movimentos líquidos, total esperado, diferença e valor a retirar ou a repor. Este resumo usa o numerário físico contado; o realizado declarado não é somado novamente. O mesmo quadro é apresentado no modo integrado.
+A folha apresenta a identificação da caixa, o estado e um quadro de **Apuramento de numerário**: fundo a manter, faturado em numerário mais outros movimentos, total esperado na gaveta, diferença e valor a retirar ou a repor.
 
 Abra **Conferência e fecho** para declarar o realizado, contar o numerário, justificar diferenças e fechar. Numa folha fechada, **Ver detalhes do fecho** permite consultar os valores, obter o PDF e reabrir com permissão e motivo. Estes detalhes ficam recolhidos ao abrir a página.
 
 ## Realizado do dia
 
-Na coluna **Realizado declarado**, use **Registar valor** no respetivo meio de pagamento (numerário, Multibanco/TPA, MB WAY, transferência e outros meios). A janela permite introduzir o valor e, opcionalmente, as observações do dia e a referência POS, comuns a todos os meios. **Aplicar valor** atualiza o rascunho; use **Guardar rascunho** na folha para o guardar. Para alterar um valor, carregue no montante; **Deixar por preencher** remove a declaração desse meio sem a substituir por zero.
+Na coluna **Faturado**, use **Registar valor** no respetivo meio de pagamento (numerário, Multibanco/TPA, MB WAY, transferência e outros meios). Este valor representa o faturado do dia e é a base da coluna **Esperado**. No numerário, o esperado inclui ainda o fundo de maneio e outros movimentos da gaveta. A janela permite introduzir o valor e, opcionalmente, as observações do dia e a referência POS, comuns a todos os meios. **Aplicar valor** atualiza o rascunho; use **Guardar rascunho** na folha para o guardar. Para alterar um valor, carregue no montante; **Deixar por preencher** remove a declaração desse meio sem a substituir por zero.
 
 Administradores e gestores podem adicionar meios locais. Estes meios também ficam disponíveis no registo de movimentos reais da empresa.
 
-O realizado é uma referência manual: guardar ou alterar valores não cria entradas, saídas ou ajustes. Campos vazios ficam **Por conferir**; um zero só é declarado quando introduzido pelo utilizador. A referência ao fecho do POS e as observações são opcionais.
+Guardar ou alterar o faturado não cria entradas, saídas ou ajustes, nem altera o saldo contabilizado nos movimentos. Atualiza apenas o esperado para a conferência. Campos vazios ficam **Por conferir** e não são tratados como zero. A referência ao fecho do POS e as observações são opcionais.
 
-A comparação usa as vendas e recebimentos registados na mesma caixa e data. Os reembolsos de vendas reduzem o total. Fundos iniciais, reforços, entradas extraordinárias, despesas, depósitos e transferências entre caixas ficam fora desta comparação. Movimentos importados anteriormente continuam identificados como **ERP**; a declaração é identificada como **Manual** e não modifica os registos importados.
+**Consultar movimentos registados** mantém uma comparação adicional com as vendas e recebimentos registados na mesma caixa e data. Os reembolsos reduzem o total. Fundos iniciais, reforços, entradas extraordinárias, despesas, depósitos e transferências ficam fora desta consulta de recebimentos. Os dados continuam identificados como **Manual** ou **ERP**; não são modificados. Não é necessário criar movimentos de venda para conferir o faturado declarado.
 
-**Diferença da conferência = valor registado − valor realizado declarado.**
+**Diferença da conferência = contado / conferido − esperado.** A diferença entre movimentos registados e faturado fica apenas na consulta dos registos.
 
 ## Numerário físico
 
-**Saldo esperado = fundo inicial + entradas em numerário − saídas em numerário.**
+**Esperado na gaveta = fundo inicial + faturado em numerário + outras entradas − outras saídas.**
 
-As saídas incluem retiradas para depósito, depósitos confirmados e transferências que retiram dinheiro da gaveta. Um depósito em rascunho não retira dinheiro. O realizado manual nunca é acrescentado novamente ao saldo. Movimentos de outras caixas não são agregados ao saldo físico desta caixa.
+As outras entradas e saídas incluem reforços, despesas, retiradas para depósito, depósitos confirmados e transferências que afetam a gaveta. Um depósito em rascunho não retira dinheiro. Os recebimentos já registados são substituídos pelo faturado declarado na projeção, para nunca somar ambos. Em termos de cálculo: **esperado = saldo dos movimentos − recebimentos registados + faturado declarado**. Nos outros meios aplica-se a mesma regra, sem fundo inicial. Movimentos de outras caixas não são agregados.
 
 Introduza o numerário contado ou use a contagem por notas e moedas. Aplicar uma contagem de zero confirma explicitamente uma gaveta vazia.
 
-Na tabela, **Contado / conferido** abre a contagem de notas e moedas na linha do numerário. Nos restantes meios pode registar o valor líquido conferido no terminal, extrato ou comprovativos. A coluna **Diferença** compara cada valor contado/conferido com o esperado indicado na mesma linha; a **Diferença do realizado** continua a comparar os movimentos de vendas/recebimentos com o realizado declarado. Os valores conferidos são guardados no rascunho e no fecho. Qualquer diferença num valor conferido exige justificação para fechar, sem criar ajustes automáticos.
+Na tabela, **Contado / conferido** abre a contagem de notas e moedas na linha do numerário. Nos restantes meios pode registar o valor líquido conferido no terminal, extrato ou comprovativos. A coluna **Diferença** compara com o esperado indicado na mesma linha. Os valores são guardados no rascunho e no fecho. Qualquer diferença num valor contado/conferido exige justificação para fechar; a ausência de movimentos de venda não exige justificação quando o contado corresponde ao faturado esperado. Não são criados ajustes automáticos.
 
 **Diferença de numerário = contado − esperado.**
 
@@ -43,15 +43,17 @@ No modo integrado, continuam disponíveis a importação ERP, a contagem existen
 
 ## Instalação e validação
 
-A migração **0035** acrescenta apenas a tabela de meios locais em cada esquema de empresa. As declarações, conferências, utilizadores e timestamps utilizam a persistência existente da folha. Não são recalculados ou modificados movimentos históricos.
+A migração **0035** acrescenta apenas a tabela de meios locais em cada esquema de empresa. As declarações, conferências, utilizadores e timestamps utilizam a persistência existente. A regra baseada no faturado não requer nova migração. O fecho guarda a base `declared_sales`, o esperado por meio e as diferenças, incluindo no PDF. Folhas já fechadas conservam o cálculo e os valores históricos; a interface identifica os fechos anteriores baseados nos movimentos.
 
 Exemplos verificados:
 
 | Realizado / gaveta | Resultado |
 | --- | --- |
-| Declarado 1.000,00 €; registado 980,00 € | Diferença −20,00 € |
-| Fundo 100,00 €; entradas 300,00 €; saídas 50,00 € | Esperado 350,00 € |
+| Faturado no cartão 1.000,00 €; conferido 980,00 € | Diferença −20,00 € |
+| Fundo 100,00 €; faturado em numerário 300,00 €; saídas 50,00 € | Esperado 350,00 € |
 | Contado 340,00 €; esperado 350,00 € | Falta de 10,00 € |
+| Fundo 40,00 €; faturado em numerário 200,00 €; contado 50,00 € | Esperado 240,00 €; falta de 190,00 € |
+| Faturado no cartão 50,00 €; conferido 50,00 €; sem movimentos de venda | Esperado 50,00 €; diferença 0,00 € |
 | Guardar, alterar e fechar o realizado local | Nenhum movimento adicional |
 
 Os testes `backend/tests/test_cash_local.py` e `test_cash_local_tenants.py` verificam cálculos, persistência, permissões, isolamento, migração, origem ERP e ausência de duplicação. O teste `scripts/test-cash-local-ui.py` verifica o fluxo no navegador e a vista móvel, exigindo uma base local descartável `gpgest_test_cash_*` no ficheiro privado `.local/test-cash.env`. Nunca utilize a base Neon da aplicação para estes testes.

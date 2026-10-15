@@ -890,6 +890,10 @@ def close_session(
     counting["wintouch_excluded"] = json.loads(s.count_data or "{}").get("wintouch_excluded", False)
     counted = counting["values"]["numerario"]
     expected = next(row["expected_cents"] for row in rows if row["key"] == "numerario")
+    ledger_expected = expected
+    if local:
+        local_result = cash_local.reconciliation(db, s, rows, counting)
+        expected = next(row["expected_cents"] for row in local_result["rows"] if row["key"] == "numerario")
     counting.update(
         final=True,
         summary=rows,
@@ -900,7 +904,7 @@ def close_session(
         closed_by_name=user.name,
         workflow_mode="local" if local else "integrated",
         scope="register_day" if local else "store_day",
-        ledger_balance_cents=expected if local else balance(db, s),
+        ledger_balance_cents=ledger_expected if local else balance(db, s),
         include_wintouch=bool(daily_enterprise(db, s)),
     )
     if local:
@@ -1515,7 +1519,7 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
         y -= 23
 
     def euro(v):
-        return f"{Decimal(v) / 100:,.2f} EUR"
+        return f"{Decimal(v) / 100:,.2f}".replace(",", " ").replace(".", ",") + " EUR"
 
     line("GPGest - Folha de caixa / relatório interno de fecho")
     line("NÃO É UM DOCUMENTO FISCAL")
@@ -1533,16 +1537,26 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
     line("Diferença: " + euro(s.counted_cents - s.expected_cents))
     counting = json.loads(s.count_data or "{}")
     local_reconciliation = counting.get("local_reconciliation")
+    declared_basis = (local_reconciliation or {}).get("expectation_basis") == "declared_sales"
     if local_reconciliation:
-        line("Realizado do dia - origem Manual:")
+        line("Faturado do dia - origem Manual:" if declared_basis else "Realizado do dia - origem Manual:")
         line("Referência POS: " + local_reconciliation["realized"].get("pos_reference", ""))
         for row in local_reconciliation["rows"]:
+            if declared_basis:
+                counted_value = row["counted_cents"]
+                line(row["name"] + " - Faturado: " + euro(row["declared_cents"])
+                     + " / Esperado: " + euro(row["expected_cents"]))
+                line("  Contado / conferido: " + (euro(counted_value) if counted_value is not None else "Por conferir")
+                     + " / Diferença: " + (euro(row["count_difference_cents"]) if counted_value is not None else "Por conferir"))
+                line("  Fundo: " + euro(row["fund_cents"]) + " / Outros movimentos: " + euro(row["other_movements_cents"]))
+                continue
             line(row["name"] + " - Declarado: " + euro(row["declared_cents"])
                  + " / Registado: " + euro(row["registered_cents"])
                  + " / Diferença: " + euro(row["difference_cents"]))
-        line("Total realizado: " + euro(local_reconciliation["declared_total_cents"]))
+        line("Total faturado: " + euro(local_reconciliation["declared_total_cents"]))
+        line("Consulta dos recebimentos registados (registado - faturado):")
         line("Total registado: " + euro(local_reconciliation["registered_total_cents"]))
-        line("Diferença da conferência: " + euro(local_reconciliation["difference_cents"]))
+        line("Diferença dos registos: " + euro(local_reconciliation["difference_cents"]))
         line("Conferido por: " + counting.get("reconciliation_check", {}).get("checked_by_name", ""))
         line("Fechado por: " + counting.get("closed_by_name", ""))
     counted_values = counting.get("values", {"numerario": s.counted_cents})
@@ -1558,6 +1572,8 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
         line(
             "  Créditos: " + euro(row["credits_cents"]) + " / Débitos: " + euro(row["debits_cents"])
         )
+        if declared_basis:
+            continue
         counted_value = counted_values.get(row["key"])
         line(
             "  Esperado: "

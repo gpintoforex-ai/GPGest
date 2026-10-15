@@ -21,7 +21,7 @@ export default function CashCountDialog({
   onCancel,
 }: {
   initial: CashCount;
-  expected: number;
+  expected: number | null;
   onApply: (value: CashCount) => void;
   onCancel: () => void;
 }) {
@@ -226,14 +226,24 @@ export default function CashCountDialog({
             </div>
             <div>
               <small>Esperado</small>
-              <strong>{money(expected)}</strong>
+              <strong>
+                {expected === null ? "Faturado por preencher" : money(expected)}
+              </strong>
             </div>
             <div>
               <small>Diferença</small>
               <strong
-                className={counted === expected ? "positive" : "negative"}
+                className={
+                  expected === null || !valid
+                    ? ""
+                    : counted === expected
+                      ? "positive"
+                      : "negative"
+                }
               >
-                {valid ? money(counted - expected) : "—"}
+                {valid && expected !== null
+                  ? money(counted - expected)
+                  : "Por conferir"}
               </strong>
             </div>
           </div>

@@ -1,4 +1,4 @@
-"""Declared receipts and drawer counts are independent, read-only projections."""
+"""Declared sales set local count expectations without changing the cash ledger."""
 
 import hashlib
 import json
@@ -138,12 +138,26 @@ def reconciliation(db, session, drawer, counting=None):
         return stored["local_reconciliation"]
     realized = realized_for(session, stored)
     rows = receipt_rows(db, session, drawer)
+    balances = {row["key"]: row for row in drawer}
     for row in rows:
         declared = realized.get("values", {}).get(row["key"])
+        balance = balances[row["key"]]
+        fund = balance["fund_cents"]
+        # Replace the recorded receipts with declared sales; never add both.
+        other = balance["expected_cents"] - fund - row["registered_cents"]
+        expected = None if declared is None else fund + declared + other
+        counted = stored.get("values", {}).get(row["key"])
         row.update(
             declared_cents=declared,
             difference_cents=None if declared is None else row["registered_cents"] - declared,
             declared_source="Manual",
+            fund_cents=fund,
+            other_movements_cents=other,
+            expected_cents=expected,
+            counted_cents=counted,
+            count_difference_cents=(
+                None if expected is None or counted is None else counted - expected
+            ),
         )
     signature = hashlib.sha256(
         json.dumps(
@@ -162,9 +176,9 @@ def reconciliation(db, session, drawer, counting=None):
     for row in rows:
         row["status"] = (
             "Com diferença"
-            if row["difference_cents"] not in (None, 0)
+            if row["count_difference_cents"] not in (None, 0)
             else "Conferido"
-            if checked and row["declared_cents"] is not None
+            if checked and row["count_difference_cents"] == 0
             else "Por conferir"
         )
     complete = all(row["declared_cents"] is not None for row in rows)
@@ -172,6 +186,7 @@ def reconciliation(db, session, drawer, counting=None):
     registered_total = sum(row["registered_cents"] for row in rows)
     return {
         "rows": rows,
+        "expectation_basis": "declared_sales",
         "realized": realized,
         "complete": complete,
         "checked": checked,
@@ -233,15 +248,10 @@ def validate(db, session, data, drawer, parse_money, user, complete=False, closi
                 422, "Indique o numerário contado, incluindo zero quando a gaveta estiver vazia."
             )
     if closing:
-        expected = {row["key"]: row["expected_cents"] for row in drawer}
         if (
-            any(row["difference_cents"] != 0 for row in result["rows"])
-            or any(
-                value != expected[key]
-                for key, value in counting["values"].items()
-                if key in expected
-            )
-        ) and len(data.reason.strip()) < 5:
+            any(row["count_difference_cents"] not in (None, 0) for row in result["rows"])
+            and len(data.reason.strip()) < 5
+        ):
             raise HTTPException(
                 422,
                 "Justifique as diferenças da conferência e do numerário antes de fechar a caixa.",

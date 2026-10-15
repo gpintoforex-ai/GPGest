@@ -98,7 +98,7 @@ function RealizedDialog({
         }}
       >
         <div className="panel-title">
-          <h2 id={titleId}>Registar realizado</h2>
+          <h2 id={titleId}>Registar faturado</h2>
           <button type="button" aria-label="Fechar" onClick={onCancel}>
             <X size={20} aria-hidden="true" />
           </button>
@@ -106,7 +106,7 @@ function RealizedDialog({
         <p className="cash-payment-label">
           <Icon size={20} aria-hidden="true" /> {row.name}
         </p>
-        <Field label={`Realizado ${row.name} (€)`}>
+        <Field label={`Faturado ${row.name} (€)`}>
           <input
             inputMode="decimal"
             placeholder="Introduza o valor"
@@ -120,9 +120,10 @@ function RealizedDialog({
           </p>
         )}
         <p className="footnote">
-          Introduza zero para confirmar que não houve recebimentos neste meio.
-          Depois de aplicar, escolha «Guardar rascunho» na folha para guardar o
-          valor. Este registo não cria movimentos.
+          Indique o faturado neste meio de pagamento. Este é o valor esperado
+          para a conferência. Introduza zero para confirmar que não houve
+          vendas. Depois de aplicar, escolha «Guardar rascunho» na folha para
+          guardar o valor. Este registo não cria movimentos.
         </p>
         <details className="local-realized-details">
           <summary>Observações do dia e referência POS</summary>
@@ -232,7 +233,6 @@ export default function LocalCashSheet({
     setNotice("");
   };
   const rows: Row[] = rec.rows;
-  const cashRow = s.sheet.rows.find((row: Row) => row.key === "numerario");
   const counted =
     form.mode === "denominations" && Object.keys(form.counts).length
       ? Object.entries(form.counts).reduce(
@@ -249,10 +249,28 @@ export default function LocalCashSheet({
   );
   const registeredTotal = rec.registered_total_cents;
   const difference = complete ? registeredTotal - declaredTotal : null;
+  const legacyClose =
+    !!s.closed_at && rec.expectation_basis !== "declared_sales";
+  const otherFor = (key: string) => {
+    const ledger = s.sheet.rows.find((row: Row) => row.key === key);
+    const receipt = rows.find((row) => row.key === key);
+    return (
+      (ledger?.expected_cents ?? 0) -
+      (key === "numerario" ? s.opening_cents : 0) -
+      (receipt?.registered_cents ?? 0)
+    );
+  };
+  const expectedFor = (key: string): number | null => {
+    const ledger = s.sheet.rows.find((row: Row) => row.key === key);
+    if (legacyClose) return ledger?.expected_cents ?? 0;
+    const declared = amount(form.values[key] || "");
+    return declared === null
+      ? null
+      : declared + (key === "numerario" ? s.opening_cents : 0) + otherFor(key);
+  };
+  const cashExpected = expectedFor("numerario");
   const cashDifference =
-    counted === null ? null : counted - cashRow.expected_cents;
-  const expectedFor = (key: string) =>
-    s.sheet.rows.find((row: Row) => row.key === key)?.expected_cents ?? 0;
+    counted === null || cashExpected === null ? null : counted - cashExpected;
   const countFor = (key: string) =>
     key === "numerario" ? counted : amount(form.confirmed[key] || "");
   const countsComplete = rows.every((row) => countFor(row.key) !== null);
@@ -260,20 +278,20 @@ export default function LocalCashSheet({
     (sum, row) => sum + (countFor(row.key) ?? 0),
     0,
   );
+  const expectedTotal = complete
+    ? rows.reduce((sum, row) => sum + (expectedFor(row.key) ?? 0), 0)
+    : null;
   const countDifference =
-    countedTotal - rows.reduce((sum, row) => sum + expectedFor(row.key), 0);
+    !countsComplete || expectedTotal === null
+      ? null
+      : countedTotal - expectedTotal;
   const checked = rec.checked && !dirty;
-  const hasDifference =
-    rows.some(
-      (row) =>
-        amount(form.values[row.key] || "") !== null &&
-        row.registered_cents !== amount(form.values[row.key]),
-    ) ||
-    rows.some(
-      (row) =>
-        countFor(row.key) !== null &&
-        countFor(row.key) !== expectedFor(row.key),
-    );
+  const hasDifference = rows.some(
+    (row) =>
+      countFor(row.key) !== null &&
+      expectedFor(row.key) !== null &&
+      countFor(row.key) !== expectedFor(row.key),
+  );
   const tone = (diff: number | null, confirmed = true) =>
     diff === null
       ? "pending"
@@ -365,8 +383,9 @@ export default function LocalCashSheet({
       </div>
       <CashReconciliation
         opening={s.opening_cents}
-        expected={cashRow.expected_cents}
+        expected={cashExpected}
         counted={counted}
+        declaredSales={!legacyClose}
       />
       <details className="cash-sheet-details">
         <summary>
@@ -412,9 +431,8 @@ export default function LocalCashSheet({
           </div>
         </div>
         <p className="footnote">
-          Vendas e recebimentos desta caixa neste dia. Os valores declarados são
-          uma referência de conferência; guardar este registo não cria
-          movimentos.
+          Indique o faturado do dia por meio de pagamento e compare com o valor
+          contado ou conferido. Guardar o faturado não cria movimentos.
         </p>
         {editable && manager && newMethod !== null && (
           <div className="local-cash-methods">
@@ -452,12 +470,18 @@ export default function LocalCashSheet({
             </form>
           </div>
         )}
-        <h3>Conferência das vendas e recebimentos</h3>
+        <h3>Conferência do faturado</h3>
         <p className="footnote">
-          Diferença = registado − realizado. Exclui fundos iniciais,
-          transferências internas, retiradas, depósitos e despesas. Os
-          reembolsos de vendas reduzem os recebimentos.
+          O faturado declarado é a base do valor esperado. No numerário, soma-se
+          o fundo de maneio e incluem-se as restantes entradas e saídas da
+          gaveta. Diferença = contado / conferido − esperado.
         </p>
+        {legacyClose && (
+          <p className="footnote">
+            Fecho anterior: preservado o esperado calculado a partir dos
+            movimentos na data do fecho.
+          </p>
+        )}
         <div className="table-wrap">
           <table className="cash-sheet-table local-cash-table">
             <thead>
@@ -468,9 +492,8 @@ export default function LocalCashSheet({
                     <span className="local-cash-badge">Origem: Manual</span>
                   </span>
                 </th>
-                <th>Realizado declarado</th>
-                <th>Registado nos movimentos</th>
-                <th>Diferença do realizado</th>
+                <th>Faturado</th>
+                <th>Esperado</th>
                 <th>Contado / conferido</th>
                 <th>Diferença</th>
               </tr>
@@ -480,10 +503,11 @@ export default function LocalCashSheet({
                 const declared = amount(form.values[row.key] || "");
                 const Icon = icon(row.key);
                 const confirmed = countFor(row.key);
+                const expected = expectedFor(row.key);
                 const confirmedDifference =
-                  confirmed === null ? null : confirmed - expectedFor(row.key);
-                const diff =
-                  declared === null ? null : row.registered_cents - declared;
+                  confirmed === null || expected === null
+                    ? null
+                    : confirmed - expected;
                 return (
                   <tr key={row.key}>
                     <td>
@@ -494,7 +518,7 @@ export default function LocalCashSheet({
                     <td>
                       {editable ? (
                         <button
-                          className={`local-realized-button ${tone(diff, checked)}`}
+                          className={`local-realized-button ${tone(confirmedDifference)}`}
                           disabled={busy}
                           aria-haspopup="dialog"
                           aria-label={`${declared === null ? "Registar" : "Alterar"} valor de ${row.name}`}
@@ -516,15 +540,17 @@ export default function LocalCashSheet({
                       )}
                     </td>
                     <td>
-                      {money(row.registered_cents)}
-                      <small>
-                        {row.sources?.includes("ERP")
-                          ? `Manual: ${money(row.manual_cents)} · ERP: ${money(row.erp_cents)}`
-                          : "Manual"}
-                      </small>
-                    </td>
-                    <td className={`local-cash-amount ${tone(diff, checked)}`}>
-                      {diff === null ? "—" : money(diff)}
+                      <strong>
+                        {expected === null ? "Por preencher" : money(expected)}
+                      </strong>
+                      {row.key === "numerario" && (
+                        <small>Fundo: {money(s.opening_cents)}</small>
+                      )}
+                      {otherFor(row.key) !== 0 && (
+                        <small>
+                          Outros movimentos: {money(otherFor(row.key))}
+                        </small>
+                      )}
                     </td>
                     <td>
                       {editable && row.key === "numerario" ? (
@@ -563,7 +589,6 @@ export default function LocalCashSheet({
                       ) : (
                         money(confirmed)
                       )}
-                      <small>Esperado: {money(expectedFor(row.key))}</small>
                     </td>
                     <td
                       className={
@@ -587,17 +612,20 @@ export default function LocalCashSheet({
                 <th>Total</th>
                 <td>
                   {money(declaredTotal)}
-                  {!complete && <small>Realizado incompleto</small>}
+                  {!complete && <small>Faturado incompleto</small>}
                 </td>
-                <td>{money(registeredTotal)}</td>
                 <td>
-                  {difference === null ? "Por conferir" : money(difference)}
+                  {expectedTotal === null
+                    ? "Por preencher"
+                    : money(expectedTotal)}
                 </td>
                 <td>
                   {countsComplete ? money(countedTotal) : "Contagem incompleta"}
                 </td>
                 <td>
-                  {countsComplete ? money(countDifference) : "Por conferir"}
+                  {countDifference === null
+                    ? "Por conferir"
+                    : money(countDifference)}
                 </td>
               </tr>
             </tfoot>
@@ -608,6 +636,62 @@ export default function LocalCashSheet({
           valor líquido conferido no terminal, extrato ou comprovativos nos
           restantes meios. Diferença = contado / conferido − esperado.
         </p>
+        <details className="local-realized-details">
+          <summary>Consultar movimentos registados</summary>
+          <p className="footnote">
+            Esta consulta compara os recebimentos registados com o faturado. Não
+            é necessário criar movimentos de venda para conferir o faturado
+            manual. Os recebimentos já registados não são somados novamente ao
+            esperado.
+          </p>
+          <div className="table-wrap">
+            <table className="cash-sheet-table local-cash-movements-table">
+              <thead>
+                <tr>
+                  <th>Meio de pagamento</th>
+                  <th>Faturado declarado</th>
+                  <th>Recebimentos registados</th>
+                  <th>Registado − faturado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => {
+                  const declared = amount(form.values[row.key] || "");
+                  return (
+                    <tr key={row.key}>
+                      <td>{row.name}</td>
+                      <td>
+                        {declared === null ? "Por preencher" : money(declared)}
+                      </td>
+                      <td>
+                        {money(row.registered_cents)}
+                        <small>
+                          Manual: {money(row.manual_cents)} · ERP:{" "}
+                          {money(row.erp_cents)}
+                        </small>
+                      </td>
+                      <td>
+                        {declared === null
+                          ? "—"
+                          : money(row.registered_cents - declared)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th>Total</th>
+                  <td>{money(declaredTotal)}</td>
+                  <td>{money(registeredTotal)}</td>
+                  <td>
+                    {difference === null ? "Por preencher" : money(difference)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </details>
         {!editable && (form.notes || form.pos) && (
           <details className="local-realized-details">
             <summary>Observações do dia e referência POS</summary>
@@ -637,19 +721,22 @@ export default function LocalCashSheet({
         )}
         <h3>Conferência do numerário físico</h3>
         <p className="footnote">
-          Saldo esperado = fundo inicial + entradas em numerário − saídas em
-          numerário. Inclui retiradas e depósitos efetivamente retirados da
-          gaveta. O realizado declarado não é somado a este saldo.
+          {legacyClose
+            ? "Saldo esperado preservado do fecho anterior."
+            : "Esperado na gaveta = fundo de maneio + faturado em numerário + outras entradas − outras saídas. Inclui despesas, retiradas e depósitos efetivamente retirados da gaveta. Os recebimentos registados já incluídos no faturado não são somados novamente."}
         </p>
         <p className="footnote">
-          Entradas em numerário: {money(cashRow.credits_cents)} · Saídas em
-          numerário: {money(cashRow.debits_cents)}
+          Fundo: {money(s.opening_cents)} · Faturado em numerário:{" "}
+          {amount(form.values.numerario || "") === null
+            ? "Por preencher"
+            : money(amount(form.values.numerario)!)}{" "}
+          · Outros movimentos: {money(otherFor("numerario"))}
         </p>
         <div className="local-cash-context">
           <div className={`local-cash-amount ${tone(cashDifference)}`}>
             <small>Diferença de numerário (contado − esperado)</small>
             <strong>
-              {cashDifference === null ? "Por contar" : money(cashDifference)}
+              {cashDifference === null ? "Por conferir" : money(cashDifference)}
             </strong>
             {cashDifference !== null && cashDifference < 0 && (
               <small>Falta de {money(-cashDifference)}</small>
@@ -666,7 +753,7 @@ export default function LocalCashSheet({
               counts: form.counts,
               total: form.cash,
             }}
-            expected={cashRow.expected_cents}
+            expected={cashExpected}
             onCancel={() => setCountDialog(false)}
             onApply={(draft) => {
               update({
