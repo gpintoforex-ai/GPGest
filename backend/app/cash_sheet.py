@@ -20,7 +20,6 @@ from .models import (
     WintouchCashAccount,
     LocalPaymentMethod,
 )
-from .platform_models import Company
 
 LABELS = {
     "numerario": "Numerário",
@@ -95,9 +94,8 @@ def sheet_source_context(db, session):
     company_id = db.info.get("company", {}).get("id")
     if not company_id:
         return None, None
-    with database.next_platform_session() as core:
-        company = core.get(Company, company_id)
-        enterprise = company.api_enterprise if company else None
+    company = database.request_company(db)
+    enterprise = company.api_enterprise if company else None
     if not enterprise:
         return None, None
     register = db.get(Register, session.register_id)
@@ -132,9 +130,8 @@ def daily_enterprise(db, session):
     company_id = db.info.get("company", {}).get("id")
     if not company_id:
         return session.wintouch_enterprise
-    with database.next_platform_session() as core:
-        company = core.get(Company, company_id)
-        return company.api_enterprise if company else None
+    company = database.request_company(db)
+    return company.api_enterprise if company else None
 
 
 def real_receipts(db, store_id, selected_day, enterprise):

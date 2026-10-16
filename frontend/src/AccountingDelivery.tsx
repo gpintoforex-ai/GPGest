@@ -49,7 +49,7 @@ export default function AccountingDelivery({ admin, onSettings }: { admin: boole
       {error && <p className="error" role="alert">{error}</p>}
       {error && !action && <button disabled={busy} onClick={() => load().then(() => setError("")).catch(e => setError(e.message))}>Tentar novamente</button>}
       {notice && <p className="success" role="status">{notice}</p>}
-      {!loading && !mode && !error && <div className="empty"><h3>Configure o regime de IVA da empresa</h3><p>Escolha mensal ou trimestral em Configurações para organizar os períodos.</p><button onClick={onSettings}>Abrir configurações</button></div>}
+      {!loading && !mode && !error && <div className="empty"><h3>Configure o regime de IVA da empresa</h3><p>Escolha mensal ou trimestral em Configurações &gt; Parâmetros para organizar os períodos.</p><button onClick={onSettings}>Configurar regime de IVA</button></div>}
       {!!mode && <><p>Confirme o fecho depois de conferir o período. O ZIP reúne os documentos e anexos disponíveis, a listagem ERP e as pendências. O fecho desta entrega não bloqueia alterações documentais.</p>
         <div className="purchase-table"><table><thead><tr><th>Período</th><th>Datas</th><th>Documentos</th><th>Sem anexo</th><th>Estado</th><th>Ações</th></tr></thead><tbody>{periods.map(period => <tr key={`${period.vat_period}-${period.number}`}>
           <td><strong>{label(period)} {period.year}</strong>{period.vat_period !== mode && <small> · Regime anterior</small>}</td><td>{day(period.start)} — {day(period.end)}</td><td>{period.documents}</td><td>{period.without_attachment}</td>

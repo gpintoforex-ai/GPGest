@@ -14,7 +14,7 @@ def opening_case(setup, monkeypatch):
 
     @contextmanager
     def core():
-        yield SimpleNamespace(get=lambda *_: SimpleNamespace(api_enterprise="tenant"))
+        yield SimpleNamespace(get=lambda *_: SimpleNamespace(api_enterprise="tenant", operating_mode="integrated", erp_provider="wintouch", api_active=True))
 
     monkeypatch.setattr("app.db.next_platform_session", core)
 
@@ -101,7 +101,7 @@ def test_opening_entry_is_suggested_and_not_counted_twice(opening_case):
         is None
     )
     closed = client.post(
-        f"/api/sessions/{session}/close", json={"cash_total": "35", "cash_mode": "total"}
+        f"/api/sessions/{session}/close", json={"cash_total": "35", "cash_mode": "total", "supplier_answer": "indicado", "supplier_name": "Fornecedor ERP"}
     )
     assert closed.status_code == 200, closed.text
     assert json.loads(closed.json()["count_data"])["opening_wintouch_id"] == source

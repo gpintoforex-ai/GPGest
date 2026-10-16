@@ -3,6 +3,8 @@ import Liquidity from "./Liquidity";
 import IntegrationSettings from "./IntegrationSettings";
 import {
   useEffect,
+  useLayoutEffect,
+  useRef,
   useState,
   useId,
   cloneElement,
@@ -27,12 +29,15 @@ import {
   CheckCircle,
   ShieldCheck,
   Plus,
+  Building2,
+  SlidersHorizontal,
   Clock,
   ChevronRight,
   ChevronDown,
   Receipt,
   Camera,
   X,
+  Users,
 } from "lucide-react";
 
 type Row = Record<string, any>;
@@ -42,8 +47,13 @@ import RealMovements from "./RealMovements";
 import CashSheet from "./CashSheet";
 import LocalCashSheet from "./LocalCashSheet";
 import CashSheetList from "./CashSheetList";
+import PaymentMethods, { type PaymentMethod, type PaymentBankDefault } from "./PaymentMethods";
+import Employees from "./Employees";
+import ReadAloud from "./ReadAloud";
+import { CashPreferencesProvider } from "./CashPreferences";
 import OpenCashForm from "./OpenCashForm";
 import BankStatements from "./BankStatements";
+import BanksCatalog from "./BanksCatalog";
 import Reconciliation from "./Reconciliation";
 import DocumentControl from "./DocumentControl";
 import Entities from "./Entities";
@@ -57,6 +67,8 @@ import Rubrics from "./Rubrics";
 import RubricBadge from "./components/RubricBadge";
 type Bootstrap = {
   payment_methods?: Record<string, string>;
+  payment_method_catalog?: PaymentMethod[] | null;
+  payment_method_bank_defaults?: PaymentBankDefault[];
   integration?: Row;
   user: Row;
   mode: string;
@@ -64,6 +76,7 @@ type Bootstrap = {
   stores: Row[];
   registers: Row[];
   accounts: Row[];
+  bank_institutions?: Row[];
   categories: Row[];
   users: Row[];
 };
@@ -214,6 +227,11 @@ function Empty({ text = "Ainda não existem registos." }: { text?: string }) {
 }
 
 export default function App() {
+  type PaymentReturn = { page: string; scrollY: number; focus: HTMLElement | null };
+  type DataTarget = "bootstrap" | "sessions" | "movements" | "dashboard";
+  const dataVersions = useRef<Record<DataTarget, number>>({ bootstrap: 0, sessions: 0, movements: 0, dashboard: 0 });
+  const [paymentReturn, setPaymentReturn] = useState<PaymentReturn | null>(null);
+  const pendingPaymentReturn = useRef<PaymentReturn | null>(null);
   const [boot, setBoot] = useState<Bootstrap | null>(null),
     [loading, setLoading] = useState(true),
     [page, setPage] = useState("Dashboard"),
@@ -222,6 +240,7 @@ export default function App() {
     [dashboard, setDashboard] = useState<Row>({}),
     [audit, setAudit] = useState<Row[]>([]),
     [modal, setModal] = useState(""),
+    [customBank, setCustomBank] = useState(false),
     [selected, setSelected] = useState<Row | null>(null),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
@@ -229,37 +248,86 @@ export default function App() {
     [sidebarCollapsed, setSidebarCollapsed] = useState(false),
     [financeOpen, setFinanceOpen] = useState(false),
     [accountingOpen, setAccountingOpen] = useState(false),
+    [configurationOpen, setConfigurationOpen] = useState(false),
+    [parametersOpen, setParametersOpen] = useState(false),
     [scanMenuOpen, setScanMenuOpen] = useState(false),
     [banksOpen, setBanksOpen] = useState(false),
 
     [tablesOpen, setTablesOpen] = useState(false),
     [store, setStore] = useState(""),
     [requestKey, setRequestKey] = useState(crypto.randomUUID());
-  async function reload() {
-    const b = await api("/bootstrap");
-    setBoot(b);
-    const [s, m, d] = await Promise.all([
-      api("/sessions"),
-      api("/movements"),
-      api("/dashboard"),
-    ]);
-    setSessions(s);
-    setMovements(m);
-    setDashboard(d);
-    setAudit(b.user.role !== "operador" ? await api("/audit") : []);
+  function navigatePage(next: string) {
+    if (next === "Organização" || [
+      "Integrações",
+      "Regime de IVA",
+      "Anexos",
+      "Digitalização",
+      "Verificação automática e-Fatura",
+    ].includes(next)) {
+      setConfigurationOpen(true);
+      setParametersOpen(next !== "Organização");
+    }
+    if (next === "Meios de pagamento" && page !== next) {
+      setPaymentReturn({ page, scrollY: window.scrollY, focus: document.activeElement as HTMLElement | null });
+    } else if (next !== "Meios de pagamento") {
+      setPaymentReturn(null);
+    }
+    setPage(next);
+  }
+  function closePaymentMethods() {
+    const destination = paymentReturn || { page: "Dashboard", scrollY: 0, focus: null };
+    pendingPaymentReturn.current = destination;
+    setPaymentReturn(null);
+    setPage(destination.page);
+    setMobile(false);
+  }
+  useLayoutEffect(() => {
+    const destination = pendingPaymentReturn.current;
+    if (destination && page === destination.page) {
+      pendingPaymentReturn.current = null;
+      destination.focus?.focus({ preventScroll: true });
+      window.scrollTo({ top: destination.scrollY, behavior: "instant" });
+    } else if (page === "Meios de pagamento") {
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
+  }, [page]);
+  async function reload(targets: DataTarget[] = ["bootstrap", "sessions", "movements", "dashboard"]) {
+    const results = await Promise.all(targets.map(async target => {
+      const version = ++dataVersions.current[target];
+      return { target, version, data: await api("/" + target) };
+    }));
+    for (const { target, version, data } of results) {
+      if (dataVersions.current[target] !== version) continue;
+      if (target === "bootstrap") setBoot(data);
+      else if (target === "sessions") setSessions(data);
+      else if (target === "movements") setMovements(data);
+      else setDashboard(data);
+    }
+  }
+  function updateSavedSheet(saved: Row) {
+    // Count/reconcile responses are returned only after the transaction commits.
+    // Invalidate older list requests so they cannot replace this saved version.
+    ++dataVersions.current.sessions;
+    setSessions(previous => previous.map(row => row.id === saved.id ? saved : row));
+  }
+  function invalidateDataRequests() {
+    for (const target of Object.keys(dataVersions.current) as DataTarget[]) ++dataVersions.current[target];
   }
   useEffect(() => {
-    const settings = () => { setModal(""); setSelected(null); setPage("Configurações"); };
+    const settings = () => { setModal(""); setSelected(null); navigatePage("Anexos"); };
     window.addEventListener("gpgest-attachment-settings", settings);
     return () => window.removeEventListener("gpgest-attachment-settings", settings);
   }, []);
   useEffect(() => {
     const expire = () => {
+      invalidateDataRequests();
       setBoot(null);
       setSessions([]);
       setMovements([]);
       setAudit([]);
       setModal("");
+      setPaymentReturn(null);
+      pendingPaymentReturn.current = null;
     };
     window.addEventListener("gpgest-expired", expire);
     return () => window.removeEventListener("gpgest-expired", expire);
@@ -275,7 +343,8 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => {
-    const refreshSheets = () => {
+    const refreshSheets = (event: Event) => {
+      if ((event as CustomEvent).detail?.appRefreshed) return;
       reload().catch((e) => setError((e as Error).message));
     };
     window.addEventListener("gpgest-sales-updated", refreshSheets);
@@ -284,14 +353,28 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (page === "Folha de caixa")
-      reload().catch((e) => setError((e as Error).message));
+      reload(["bootstrap", "sessions"]).catch((e) => setError((e as Error).message));
   }, [page]);
+  useEffect(() => {
+    if (page !== "Relatórios" || !boot || boot.user.role === "operador") return;
+    let active = true;
+    api("/audit").then(rows => { if (active) setAudit(rows); })
+      .catch(e => { if (active) setError((e as Error).message); });
+    return () => { active = false; };
+  }, [page, boot]);
   const save = async (path: string, data: unknown) => {
     await api(path, data);
-    await reload();
     setModal("");
     setSelected(null);
     setNotice("Operação concluída com sucesso.");
+    try {
+      if (path === "/auth/password") return;
+      if (["/stores", "/registers", "/accounts", "/categories", "/users"].includes(path)) await reload(["bootstrap"]);
+      else if (path === "/cash/payment-methods") await reload(["bootstrap", "sessions"]);
+      else await reload();
+    } catch {
+      setError("A operação foi guardada, mas não foi possível atualizar os dados do ecrã. Atualize a página para consultar o registo.");
+    }
   };
   const act = async (fn: () => Promise<void>) => {
     setError("");
@@ -405,8 +488,18 @@ export default function App() {
     ["Tabelas", Package],
     ["Receitas e despesas", Receipt],
     ["Relatórios", FileBarChart],
-    ["Integrações", Plug],
     ["Configurações", Settings],
+  ] as const;
+  const configurationMenu = [
+    ["Organização", Building2],
+    ["Parâmetros", SlidersHorizontal],
+  ] as const;
+  const parameterMenu = [
+    ["Integrações", Plug],
+    ["Regime de IVA", FileBarChart],
+    ["Anexos", Package],
+    ["Digitalização", Camera],
+    ["Verificação automática e-Fatura", CheckCircle],
   ] as const;
   const financeMenu = [
     ["Folha de caixa", Wallet],
@@ -425,12 +518,15 @@ export default function App() {
   const tablesMenu = [
     ["Clientes", Receipt],
     ["Fornecedores", Landmark],
+    ["Bancos", Landmark],
     ["Artigos e validades", Package],
     ["Rubricas", FileBarChart],
     ["Caixas", Wallet],
     ["Meios de pagamento", CreditCard],
+    ["Operadores / funcionários", Users],
   ] as const;
   const openModal = async (kind: string, row: Row | null = null) => {
+    if (kind === "account") setCustomBank(false);
     if (kind === "open") {
       try {
         await reload();
@@ -463,7 +559,9 @@ export default function App() {
         <button className="sidebar-collapse" aria-label={sidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}><Menu size={18} /><span className="nav-label">Recolher menu</span></button>
         <nav aria-label="Navegação principal">
           {menu.map(([label, Icon]) => {
-            const group = label === "Tabelas"
+            const group = label === "Configurações"
+              ? { items: configurationMenu, expanded: configurationOpen, toggle: () => setConfigurationOpen(!configurationOpen), id: "configuration-submenu" }
+              : label === "Tabelas"
               ? { items: tablesMenu, expanded: tablesOpen, toggle: () => setTablesOpen(!tablesOpen), id: "tables-submenu" }
               : label === "Bancos"
                 ? { items: banksMenu, expanded: banksOpen, toggle: () => setBanksOpen(!banksOpen), id: "banks-submenu" }
@@ -473,11 +571,14 @@ export default function App() {
             const groupedMenu = group.items;
             const expanded = group.expanded;
             const submenuId = group.id;
-            return label === "Tesouraria" || label === "Bancos" || label === "Contabilidade" || label === "Tabelas" ? (
+            return label === "Tesouraria" || label === "Bancos" || label === "Contabilidade" || label === "Tabelas" || label === "Configurações" ? (
               <div className="finance-menu" key={label}>
                 <button
                   className={
-                    groupedMenu.some(([name]) => name === page) ? "active" : ""
+                    groupedMenu.some(([name]) => name === page) ||
+                    label === "Configurações" && parameterMenu.some(([name]) => name === page)
+                      ? "active"
+                      : ""
                   }
                   aria-expanded={expanded}
                   aria-controls={submenuId}
@@ -498,22 +599,56 @@ export default function App() {
                   hidden={!expanded}
                 >
                   {groupedMenu.map(([name, FinanceIcon]) => (
-                    <button
-                      key={name}
-                      className={page === name ? "active" : ""}
-                      aria-current={page === name ? "page" : undefined}
-                      aria-label={name}
-                      title={name}
-                      onClick={() => {
-                        setPage(name);
-                        setScanMenuOpen(name === "Digitalizar documento");
-                        setMobile(false);
-                        setError("");
-                      }}
-                    >
-                      <FinanceIcon size={17} /> <span className="nav-label">{name}</span>
-                      {page === name && <ChevronRight size={15} />}
-                    </button>
+                    name === "Parâmetros" && manager ? (
+                      <div className="finance-menu" key={name}>
+                        <button
+                          className={parameterMenu.some(([parameter]) => parameter === page) ? "active" : ""}
+                          aria-expanded={parametersOpen}
+                          aria-controls="parameters-submenu"
+                          aria-label={name}
+                          title={name}
+                          onClick={() => setParametersOpen(!parametersOpen)}
+                        >
+                          <FinanceIcon size={17} /> <span className="nav-label">{name}</span>
+                          {parametersOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                        </button>
+                        <div id="parameters-submenu" className="finance-submenu" hidden={!parametersOpen}>
+                          {manager && parameterMenu.map(([parameter, ParameterIcon]) => (
+                            <button
+                              key={parameter}
+                              className={page === parameter ? "active" : ""}
+                              aria-current={page === parameter ? "page" : undefined}
+                              aria-label={parameter}
+                              title={parameter}
+                              onClick={() => {
+                                navigatePage(parameter);
+                                setMobile(false);
+                                setError("");
+                              }}
+                            >
+                              <ParameterIcon size={17} /> <span className="nav-label">{parameter}</span>
+                              {page === parameter && <ChevronRight size={15} />}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : name !== "Parâmetros" ? (
+                      <button
+                        key={name}
+                        className={page === name ? "active" : ""}
+                        aria-current={page === name ? "page" : undefined}
+                        aria-label={name}
+                        title={name}
+                        onClick={() => {
+                          navigatePage(name);
+                          setMobile(false);
+                          setError("");
+                        }}
+                      >
+                        <FinanceIcon size={17} /> <span className="nav-label">{name}</span>
+                        {page === name && <ChevronRight size={15} />}
+                      </button>
+                    ) : null
                   ))}
                 </div>
               </div>
@@ -525,7 +660,7 @@ export default function App() {
                 aria-label={label}
                 title={label}
                 onClick={() => {
-                  setPage(label);
+                  navigatePage(label);
                   setMobile(false);
                   setError("");
                 }}
@@ -561,6 +696,7 @@ export default function App() {
               onClick={() =>
                 act(async () => {
                   await api("/auth/logout", {});
+                  invalidateDataRequests();
                   setBoot(null);
                   setSessions([]);
                   setMovements([]);
@@ -619,7 +755,7 @@ export default function App() {
             </span>
             <details className="user-menu">
               <summary aria-label="Menu do utilizador"><span className="avatar">{boot.user.name.slice(0, 2).toUpperCase()}</span><span className="user-name">{boot.user.name}</span><ChevronDown size={15} /></summary>
-              <div className="user-menu-panel"><strong>{boot.user.name}</strong><small>{boot.user.role}</small><button onClick={() => act(async () => { await api("/auth/logout", {}); setBoot(null); setSessions([]); setMovements([]); setAudit([]); setModal(""); })}><LogOut size={16} />Terminar sessão</button></div>
+              <div className="user-menu-panel"><strong>{boot.user.name}</strong><small>{boot.user.role}</small><button onClick={() => act(async () => { await api("/auth/logout", {}); invalidateDataRequests(); setBoot(null); setSessions([]); setMovements([]); setAudit([]); setModal(""); })}><LogOut size={16} />Terminar sessão</button></div>
             </details>
           </div>
         </header>
@@ -766,14 +902,19 @@ export default function App() {
               </section>
             </>
           )}
-          {page === "Folha de caixa" && (
-            <>
+          {(page === "Folha de caixa" || (page === "Meios de pagamento" && paymentReturn?.page === "Folha de caixa")) && (
+            <div hidden={page !== "Folha de caixa"}>
+            <CashPreferencesProvider
+              key={JSON.stringify([boot.company.id || boot.company.nif || boot.company.name, boot.user.id])}
+              scope={JSON.stringify([boot.company.id || boot.company.nif || boot.company.name, boot.user.id])}
+            >
               <CashSheetList
                 rows={visibleSessions}
                 store={store}
                 information={
                   <details
                     className="cash-page-info"
+                    name="cash-page-options"
                     onKeyDown={(e) => {
                       if (e.key === "Escape") {
                         e.currentTarget.open = false;
@@ -785,18 +926,30 @@ export default function App() {
                       <Info size={22} aria-hidden="true" />
                     </summary>
                     <div className="cash-page-info-content">
-                      <p>
-                        Fundo de maneio, movimentos por meio de pagamento e contagem
-                        com apuramento de diferenças.
-                      </p>
-                      <p>
-                        {boot.integration?.mode === "local"
-                          ? "Declare o realizado do dia e confira os recebimentos registados. Conte separadamente o numerário físico da gaveta."
-                          : "Os valores incluem os créditos e débitos reais da loja nesse dia, manuais e ERP. Introduza o fundo de maneio e a contagem."}
-                      </p>
+                      <ReadAloud active={page === "Folha de caixa"}>
+                        <p>
+                          Fundo de maneio, movimentos por meio de pagamento e contagem
+                          com apuramento de diferenças.
+                        </p>
+                        <p>
+                          {boot.integration?.mode === "local"
+                            ? "Declare o realizado do dia e confira os recebimentos registados. Conte separadamente o numerário físico da gaveta."
+                            : "Os valores incluem os créditos e débitos reais da loja nesse dia, manuais e ERP. Introduza o fundo de maneio e a contagem."}
+                        </p>
+                      </ReadAloud>
                     </div>
                   </details>
                 }
+                configuration={manager && (
+                  <>
+                    <button type="button" onClick={() => { setTablesOpen(true); setPage("Caixas"); }}>
+                      <Wallet size={18} aria-hidden="true" /> Configurar caixas
+                    </button>
+                    <button type="button" onClick={() => { setTablesOpen(true); navigatePage("Meios de pagamento"); }}>
+                      <CreditCard size={18} aria-hidden="true" /> Configurar meios de pagamento
+                    </button>
+                  </>
+                )}
                 actions={write && (
                   <button className="primary" onClick={() => openModal("open")}>
                     <Plus size={18} /> Nova folha de caixa
@@ -808,7 +961,7 @@ export default function App() {
                     key={s.id} session={s} register={rname(s.register_id)}
                     store={registerStore(s.register_id)}
                     operator={uname(s.operator_id)} writable={write && (manager || s.operator_id === boot.user.id)}
-                    manager={manager} reload={reload} onAction={openModal}
+                    manager={manager} reload={reload} onSaved={updateSavedSheet} onAction={openModal} active={page === "Folha de caixa"}
                   /> : <CashSheet
                     key={s.id}
                     session={s}
@@ -822,6 +975,7 @@ export default function App() {
                     canImportErp={boot.user.role === "administrador" && (boot.integration?.capabilities.read_documents ?? true) && (boot.integration?.resources.includes("sales") ?? true)}
                     demo={boot.mode === "demonstracao"}
                     reload={reload}
+                    onSaved={updateSavedSheet}
                     onAction={openModal}
                   />
                 )}
@@ -829,7 +983,8 @@ export default function App() {
               {!visibleSessions.length && (
                 <Empty text="Abra a primeira sessão de caixa" />
               )}
-            </>
+            </CashPreferencesProvider>
+            </div>
           )}
           {page === "Movimentos previstos" && (
             <>
@@ -867,7 +1022,7 @@ export default function App() {
                 </div>
               </div>
               <RealMovements
-                localRows={visibleMovements}
+                localRows={movements}
                 store={store}
                 registers={boot.registers}
               >
@@ -920,6 +1075,7 @@ export default function App() {
               <button onClick={() => setPage("Extratos")}>Consultar extratos</button>
             </>
           )}
+          {page === "Bancos" && <BanksCatalog manager={manager} onChanged={() => reload(["bootstrap"])} />}
           {page === "Extratos" && (
             <>
               <div className="page-intro"><div><h1>Extratos bancários</h1><p>Selecione uma conta para importar e consultar os movimentos do banco.</p></div><button onClick={() => setPage("Múltiplas contas")}>Gerir contas</button></div>
@@ -930,7 +1086,7 @@ export default function App() {
             <Reconciliation stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} />
           )}
           {page === "Conferência documental" && <DocumentControl stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} integration={boot.integration} />}
-          {page === "Entrega à contabilidade" && <AccountingDelivery admin={boot.user.role === "administrador"} onSettings={() => setPage("Configurações")} />}
+          {page === "Entrega à contabilidade" && <AccountingDelivery admin={boot.user.role === "administrador"} onSettings={() => navigatePage(manager ? "Regime de IVA" : "Organização")} />}
           {page === "Digitalizar documento" && <><div className="page-intro"><div><h1>Digitalizar documento</h1><p>Fotografe ou selecione páginas, reveja o PDF e guarde-o na pasta cloud da empresa.</p></div>{manager && <button onClick={() => setScanMenuOpen(true)}><Camera size={18} />Digitalizar documento</button>}</div>{!manager && <p>A digitalização está disponível para administradores e gestores.</p>}{manager && scanMenuOpen && <DocumentScanner store={store} onClose={() => setScanMenuOpen(false)} onSaved={reload} />}</>}
           {page === "Relatórios" && (
             <>
@@ -1058,6 +1214,7 @@ export default function App() {
                   <p>A aplicação não pede credenciais de homebanking.</p>
                 </section>
               </div>
+              {manager && <IntegrationSettings boot={boot} reload={reload} />}
             </>
           )}
           {page === "Rubricas" && (
@@ -1095,37 +1252,25 @@ export default function App() {
             </>
           )}
           {page === "Meios de pagamento" && (
-            <>
-              <div className="page-intro">
-                <div>
-                  <h1>Meios de pagamento</h1>
-                  <p>Meios disponíveis no registo manual de movimentos.</p>
-                </div>
-                {manager && boot.integration?.mode === "local" && (
-                  <button className="primary" onClick={() => openModal("payment-method")}>
-                    <Plus size={18} /> Novo meio de pagamento
-                  </button>
-                )}
-              </div>
-              <section className="panel">
-                <div className="table-wrap">
-                  <table>
-                    <thead><tr><th>Meio de pagamento</th><th>Tipo</th></tr></thead>
-                    <tbody>
-                      {Object.entries(paymentMethods).map(([key, name]) => (
-                        <tr key={key}>
-                          <td>{name}</td>
-                          <td><span className="pill neutral">{key.startsWith("pm_") ? "Personalizado" : "Base"}</span></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {integratedMode && <p className="footnote">Os meios dos documentos importados são definidos pelo ERP. Pode configurar meios personalizados no modo local autónomo.</p>}
-              </section>
-            </>
+            <PaymentMethods
+              stores={boot.stores as { id: string; name: string }[]}
+              accounts={boot.accounts as { id: string; store_id: string; name: string; bank: string; iban_last4: string }[]}
+              bankDefaults={boot.payment_method_bank_defaults || []}
+              store={store}
+              methods={boot.payment_method_catalog || Object.entries(paymentMethods).map(([id, name]): PaymentMethod => ({
+                id, name, active: true, kind: id.startsWith("pm_") ? "custom" : "base", required: id === "numerario",
+              }))}
+              local={boot.integration?.mode === "local"}
+              manager={manager}
+              reload={() => reload(["bootstrap", "sessions"])}
+              onNew={() => openModal("payment-method")}
+              onClose={closePaymentMethods}
+            />
           )}
-          {page === "Configurações" && (
+          {page === "Operadores / funcionários" && (
+            <Employees users={boot.users as { id: string; name: string; email: string; role: string; active?: boolean; store_ids?: string[] }[]} stores={boot.stores as { id: string; name: string }[]} store={store} admin={boot.user.role === "administrador"} onNewUser={() => openModal("user")} />
+          )}
+          {page === "Organização" && (
             <>
               <div className="page-intro">
                 <div>
@@ -1228,9 +1373,10 @@ export default function App() {
             </section>
           )}
           {(page === "Clientes" || page === "Fornecedores") && <Entities kind={page} manager={manager} categories={boot.categories.map(c => ({ id: c.id, name: c.name }))} />}
-          {page === "Configurações" && manager && <IntegrationSettings boot={boot} reload={reload} />}
-          {page === "Configurações" && manager && <FiscalSettings />}
-          {page === "Configurações" && manager && <><AttachmentSettings nif={boot.company?.nif} /><ScanSettings admin={boot.user.role === "administrador"} /><InvoiceWorkflowSettings admin={boot.user.role === "administrador"} /></>}
+          {page === "Regime de IVA" && manager && <FiscalSettings />}
+          {page === "Anexos" && manager && <AttachmentSettings nif={boot.company?.nif} />}
+          {page === "Digitalização" && manager && <ScanSettings admin={boot.user.role === "administrador"} />}
+          {page === "Verificação automática e-Fatura" && manager && <InvoiceWorkflowSettings admin={boot.user.role === "administrador"} />}
           <footer>
             GPGest · Gestão interna <span>Europe/Lisbon · EUR · Fase 1</span>
           </footer>
@@ -1492,8 +1638,13 @@ export default function App() {
             )}
             {["store", "category", "register", "account", "payment-method"].includes(modal) && (
               <Form
-                onSubmit={(v) =>
-                  save(
+                onSubmit={(v) => {
+                  let payload = v;
+                  if (modal === "account" && v.bank_choice) {
+                    const { bank_choice, ...account } = v;
+                    payload = { ...account, bank: bank_choice === "__other__" ? account.bank : bank_choice };
+                  }
+                  return save(
                     "/" +
                       {
                         store: "stores",
@@ -1502,9 +1653,9 @@ export default function App() {
                         "payment-method": "cash/payment-methods",
                         account: "accounts",
                       }[modal],
-                    v,
-                  )
-                }
+                    payload,
+                  );
+                }}
               >
                 <Field label="Nome">
                   <input name="name" required minLength={2} maxLength={100} />
@@ -1516,9 +1667,16 @@ export default function App() {
                 )}
                 {modal === "account" && (
                   <>
-                    <Field label="Banco">
-                      <input name="bank" required minLength={2} />
-                    </Field>
+                    {boot.bank_institutions?.length ? <>
+                      <Field label="Banco">
+                        <select name="bank_choice" required defaultValue="" onChange={(event) => setCustomBank(event.target.value === "__other__")}>
+                          <option value="">Selecionar banco…</option>
+                          {boot.bank_institutions.map((bank) => <option key={bank.id} value={bank.name}>{bank.name}</option>)}
+                          <option value="__other__">Outro banco…</option>
+                        </select>
+                      </Field>
+                      {customBank && <Field label="Nome do banco"><input name="bank" required minLength={2} maxLength={100} /></Field>}
+                    </> : <Field label="Banco"><input name="bank" required minLength={2} /></Field>}
                     <Field label="Últimos 4 algarismos do IBAN">
                       <input
                         name="iban_last4"
@@ -1632,7 +1790,7 @@ export default function App() {
                 </td>
                 <td>
                   <span className="pill neutral">
-                    {m.external ? "Wintouch" : "GPGest"}
+                    {m.origin === "fecho_local" ? "Fecho de caixa" : m.external ? "Wintouch" : "GPGest"}
                   </span>
                 </td>
                 <td>
@@ -1655,14 +1813,16 @@ export default function App() {
                 </td>
                 <td>
                   {!m.external && (
-                    <button onClick={() => openModal("attachments", m)}>
+                    <button onClick={() => openModal("attachments", m.movement_id ? { ...m, id: m.movement_id } : m)}>
                       Anexos
                     </button>
                   )}
                   {m.external && <small>Gerido na Wintouch</small>}
+                  {m.origin === "fecho_local" && <small>Gerido na folha de caixa</small>}
                   {onReverse &&
                     !m.external &&
                     m.origin !== "fecho_caixa" &&
+                    m.origin !== "fecho_local" &&
                     !m.reversed_by &&
                     !m.reversal_of &&
                     !m.transfer_id && (

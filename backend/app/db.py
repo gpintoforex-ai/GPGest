@@ -40,6 +40,9 @@ def db_session(request: Request):
         else engine.execution_options(schema_translate_map={None: company.schema_name})
     )
     with SessionLocal(bind=bind) as db:
+        # This session belongs to one HTTP request. Reuse the company already
+        # checked above; never retain configuration across requests or tenants.
+        db.info["selected_company"] = company
         db.info["company"] = {
             "id": company.id,
             "name": company.name,
@@ -52,6 +55,17 @@ def db_session(request: Request):
             "connector_writes": bool(company.connector_writes),
         }
         yield db
+
+
+def request_company(db):
+    company_id = db.info.get("company", {}).get("id")
+    company = db.info.get("selected_company")
+    if company is not None and company.id == company_id:
+        return company
+    if not company_id:
+        return None
+    with next_platform_session() as core:
+        return core.get(Company, company_id)
 
 
 def next_platform_session():

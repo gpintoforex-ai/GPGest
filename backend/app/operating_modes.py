@@ -44,8 +44,7 @@ def policy(db):
     if not company_id:
         # Legacy isolated tests and standalone initialization have no platform selection.
         return {"mode": "integrated", "provider": "wintouch", "active": True, "writes": True, "capabilities": {key: key in CONNECTORS["wintouch"]["capabilities"] for key in CAPABILITIES}, "resources": list(RESOURCES)}
-    with database.next_platform_session() as core:
-        return company_policy(core.get(Company, company_id))
+    return company_policy(database.request_company(db))
 
 
 def require_capability(db, capability, resource=None):

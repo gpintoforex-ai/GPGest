@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeftRight, Banknote, CreditCard, FileText, LockKeyhole, LockKeyholeOpen, Wallet } from "lucide-react";
 import { api, Field } from "./App";
 import CashCountDialog from "./CashCountDialog";
+import SettlementConfirmation from "./SettlementConfirmation";
+import { useCashPreferences } from "./CashPreferences";
 import CashReconciliation from "./CashReconciliation";
-import SupplierPicker from "./components/SupplierPicker";
+import CashSupplierDialog, { type CashSupplierAllocation } from "./CashSupplierDialog";
 import "./CashSheet.css";
 
 type Row = Record<string, any>;
@@ -32,6 +34,7 @@ export default function CashSheet({
   canImportErp = false,
   demo = false,
   reload,
+  onSaved,
   onAction,
 }: {
   session: Row;
@@ -43,9 +46,12 @@ export default function CashSheet({
   canImportErp?: boolean;
   demo?: boolean;
   reload: () => Promise<void>;
+  onSaved?: (saved: Row) => void;
   onAction: (kind: string, row: Row) => void;
 }) {
   const stored = s.count_data || {};
+  const [closeNotice, setCloseNotice] = useState("");
+  const { preferences } = useCashPreferences();
   const [importPrompt, setImportPrompt] = useState(false), [confirmDemo, setConfirmDemo] = useState(false);
   const importDialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { if (importPrompt && !importDialog.current?.open) importDialog.current?.showModal(); }, [importPrompt]);
@@ -72,19 +78,6 @@ export default function CashSheet({
   const [notice, setNotice] = useState("");
   const [sourceDay, setSourceDay] = useState(s.sheet.day);
   const [supplierPrompt, setSupplierPrompt] = useState(false);
-  const [supplierAnswer, setSupplierAnswer] = useState(stored.debit_supplier?.answer || "");
-  const [supplierName, setSupplierName] = useState(stored.debit_supplier?.name || "");
-  const [supplierId, setSupplierId] = useState(stored.debit_supplier?.id || "");
-  const [suppliers, setSuppliers] = useState<Row[]>([]);
-  const [supplierLoading, setSupplierLoading] = useState(false);
-  useEffect(() => {
-    if (!supplierPrompt) return;
-    let active = true; setSupplierLoading(true);
-    api("/entities").then(result => { if (active) setSuppliers(result.filter((entity: Row) => entity.is_supplier && entity.active)); }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setSupplierLoading(false); });
-    return () => { active = false; };
-  }, [supplierPrompt]);
-  const supplierDialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => { if (supplierPrompt && !supplierDialog.current?.open) supplierDialog.current?.showModal(); }, [supplierPrompt]);
   const editable = writable && !s.closed_at;
   const countedCash = Object.entries(counts).reduce(
     (sum, [key, count]) => sum + Number(key) * count,
@@ -125,7 +118,7 @@ export default function CashSheet({
         : amountFor(row.key)! - row.expected_cents),
     0,
   );
-  async function save(closing: boolean, supplier?: { answer: string; name: string; id?: string }) {
+  async function save(closing: boolean, supplierAllocations?: CashSupplierAllocation[]) {
     setError("");
     setNotice("");
     if (closing && rows.some((row) => amountFor(row.key) === null)) {
@@ -134,7 +127,7 @@ export default function CashSheet({
       );
       return;
     }
-    if (closing && rows.some(row => row.debits_cents > 0) && !supplier) {
+    if (closing && rows.some(row => row.debits_cents > 0) && !supplierAllocations) {
       setSupplierPrompt(true);
       return;
     }
@@ -144,7 +137,7 @@ export default function CashSheet({
         payments[row.key] = values[row.key];
     setBusy(true);
     try {
-      await api(`/sessions/${s.id}/${closing ? "close" : "count"}`, {
+      const saved = await api(`/sessions/${s.id}/${closing ? "close" : "count"}`, {
         counts: cashMode === "denominations" ? counts : {},
         cash_mode: cashMode,
         payments,
@@ -153,16 +146,20 @@ export default function CashSheet({
             ? values.numerario
             : null,
         reason,
-        ...(closing && supplier ? { supplier_answer: supplier.answer, supplier_name: supplier.name, supplier_id: supplier.id || null } : {}),
+        ...(closing && supplierAllocations ? {
+          supplier_answer: "indicado",
+          supplier_allocations: supplierAllocations.map(({ id, amount_cents }) => ({ supplier_id: id, amount_cents })),
+        } : {}),
       });
-      await reload();
+      if (!closing && onSaved) onSaved(saved);
+      else await reload();
       setSupplierPrompt(false);
-      if (closing) window.dispatchEvent(new Event("gpgest-sales-updated"));
-      setNotice(
-        closing
-          ? "Folha de caixa fechada."
-          : "Contagem guardada. Pode continuar a registar movimentos.",
-      );
+      if (closing) {
+        setCloseNotice(`${register} · ${store} · ${s.sheet.day.split("-").reverse().join("/")}. Os valores do fecho foram guardados.`);
+        window.dispatchEvent(new CustomEvent("gpgest-sales-updated", { detail: { appRefreshed: true } }));
+      } else {
+        setNotice("Contagem guardada. Pode continuar a registar movimentos.");
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -339,11 +336,9 @@ export default function CashSheet({
       </div>
       {editable && countDialog && (
         <CashCountDialog
+          defaultMode={preferences.countMode}
           initial={{
-            mode:
-              cashMode === "denominations" || amountFor("numerario") === null
-                ? "denominations"
-                : "total",
+            mode: cashMode === "denominations" ? "denominations" : "total",
             counts,
             total: values.numerario || "",
           }}
@@ -372,7 +367,7 @@ export default function CashSheet({
         </Field>
       )}
       {s.closed_at && s.close_reason && <p>Justificação: {s.close_reason}</p>}
-      {s.closed_at && stored.debit_supplier && <p>Fornecedor dos débitos: <strong>{stored.debit_supplier.answer === "indicado" ? stored.debit_supplier.name : stored.debit_supplier.answer === "desconhecido" ? "Não identificado" : "Não aplicável"}</strong></p>}
+      {s.closed_at && stored.debit_supplier && <div className="cash-supplier-summary"><strong>Fornecedores dos débitos:</strong>{stored.debit_supplier.allocations?.length ? stored.debit_supplier.allocations.map((allocation: Row) => <p key={allocation.id}>{allocation.name} · {money(allocation.amount_cents)}</p>) : <p>{stored.debit_supplier.answer === "indicado" ? `${stored.debit_supplier.name} · ${money(stored.debit_supplier.debits_cents)}` : stored.debit_supplier.answer === "desconhecido" ? "Não identificado" : "Não aplicável"}</p>}{stored.debit_supplier.unassigned_cents > 0 && <p>Por atribuir: {money(stored.debit_supplier.unassigned_cents)}</p>}</div>}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -406,22 +401,10 @@ export default function CashSheet({
           <button onClick={() => onAction("reopen", s)}>Reabrir</button>
         )}
       </div>
-      {supplierPrompt && <dialog ref={supplierDialog} className="doc-dialog" aria-label="Fornecedor dos débitos" style={{ maxWidth: 560 }} onCancel={e => { e.preventDefault(); if (!busy) setSupplierPrompt(false); }}>
-        <div className="panel-title"><h2>Identificar fornecedor</h2><button disabled={busy} aria-label="Fechar pergunta do fornecedor" onClick={() => setSupplierPrompt(false)}>×</button></div>
-        <p>Existem {money(rows.reduce((sum, row) => sum + row.debits_cents, 0))} em débitos nesta folha.</p>
-        <form className="doc-form" onSubmit={e => { e.preventDefault(); save(true, { answer: supplierAnswer, name: supplierName, id: supplierAnswer === "indicado" ? supplierId : undefined }); }}>
-          <fieldset><legend>Sabe indicar o fornecedor dos débitos?</legend>
-            {[["indicado", "Sim, indicar fornecedor"], ["desconhecido", "Não sei indicar"], ["nao_aplicavel", "Não se aplica a um fornecedor"]].map(([value, label]) => <label className="doc-check" key={value}><input type="radio" name="supplier_answer" value={value} checked={supplierAnswer === value} onChange={() => setSupplierAnswer(value)} />{label}</label>)}
-          </fieldset>
-          {supplierAnswer === "indicado" && <>
-            <SupplierPicker items={suppliers as { id: string; name: string; tax_number?: string }[]} selectedName={supplierName} loading={supplierLoading} canCreate={manager} onSelect={entity => { setSupplierId(entity?.id || ""); setSupplierName(entity?.name || ""); }} onCreated={entity => setSuppliers(previous => [...previous, entity])} />
-          </>}
-          <p className="footnote">A indicação fica guardada no fecho. Os movimentos e o registo na Wintouch mantêm os seus dados.</p>
-          {error && <p className="error" role="alert">{error}</p>}
-          <div className="actions"><button type="button" disabled={busy} onClick={() => setSupplierPrompt(false)}>Cancelar</button><button className="primary" disabled={busy || !supplierAnswer || (supplierAnswer === "indicado" && !supplierId)}>Confirmar e fechar caixa</button></div>
-        </form>
-      </dialog>}
+
       </details>
+      {supplierPrompt && <CashSupplierDialog total={rows.reduce((sum, row) => sum + row.debits_cents, 0)} initialId={stored.debit_supplier?.id} canCreate={manager} busy={busy} error={error} onCancel={() => setSupplierPrompt(false)} onConfirm={allocations => save(true, allocations)} />}
+      {closeNotice && <SettlementConfirmation title="Caixa fechada" message={closeNotice} onClose={() => setCloseNotice("")} />}
     </section>
   );
 }

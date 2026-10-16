@@ -1,0 +1,80 @@
+.cash-page-controls {
+  flex-wrap: wrap;
+}
+.cash-page-settings > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid #e3b82f;
+  border-radius: 8px;
+  color: #263d34;
+  background: #f2c94c;
+  box-shadow: 0 3px 8px #d4a91f40;
+  cursor: pointer;
+  list-style: none;
+}
+.cash-page-settings > summary::-webkit-details-marker {
+  display: none;
+}
+.cash-page-settings > summary:hover,
+.cash-page-settings[open] > summary {
+  background: #e5b62f;
+  border-color: #d9a91f;
+}
+.cash-page-settings > summary:focus-visible {
+  outline: 3px solid #adc856;
+  outline-offset: 2px;
+}
+.cash-page-settings-content {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  z-index: 15;
+  width: 360px;
+  max-width: calc(100vw - 60px);
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
+}
+.cash-page-settings-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.cash-page-settings-heading h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.cash-page-settings-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px;
+  flex-shrink: 0;
+  border-color: transparent;
+  background: transparent;
+}
+.cash-page-controls .cash-page-settings-content .record-field {
+  width: 100%;
+}
+.cash-page-settings-content > .record-field + .record-field {
+  margin-top: 14px;
+}
+.cash-page-settings-links {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+.cash-page-settings-links button {
+  justify-content: flex-start;
+  width: 100%;
+}

@@ -271,7 +271,7 @@ def reset_company_data(
         connection.execution_options(schema_translate_map={None: replacement})
         Base.metadata.create_all(connection)
         # Preserve configuration and credentials, but no business records or sessions.
-        for name in ("users", "stores", "store_access", "registers", "categories"):
+        for name in ("users", "stores", "store_access", "registers", "categories", "employees", "employee_stores"):
             columns = ", ".join(
                 '"' + column.name + '"' for column in Base.metadata.tables[name].columns
             )

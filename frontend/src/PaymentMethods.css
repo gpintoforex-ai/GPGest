@@ -1,0 +1,103 @@
+.payment-method-page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.payment-method-bank-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px 24px;
+  margin-bottom: 20px;
+}
+
+.payment-method-bank-context label {
+  display: grid;
+  gap: 8px;
+  min-width: 240px;
+}
+
+.payment-method-bank-context p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 280px;
+  margin: 0 0 10px;
+}
+
+.payment-method-bank-context svg {
+  flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+.payment-method-bank-cell {
+  min-width: 290px;
+  max-width: 420px;
+}
+
+.payment-method-bank-cell select {
+  width: 100%;
+  min-width: 250px;
+}
+
+button.payment-method-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  padding: 8px;
+  flex-shrink: 0;
+}
+
+button.payment-method-action,
+.payment-method-required {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+button.payment-method-action {
+  min-width: 116px;
+}
+
+button.payment-method-action.is-deactivate {
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+  border-color: #e8b9bc;
+}
+
+button.payment-method-action.is-deactivate:hover:not(:disabled) {
+  background: #fce2e5;
+  border-color: var(--color-danger);
+}
+
+button.payment-method-action.is-activate {
+  color: var(--color-success);
+  background: var(--color-success-bg);
+  border-color: #a9d3ba;
+}
+
+button.payment-method-action.is-activate:hover:not(:disabled) {
+  background: #ddf0e4;
+  border-color: var(--color-success);
+}
+
+.payment-method-required {
+  padding: 8px 10px;
+  color: var(--color-primary);
+  background: #edf2ff;
+  border-radius: var(--radius-control);
+  font-size: 12px;
+}
+
+.payment-method-action svg,
+.payment-method-required svg {
+  flex-shrink: 0;
+}

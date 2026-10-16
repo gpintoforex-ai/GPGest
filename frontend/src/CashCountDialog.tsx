@@ -19,24 +19,36 @@ export default function CashCountDialog({
   expected,
   onApply,
   onCancel,
+  defaultMode,
 }: {
   initial: CashCount;
   expected: number | null;
   onApply: (value: CashCount) => void;
   onCancel: () => void;
+  defaultMode?: CashCount["mode"];
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-  const [mode, setMode] = useState(initial.mode);
+  const [mode, setMode] = useState(defaultMode ?? initial.mode);
   const [quantities, setQuantities] = useState<Record<string, string>>(
     Object.fromEntries(
-      Object.entries(initial.counts).map(([key, value]) => [
-        key,
-        String(value),
-      ]),
+      Object.entries(
+        initial.mode === "denominations" ? initial.counts : {},
+      ).map(([key, value]) => [key, String(value)]),
     ),
   );
-  const [total, setTotal] = useState(initial.total);
+  const [total, setTotal] = useState(() =>
+    initial.mode === "denominations" && Object.keys(initial.counts).length
+      ? (
+          Object.entries(initial.counts).reduce(
+            (sum, [value, quantity]) => sum + Number(value) * quantity,
+            0,
+          ) / 100
+        )
+          .toFixed(2)
+          .replace(".", ",")
+      : initial.total,
+  );
   const [keypad, setKeypad] = useState<number | "total" | null>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -73,7 +85,12 @@ export default function CashCountDialog({
           0,
         )
       : totalCents;
-  const valid = mode === "denominations" ? validCounts : validTotal;
+  const needsBreakdown =
+    initial.mode === "total" &&
+    Number(initial.total.trim().replace(",", ".")) > 0 &&
+    !Object.values(quantities).some((quantity) => quantity.trim());
+  const valid =
+    mode === "denominations" ? validCounts && !needsBreakdown : validTotal;
   function group(values: number[], kind: "note" | "coin") {
     return (
       <div className={`cash-count-grid ${kind}`}>
@@ -167,6 +184,13 @@ export default function CashCountDialog({
               Valor total
             </button>
           </div>
+          {mode === "denominations" && needsBreakdown && (
+            <p className="footnote">
+              Existe um total guardado de{" "}
+              {money(Math.round(Number(initial.total.replace(",", ".")) * 100))}
+              . Preencha a contagem por notas e moedas para aplicar este modo.
+            </p>
+          )}
           {mode === "denominations" ? (
             <>
               <div className="cash-count-groups">

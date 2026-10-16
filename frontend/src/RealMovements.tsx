@@ -51,10 +51,8 @@ export default function RealMovements({
       }
     };
     load();
-    window.addEventListener("gpgest-sales-updated", load);
     return () => {
       active = false;
-      window.removeEventListener("gpgest-sales-updated", load);
     };
   }, [localRows]);
   const imported = sourceRows
@@ -72,7 +70,11 @@ export default function RealMovements({
       category_name: r.category_name || (r.source_kind === "cash_movement" ? r.direction > 0 ? "Fundo de maneio" : null : r.document_group === "vendas" ? "Vendas" : null),
     }));
   const local = [...new Map([...allLocalRows, ...localRows].map(row => [row.id, row])).values()]
-    .filter(row => !store || registers.find(register => register.id === row.register_id)?.store_id === store);
+    .filter(row => !store || registers.find(register => register.id === row.register_id)?.store_id === store)
+    .flatMap<Row>(row => Array.isArray(row.supplier_parts) ? row.supplier_parts.map((part: Row, index: number) => ({
+      ...row, id: `${row.id}:supplier:${index}`, movement_id: row.id, entity: part.name || "Por atribuir",
+      amount_cents: part.amount_cents, supplier_id: part.supplier_id,
+    })) : [{ ...row, entity: row.supplier_unassigned ? "Por atribuir" : row.entity }]);
   const rows = [...(documents ? [] : local), ...imported]
     .map<Row>((r) => {
       const physical = ["Numerário", "Cheque", "Cheques", "Numerário e cheques"].includes(paymentGroup(r));

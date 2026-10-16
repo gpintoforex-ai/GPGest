@@ -111,7 +111,7 @@ def test_count_draft_all_methods_and_close_snapshot(setup):
     assert c.get("/api/sessions").json()[0]["closed_at"] is None
     assert (
         c.post(
-            f"/api/sessions/{session}/close", json={**payload, "reason": "Comissão terminal"}
+            f"/api/sessions/{session}/close", json={**payload, "reason": "Comissão terminal", "supplier_answer": "indicado", "supplier_name": "Fornecedor terminal"}
         ).status_code
         == 200
     )
@@ -225,7 +225,7 @@ def test_count_net_refund_can_be_negative(setup):
     assert (
         c.post(
             f"/api/sessions/{session}/close",
-            json={"cash_total": "100", "payments": {"cartao": "-5"}},
+            json={"cash_total": "100", "payments": {"cartao": "-5"}, "supplier_answer": "indicado", "supplier_name": "Fornecedor de teste"},
         ).status_code
         == 200
     )
@@ -285,7 +285,7 @@ def test_store_day_counts_all_manual_and_wintouch_credits_and_debits(setup):
     assert (
         c.post(
             f"/api/sessions/{first}/close",
-            json={"cash_total": "134.30", "payments": {"cartao": "5"}},
+            json={"cash_total": "134.30", "payments": {"cartao": "5"}, "supplier_answer": "indicado", "supplier_name": "Fornecedor da loja"},
         ).status_code
         == 200
     )

@@ -28,13 +28,29 @@ BASE_METHODS = {
 }
 
 
-def methods(db):
+def method_catalog(db):
+    configured = {
+        row.id: row
+        for row in db.scalars(select(LocalPaymentMethod).order_by(LocalPaymentMethod.name))
+    }
+    names = {**BASE_METHODS, **{key: row.name for key, row in configured.items()}}
+    return [
+        {
+            "id": key,
+            "name": name,
+            "active": key == "numerario" or key not in configured or configured[key].active,
+            "kind": "base" if key in BASE_METHODS else "custom",
+            "required": key == "numerario",
+        }
+        for key, name in names.items()
+    ]
+
+
+def methods(db, active_only=False):
     return {
-        **BASE_METHODS,
-        **{
-            row.id: row.name
-            for row in db.scalars(select(LocalPaymentMethod).order_by(LocalPaymentMethod.name))
-        },
+        row["id"]: row["name"]
+        for row in method_catalog(db)
+        if not active_only or row["active"]
     }
 
 
@@ -48,7 +64,17 @@ def is_local(db, session, policy):
 
 
 def drawer_rows(db, session):
-    return summary(db, session, register_only=True, methods=methods(db))
+    stored = json.loads(session.count_data or "{}")
+    if session.closed_at and stored.get("final"):
+        # Closed sheets use their immutable snapshot, including historical
+        # method names and statuses. No current catalogue lookup is needed.
+        return stored["summary"]
+    catalog = method_catalog(db)
+    rows = summary(db, session, register_only=True, methods={r["id"]: r["name"] for r in catalog})
+    if session.closed_at:
+        return rows
+    inactive = {row["id"] for row in catalog if not row["active"]}
+    return [row for row in rows if row["key"] not in inactive]
 
 
 def receipt_rows(db, session, drawer):
@@ -64,6 +90,8 @@ def receipt_rows(db, session, drawer):
             "key": row["key"],
             "name": row["name"],
             "registered_cents": 0,
+            "receipt_credits_cents": 0,
+            "receipt_debits_cents": 0,
             "manual_cents": 0,
             "erp_cents": 0,
             "sources": [],
@@ -72,18 +100,12 @@ def receipt_rows(db, session, drawer):
     }
 
     def add(key, name, amount, source):
-        row = rows.setdefault(
-            key,
-            {
-                "key": key,
-                "name": name,
-                "registered_cents": 0,
-                "manual_cents": 0,
-                "erp_cents": 0,
-                "sources": [],
-            },
-        )
+        # Receipts must not reintroduce an inactive method excluded from the drawer.
+        if key not in rows:
+            return
+        row = rows[key]
         row["registered_cents"] += amount
+        row["receipt_credits_cents" if amount >= 0 else "receipt_debits_cents"] += abs(amount)
         row[source + "_cents"] += amount
         label = "ERP" if source == "erp" else "Manual"
         if label not in row["sources"]:
@@ -143,8 +165,14 @@ def reconciliation(db, session, drawer, counting=None):
         declared = realized.get("values", {}).get(row["key"])
         balance = balances[row["key"]]
         fund = balance["fund_cents"]
-        # Replace the recorded receipts with declared sales; never add both.
-        other = balance["expected_cents"] - fund - row["registered_cents"]
+        # Declared debits are the day's total, including recorded non-sale outflows.
+        registered_credits = balance["credits_cents"] - row["receipt_credits_cents"]
+        declared_credits = realized.get("credits", {}).get(row["key"])
+        credits = registered_credits if declared_credits is None else declared_credits
+        registered_debits = balance["debits_cents"] - row["receipt_debits_cents"]
+        declared_debits = realized.get("debits", {}).get(row["key"])
+        debits = registered_debits if declared_debits is None else declared_debits
+        other = credits - debits
         expected = None if declared is None else fund + declared + other
         counted = stored.get("values", {}).get(row["key"])
         row.update(
@@ -152,6 +180,12 @@ def reconciliation(db, session, drawer, counting=None):
             difference_cents=None if declared is None else row["registered_cents"] - declared,
             declared_source="Manual",
             fund_cents=fund,
+            other_credits_cents=credits,
+            registered_credits_cents=registered_credits,
+            declared_credits_cents=declared_credits,
+            registered_debits_cents=registered_debits,
+            declared_debits_cents=declared_debits,
+            debits_cents=debits,
             other_movements_cents=other,
             expected_cents=expected,
             counted_cents=counted,
@@ -200,7 +234,18 @@ def reconciliation(db, session, drawer, counting=None):
 
 def validate(db, session, data, drawer, parse_money, user, complete=False, closing=False):
     previous = json.loads(session.count_data or "{}")
-    parsed = validate_count(data, drawer, parse_money)
+    inactive = {row["id"] for row in method_catalog(db) if not row["active"]}
+    allowed = {row["key"] for row in drawer}
+    # Older/open browser drafts may still submit inactive fields. Ignore them and
+    # retain saved values as history, without including them in this conference.
+    active_data = data.model_copy(update={"payments": {
+        key: value for key, value in data.payments.items() if key not in inactive
+    }})
+    parsed = validate_count(active_data, drawer, parse_money)
+    parsed["values"] = {
+        **{key: value for key, value in previous.get("values", {}).items() if key in inactive},
+        **parsed["values"],
+    }
     if not {"counts", "payments", "cash_total", "cash_mode"} & data.model_fields_set:
         for key in ("values", "counts", "cash_mode"):
             if key in previous:
@@ -210,11 +255,17 @@ def validate(db, session, data, drawer, parse_money, user, complete=False, closi
     counting = {**previous, **parsed}
     stamp = now().isoformat()
     if data.realized is not None:
-        allowed = {row["key"] for row in drawer}
-        if set(data.realized.values) - allowed:
+        previous_realized = realized_for(session, previous)
+        if set(data.realized.values) - (allowed | inactive):
             raise HTTPException(422, "Meio de pagamento inválido no realizado do dia.")
-        values = {}
+        values = (
+            {key: value for key, value in previous_realized.get("values", {}).items() if key in inactive}
+            if "values" in data.realized.model_fields_set
+            else previous_realized.get("values", {})
+        )
         for key, text in data.realized.values.items():
+            if key not in allowed:
+                continue
             if text is None or not text.strip():
                 values[key] = None
             else:
@@ -224,10 +275,34 @@ def validate(db, session, data, drawer, parse_money, user, complete=False, closi
                     if value.startswith("-")
                     else parse_money(value, True)
                 )
+        debits = previous_realized.get("debits", {})
+        if data.realized.debits is not None:
+            if set(data.realized.debits) - (allowed | inactive):
+                raise HTTPException(422, "Meio de pagamento inválido nos débitos do dia.")
+            debits = {key: value for key, value in previous_realized.get("debits", {}).items() if key in inactive}
+            debits.update({
+                key: None if text is None or not text.strip() else parse_money(text.strip(), True)
+                for key, text in data.realized.debits.items() if key in allowed
+            })
+        credits = previous_realized.get("credits", {})
+        if data.realized.credits is not None:
+            if set(data.realized.credits) - (allowed | inactive):
+                raise HTTPException(422, "Meio de pagamento inválido nos créditos do dia.")
+            credits = {key: value for key, value in previous_realized.get("credits", {}).items() if key in inactive}
+            credits.update({
+                key: None if text is None or not text.strip() else parse_money(text.strip(), True)
+                for key, text in data.realized.credits.items() if key in allowed
+            })
         counting["realized"] = {
             "values": values,
-            "notes": data.realized.notes,
-            "pos_reference": data.realized.pos_reference,
+            "debits": debits,
+            "credits": credits,
+            "notes": data.realized.notes
+            if "notes" in data.realized.model_fields_set
+            else previous_realized.get("notes", ""),
+            "pos_reference": data.realized.pos_reference
+            if "pos_reference" in data.realized.model_fields_set
+            else previous_realized.get("pos_reference", ""),
             "day": session.sheet_day or day(session.opened_at),
             "register_id": session.register_id,
             "source": "Manual",

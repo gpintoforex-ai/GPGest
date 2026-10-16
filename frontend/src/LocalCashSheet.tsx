@@ -11,10 +11,18 @@ import {
   X,
   LockKeyhole,
   LockKeyholeOpen,
+  CircleMinus,
+  Calculator,
+  Info,
 } from "lucide-react";
 import { api, Field } from "./App";
 import CashCountDialog from "./CashCountDialog";
+import NumericKeypad from "./NumericKeypad";
+import ReadAloud from "./ReadAloud";
+import SettlementConfirmation from "./SettlementConfirmation";
+import CashSupplierDialog, { type CashSupplierAllocation } from "./CashSupplierDialog";
 import CashReconciliation from "./CashReconciliation";
+import { useCashPreferences } from "./CashPreferences";
 import "./CashSheet.css";
 import "./LocalCashSheet.css";
 
@@ -67,6 +75,7 @@ function RealizedDialog({
   const titleId = useId();
   const [draft, setDraft] = useState(initial);
   const cents = amount(draft.value);
+  const valid = cents !== null;
   const Icon = icon(row.key);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -74,7 +83,9 @@ function RealizedDialog({
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     element.showModal();
-    element.querySelector("input")?.focus();
+    const input = element.querySelector("input");
+    input?.focus();
+    input?.select();
     return () => {
       element.close();
       document.body.style.overflow = overflow;
@@ -94,7 +105,7 @@ function RealizedDialog({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (cents !== null) onApply({ ...draft, value: euros(cents) });
+          if (valid) onApply({ ...draft, value: euros(cents!) });
         }}
       >
         <div className="panel-title">
@@ -114,7 +125,7 @@ function RealizedDialog({
             onChange={(e) => setDraft({ ...draft, value: e.target.value })}
           />
         </Field>
-        {draft.value.trim() && cents === null && (
+        {draft.value.trim() && !valid && (
           <p className="error" role="alert">
             Introduza um valor válido em euros, com até duas casas decimais.
           </p>
@@ -123,7 +134,7 @@ function RealizedDialog({
           Indique o faturado neste meio de pagamento. Este é o valor esperado
           para a conferência. Introduza zero para confirmar que não houve
           vendas. Depois de aplicar, escolha «Guardar rascunho» na folha para
-          guardar o valor. Este registo não cria movimentos.
+          guardar o valor. O fecho cria apenas os movimentos ainda em falta.
         </p>
         <details className="local-realized-details">
           <summary>Observações do dia e referência POS</summary>
@@ -146,7 +157,7 @@ function RealizedDialog({
           </Field>
         </details>
         <div className="actions">
-          <button className="primary" disabled={cents === null}>
+          <button className="primary" disabled={!valid}>
             Aplicar valor
           </button>
           {initial.value.trim() && (
@@ -175,7 +186,9 @@ export default function LocalCashSheet({
   writable,
   manager,
   reload,
+  onSaved,
   onAction,
+  active = true,
 }: {
   session: Row;
   register: string;
@@ -184,15 +197,40 @@ export default function LocalCashSheet({
   writable: boolean;
   manager: boolean;
   reload: () => Promise<void>;
+  onSaved?: (saved: Row) => void;
   onAction: (kind: string, row: Row) => void;
+  active?: boolean;
 }) {
   const rec = s.sheet.reconciliation;
+  const closeHelpId = useId();
+  const closeTitleId = useId();
+  const closeDialog = useRef<HTMLDialogElement>(null);
+  const [closeWarnings, setCloseWarnings] = useState<string[] | null>(null);
+  const conferenceHelpId = useId();
+  const [showConferenceHelp, setShowConferenceHelp] = useState(false);
+  const { preferences } = useCashPreferences();
   const stored = s.count_data || {};
   const hydrate = () => ({
     values: Object.fromEntries(
       rec.rows.map((row: Row) => [
         row.key,
         row.declared_cents == null ? "" : euros(row.declared_cents),
+      ]),
+    ) as Record<string, string>,
+    debits: Object.fromEntries(
+      rec.rows.map((row: Row) => [
+        row.key,
+        rec.realized.debits?.[row.key] == null
+          ? ""
+          : euros(rec.realized.debits[row.key]),
+      ]),
+    ) as Record<string, string>,
+    credits: Object.fromEntries(
+      rec.rows.map((row: Row) => [
+        row.key,
+        rec.realized.credits?.[row.key] == null
+          ? ""
+          : euros(rec.realized.credits[row.key]),
       ]),
     ) as Record<string, string>,
     confirmed: Object.fromEntries(
@@ -217,19 +255,42 @@ export default function LocalCashSheet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [closeNotice, setCloseNotice] = useState("");
+  const [supplierPrompt, setSupplierPrompt] = useState(false);
   const [countDialog, setCountDialog] = useState(false);
   const [realizedMethod, setRealizedMethod] = useState<string | null>(null);
+  const [debitMethod, setDebitMethod] = useState<string | null>(null);
+  const [adjustmentKind, setAdjustmentKind] = useState<"debits" | "credits">(
+    "debits",
+  );
   const [newMethod, setNewMethod] = useState<string | null>(null);
   useEffect(() => {
     setForm(hydrate());
     setDirty(false);
     setSourceDay(s.sheet.day);
     setRealizedMethod(null);
+    setDebitMethod(null);
+    setCloseWarnings(null);
   }, [s.id, stored.updated_at, s.sheet.day]);
+  useEffect(() => {
+    if (!closeWarnings) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const element = closeDialog.current!;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    element.showModal();
+    element.querySelector<HTMLButtonElement>(".primary")?.focus();
+    return () => {
+      element.close();
+      document.body.style.overflow = overflow;
+      previous?.focus();
+    };
+  }, [closeWarnings]);
   const editable = writable && !s.closed_at;
   const update = (patch: Partial<typeof form>) => {
     setForm((previous) => ({ ...previous, ...patch }));
     setDirty(true);
+    setError("");
     setNotice("");
   };
   const rows: Row[] = rec.rows;
@@ -251,36 +312,121 @@ export default function LocalCashSheet({
   const difference = complete ? registeredTotal - declaredTotal : null;
   const legacyClose =
     !!s.closed_at && rec.expectation_basis !== "declared_sales";
-  const otherFor = (key: string) => {
+  const registeredDebitFor = (key: string): number =>
+    rows.find((row) => row.key === key)?.registered_debits_cents ??
+    s.sheet.rows.find((row: Row) => row.key === key)?.debits_cents ??
+    0;
+  const registeredCreditFor = (key: string): number => {
+    const row = rows.find((row) => row.key === key);
+    const ledger = s.sheet.rows.find((row: Row) => row.key === key);
+    return (
+      row?.registered_credits_cents ??
+      row?.other_credits_cents ??
+      (ledger?.credits_cents ?? 0) -
+        (row?.receipt_credits_cents ?? Math.max(row?.registered_cents ?? 0, 0))
+    );
+  };
+  const creditFor = (key: string): number | null => {
+    if (s.closed_at)
+      return rows.find((row) => row.key === key)?.other_credits_cents ?? 0;
+    if (!form.credits[key]?.trim()) return registeredCreditFor(key);
+    const credit = amount(form.credits[key]);
+    return credit === null || credit < 0 ? null : credit;
+  };
+  const debitFor = (key: string): number | null => {
+    if (s.closed_at)
+      return rows.find((row) => row.key === key)?.debits_cents ?? null;
+    if (!form.debits[key]?.trim()) return registeredDebitFor(key);
+    const debit = amount(form.debits[key]);
+    return debit === null || debit < 0 ? null : debit;
+  };
+  const debitsValid = rows.every(
+    (row) => !form.debits[row.key]?.trim() || debitFor(row.key) !== null,
+  );
+  const creditsValid = rows.every(
+    (row) => !form.credits[row.key]?.trim() || creditFor(row.key) !== null,
+  );
+  const creditsTotal = rows.every((row) => creditFor(row.key) !== null)
+    ? rows.reduce((sum, row) => sum + creditFor(row.key)!, 0)
+    : null;
+  const debitsTotal = rows.every((row) => debitFor(row.key) !== null)
+    ? rows.reduce((sum, row) => sum + debitFor(row.key)!, 0)
+    : null;
+  const otherFor = (key: string): number | null => {
     const ledger = s.sheet.rows.find((row: Row) => row.key === key);
     const receipt = rows.find((row) => row.key === key);
-    return (
+    const original =
       (ledger?.expected_cents ?? 0) -
       (key === "numerario" ? s.opening_cents : 0) -
-      (receipt?.registered_cents ?? 0)
-    );
+      (receipt?.registered_cents ?? 0);
+    if (s.closed_at) return receipt?.other_movements_cents ?? original;
+    const credits = creditFor(key);
+    const debit = debitFor(key);
+    return debit === null || credits === null ? null : credits - debit;
   };
   const expectedFor = (key: string): number | null => {
     const ledger = s.sheet.rows.find((row: Row) => row.key === key);
-    if (legacyClose) return ledger?.expected_cents ?? 0;
+    if (s.closed_at)
+      return (
+        rows.find((row) => row.key === key)?.expected_cents ??
+        ledger?.expected_cents ??
+        0
+      );
     const declared = amount(form.values[key] || "");
-    return declared === null
+    const other = otherFor(key);
+    return declared === null || other === null
       ? null
-      : declared + (key === "numerario" ? s.opening_cents : 0) + otherFor(key);
+      : declared + (key === "numerario" ? s.opening_cents : 0) + other;
   };
   const cashExpected = expectedFor("numerario");
   const cashDifference =
     counted === null || cashExpected === null ? null : counted - cashExpected;
   const countFor = (key: string) =>
     key === "numerario" ? counted : amount(form.confirmed[key] || "");
+  const noMovementBlocked = (key: string) => {
+    const ledger = s.sheet.rows.find((row: Row) => row.key === key);
+    const receipt = rows.find((row) => row.key === key);
+    const hasRecordedMovements = [
+      ledger?.count,
+      ledger?.credits_cents,
+      ledger?.debits_cents,
+      receipt?.receipt_credits_cents,
+      receipt?.receipt_debits_cents,
+      receipt?.registered_cents,
+    ].some((value) => value != null && value !== 0);
+    const nonZeroOrInvalid = (text: string) =>
+      !!text.trim() && amount(text) !== 0;
+    return (
+      hasRecordedMovements ||
+      nonZeroOrInvalid(form.values[key] || "") ||
+      nonZeroOrInvalid(form.debits[key] || "") ||
+      nonZeroOrInvalid(form.credits[key] || "") ||
+      (key !== "numerario" && nonZeroOrInvalid(form.confirmed[key] || ""))
+    );
+  };
+  const isWithoutMovement = (key: string) =>
+    !noMovementBlocked(key) &&
+    amount(form.values[key] || "") === 0 &&
+    (key === "numerario" || countFor(key) === 0);
+  function toggleWithoutMovement(key: string) {
+    if (!editable || busy || noMovementBlocked(key)) return;
+    const value = isWithoutMovement(key) ? "" : "0,00";
+    update({
+      values: { ...form.values, [key]: value },
+      ...(key !== "numerario"
+        ? { confirmed: { ...form.confirmed, [key]: value } }
+        : {}),
+    });
+  }
   const countsComplete = rows.every((row) => countFor(row.key) !== null);
   const countedTotal = rows.reduce(
     (sum, row) => sum + (countFor(row.key) ?? 0),
     0,
   );
-  const expectedTotal = complete
-    ? rows.reduce((sum, row) => sum + (expectedFor(row.key) ?? 0), 0)
-    : null;
+  const expectedTotal =
+    complete && debitsValid && creditsValid
+      ? rows.reduce((sum, row) => sum + (expectedFor(row.key) ?? 0), 0)
+      : null;
   const countDifference =
     !countsComplete || expectedTotal === null
       ? null
@@ -292,6 +438,52 @@ export default function LocalCashSheet({
       expectedFor(row.key) !== null &&
       countFor(row.key) !== expectedFor(row.key),
   );
+  const valueError =
+    rows.some(
+      (row) =>
+        form.values[row.key]?.trim() && amount(form.values[row.key]) === null,
+    ) ||
+    rows.some(
+      (row) => row.key !== "numerario" && form.confirmed[row.key]?.trim() && amount(form.confirmed[row.key]) === null,
+    ) ||
+    (form.mode === "total" && form.cash.trim() && amount(form.cash) === null) ||
+    (counted !== null && counted < 0);
+  const commonIssues = [
+    ...(!debitsValid
+      ? [
+          "Introduza débitos válidos, iguais ou superiores a zero, com até duas casas decimais.",
+        ]
+      : []),
+    ...(!creditsValid
+      ? [
+          "Introduza créditos válidos, iguais ou superiores a zero, com até duas casas decimais.",
+        ]
+      : []),
+    ...(valueError
+      ? [
+          "Introduza valores válidos em euros, com até duas casas decimais. O numerário contado não pode ser negativo.",
+        ]
+      : []),
+  ];
+  const missingDeclared = rows.filter((row) => !form.values[row.key]?.trim());
+  const missingDeclaredIssue = missingDeclared.length
+    ? `Preencha o faturado de: ${missingDeclared.map((row) => row.name).join(", ")}. Indique zero nos meios sem vendas ou recebimentos.`
+    : null;
+  const requiredIssues = [
+    ...(missingDeclaredIssue ? [missingDeclaredIssue] : []),
+    ...(counted === null
+      ? [
+          "Indique o numerário contado, incluindo zero se a gaveta estiver vazia.",
+        ]
+      : []),
+  ];
+  const closeIssues = [
+    ...commonIssues,
+    ...requiredIssues,
+    ...(hasDifference && form.reason.trim().length < 5
+      ? ["Justifique as diferenças com pelo menos 5 caracteres."]
+      : []),
+  ];
   const tone = (diff: number | null, confirmed = true) =>
     diff === null
       ? "pending"
@@ -300,31 +492,36 @@ export default function LocalCashSheet({
         : confirmed
           ? "matched"
           : "pending";
-  async function save(action: "count" | "reconcile" | "close") {
+  async function save(action: "count" | "reconcile" | "close", supplierAllocations?: CashSupplierAllocation[]) {
     setError("");
     setNotice("");
-    if (
-      rows.some(
-        (row) =>
-          form.values[row.key]?.trim() && amount(form.values[row.key]) === null,
-      ) ||
-      Object.values(form.confirmed).some(
-        (value) => value.trim() && amount(value) === null,
-      ) ||
-      (form.cash.trim() && amount(form.cash) === null) ||
-      (counted !== null && counted < 0)
-    ) {
-      setError(
-        "Introduza valores válidos em euros, com duas casas decimais. O numerário contado não pode ser negativo.",
-      );
+    const issues =
+      action === "close"
+        ? closeIssues
+        : action === "reconcile"
+          ? [...commonIssues, ...requiredIssues]
+          : commonIssues;
+    if (issues.length) {
+      if (action === "close") setCloseWarnings(issues);
+      else setError(issues.join(" "));
+      return;
+    }
+    if (action === "close" && (debitsTotal || 0) > 0 && !supplierAllocations) {
+      setSupplierPrompt(true);
       return;
     }
     setBusy(true);
     try {
-      await api(`/sessions/${s.id}/${action}`, {
+      const saved = await api(`/sessions/${s.id}/${action}`, {
         realized: {
           values: Object.fromEntries(
             rows.map((row) => [row.key, form.values[row.key]?.trim() || null]),
+          ),
+          debits: Object.fromEntries(
+            rows.map((row) => [row.key, form.debits[row.key]?.trim() || null]),
+          ),
+          credits: Object.fromEntries(
+            rows.map((row) => [row.key, form.credits[row.key]?.trim() || null]),
           ),
           notes: form.notes,
           pos_reference: form.pos,
@@ -333,22 +530,28 @@ export default function LocalCashSheet({
           form.mode === "total" && form.cash.trim() ? form.cash : null,
         counts: form.mode === "denominations" ? form.counts : {},
         payments: Object.fromEntries(
-          Object.entries(form.confirmed).filter(([, value]) => value.trim()),
+          rows.filter((row) => row.key !== "numerario" && form.confirmed[row.key]?.trim())
+            .map((row) => [row.key, form.confirmed[row.key]]),
         ),
         cash_mode: form.mode,
         reason: form.reason,
+        ...(action === "close" && supplierAllocations ? {
+          supplier_answer: "indicado",
+          supplier_allocations: supplierAllocations.map(({ id, amount_cents, payment }) => ({ supplier_id: id, amount_cents, ...(payment ? { payment } : {}) })),
+        } : {}),
       });
-      await reload();
+      if (action !== "close" && onSaved) onSaved(saved);
+      else await reload();
       setDirty(false);
-      setNotice(
-        action === "close"
-          ? "Caixa fechada. As diferenças foram guardadas sem criar ajustes."
-          : action === "reconcile"
+      setSupplierPrompt(false);
+      if (action === "close") {
+        setCloseNotice(`${register} · ${store} · ${s.sheet.day.split("-").reverse().join("/")}. Os valores foram guardados e os montantes ainda não registados foram adicionados aos movimentos reais.`);
+        window.dispatchEvent(new CustomEvent("gpgest-sales-updated", { detail: { appRefreshed: true } }));
+      } else {
+        setNotice(action === "reconcile"
             ? "Conferência guardada."
-            : "Rascunho guardado.",
-      );
-      if (action === "close")
-        window.dispatchEvent(new Event("gpgest-sales-updated"));
+            : "Rascunho guardado.");
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -360,8 +563,8 @@ export default function LocalCashSheet({
       className="panel cash-sheet local-cash-sheet"
       aria-label={`Folha de caixa ${register}`}
     >
-      <div className="panel-title">
-        <div>
+      <div className="local-cash-header">
+        <div className="local-cash-identity">
           <h3>
             {register} · {store}
           </h3>
@@ -370,27 +573,6 @@ export default function LocalCashSheet({
             {s.closed_at ? "Fechada" : "Em aberto"}
           </p>
         </div>
-        <span
-          className={`cash-sheet-status ${s.closed_at ? "closed" : "open"}`}
-        >
-          {s.closed_at ? (
-            <LockKeyhole size={16} aria-hidden="true" />
-          ) : (
-            <LockKeyholeOpen size={16} aria-hidden="true" />
-          )}
-          {s.closed_at ? "Fechada" : "Aberta"}
-        </span>
-      </div>
-      <CashReconciliation
-        opening={s.opening_cents}
-        expected={cashExpected}
-        counted={counted}
-        declaredSales={!legacyClose}
-      />
-      <details className="cash-sheet-details">
-        <summary>
-          {s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"}
-        </summary>
         <div className="local-realized-toolbar">
           <h3>Realizado do dia</h3>
           <div className="local-cash-context local-cash-day-context">
@@ -430,10 +612,16 @@ export default function LocalCashSheet({
             )}
           </div>
         </div>
-        <p className="footnote">
-          Indique o faturado do dia por meio de pagamento e compare com o valor
-          contado ou conferido. Guardar o faturado não cria movimentos.
-        </p>
+        <span
+          className={`cash-sheet-status ${s.closed_at ? "closed" : "open"}`}
+        >
+          {s.closed_at ? (
+            <LockKeyhole size={16} aria-hidden="true" />
+          ) : (
+            <LockKeyholeOpen size={16} aria-hidden="true" />
+          )}
+          {s.closed_at ? "Fechada" : "Aberta"}
+        </span>
         {editable && manager && newMethod !== null && (
           <div className="local-cash-methods">
             <form
@@ -470,12 +658,72 @@ export default function LocalCashSheet({
             </form>
           </div>
         )}
-        <h3>Conferência do faturado</h3>
-        <p className="footnote">
-          O faturado declarado é a base do valor esperado. No numerário, soma-se
-          o fundo de maneio e incluem-se as restantes entradas e saídas da
-          gaveta. Diferença = contado / conferido − esperado.
+      </div>
+      {error && (
+        <p className="error" role="alert">
+          {error}
         </p>
+      )}
+      {notice && <p role="status">{notice}</p>}
+      <CashReconciliation
+        opening={s.opening_cents}
+        expected={cashExpected}
+        counted={counted}
+        declaredSales={!legacyClose}
+      />
+      <details className="cash-sheet-details">
+        <summary>
+          {s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"}
+        </summary>
+        <div className="local-cash-conference-heading">
+          <h3>Conferência do faturado</h3>
+          <button
+            type="button"
+            className="local-cash-info"
+            aria-label="Informação sobre a conferência do faturado"
+            title="Informação sobre a conferência do faturado"
+            aria-expanded={showConferenceHelp}
+            aria-controls={conferenceHelpId}
+            onClick={() => setShowConferenceHelp((shown) => !shown)}
+          >
+            <Info size={20} aria-hidden="true" />
+          </button>
+        </div>
+        <div
+          id={conferenceHelpId}
+          className="local-cash-conference-help"
+          hidden={!showConferenceHelp}
+        >
+          <ReadAloud active={active && showConferenceHelp}>
+            <p className="footnote">
+              Indique o faturado do dia por meio de pagamento e compare com o valor
+              contado ou conferido. Guardar o rascunho não cria movimentos. O fecho regista os montantes ainda em falta nos movimentos reais.
+            </p>
+            <p className="footnote">
+              O faturado declarado é a base do valor esperado. No numerário, soma-se
+              o fundo de maneio e incluem-se as restantes entradas e saídas da
+              gaveta. Diferença = contado / conferido − esperado.
+            </p>
+            {editable && (
+              <p className="footnote">
+                Sem movimento confirma faturado e conferido a zero nos meios sem
+                registos. No numerário, confirma apenas faturado zero: conte sempre
+                o dinheiro físico, incluindo o fundo de maneio.
+              </p>
+            )}
+            <p className="footnote">
+              Débitos / créditos: carregue no valor para abrir a calculadora e
+              escolha débito (saída) ou crédito (entrada). Indique os totais do dia,
+              incluindo os já registados. A coluna mostra créditos menos débitos.
+              Guardar o rascunho não cria movimentos. O fecho regista apenas os montantes ainda em falta.
+            </p>
+            <p className="footnote">
+              Contado / conferido: numerário físico, incluindo o fundo de maneio, ou
+              valor líquido conferido no terminal, extrato ou comprovativos nos
+              restantes meios. Diferença = contado / conferido − esperado.
+            </p>
+          </ReadAloud>
+        </div>
         {legacyClose && (
           <p className="footnote">
             Fecho anterior: preservado o esperado calculado a partir dos
@@ -493,7 +741,8 @@ export default function LocalCashSheet({
                   </span>
                 </th>
                 <th>Faturado</th>
-                <th>Esperado</th>
+                <th>Débitos / créditos</th>
+                <th className="local-cash-expected">Esperado</th>
                 <th>Contado / conferido</th>
                 <th>Diferença</th>
               </tr>
@@ -504,6 +753,15 @@ export default function LocalCashSheet({
                 const Icon = icon(row.key);
                 const confirmed = countFor(row.key);
                 const expected = expectedFor(row.key);
+                const debit = debitFor(row.key);
+                const credit = creditFor(row.key);
+                const adjustment =
+                  debit === null || credit === null ? null : credit - debit;
+                const adjustmentText =
+                  adjustment === null
+                    ? "Registar valor"
+                    : `${adjustment > 0 ? "+" : ""}${money(adjustment)}`;
+                const other = otherFor(row.key);
                 const confirmedDifference =
                   confirmed === null || expected === null
                     ? null
@@ -511,14 +769,35 @@ export default function LocalCashSheet({
                 return (
                   <tr key={row.key}>
                     <td>
-                      <span className="cash-payment-label">
-                        <Icon size={18} aria-hidden="true" /> {row.name}
-                      </span>
+                      <div className="local-cash-method-cell">
+                        <span className="cash-payment-label">
+                          <Icon size={18} aria-hidden="true" /> {row.name}
+                        </span>
+                        {editable && (
+                          <button
+                            type="button"
+                            className="local-cash-no-movement"
+                            aria-label={`Sem movimento — ${row.name}`}
+                            aria-pressed={isWithoutMovement(row.key)}
+                            disabled={busy || noMovementBlocked(row.key)}
+                            title={`Sem movimento — ${
+                              noMovementBlocked(row.key)
+                                ? "Este meio já tem movimentos ou valores preenchidos. Confira os valores registados."
+                                : row.key === "numerario"
+                                  ? "Confirmar faturado zero. A contagem do dinheiro físico continua obrigatória."
+                                  : "Confirmar faturado e conferido a zero. Carregue novamente para deixar por preencher."
+                            }`}
+                            onClick={() => toggleWithoutMovement(row.key)}
+                          >
+                            <CircleMinus size={20} aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td>
                       {editable ? (
                         <button
-                          className={`local-realized-button ${tone(confirmedDifference)}`}
+                          className={`local-realized-button local-cash-value-box ${tone(confirmedDifference)}`}
                           disabled={busy}
                           aria-haspopup="dialog"
                           aria-label={`${declared === null ? "Registar" : "Alterar"} valor de ${row.name}`}
@@ -533,29 +812,59 @@ export default function LocalCashSheet({
                             ? "Registar valor"
                             : money(declared)}
                         </button>
-                      ) : declared === null ? (
-                        "Por preencher"
                       ) : (
-                        money(declared)
+                        <span
+                          className={`local-cash-value-box ${tone(confirmedDifference)}`}
+                        >
+                          {declared === null
+                            ? "Por preencher"
+                            : money(declared)}
+                        </span>
                       )}
                     </td>
                     <td>
+                      {editable ? (
+                        <button
+                          className={`local-debit-button local-cash-value-box ${tone(confirmedDifference)}`}
+                          aria-label={`Registar débitos / créditos de ${row.name}`}
+                          title={`Débitos: ${debit === null ? "Por preencher" : money(debit)} · Créditos: ${credit === null ? "Por preencher" : money(credit)}`}
+                          aria-haspopup="dialog"
+                          disabled={busy}
+                          onClick={() => {
+                            setAdjustmentKind(
+                              (credit ?? 0) > (debit ?? 0)
+                                ? "credits"
+                                : "debits",
+                            );
+                            setDebitMethod(row.key);
+                          }}
+                        >
+                          <Calculator size={16} aria-hidden="true" />
+                          {adjustmentText}
+                        </button>
+                      ) : (
+                        <span
+                          className={`local-cash-value-box ${tone(confirmedDifference)}`}
+                        >
+                          {adjustment === null ? "—" : adjustmentText}
+                        </span>
+                      )}
+                    </td>
+                    <td className="local-cash-expected">
                       <strong>
                         {expected === null ? "Por preencher" : money(expected)}
                       </strong>
                       {row.key === "numerario" && (
                         <small>Fundo: {money(s.opening_cents)}</small>
                       )}
-                      {otherFor(row.key) !== 0 && (
-                        <small>
-                          Outros movimentos: {money(otherFor(row.key))}
-                        </small>
+                      {other !== null && other !== 0 && (
+                        <small>Outros movimentos: {money(other)}</small>
                       )}
                     </td>
                     <td>
                       {editable && row.key === "numerario" ? (
                         <button
-                          className="cash-count-trigger"
+                          className={`cash-count-trigger local-cash-value-box ${tone(confirmedDifference)}`}
                           aria-label="Contar numerário"
                           aria-haspopup="dialog"
                           disabled={busy}
@@ -571,6 +880,7 @@ export default function LocalCashSheet({
                       ) : editable ? (
                         <input
                           aria-label={`Contagem ${row.name} (€)`}
+                          className={`local-cash-value-box ${tone(confirmedDifference)}`}
                           inputMode="decimal"
                           placeholder="Por conferir"
                           disabled={busy}
@@ -584,24 +894,24 @@ export default function LocalCashSheet({
                             })
                           }
                         />
-                      ) : confirmed === null ? (
-                        "Por conferir"
                       ) : (
-                        money(confirmed)
+                        <span
+                          className={`local-cash-value-box ${tone(confirmedDifference)}`}
+                        >
+                          {confirmed === null
+                            ? "Por conferir"
+                            : money(confirmed)}
+                        </span>
                       )}
                     </td>
-                    <td
-                      className={
-                        confirmedDifference === null
-                          ? ""
-                          : confirmedDifference === 0
-                            ? "positive"
-                            : "negative"
-                      }
-                    >
-                      {confirmedDifference === null
-                        ? "Por conferir"
-                        : money(confirmedDifference)}
+                    <td>
+                      <span
+                        className={`local-cash-value-box ${tone(confirmedDifference)}`}
+                      >
+                        {confirmedDifference === null
+                          ? "Por conferir"
+                          : money(confirmedDifference)}
+                      </span>
                     </td>
                   </tr>
                 );
@@ -615,6 +925,11 @@ export default function LocalCashSheet({
                   {!complete && <small>Faturado incompleto</small>}
                 </td>
                 <td>
+                  {debitsTotal === null || creditsTotal === null
+                    ? "—"
+                    : money(creditsTotal - debitsTotal)}
+                </td>
+                <td className="local-cash-expected">
                   {expectedTotal === null
                     ? "Por preencher"
                     : money(expectedTotal)}
@@ -631,11 +946,6 @@ export default function LocalCashSheet({
             </tfoot>
           </table>
         </div>
-        <p className="footnote">
-          Contado / conferido: numerário físico, incluindo o fundo de maneio, ou
-          valor líquido conferido no terminal, extrato ou comprovativos nos
-          restantes meios. Diferença = contado / conferido − esperado.
-        </p>
         <details className="local-realized-details">
           <summary>Consultar movimentos registados</summary>
           <p className="footnote">
@@ -665,10 +975,9 @@ export default function LocalCashSheet({
                       </td>
                       <td>
                         {money(row.registered_cents)}
-                        <small>
-                          Manual: {money(row.manual_cents)} · ERP:{" "}
-                          {money(row.erp_cents)}
-                        </small>
+                        {row.sources?.includes("ERP") && (
+                          <small>ERP: {money(row.erp_cents)}</small>
+                        )}
                       </td>
                       <td>
                         {declared === null
@@ -719,18 +1028,83 @@ export default function LocalCashSheet({
             }}
           />
         )}
+        {editable && debitMethod !== null && (
+          <NumericKeypad
+            key={`debit-${debitMethod}`}
+            calculator
+            decimal
+            maxCents={99999999900}
+            label={`${adjustmentKind === "debits" ? "Débitos" : "Créditos"} — ${rows.find((row) => row.key === debitMethod)!.name} (€)`}
+            value={euros(
+              (adjustmentKind === "debits"
+                ? debitFor(debitMethod)
+                : creditFor(debitMethod)) ?? 0,
+            )}
+            description="Indique o total do dia, incluindo os valores já registados. Os débitos reduzem o esperado e os créditos aumentam-no. Depois de aplicar, escolha Guardar rascunho na folha. Não são criados movimentos."
+            resetLabel={`Usar ${adjustmentKind === "debits" ? "débitos" : "créditos"} dos movimentos`}
+            onReset={
+              form[adjustmentKind][debitMethod]?.trim()
+                ? () => {
+                    update({
+                      [adjustmentKind]: {
+                        ...form[adjustmentKind],
+                        [debitMethod]: "",
+                      },
+                    });
+                    setDebitMethod(null);
+                  }
+                : undefined
+            }
+            onCancel={() => setDebitMethod(null)}
+            onConfirm={(value) => {
+              update({
+                [adjustmentKind]: {
+                  ...form[adjustmentKind],
+                  [debitMethod]: value,
+                },
+              });
+              setDebitMethod(null);
+            }}
+          >
+            <div
+              className="cash-adjustment-types"
+              role="group"
+              aria-label="Tipo de movimento"
+            >
+              <button
+                type="button"
+                aria-label="Débito (saída)"
+                aria-pressed={adjustmentKind === "debits"}
+                onClick={() => setAdjustmentKind("debits")}
+              >
+                Débitos <strong>{money(debitFor(debitMethod) ?? 0)}</strong>
+              </button>
+              <button
+                type="button"
+                aria-label="Crédito (entrada)"
+                aria-pressed={adjustmentKind === "credits"}
+                onClick={() => setAdjustmentKind("credits")}
+              >
+                Créditos <strong>{money(creditFor(debitMethod) ?? 0)}</strong>
+              </button>
+            </div>
+          </NumericKeypad>
+        )}
         <h3>Conferência do numerário físico</h3>
         <p className="footnote">
           {legacyClose
             ? "Saldo esperado preservado do fecho anterior."
-            : "Esperado na gaveta = fundo de maneio + faturado em numerário + outras entradas − outras saídas. Inclui despesas, retiradas e depósitos efetivamente retirados da gaveta. Os recebimentos registados já incluídos no faturado não são somados novamente."}
+            : "Esperado na gaveta = fundo de maneio + faturado em numerário + créditos − débitos. Inclui despesas, retiradas e depósitos efetivamente retirados da gaveta. Os recebimentos, créditos e débitos já registados não são somados novamente."}
         </p>
         <p className="footnote">
           Fundo: {money(s.opening_cents)} · Faturado em numerário:{" "}
           {amount(form.values.numerario || "") === null
             ? "Por preencher"
             : money(amount(form.values.numerario)!)}{" "}
-          · Outros movimentos: {money(otherFor("numerario"))}
+          · Outros movimentos:{" "}
+          {otherFor("numerario") === null
+            ? "Por preencher"
+            : money(otherFor("numerario")!)}
         </p>
         <div className="local-cash-context">
           <div className={`local-cash-amount ${tone(cashDifference)}`}>
@@ -748,6 +1122,7 @@ export default function LocalCashSheet({
         </div>
         {editable && countDialog && (
           <CashCountDialog
+            defaultMode={preferences.countMode}
             initial={{
               mode: form.mode as "total" | "denominations",
               counts: form.counts,
@@ -796,6 +1171,15 @@ export default function LocalCashSheet({
             Fechado por {stored.closed_by_name} · {date(s.closed_at)}
           </p>
         )}
+        {s.closed_at && stored.debit_supplier && (
+          <div className="cash-supplier-summary">
+            <strong>Fornecedores dos débitos:</strong>
+            {stored.debit_supplier.allocations?.length
+              ? stored.debit_supplier.allocations.map((allocation: Row) => <p key={`${allocation.id}:${allocation.payment || ""}`}>{allocation.name}{allocation.payment ? ` · ${rows.find(row => row.key === allocation.payment)?.name || allocation.payment}` : ""} · {money(allocation.amount_cents)}</p>)
+              : <p>{stored.debit_supplier.answer === "indicado" ? `${stored.debit_supplier.name} · ${money(stored.debit_supplier.debits_cents)}` : "Não identificado"}</p>}
+            {stored.debit_supplier.unassigned_cents > 0 && <p>Por atribuir: {money(stored.debit_supplier.unassigned_cents)}</p>}
+          </div>
+        )}
         {stored.reopened_at && (
           <p className="footnote">
             Reaberto por {stored.reopened_by_name} · {date(stored.reopened_at)}{" "}
@@ -803,18 +1187,6 @@ export default function LocalCashSheet({
           </p>
         )}
         {dirty && <p className="footnote">Há alterações por guardar.</p>}
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-        {notice && <p role="status">{notice}</p>}
-        {editable && (!complete || counted === null) && (
-          <p className="footnote">
-            Para conferir e fechar, preencha todos os meios, incluindo zero nos
-            meios sem recebimentos, e indique o numerário contado.
-          </p>
-        )}
         <div className="actions">
           {editable && (
             <>
@@ -822,19 +1194,20 @@ export default function LocalCashSheet({
                 Guardar rascunho
               </button>
               <button
-                disabled={busy || !complete || counted === null}
+                disabled={
+                  busy ||
+                  !complete ||
+                  !debitsValid ||
+                  !creditsValid ||
+                  counted === null
+                }
                 onClick={() => save("reconcile")}
               >
                 Conferir
               </button>
               <button
                 className="primary"
-                disabled={
-                  busy ||
-                  !complete ||
-                  counted === null ||
-                  (hasDifference && form.reason.trim().length < 5)
-                }
+                disabled={busy}
                 onClick={() => save("close")}
               >
                 Fechar caixa
@@ -854,6 +1227,76 @@ export default function LocalCashSheet({
           )}
         </div>
       </details>
+      {closeWarnings && createPortal(
+        <dialog
+          ref={closeDialog}
+          className="local-realized-dialog local-cash-close-dialog"
+          role="alertdialog"
+          aria-labelledby={closeTitleId}
+          aria-describedby={closeHelpId}
+          onCancel={(e) => {
+            e.preventDefault();
+            setCloseWarnings(null);
+          }}
+        >
+          <div className="panel-title">
+            <h2 id={closeTitleId}>Para fechar a caixa</h2>
+            <button
+              type="button"
+              aria-label="Fechar aviso"
+              onClick={() => setCloseWarnings(null)}
+            >
+              <X size={20} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="local-cash-close-guidance" id={closeHelpId}>
+            <ul>
+              {closeWarnings.map((issue) => (
+                <li key={issue}>
+                  {issue === missingDeclaredIssue ? (
+                    <>
+                      Preencha o faturado de:{" "}
+                      <strong>
+                        {missingDeclared.map((row) => row.name).join(", ")}
+                      </strong>
+                      . Indique zero nos meios sem vendas ou recebimentos.
+                    </>
+                  ) : issue}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="actions">
+            <button
+              type="button"
+              className="primary"
+              onClick={() => setCloseWarnings(null)}
+            >
+              Voltar à conferência
+            </button>
+          </div>
+        </dialog>,
+        document.body,
+      )}
+      {supplierPrompt && (
+        <CashSupplierDialog
+          total={debitsTotal || 0}
+          payments={rows.filter(row => (debitFor(row.key) || 0) > 0).map(row => ({ id: row.key, name: row.name, amount_cents: debitFor(row.key)! }))}
+          initialId={stored.debit_supplier?.id}
+          canCreate={manager}
+          busy={busy}
+          error={error}
+          onCancel={() => setSupplierPrompt(false)}
+          onConfirm={(allocations) => save("close", allocations)}
+        />
+      )}
+      {closeNotice && (
+        <SettlementConfirmation
+          title="Caixa fechada"
+          message={closeNotice}
+          onClose={() => setCloseNotice("")}
+        />
+      )}
     </section>
   );
 }

@@ -20,8 +20,11 @@ from sqlalchemy.orm import Session
 
 from . import db as database
 from . import cash_local
+from . import cash_posting
+from .payment_methods import bank_defaults
 from .operating_modes import policy as integration_policy
 from .cash_sheet import (
+    belongs_to_register,
     daily_enterprise,
     is_real_cash_movement,
     payment_key,
@@ -38,6 +41,7 @@ from .models import (
     Attachment,
     Audit,
     BankAccount,
+    BankInstitution,
     BankTransaction,
     BankDeposit,
     BusinessEntity,
@@ -63,6 +67,7 @@ from .platform import router as platform_router
 from .platform_models import Company
 from .schemas import (
     BankCreate,
+    BankInstitutionEdit,
     CashCount,
     CashSources,
     CloseCash,
@@ -72,6 +77,7 @@ from .schemas import (
     Name,
     OpenCash,
     PasswordChange,
+    PaymentMethodStatus,
     Strict,
     PlannedCreate,
     PlannedPay,
@@ -214,15 +220,19 @@ def cents(value: str, zero=False):
 
 def current(request: Request, db: Session = Depends(db_session)):
     token = request.cookies.get("gpgest_session", "")
-    login = db.get(LoginSession, hashlib.sha256(token.encode()).hexdigest())
-    if not login:
+    selected = db.execute(
+        select(LoginSession, User)
+        .join(User, User.id == LoginSession.user_id)
+        .where(LoginSession.token_hash == hashlib.sha256(token.encode()).hexdigest())
+    ).first()
+    if not selected:
         raise HTTPException(401, "Inicie sessão para continuar.")
+    login, user = selected
     expires = (
         login.expires_at.replace(tzinfo=timezone.utc)
         if login.expires_at.tzinfo is None
         else login.expires_at
     )
-    user = db.get(User, login.user_id)
     if expires <= now() or not user or not user.active:
         raise HTTPException(401, "A sessão expirou.")
     return user
@@ -416,9 +426,18 @@ def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
         if user.role == "administrador"
         else list(db.scalars(select(User).join(Access).where(Access.store_id.in_(ids)).distinct()))
     )
+    user_stores = {u.id: [] for u in users}
+    for user_id, store_id in db.execute(
+        select(Access.user_id, Access.store_id).where(Access.user_id.in_(user_stores))
+    ):
+        user_stores[user_id].append(store_id)
+    integration = integration_policy(db)
+    catalog = cash_local.method_catalog(db) if integration["mode"] == "local" else None
     return {
-        "integration": integration_policy(db),
-        "payment_methods": cash_local.methods(db) if integration_policy(db)["mode"] == "local" else None,
+        "integration": integration,
+        "payment_methods": {row["id"]: row["name"] for row in catalog if row["active"]} if catalog is not None else None,
+        "payment_method_catalog": catalog,
+        "payment_method_bank_defaults": bank_defaults(db, ids),
         "user": serial(user),
         "mode": db.info.get("company", {}).get("mode", os.getenv("APP_MODE", "real")),
         "company": db.info.get("company", {}),
@@ -432,6 +451,9 @@ def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
         "accounts": [
             serial(a) for a in db.scalars(select(BankAccount).where(BankAccount.store_id.in_(ids)))
         ],
+        "bank_institutions": [
+            serial(bank) for bank in db.scalars(select(BankInstitution).where(BankInstitution.active.is_(True)).order_by(BankInstitution.name))
+        ],
         "categories": [serial(c) for c in db.scalars(select(Category).order_by(Category.name))],
         "users": [
             {
@@ -439,9 +461,8 @@ def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
                 "name": u.name,
                 "role": u.role,
                 "email": u.email,
-                "store_ids": list(
-                    db.scalars(select(Access.store_id).where(Access.user_id == u.id))
-                ),
+                "active": bool(u.active),
+                "store_ids": user_stores[u.id],
             }
             for u in users
         ],
@@ -468,6 +489,46 @@ def create_register(data: RegisterCreate, user=Depends(current), db: Session = D
     db.add(obj)
     db.flush()
     record(db, user, "caixa_criada", obj.id, {}, data.store_id)
+    db.commit()
+    return serial(obj)
+
+
+@app.get("/api/banks")
+def list_banks(user=Depends(current), db: Session = Depends(db_session)):
+    rows = db.scalars(select(BankInstitution).order_by(BankInstitution.name)).all()
+    return [serial(row) for row in rows]
+
+
+@app.post("/api/banks")
+def create_bank(data: Name, user=Depends(current), db: Session = Depends(db_session)):
+    authorize(user, db, roles=["administrador", "gestor"])
+    if db.scalar(select(BankInstitution.id).where(func.lower(BankInstitution.name) == data.name.lower())):
+        raise HTTPException(409, "Esta instituição financeira já está registada.")
+    obj = BankInstitution(name=data.name)
+    db.add(obj)
+    db.flush()
+    record(db, user, "banco_criado", obj.id, {"name": obj.name})
+    db.commit()
+    return serial(obj)
+
+
+@app.post("/api/banks/{bank_id}")
+def edit_bank(bank_id: str, data: BankInstitutionEdit, user=Depends(current), db: Session = Depends(db_session)):
+    authorize(user, db, roles=["administrador", "gestor"])
+    obj = db.get(BankInstitution, bank_id)
+    if not obj:
+        raise HTTPException(404, "Instituição financeira não encontrada.")
+    duplicate = db.scalar(
+        select(BankInstitution.id).where(
+            func.lower(BankInstitution.name) == data.name.lower(),
+            BankInstitution.id != bank_id,
+        )
+    )
+    if duplicate:
+        raise HTTPException(409, "Esta instituição financeira já está registada.")
+    obj.name = data.name
+    obj.active = data.active
+    record(db, user, "banco_editado", obj.id, {"name": obj.name, "active": obj.active})
     db.commit()
     return serial(obj)
 
@@ -624,9 +685,10 @@ def sessions(user=Depends(current), db: Session = Depends(db_session)):
     return [session_result(db, s) for s in rows]
 
 
-def session_result(db, s):
+def session_result(db, s, rows=None):
     local = cash_local.is_local(db, s, integration_policy)
-    rows = cash_local.drawer_rows(db, s) if local else sheet_summary(db, s)
+    if rows is None:
+        rows = cash_local.drawer_rows(db, s) if local else sheet_summary(db, s)
     counting = json.loads(s.count_data or "{}")
     if s.closed_at and not counting:
         counting = {
@@ -750,8 +812,9 @@ def change_sheet_sources(
     s, r = cash(db, user, session_id, True)
     saved = json.loads(s.count_data or "{}")
     if (data.sheet_day.isoformat() != (s.sheet_day or sheet_day_of(s.opened_at))
-            and any(value is not None for value in saved.get("realized", {}).get("values", {}).values())):
-        raise HTTPException(409, "Esta folha já tem realizado manual guardado. Limpe os valores e guarde o rascunho antes de alterar o dia, ou crie outra folha.")
+            and any(value is not None for field in ("values", "debits", "credits")
+                    for value in saved.get("realized", {}).get(field, {}).values())):
+        raise HTTPException(409, "Esta folha já tem faturado, débitos ou créditos manuais guardados. Limpe os valores e guarde o rascunho antes de alterar o dia, ou crie outra folha.")
     previous = {"day": s.sheet_day, "include_wintouch": bool(s.wintouch_scope)}
     if data.include_wintouch is None:
         token, enterprise = (
@@ -803,7 +866,7 @@ def save_count(
     s.count_data = json.dumps(counting, ensure_ascii=False)
     record(db, user, "contagem_guardada", s.id, counting, r.store_id)
     db.commit()
-    return session_result(db, s)
+    return session_result(db, s, rows)
 
 
 @app.post("/api/sessions/{session_id}/reconcile")
@@ -811,11 +874,12 @@ def reconcile_cash(session_id: str, data: CashCount, user=Depends(current), db: 
     s, r = cash(db, user, session_id, True)
     if not cash_local.is_local(db, s, integration_policy):
         raise HTTPException(409, "Use a conferência de valores ERP no modo integrado.")
-    counting = cash_local.validate(db, s, data, cash_local.drawer_rows(db, s), cents, user, complete=True)
+    rows = cash_local.drawer_rows(db, s)
+    counting = cash_local.validate(db, s, data, rows, cents, user, complete=True)
     s.count_data = json.dumps(counting, ensure_ascii=False)
     record(db, user, "conferencia_folha_caixa", s.id, counting, r.store_id)
     db.commit()
-    return session_result(db, s)
+    return session_result(db, s, rows)
 
 
 @app.post("/api/cash/payment-methods")
@@ -831,6 +895,30 @@ def create_cash_payment_method(data: Name, user=Depends(current), db: Session = 
     record(db, user, "meio_pagamento_local_criado", method.id, {"name": name})
     db.commit()
     return serial(method)
+
+
+@app.post("/api/cash/payment-methods/{method_id}/status")
+def cash_payment_method_status(method_id: str, data: PaymentMethodStatus, user=Depends(current), db: Session = Depends(db_session)):
+    from sqlalchemy.dialects.postgresql import insert
+
+    authorize(user, db, roles=["administrador", "gestor"])
+    if integration_policy(db)["mode"] != "local":
+        raise HTTPException(409, "Configure os meios locais no modo local autónomo.")
+    current_method = next((row for row in cash_local.method_catalog(db) if row["id"] == method_id), None)
+    if current_method is None:
+        raise HTTPException(404, "Meio de pagamento não encontrado nesta empresa.")
+    if current_method["required"] and not data.active:
+        raise HTTPException(422, "O numerário é obrigatório para conferir o dinheiro físico da gaveta.")
+    if current_method["active"] != data.active:
+        db.execute(
+            insert(LocalPaymentMethod)
+            .values(id=method_id, name=current_method["name"], active=data.active)
+            .on_conflict_do_update(index_elements=[LocalPaymentMethod.id], set_={"active": data.active})
+        )
+        record(db, user, "meio_pagamento_local_ativado" if data.active else "meio_pagamento_local_inativado", method_id,
+               {"name": current_method["name"], "before": current_method["active"], "active": data.active})
+        db.commit()
+    return {**current_method, "active": data.active}
 
 
 @app.post("/api/sessions/{session_id}/close")
@@ -850,41 +938,118 @@ def close_session(
         if data.realized is not None:
             raise HTTPException(409, "Os valores ERP não podem ser substituídos por realizado manual no modo integrado.")
         counting = {**json.loads(s.count_data or "{}"), **validate_count(data, rows, cents, closing=True)}
+    local_result = cash_local.reconciliation(db, s, rows, counting) if local else None
+    debit_total = sum(row["debits_cents"] for row in (local_result["rows"] if local else rows))
+    if debit_total > 0 and data.supplier_answer != "indicado":
+        raise HTTPException(422, "Indique o fornecedor dos débitos antes de fechar a caixa.")
+    # A reopened sheet must not silently reuse a supplier from a previous close.
+    counting.pop("debit_supplier", None)
     supplier = None
-    if data.supplier_id:
+    supplier_allocations = []
+    if data.supplier_allocations is not None:
+        if data.supplier_answer != "indicado":
+            raise HTTPException(422, "Confirme que pretende indicar fornecedores.")
+        if not data.supplier_allocations:
+            raise HTTPException(422, "Indique pelo menos um fornecedor e respetivo valor.")
+        allocation_ids = [(item.supplier_id, item.payment if local else None) for item in data.supplier_allocations]
+        if len(allocation_ids) != len(set(allocation_ids)):
+            raise HTTPException(422, "Cada fornecedor só pode ser indicado uma vez por meio de pagamento.")
+        allocated_total = sum(item.amount_cents for item in data.supplier_allocations)
+        if allocated_total > debit_total:
+            raise HTTPException(422, "O valor atribuído ultrapassa o total dos débitos.")
+        active_suppliers = {
+            item["id"]: item
+            for item in list_entities(user, db)
+            if item["is_supplier"] and item["active"]
+        }
+        for allocation in data.supplier_allocations:
+            selected = active_suppliers.get(allocation.supplier_id)
+            if not selected:
+                raise HTTPException(404, "Fornecedor ativo não encontrado nesta empresa.")
+            supplier_allocations.append({
+                "id": selected["id"],
+                "name": selected["name"],
+                "tax_number": selected["tax_number"],
+                "source": selected["source"],
+                "amount_cents": allocation.amount_cents,
+                **({"payment": allocation.payment} if local and allocation.payment else {}),
+            })
+        if local:
+            debit_methods = {row["key"]: row["debits_cents"] for row in local_result["rows"] if row["debits_cents"] > 0}
+            for allocation in supplier_allocations:
+                if not allocation.get("payment") and len(debit_methods) == 1:
+                    allocation["payment"] = next(iter(debit_methods))
+                if allocation.get("payment") and allocation["payment"] not in debit_methods:
+                    raise HTTPException(422, "Escolha um meio de pagamento com débitos nesta folha.")
+            for key, total in debit_methods.items():
+                if sum(a["amount_cents"] for a in supplier_allocations if a.get("payment") == key) > total:
+                    raise HTTPException(422, "O valor atribuído aos fornecedores ultrapassa os débitos desse meio de pagamento.")
+            if len({(a["id"], a.get("payment")) for a in supplier_allocations}) != len(supplier_allocations):
+                raise HTTPException(422, "Cada fornecedor só pode ser indicado uma vez por meio de pagamento.")
+        if len(supplier_allocations) == 1:
+            supplier = active_suppliers[supplier_allocations[0]["id"]]
+    elif data.supplier_id:
         if data.supplier_answer != "indicado":
             raise HTTPException(422, "Confirme que pretende indicar um fornecedor.")
         supplier = next((e for e in list_entities(user, db) if e["id"] == data.supplier_id and e["is_supplier"] and e["active"]), None)
         if not supplier:
             raise HTTPException(404, "Fornecedor ativo não encontrado nesta empresa.")
     supplier_name = supplier["name"] if supplier else data.supplier_name.strip()
-    if data.supplier_answer == "indicado" and len(supplier_name) < 2:
+    if data.supplier_answer == "indicado" and not supplier_allocations and len(supplier_name) < 2:
         raise HTTPException(422, "Indique o nome do fornecedor dos débitos.")
+    display_supplier_name = ""
+    if data.supplier_answer == "indicado":
+        if data.supplier_allocations is None or supplier:
+            display_supplier_name = supplier_name
+        elif len(supplier_allocations) == 1:
+            display_supplier_name = supplier_allocations[0]["name"]
     if data.supplier_answer:
+        assigned_total = sum(item["amount_cents"] for item in supplier_allocations) if supplier_allocations else debit_total
         counting["debit_supplier"] = {
             "answer": data.supplier_answer,
-            "name": supplier_name if data.supplier_answer == "indicado" else "",
-            "debits_cents": sum(row["debits_cents"] for row in rows),
+            "name": display_supplier_name,
+            "debits_cents": assigned_total,
+            "unassigned_cents": debit_total - assigned_total,
         }
-        if supplier:
+        if supplier_allocations:
+            counting["debit_supplier"]["allocations"] = supplier_allocations
+        if supplier and not supplier_allocations:
             counting["debit_supplier"].update(id=supplier["id"], tax_number=supplier["tax_number"], source=supplier["source"])
-        if data.supplier_answer == "indicado":
+        can_associate_movements = (
+            data.supplier_answer == "indicado"
+            and (not supplier_allocations or (
+                len(supplier_allocations) == 1
+                and supplier_allocations[0]["amount_cents"] == debit_total
+            ))
+        )
+        if can_associate_movements:
             # Associate only unidentified debits covered by this store/day sheet.
-            local_debits = db.scalars(select(Movement).join(CashSession).join(Register).where(
+            local_debit_methods = {row["key"] for row in local_result["rows"] if row["debits_cents"] > 0} if local else set()
+            debit_query = select(Movement).join(CashSession).join(Register).where(
                 Register.store_id == r.store_id, Movement.direction == -1,
                 Movement.reversed_by.is_(None), Movement.reversal_of.is_(None),
                 Movement.origin != "fecho_caixa",
                 Movement.origin != "deposito_modulo",
-            ))
+            )
+            if local:
+                debit_query = debit_query.where(Register.id == r.id, Movement.kind.in_(("despesa", "fornecedor")), Movement.transfer_id.is_(None), Movement.payment.in_(local_debit_methods))
+            local_debits = db.scalars(debit_query)
             local_ids = []
             for debit in local_debits:
                 if (debit.entity or "").strip() in ("", "Entidade não indicada") and sheet_day_of(debit.occurred_at) == (s.sheet_day or sheet_day_of(s.opened_at)):
                     debit.entity = supplier_name
                     local_ids.append(debit.id)
+            def covers_imported_debit(item):
+                if not local:
+                    return True
+                key = "mbway" if str(item.get("payment", "")).casefold().replace(" ", "") == "mbway" else payment_key(item)[0]
+                return key in local_debit_methods and belongs_to_register(db, s, r, item)
+
             imported_ids = [item["_record_id"] for item in real_receipts(
                 db, r.store_id, s.sheet_day or sheet_day_of(s.opened_at), daily_enterprise(db, s)
             ) if item.get("source_kind") == "cash_movement" and item.get("direction") == -1
-                and (item.get("entity") or "").strip() in ("", "Entidade não indicada")]
+                and (item.get("entity") or "").strip() in ("", "Entidade não indicada")
+                and covers_imported_debit(item)]
             counting["debit_supplier"].update(local_movement_ids=local_ids, imported_movement_ids=imported_ids)
     counting["opening_wintouch_id"] = json.loads(s.count_data or "{}").get("opening_wintouch_id")
     counting["wintouch_excluded"] = json.loads(s.count_data or "{}").get("wintouch_excluded", False)
@@ -892,8 +1057,12 @@ def close_session(
     expected = next(row["expected_cents"] for row in rows if row["key"] == "numerario")
     ledger_expected = expected
     if local:
-        local_result = cash_local.reconciliation(db, s, rows, counting)
         expected = next(row["expected_cents"] for row in local_result["rows"] if row["key"] == "numerario")
+        cash_posting.post_close(db, s, r, local_result, counting, user, record)
+        # Freeze the actual ledger after posting. The declared totals and count
+        # discrepancy remain separate, so nothing is added a second time.
+        rows = cash_local.drawer_rows(db, s)
+        ledger_expected = next(row["expected_cents"] for row in rows if row["key"] == "numerario")
     counting.update(
         final=True,
         summary=rows,
@@ -908,6 +1077,7 @@ def close_session(
         include_wintouch=bool(daily_enterprise(db, s)),
     )
     if local:
+        counting["reconciliation_check"]["signature"] = cash_local.reconciliation(db, s, rows, counting)["signature"]
         counting["local_reconciliation"] = cash_local.reconciliation(db, s, rows, counting)
     s.count_data = json.dumps(counting, ensure_ascii=False)
     s.counted_cents = counted
@@ -982,6 +1152,7 @@ def reopen_session(
         select(CashSession).where(CashSession.register_id == r.id, CashSession.closed_at.is_(None))
     ):
         raise HTTPException(409, "Existe outra sessão aberta nesta caixa.")
+    cash_posting.reverse_close(db, s, r, user, data.reason, record)
     record(
         db,
         user,
@@ -1043,6 +1214,7 @@ def reopen_session(
     counting.pop("summary", None)
     counting.pop("local_reconciliation", None)
     counting.pop("reconciliation_check", None)
+    counting.pop("posted_movements", None)
     counting.update(reopened_by=user.id, reopened_by_name=user.name,
                     reopened_at=now().isoformat(), reopen_reason=data.reason)
     s.count_data = json.dumps(counting, ensure_ascii=False)
@@ -1089,7 +1261,10 @@ def movements(all_records: bool = False, user=Depends(current), db: Session = De
         .join(Register, Register.id == func.coalesce(CashSession.register_id, BankDeposit.register_id))
         .where(Register.store_id.in_(scope(user, db)))
         .where(
-            (Movement.origin != "fecho_caixa")
+            # Reopening cancels generated closing entries as a linked pair.
+            # Keep that audit trail in the ledger, but list only current close
+            # entries; manual reversals retain their existing visible history.
+            Movement.origin.notin_(("fecho_caixa", cash_posting.ORIGIN))
             | (Movement.reversed_by.is_(None) & Movement.reversal_of.is_(None))
         )
         .order_by(Movement.created_at.desc())
@@ -1099,7 +1274,12 @@ def movements(all_records: bool = False, user=Depends(current), db: Session = De
     if integration_policy(db)["mode"] != "local":
         from .cash_sheet import LABELS
         payment_names.update(LABELS)
-    return [{**serial(m), "register_id": register_id, "payment_name": payment_names.get(m.payment)} for m, register_id in rows]
+    accounts = {account.id: account for account in db.scalars(select(BankAccount).where(BankAccount.store_id.in_(scope(user, db))))}
+    rows = list(rows)
+    supplier_views = cash_posting.supplier_views(db, [m for m, _ in rows])
+    return [{**serial(m), **supplier_views.get(m.id, {}), "register_id": register_id, "payment_name": payment_names.get(m.payment),
+             "bank_account_name": accounts[m.bank_account_id].name if m.bank_account_id in accounts else None,
+             "bank_name": accounts[m.bank_account_id].bank if m.bank_account_id in accounts else None} for m, register_id in rows]
 
 
 @app.post("/api/movements")
@@ -1111,9 +1291,9 @@ def create_movement(data: MovementCreate, user=Depends(current), db: Session = D
 
 def add_movement(data, user, db):
     s, r = cash(db, user, data.session_id, True)
-    allowed = cash_local.methods(db) if integration_policy(db)["mode"] == "local" else {"numerario", "cartao", "transferencia", "outro"}
+    allowed = cash_local.methods(db, active_only=True) if integration_policy(db)["mode"] == "local" else {"numerario", "cartao", "transferencia", "outro"}
     if data.payment not in allowed:
-        raise HTTPException(422, "Escolha um meio de pagamento configurado nesta empresa.")
+        raise HTTPException(422, "Escolha um meio de pagamento ativo e configurado nesta empresa.")
     if not db.get(Category, data.category_id):
         raise HTTPException(422, "Categoria inválida.")
     amount = cents(data.amount)
@@ -1132,6 +1312,7 @@ def add_movement(data, user, db):
     values["amount_cents"] = amount
     values["direction"] = direction
     values["user_id"] = user.id
+    values["bank_account_id"] = cash_posting.default_bank(db, r.store_id, data.payment)
     m = Movement(**values)
     db.add(m)
     db.flush()
@@ -1296,6 +1477,8 @@ def reverse(
         )
     if original.origin == "fecho_caixa":
         raise HTTPException(409, "Reabra a folha de caixa para rever a diferença do fecho.")
+    if original.origin == cash_posting.ORIGIN:
+        raise HTTPException(409, "Reabra a folha de caixa para rever os movimentos gerados no fecho.")
     if original.reversed_by or original.reversal_of:
         raise HTTPException(409, "O movimento já foi estornado ou é um estorno.")
     if original.transfer_id:
@@ -1313,6 +1496,7 @@ def reverse(
         session_id=s.id,
         user_id=user.id,
         category_id=original.category_id,
+        bank_account_id=original.bank_account_id,
         kind=original.kind,
         payment=original.payment,
         amount_cents=original.amount_cents,
@@ -1549,6 +1733,10 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
                 line("  Contado / conferido: " + (euro(counted_value) if counted_value is not None else "Por conferir")
                      + " / Diferença: " + (euro(row["count_difference_cents"]) if counted_value is not None else "Por conferir"))
                 line("  Fundo: " + euro(row["fund_cents"]) + " / Outros movimentos: " + euro(row["other_movements_cents"]))
+                if "debits_cents" in row:
+                    line("  Débitos: " + euro(row["debits_cents"]) + " / Dos movimentos: " + euro(row["registered_debits_cents"]))
+                if "registered_credits_cents" in row:
+                    line("  Créditos: " + euro(row["other_credits_cents"]) + " / Dos movimentos: " + euro(row["registered_credits_cents"]))
                 continue
             line(row["name"] + " - Declarado: " + euro(row["declared_cents"])
                  + " / Registado: " + euro(row["registered_cents"])
@@ -1588,6 +1776,24 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
         if count:
             line(euro(int(value)) + " x " + str(count))
     from textwrap import wrap
+
+    supplier = counting.get("debit_supplier", {})
+    if supplier.get("answer") == "indicado":
+        if supplier.get("allocations"):
+            line("Fornecedores dos débitos:")
+            for allocation in supplier["allocations"]:
+                payment_label = next((row["name"] for row in counting.get("summary", []) if row["key"] == allocation.get("payment")), "")
+                for fragment in wrap("  " + allocation["name"] + (" · " + payment_label if payment_label else "") + ": " + euro(allocation["amount_cents"]), 90):
+                    line(fragment)
+            line("Total atribuído: " + euro(supplier["debits_cents"]))
+            if supplier.get("unassigned_cents", 0):
+                line("Por atribuir: " + euro(supplier["unassigned_cents"]))
+        else:
+            for fragment in wrap("Fornecedor dos débitos: " + supplier["name"], 90):
+                line(fragment)
+            if supplier.get("tax_number"):
+                line("NIF do fornecedor: " + supplier["tax_number"])
+            line("Débitos no fecho: " + euro(supplier["debits_cents"]))
 
     for fragment in wrap("Justificação: " + s.close_reason, 90):
         line(fragment)
@@ -2270,3 +2476,9 @@ app.add_middleware(ScanBodyLimit)
 
 from .invoice_workflow import register_routes as register_invoice_workflow_routes
 register_invoice_workflow_routes(app, current, authorize, scope, record)
+
+from .employees import register_routes as register_employee_routes
+register_employee_routes(app, current, authorize, scope, record, serial)
+
+from .payment_methods import register_routes as register_payment_method_routes
+register_payment_method_routes(app, current, authorize, record)

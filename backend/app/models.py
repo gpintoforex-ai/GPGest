@@ -62,6 +62,23 @@ class Register(Base):
     name: Mapped[str] = mapped_column(String(100))
 
 
+class Employee(Base):
+    __tablename__ = "employees"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    phone: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class EmployeeStore(Base):
+    __tablename__ = "employee_stores"
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.id"), primary_key=True)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), primary_key=True)
+
+
 class BankAccount(Base):
     currency: Mapped[str] = mapped_column(String(3), default="EUR", server_default="EUR")
     __tablename__ = "bank_accounts"
@@ -70,6 +87,15 @@ class BankAccount(Base):
     name: Mapped[str] = mapped_column(String(100))
     bank: Mapped[str] = mapped_column(String(100))
     iban_last4: Mapped[str] = mapped_column(String(4))
+
+
+class BankInstitution(Base):
+    __tablename__ = "bank_institutions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
 class BankTransaction(Base):
@@ -306,6 +332,14 @@ class LocalPaymentMethod(Base):
     __tablename__ = "local_payment_methods"
     id: Mapped[str] = mapped_column(String(20), primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+
+
+class PaymentMethodBankDefault(Base):
+    __tablename__ = "payment_method_bank_defaults"
+    method_id: Mapped[str] = mapped_column(ForeignKey("local_payment_methods.id"), primary_key=True)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), primary_key=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey("bank_accounts.id"))
 
 
 class CashSession(Base):
@@ -340,6 +374,7 @@ class Movement(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     session_id: Mapped[str | None] = mapped_column(ForeignKey("cash_sessions.id"), nullable=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    bank_account_id: Mapped[str | None] = mapped_column(ForeignKey("bank_accounts.id"), nullable=True)
     category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
     kind: Mapped[str] = mapped_column(String(40))
     payment: Mapped[str] = mapped_column(String(20))

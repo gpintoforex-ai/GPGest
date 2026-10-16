@@ -26,7 +26,7 @@ export default function IntegrationSettings({ boot, reload }: { boot: Row; reloa
   const external = data.records.filter((r: Row) => r.kind === (binding.internal_kind === "entity" ? "entity" : "account"));
   const native = binding.internal_kind === "entity" ? data.entities : boot.registers;
   return <section className="integration-settings">
-    <div className="page-intro"><div><h1>Integrações</h1><p>Modo de funcionamento e origem dos dados de {boot.company?.name || "esta empresa"}.</p></div><StatusBadge tone={data.policy.mode === "local" ? "neutral" : "success"}>{data.policy.mode === "local" ? "Modo local autónomo" : "Modo integrado com ERP"}</StatusBadge></div>
+    <div className="page-intro"><div><h2>Modo e ligação ERP</h2><p>Modo de funcionamento e origem dos dados de {boot.company?.name || "esta empresa"}.</p></div><StatusBadge tone={data.policy.mode === "local" ? "neutral" : "success"}>{data.policy.mode === "local" ? "Modo local autónomo" : "Modo integrado com ERP"}</StatusBadge></div>
     {error && <p className="error" role="alert">{error}</p>}{notice && <p className="success" role="status">{notice}</p>}
     <section className="panel"><h3>Modo e ligação</h3><p>O modo local permite gerir os dados no GPGest. Não implica funcionamento sem Internet. Os documentos locais são documentos de gestão, sem emissão fiscal.</p>
       <form className="doc-form" onSubmit={e => { e.preventDefault(); run(async () => { setPreview(await api("/company/integration/preview", payload())); setConfirmed(false); setPendingReviewed(false); setModal("preview"); }); }}>

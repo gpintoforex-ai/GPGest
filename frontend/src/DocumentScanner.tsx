@@ -149,7 +149,7 @@ export default function DocumentScanner({ initialDocument, movement, deposit, st
     {error && <p className="error" role="alert">{error}</p>}{!setup && <p>A carregar a configuração…</p>}
     {setup && <>
       <p>Empresa: <b>{setup.company.name || "Empresa ativa"}</b> · Google Drive: {setup.account || "Conta por configurar"}. Limites: {setup.settings.max_pages} páginas · PDF até {bytes(setup.settings.max_bytes)}.</p>
-      {(!setup.connected || !setup.folder_configured) && <p className="error">A pasta cloud ou a ligação Google não está configurada. Pode preparar e descarregar o PDF. Configure a conta e a pasta em Configurações &gt; Anexos antes de guardar.</p>}
+      {(!setup.connected || !setup.folder_configured) && <p className="error">A pasta cloud ou a ligação Google não está configurada. Pode preparar e descarregar o PDF. Configure a conta e a pasta em Configurações &gt; Parâmetros &gt; Anexos antes de guardar.</p>}
       <button disabled={busy} onClick={() => api("/scans/setup").then(setSetup).catch(e => setError(e.message))}>Atualizar estado da ligação</button>
       <button disabled={busy} onClick={() => { if (dirty && !window.confirm("Descarregue o PDF antes de sair. Abrir as configurações fecha esta digitalização. Continuar?")) return; onClose(); window.dispatchEvent(new Event("gpgest-attachment-settings")); }}>Configurar conta e pasta cloud</button>
       <p>As fotografias ficam nesta janela. Fechar ou recarregar pode perder as páginas capturadas. Depois de gerar, descarregue o PDF para conservar o trabalho.</p>

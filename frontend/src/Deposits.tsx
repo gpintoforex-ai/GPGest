@@ -36,7 +36,7 @@ export default function Deposits({ boot, store, reload }: { boot: Row; store: st
   useEffect(() => { load().catch(e => setError(e.message)); }, []);
   useEffect(() => { if (modal && !dialog.current?.open) dialog.current?.showModal(); }, [modal]);
   async function run(task: () => Promise<void>) { setBusy(true); setError(""); setNotice(""); try { await task(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
-  async function refresh(id: string) { setSelected(await api(`/deposits/${id}`)); await load(); await reload(); window.dispatchEvent(new Event("gpgest-sales-updated")); }
+  async function refresh(id: string) { const [saved] = await Promise.all([api(`/deposits/${id}`), load(), reload()]); setSelected(saved); window.dispatchEvent(new CustomEvent("gpgest-sales-updated", { detail: { appRefreshed: true } })); }
   function edit(row?: Row) {
 
     setSelected(row || null); setError(""); setNotice(""); setCommand("");

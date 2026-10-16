@@ -29,9 +29,17 @@ class RegisterCreate(Name):
     store_id: str
 
 
+class PaymentMethodStatus(Strict):
+    active: bool = Field(strict=True)
+
+
 class BankCreate(RegisterCreate):
     bank: str = Field(min_length=2, max_length=100)
     iban_last4: str = Field(pattern=r"^\d{4}$")
+
+
+class BankInstitutionEdit(Name):
+    active: bool = Field(strict=True)
 
 
 class UserCreate(Name):
@@ -126,6 +134,8 @@ class Reason(Strict):
 
 class CashRealized(Strict):
     values: dict[str, str | None] = Field(default_factory=dict, max_length=50)
+    debits: dict[str, str | None] | None = Field(default=None, max_length=50)
+    credits: dict[str, str | None] | None = Field(default=None, max_length=50)
     notes: str = Field(default="", max_length=2000)
     pos_reference: str = Field(default="", max_length=200)
 
@@ -139,10 +149,17 @@ class CashCount(Strict):
     realized: CashRealized | None = None
 
 
+class SupplierDebitAllocation(Strict):
+    supplier_id: str = Field(min_length=1, max_length=100)
+    amount_cents: StrictInt = Field(gt=0)
+    payment: str | None = Field(default=None, min_length=1, max_length=20)
+
+
 class CloseCash(CashCount):
     supplier_answer: Literal["indicado", "desconhecido", "nao_aplicavel"] | None = None
     supplier_name: str = Field(default="", max_length=300)
     supplier_id: str | None = Field(default=None, max_length=100)
+    supplier_allocations: list[SupplierDebitAllocation] | None = Field(default=None, max_length=50)
 
 
 class Handover(Reason):

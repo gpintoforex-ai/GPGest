@@ -66,6 +66,12 @@ button:disabled { cursor: not-allowed; }
 .sidebar-mode svg { flex-shrink: 0; }
 .sidebar-mode.local { color: #c6f5e8; background: #244c47; border-color: #447f72; }
 .sidebar-mode.integrated { color: #d8e6ff; background: #253f64; border-color: #517bb2; }
+.sidebar-mode.integrated { position: relative; overflow: hidden; isolation: isolate; }
+.sidebar-mode.integrated::before, .sidebar-mode.integrated::after { content: ""; position: absolute; left: 12px; right: 12px; top: 50%; height: 2px; pointer-events: none; transform: translateY(-50%); }
+.sidebar-mode.integrated::before { background: #76e88438; box-shadow: 0 0 5px #4ade8050; }
+.sidebar-mode.integrated::after { left: -35%; right: auto; width: 35%; background: linear-gradient(90deg, transparent, #4ade80, #d9ffd9, #4ade80, transparent); box-shadow: 0 0 6px 2px #4ade80, 0 0 14px 4px #22c55e99; animation: sidebar-erp-current 1.8s linear infinite; }
+.sidebar-mode.integrated > * { position: relative; z-index: 1; }
+@keyframes sidebar-erp-current { to { left: 100%; } }
 .sidebar-mode-compact { display: none; }
 .sidebar nav { margin-top: var(--space-4); }
 .sidebar nav button { color: #c0cde0; padding: 11px 12px; min-height: 40px; }

@@ -34,7 +34,7 @@ export default function TenantIntegrations({
               {(company.capabilities?.read_documents ?? true) && company.resources?.includes("sales") !== false && <SalesImportPanel company={company} />}
             </>
           ) : (
-            <p>Consulte o modo e as permissões em Configurações &gt; Integrações. Os dados já guardados permanecem acessíveis.</p>
+            <p>Consulte o modo e as permissões em Configurações &gt; Parâmetros &gt; Ligação ERP. Os dados já guardados permanecem acessíveis.</p>
           )}
         </>
       ) : (

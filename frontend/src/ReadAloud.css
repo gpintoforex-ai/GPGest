@@ -1,0 +1,65 @@
+.read-aloud-text > :first-child {
+  margin-top: 0;
+}
+.read-aloud-text > :last-child {
+  margin-bottom: 0;
+}
+.read-aloud-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  align-items: start;
+  gap: 8px;
+}
+.read-aloud-settings {
+  min-width: 0;
+  max-width: 100%;
+}
+.read-aloud-settings > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.read-aloud-settings > summary::-webkit-details-marker {
+  display: none;
+}
+.read-aloud-settings > summary:focus-visible {
+  outline: 3px solid #adc856;
+  outline-offset: 2px;
+}
+.read-aloud-options {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  max-width: 320px;
+}
+.read-aloud-options label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+.read-aloud-options select {
+  width: 100%;
+  min-width: 0;
+}
+.read-aloud-options .footnote {
+  margin: 0;
+  font-size: 12px;
+}
+.read-aloud-actions button {
+  min-height: 36px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.read-aloud .read-aloud-status {
+  margin-top: 10px;
+  font-size: 12px;
+}

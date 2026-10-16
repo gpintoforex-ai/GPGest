@@ -1,6 +1,6 @@
 # Digitalização de documentos
 
-O botão **Digitalizar documento** está no dossiê contabilístico, na conferência documental e nas fichas de compras, movimentos de caixa abertos e depósitos. Administradores e gestores podem preparar e guardar. A associação a uma ficha existente reutiliza o documento; o envio não cria uma segunda compra.
+O botão **Folhas por página** está no dossiê contabilístico, na conferência documental e nas fichas de compras, movimentos de caixa abertos e depósitos. Administradores e gestores podem preparar e guardar. A associação a uma ficha existente reutiliza o documento; o envio não cria uma segunda compra.
 
 ## Configurar
 

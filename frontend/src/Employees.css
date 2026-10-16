@@ -1,0 +1,41 @@
+.employee-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.employee-filters .field {
+  flex: 1;
+  min-width: min(240px, 100%);
+  margin: 0;
+}
+.employee-dialog {
+  max-width: 560px;
+}
+.employee-stores {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.employee-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.employee-row-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.employees-page button.employee-activate {
+  color: var(--color-success);
+  background: var(--color-success-bg);
+  border-color: #a9d3ba;
+}
+.employees-page button.employee-activate:hover:not(:disabled) {
+  background: #ddf0e4;
+}
+.employees-page .page-intro .actions {
+  flex-wrap: wrap;
+}

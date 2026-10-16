@@ -308,6 +308,7 @@ try:
         )
         page.get_by_role("button", name="Abrir menu", exact=True).click()
         page.get_by_role("button", name="Configurações", exact=True).click()
+        page.get_by_role("button", name="Organização", exact=True).click()
         expect(page.get_by_role("heading", name="A sua organização")).to_be_visible()
         assert not errors, errors
         browser.close()

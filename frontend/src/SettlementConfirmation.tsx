@@ -3,9 +3,11 @@ import { CheckCircle } from "lucide-react";
 import "./RecordList.css";
 
 export default function SettlementConfirmation({
+  title = "Liquidação confirmada",
   message,
   onClose,
 }: {
+  title?: string;
   message: string;
   onClose: () => void;
 }) {
@@ -31,7 +33,7 @@ export default function SettlementConfirmation({
       }}
     >
       <CheckCircle size={44} aria-hidden="true" />
-      <h2 id={titleId}>Liquidação confirmada</h2>
+      <h2 id={titleId}>{title}</h2>
       <p id={messageId}>{message}</p>
       <button type="button" className="primary" autoFocus onClick={onClose}>
         OK

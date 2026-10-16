@@ -5,7 +5,7 @@ import re
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from app import db as database
-from app.models import LocalPaymentMethod, WintouchSaleRecord
+from app.models import LocalPaymentMethod, PaymentMethodBankDefault, WintouchSaleRecord
 from app.platform_models import Company
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
@@ -64,7 +64,12 @@ def test_real_local_company_methods_and_declarations_are_tenant_scoped(platform)
     assert numerario["sources"] == ["ERP"] and numerario["declared_source"] == "Manual"
     with Session(database.engine.execution_options(schema_translate_map={None: schema})) as db:
         assert db.get(WintouchSaleRecord, record_id).data == source
+    assert client.post("/api/cash/payment-methods/mbway/status", json={"active": False}).status_code == 200
+    assert client.post(f"/api/cash/payment-methods/{key}/status", json={"active": False}).status_code == 200
+    assert "mbway" not in client.get("/api/bootstrap").json()["payment_methods"]
     enter(client, b["slug"])
+    assert "mbway" in client.get("/api/bootstrap").json()["payment_methods"]
+    assert client.post(f"/api/cash/payment-methods/{key}/status", json={"active": False}).status_code == 404
     assert key not in client.get("/api/bootstrap").json()["payment_methods"]
     assert client.post(f"/api/sessions/{identifier}/count", json=payload).status_code == 404
 
@@ -77,9 +82,27 @@ def test_cash_method_migration_creates_table_without_changing_existing_sheets(se
         schema = connection.scalar(text("SELECT current_schema()"))
         assert re.fullmatch(r"test_[0-9a-f]{32}", schema)
         before = connection.scalar(text("SELECT count(*) FROM users"))
+        PaymentMethodBankDefault.__table__.drop(connection)
         LocalPaymentMethod.__table__.drop(connection)
         monkeypatch.setattr(helper, "schemas", lambda _: [schema])
         with Operations.context(MigrationContext.configure(connection)):
             migration.upgrade()
         assert "local_payment_methods" in inspect(connection).get_table_names(schema=schema)
         assert connection.scalar(text(f"SELECT count(*) FROM {schema}.users")) == before
+
+
+def test_payment_method_status_migration_preserves_rows_and_defaults_to_active(setup, monkeypatch):
+    _, _, factory = setup
+    helper = importlib.import_module("migrations.versions.0006_cash_sheet")
+    migration = importlib.import_module("migrations.versions.0036_payment_method_status")
+    with factory.kw["bind"].begin() as connection:
+        schema = connection.scalar(text("SELECT current_schema()"))
+        assert re.fullmatch(r"test_[0-9a-f]{32}", schema)
+        connection.execute(text(f"INSERT INTO {schema}.local_payment_methods (id, name) VALUES ('pm_old', 'Vale anterior')"))
+        connection.execute(text(f"ALTER TABLE {schema}.local_payment_methods DROP COLUMN active"))
+        monkeypatch.setattr(helper, "schemas", lambda _: [schema])
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            migration.upgrade()
+        row = connection.execute(text(f"SELECT name, active FROM {schema}.local_payment_methods WHERE id='pm_old'")).one()
+        assert row.name == "Vale anterior" and row.active is True

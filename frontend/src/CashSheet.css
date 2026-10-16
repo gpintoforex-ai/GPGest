@@ -11,13 +11,23 @@
 .cash-sheet-details > summary {
   cursor: pointer;
   width: fit-content;
-  padding: 10px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text);
-  background: var(--color-surface);
-  font-size: 13px;
-  font-weight: 600;
+  min-height: 48px;
+  padding: 12px 18px;
+  border: 1px solid var(--color-primary);
+  border-radius: 8px;
+  color: #fff;
+  background: var(--color-primary);
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 3px 8px rgb(36 95 197 / 20%);
+}
+.cash-sheet-details > summary:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+.cash-sheet-details > summary:focus-visible {
+  outline: 3px solid #adc856;
+  outline-offset: 3px;
 }
 .cash-sheet-details[open] > summary {
   margin-bottom: 20px;
@@ -309,6 +319,35 @@
   border: 0;
   font-size: 24px;
 }
+.numeric-keypad-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.numeric-keypad-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px;
+  color: var(--color-primary);
+  background: #eef3ff;
+  border-color: #c8d8f4;
+}
+.numeric-keypad-info[aria-expanded="true"] {
+  color: white;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.numeric-keypad-help {
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid #c8d8f4;
+  border-radius: 8px;
+  background: #eef3ff;
+}
 .numeric-keypad-display {
   display: flex;
   align-items: center;
@@ -356,6 +395,26 @@
 .numeric-keypad-actions button {
   flex: 1;
   min-height: 42px;
+}
+.cash-adjustment-types {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+.cash-adjustment-types button {
+  flex: 1;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+}
+.cash-adjustment-types [aria-pressed="true"] {
+  color: white;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.numeric-keypad-reset {
+  width: 100%;
+  margin-top: 10px;
 }
 .cash-denomination input::-webkit-inner-spin-button,
 .cash-denomination input::-webkit-outer-spin-button {
@@ -487,3 +546,5 @@
     font-size: 21px;
   }
 }
+.cash-supplier-allocation { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; }
+.cash-supplier-summary p { margin: 4px 0; }

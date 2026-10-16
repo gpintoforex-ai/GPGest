@@ -39,8 +39,6 @@ def test_imported_cash_debit_entity_survives_resync(setup):
     "answer,name,stored_name",
     [
         ("indicado", "Fornecedor XPTO", "Fornecedor XPTO"),
-        ("desconhecido", "", ""),
-        ("nao_aplicavel", "", ""),
     ],
 )
 def test_supplier_answer_is_saved_and_audited_on_close(setup, answer, name, stored_name):
@@ -86,6 +84,22 @@ def test_known_supplier_requires_a_name_without_closing_cash(setup):
         assert db.get(CashSession, session).closed_at is None
 
 
+@pytest.mark.parametrize("answer", [None, "desconhecido", "nao_aplicavel"])
+def test_debits_require_supplier_without_closing_or_changing_movements(setup, answer):
+    client, ids, factory = setup
+    session = open_cash(client, ids["registers"][0], "40").json()["id"]
+    assert movement(client, ids, session, kind="despesa", amount="5").status_code == 200
+    before = client.get("/api/movements").json()
+    response = client.post(f"/api/sessions/{session}/close", json={
+        "cash_mode": "total", "cash_total": "35", "supplier_answer": answer,
+    })
+    assert response.status_code == 422 and "fornecedor" in response.json()["detail"]
+    assert client.get("/api/movements").json() == before
+    with factory() as db:
+        assert db.get(CashSession, session).closed_at is None
+        assert not db.scalar(select(Audit.id).where(Audit.target_id == session, Audit.action == "fecho"))
+
+
 def test_supplier_selected_from_company_list_is_linked_by_id(setup):
     client, ids, factory = setup
     with factory.begin() as db:
@@ -111,3 +125,85 @@ def test_supplier_selected_from_company_list_is_linked_by_id(setup):
     linked = json.loads(result.json()["count_data"])["debit_supplier"]
     assert linked["id"] == supplier_id and linked["name"] == "Fornecedor da lista"
     assert linked["tax_number"] == "500000000"
+
+
+def test_supplier_debit_allocations_save_partial_amounts_without_guessing_movements(setup):
+    client, ids, factory = setup
+    with factory.begin() as db:
+        first = BusinessEntity(name="Fornecedor A", tax_number="500000001", is_supplier=True)
+        second = BusinessEntity(name="Fornecedor B", tax_number="500000002", is_supplier=True)
+        db.add_all([first, second])
+        db.flush()
+        first_id, second_id = "local:" + first.id, "local:" + second.id
+    session = open_cash(client, ids["registers"][0], "40").json()["id"]
+    assert movement(client, ids, session, kind="despesa", amount="5").status_code == 200
+
+    response = client.post(
+        f"/api/sessions/{session}/close",
+        json={
+            "cash_mode": "total",
+            "cash_total": "35",
+            "supplier_answer": "indicado",
+            "supplier_allocations": [
+                {"supplier_id": first_id, "amount_cents": 300},
+                {"supplier_id": second_id, "amount_cents": 100},
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    details = json.loads(response.json()["count_data"])["debit_supplier"]
+    assert [(item["id"], item["amount_cents"]) for item in details["allocations"]] == [
+        (first_id, 300),
+        (second_id, 100),
+    ]
+    assert details["debits_cents"] == 400
+    assert details["unassigned_cents"] == 100
+    assert client.get("/api/movements").json()[0]["entity"] in ("", "Entidade não indicada")
+    with factory() as db:
+        event = db.scalar(select(Audit).where(Audit.target_id == session, Audit.action == "fecho"))
+        assert json.loads(event.detail)["debit_supplier"] == details
+
+
+def test_supplier_debit_allocations_cannot_exceed_total(setup):
+    client, ids, factory = setup
+    with factory.begin() as db:
+        supplier = BusinessEntity(name="Fornecedor A", tax_number="500000001", is_supplier=True)
+        db.add(supplier)
+        db.flush()
+        supplier_id = "local:" + supplier.id
+    session = open_cash(client, ids["registers"][0], "40").json()["id"]
+    assert movement(client, ids, session, kind="despesa", amount="5").status_code == 200
+
+    response = client.post(
+        f"/api/sessions/{session}/close",
+        json={
+            "cash_mode": "total",
+            "cash_total": "35",
+            "supplier_answer": "indicado",
+            "supplier_allocations": [{"supplier_id": supplier_id, "amount_cents": 501}],
+        },
+    )
+
+    assert response.status_code == 422
+    with factory() as db:
+        assert db.get(CashSession, session).closed_at is None
+
+
+def test_full_five_euro_allocation_is_accepted_by_close_api(setup):
+    client, ids, factory = setup
+    with factory.begin() as db:
+        supplier = BusinessEntity(name="Fornecedor do fecho", is_supplier=True)
+        db.add(supplier)
+        db.flush()
+        supplier_id = "local:" + supplier.id
+    session = open_cash(client, ids["registers"][0], "40").json()["id"]
+    assert movement(client, ids, session, kind="despesa", amount="5").status_code == 200
+    result = client.post(f"/api/sessions/{session}/close", json={
+        "cash_mode": "total", "cash_total": "35", "supplier_answer": "indicado",
+        "supplier_allocations": [{"supplier_id": supplier_id, "amount_cents": 500}],
+    })
+    assert result.status_code == 200, result.text
+    details = json.loads(result.json()["count_data"])["debit_supplier"]
+    assert details["allocations"][0]["amount_cents"] == details["debits_cents"] == 500
+    assert details["unassigned_cents"] == 0

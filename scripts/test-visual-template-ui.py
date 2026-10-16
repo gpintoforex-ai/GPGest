@@ -51,7 +51,7 @@ boot = {
     "user": {"id": "demo-user", "name": "Administrador Demo", "role": "administrador"},
     "mode": "demonstracao", "company": {"name": "Empresa de demonstração visual", "nif": "500000000"},
     "stores": [{"id": "demo", "name": "Loja de demonstração"}],
-    "registers": [{"id": "demo-register", "store_id": "demo", "name": "Caixa de demonstração", "active": True, "last_opening_cents": 1500}], "accounts": [], "categories": [], "users": [],
+    "registers": [{"id": "demo-register", "store_id": "demo", "name": "Caixa de demonstração", "active": True, "last_opening_cents": 1500}], "accounts": [], "bank_institutions": [{"id": "demo-bank", "name": "Banco Demo", "active": True}], "categories": [], "users": [],
 }
 fail_documents = False
 delivery_closed = False
@@ -83,7 +83,7 @@ def intercept(route):
     result = {
         "/bootstrap": boot, "/sessions": [], "/movements": [], "/dashboard": {}, "/audit": [],
         "/documents": documents, "/documents/erp-catalog": [], "/document-payments": [],
-        "/reconciliation": {"banks": [], "internals": []},
+        "/reconciliation": {"banks": [], "internals": []}, "/banks": [],
     }.get(path, {})
     if path.startswith("/documents/") and path.endswith("/detail"):
         result = next(doc for doc in documents if doc["id"] == path.split("/")[2])
@@ -155,7 +155,7 @@ with sync_playwright() as playwright:
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), label
         page.get_by_role("button", name="Abrir menu", exact=True).click()
         expect(page.get_by_role("button", name="Contabilidade", exact=True)).to_be_visible()
-        page.get_by_role("button", name="Fechar menu", exact=True).click()
+        page.get_by_role("button", name="Fechar menu", exact=True).dispatch_event("click")
         page.evaluate("window.scrollTo(0, 0)")
         page.screenshot(path=str(output / f"{label}.png"))
         page.get_by_role("button", name="Conferir", exact=True).first.click()
@@ -176,20 +176,33 @@ with sync_playwright() as playwright:
     fail_documents = False
     page.get_by_role("button", name="Tentar novamente", exact=True).click()
     expect(page.locator("tbody tr")).to_have_count(20)
+    page.set_viewport_size({"width": 1280, "height": 900})
     page.get_by_label("Menu do utilizador", exact=True).click()
     expect(page.locator(".user-menu-panel").get_by_role("button", name="Terminar sessão")).to_be_visible()
     page.get_by_label("Menu do utilizador", exact=True).click()
-    page.get_by_role("button", name="Abrir menu", exact=True).click()
     page.get_by_role("button", name="Bancos", exact=True).click()
-    expect(page.locator("#finance-submenu").get_by_role("button", name="Reconciliação automática", exact=True)).to_have_count(0)
-    page.get_by_role("button", name="Múltiplas contas", exact=True).click()
-    expect(page.locator(".breadcrumb")).to_contain_text("Bancos")
+    page.locator("#banks-submenu").get_by_role("button", name="Múltiplas contas", exact=True).click()
+    expect(page.get_by_role("heading", name="Contas bancárias", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Nova conta", exact=True).click()
+    account_dialog = page.get_by_role("dialog")
+    bank_select = account_dialog.get_by_label("Banco", exact=True)
+    expect(bank_select.locator("option").nth(1)).to_have_text("Banco Demo")
+    bank_select.select_option("__other__")
+    expect(account_dialog.get_by_label("Nome do banco", exact=True)).to_be_visible()
+    account_dialog.get_by_role("button", name="Fechar", exact=True).click()
+    page.get_by_role("button", name="Tabelas", exact=True).click()
+    page.locator("#tables-submenu").get_by_role("button", name="Bancos", exact=True).click()
+    expect(page.locator(".breadcrumb")).to_contain_text("Tabelas")
+    expect(page.get_by_role("heading", name="Bancos", level=1)).to_be_visible()
+    expect(page.get_by_role("button", name="Adicionar banco", exact=True)).to_be_visible()
+    page.locator("#banks-submenu").get_by_role("button", name="Múltiplas contas", exact=True).click()
     expect(page.get_by_role("heading", name="Contas bancárias", exact=True)).to_be_visible()
     page.get_by_role("button", name="Consultar extratos", exact=True).click()
     expect(page.locator(".header-context h2")).to_have_text("Extratos")
     expect(page.get_by_text("Crie uma conta bancária para importar o extrato.", exact=True)).to_be_visible()
     page.get_by_role("button", name="Gerir contas", exact=True).click()
     expect(page.locator(".header-context h2")).to_have_text("Múltiplas contas")
+    page.set_viewport_size({"width": 390, "height": 900})
     page.get_by_role("button", name="Abrir menu", exact=True).click()
     page.get_by_role("button", name="Entrega à contabilidade", exact=True).click()
     expect(page.get_by_role("button", name="Exportar dossiê", exact=True)).to_have_count(0)
