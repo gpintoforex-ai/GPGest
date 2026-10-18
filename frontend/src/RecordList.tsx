@@ -1,3 +1,4 @@
+import { ActionButton, Notice } from "./components/InteractionUI";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ArrowLeftRight, Banknote, CreditCard, FileText, Smartphone, Wallet } from "lucide-react";
 import "./RecordList.css";
@@ -227,6 +228,22 @@ export default function RecordList({
   }
   return (
     <>
+      <div className="record-period-shortcuts" role="group" aria-label="Períodos rápidos">
+        {([['today', 'Hoje'], ['week', 'Esta semana'], ['month', 'Este mês'], ['year', 'Este ano']] as const).map(([period, label]) => {
+          const today = calendarDay(new Date().toISOString());
+          const [year, month, day] = today.split('-').map(Number);
+          let range = { from: today, to: today };
+          if (period === 'week') {
+            const date = new Date(Date.UTC(year, month - 1, day));
+            date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7);
+            const start = date.toISOString().slice(0, 10);
+            date.setUTCDate(date.getUTCDate() + 6);
+            range = { from: start, to: date.toISOString().slice(0, 10) };
+          } else if (period === 'month') range = currentMonth();
+          else if (period === 'year') range = { from: `${year}-01-01`, to: `${year}-12-31` };
+          return <ActionButton key={period} type="button" aria-pressed={from === range.from && to === range.to} onClick={() => { fromEdited.current = true; setFrom(range.from); setTo(range.to); setPage(1); }}>{label}</ActionButton>;
+        })}
+      </div>
       <div
         className="record-filters"
         role="group"
@@ -262,7 +279,7 @@ export default function RecordList({
                 }}
               />
             </div>
-            <button
+            <ActionButton
               type="button"
               onClick={() => {
                 setDocumentGroup("");
@@ -271,7 +288,7 @@ export default function RecordList({
               }}
             >
               Limpar filtros
-            </button>
+            </ActionButton>
           </>
         )}
         {movementFilters && (
@@ -325,7 +342,7 @@ export default function RecordList({
                 }}
               />
             </div>
-            <button
+            <ActionButton
               type="button"
               onClick={() => {
                 setRegister("");
@@ -335,7 +352,7 @@ export default function RecordList({
               }}
             >
               Limpar filtros
-            </button>
+            </ActionButton>
           </>
         )}
         <div className="record-field">
@@ -380,7 +397,7 @@ export default function RecordList({
             ))}
           </select>
         </div>
-        <button
+        <ActionButton
           type="button"
           onClick={() => {
             setFrom("");
@@ -390,12 +407,12 @@ export default function RecordList({
           }}
         >
           Limpar datas
-        </button>
+        </ActionButton>
       </div>
       {invalid && (
-        <p className="error" role="alert">
+        <Notice className="error" role="alert">
           A data inicial não pode ser posterior à data final.
-        </p>
+        </Notice>
       )}
       {totalField && (
         <section className="record-totals" aria-label={totalsTitle}>
@@ -436,9 +453,9 @@ export default function RecordList({
                 <tr>
                   <th>Meio de pagamento</th>
                   <th>Registos</th>
-                  <th>Créditos</th>
-                  <th>Débitos</th>
-                  <th>Saldo</th>
+                  <th className="numeric">Créditos</th>
+                  <th className="numeric">Débitos</th>
+                  <th className="numeric">Saldo</th>
                 </tr>
               </thead>
               <tbody>
@@ -448,14 +465,12 @@ export default function RecordList({
                     <tr key={group.name}>
                       <td><PaymentLabel name={group.name} /></td>
                       <td>{group.count}</td>
-                      <td className="positive">{money(group.credits)}</td>
-                      <td className="negative">{money(group.debits)}</td>
+                      <td className="positive numeric">{money(group.credits)}</td>
+                      <td className="negative numeric">{money(group.debits)}</td>
                       <td
-                        className={
-                          group.credits >= group.debits
+                        className={["numeric", group.credits >= group.debits
                             ? "positive"
-                            : "negative"
-                        }
+                            : "negative"].filter(Boolean).join(" ")}
                       >
                         {money(group.credits - group.debits)}
                       </td>
@@ -464,11 +479,11 @@ export default function RecordList({
               </tbody>
               <tfoot>
                 <tr>
-                  <th>Total</th>
+                  <th className="numeric">Total</th>
                   <td>{filtered.length}</td>
-                  <td>{money(credits)}</td>
-                  <td>{money(debits)}</td>
-                  <td>{money(credits - debits)}</td>
+                  <td className="numeric">{money(credits)}</td>
+                  <td className="numeric">{money(debits)}</td>
+                  <td className="numeric">{money(credits - debits)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -487,23 +502,23 @@ export default function RecordList({
           registos
         </span>
         <div>
-          <button
+          <ActionButton
             type="button"
             disabled={current === 1}
             onClick={() => setPage(current - 1)}
           >
             Anterior
-          </button>
+          </ActionButton>
           <span>
             Página {current} de {pages}
           </span>
-          <button
+          <ActionButton
             type="button"
             disabled={current === pages}
             onClick={() => setPage(current + 1)}
           >
             Seguinte
-          </button>
+          </ActionButton>
         </div>
       </nav>
     </>

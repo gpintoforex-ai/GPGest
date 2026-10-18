@@ -11,6 +11,20 @@ Abra http://127.0.0.1:5174/plataforma. Esta página não aparece no menu das emp
 
 Desativar uma empresa impede novos acessos e pedidos autenticados, incluindo sessões já abertas. Não elimina os dados. A sessão da plataforma dura duas horas; as sessões das empresas duram oito horas.
 
+## Reinicializar movimentos e documentos
+
+Em **Configurar empresa**, a opção **Reinicializar movimentos e documentos** permite recomeçar mantendo as tabelas e os bancos. Exige escrever o NIF (ou o nome, quando não há NIF) e confirmar o aviso.
+
+- Mantém utilizadores e palavras-passe, funcionários, lojas, caixas, rubricas, clientes, fornecedores, artigos, instituições e contas bancárias, terminais, meios de pagamento, associações aos bancos e configurações de integração.
+- Retira os dados operacionais: folhas e movimentos de caixa, extratos bancários, importações e documentos e-Fatura/compras, documentos a crédito, anexos guardados na aplicação, pagamentos, depósitos, reconciliações, saldos de referência e histórico operacional.
+- Termina as sessões da empresa e regista a operação na auditoria da plataforma. Não altera as outras empresas nem envia eliminações para o ERP, AT ou Google Drive.
+
+A mudança é transacional: cria um novo conjunto de dados e conserva o anterior numa cópia interna. Se falhar, a empresa continua a usar os dados anteriores. Não há recuperação automática nesta janela. **Reinicializar todos os dados** continua disponível separadamente, com o comportamento anterior, mais abrangente sobre os cadastros.
+
+Esta funcionalidade não executa nenhuma reinicialização por si só: só atua após a confirmação do administrador da plataforma. A disponibilização da opção não necessita de nova migração.
+
+Verificação: `backend/tests/test_platform_data_reset.py` cobre tabelas/bancos preservados, documentos e movimentos retirados, isolamento, confirmação, permissões, arquivo e reversão transacional de falhas. `scripts/test-platform-reset-ui.py` verifica a confirmação e a conservação dos campos após erro, em computador e telemóvel, com API simulada e sem reinicializar dados reais.
+
 ## Ligação Wintouch
 
 Em **Configurar empresa**, indique o URL da API, a chave e o identificador Wintouch enviado no cabeçalho `x-current-enterprise`. Ative a ligação e guarde antes de testar. Por defeito só é autorizado `https://api.wintouchcloud.com` na porta HTTPS. Outros servidores exigem configuração explícita de `WINTOUCH_ALLOWED_HOSTS` no servidor, sem curingas.

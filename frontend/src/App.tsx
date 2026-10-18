@@ -1,8 +1,15 @@
+import { ActionLink } from "./components/InteractionUI";
+import Brand from "./components/Brand";
+import EmailSettings from "./EmailSettings";
+import SaftSales from "./SaftSales";
+import { ActionButton, AppDialog, ManagedForm, Notice, confirmAction } from "./components/InteractionUI";
 import Deposits from "./Deposits";
 import Liquidity from "./Liquidity";
 import IntegrationSettings from "./IntegrationSettings";
 import {
   useEffect,
+  lazy,
+  Suspense,
   useLayoutEffect,
   useRef,
   useState,
@@ -20,6 +27,7 @@ import {
   Landmark,
   Package,
   FileBarChart,
+  FileUp,
   Settings,
   Plug,
   Monitor,
@@ -29,6 +37,9 @@ import {
   CheckCircle,
   ShieldCheck,
   Plus,
+  Pencil,
+  Trash2,
+  Mail,
   Building2,
   SlidersHorizontal,
   Clock,
@@ -57,18 +68,27 @@ import BanksCatalog from "./BanksCatalog";
 import Reconciliation from "./Reconciliation";
 import DocumentControl from "./DocumentControl";
 import Entities from "./Entities";
+import CompanySetupPanel from "./CompanySetup";
 import AttachmentSettings from "./AttachmentSettings";
 import FiscalSettings from "./FiscalSettings";
+import ThemeSettings from "./ThemeSettings";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { formatEuro } from "./utils/format";
 import AccountingDelivery from "./AccountingDelivery";
 import DocumentScanner, { ScanButton, ScanSettings } from "./DocumentScanner";
 import { InvoiceWorkflowSettings } from "./InvoiceWorkflow";
 import Rubrics from "./Rubrics";
 import RubricBadge from "./components/RubricBadge";
+import { ApiError, beginOperation, reportFormError, responseError, useDialogWorking, useFieldErrors, markDialogSaved, useWindowBusy, confirmFormExit } from "./components/InteractionUI";
+import { CloseButton, dismissDisclosure, useOverlayFocus } from "./components/InteractionUI";
+const Inventory = lazy(() => import("./Inventory"));
+const HomePage = lazy(() => import("./HomePage"));
+const Warehouses = lazy(() => import("./Warehouses"));
 type Bootstrap = {
   payment_methods?: Record<string, string>;
   payment_method_catalog?: PaymentMethod[] | null;
   payment_method_bank_defaults?: PaymentBankDefault[];
+  payment_terminals?: Row[];
   integration?: Row;
   user: Row;
   mode: string;
@@ -111,13 +131,15 @@ const labels: Record<string, string> = {
   cheque: "Cheques",
   misto: "Numerário e cheques",
 };
-export async function api(path: string, body?: unknown, options?: { timeoutMs?: number }) {
+export async function api(path: string, body?: unknown, options?: { timeoutMs?: number; method?: "POST" | "PUT" | "DELETE" }) {
+  const operation = beginOperation(path, body !== undefined);
+  try {
   const r = await fetch("/api" + path, {
     credentials: "same-origin",
     ...(options?.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}),
     ...(body !== undefined
       ? {
-          method: "POST",
+          method: options?.method || "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         }
@@ -128,53 +150,76 @@ export async function api(path: string, body?: unknown, options?: { timeoutMs?: 
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
-    throw new Error("O servidor não devolveu uma resposta válida.");
+    throw new Error("Não foi possível concluir a operação porque o servidor não respondeu como esperado. Os dados preenchidos foram mantidos. Tente novamente dentro de instantes.");
   }
   if (r.status === 401) window.dispatchEvent(new Event("gpgest-expired"));
-  if (!r.ok)
-    throw new Error(
-      typeof data.detail === "string"
-        ? data.detail
-        : "Verifique os campos introduzidos.",
-    );
+  if (!r.ok) {
+    const error = responseError(data.detail, r.status);
+    reportFormError(operation.form, error);
+    throw error;
+  }
+  operation.saved();
   return data;
+  } catch (error) {
+    if (error instanceof TypeError) throw new Error("Não foi possível contactar o servidor. Verifique a ligação e volte a tentar; os dados preenchidos foram mantidos.");
+    if (error instanceof DOMException && ["TimeoutError", "AbortError"].includes(error.name)) throw new Error(body === undefined ? "O servidor demorou a carregar os dados. Volte a tentar a consulta." : "O servidor demorou a responder. Confirme se a operação ficou registada antes de repetir.");
+    throw error;
+  } finally { operation.end(); }
 }
 export function Form({
   onSubmit,
   children,
   submitLabel = "Guardar",
+  onCancel,
+  destructive = false,
+  hideSubmit = false,
 }: {
   submitLabel?: string;
-  onSubmit: (v: Row) => Promise<void>;
+  onSubmit: (v: Row) => Promise<void | false>;
   children: React.ReactNode;
+  onCancel?: () => void;
+  destructive?: boolean;
+  hideSubmit?: boolean;
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
+  useDialogWorking(busy);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (saving.current) return;
+    saving.current = true;
+    const form = e.currentTarget;
     const data = Object.fromEntries(new FormData(e.currentTarget));
     setBusy(true);
     setError("");
     try {
-      await onSubmit(data);
+      const completed = await onSubmit(data);
+      if (completed === false) return;
+      markDialogSaved(form);
     } catch (e) {
+      if (e instanceof ApiError) reportFormError(form, e);
       setError((e as Error).message);
     } finally {
       setBusy(false);
+      saving.current = false;
     }
   }
   return (
-    <form onSubmit={submit}>
-      {children}
+    <ManagedForm onSubmit={submit} aria-busy={busy || undefined}>
+      <fieldset className="ui-form-fields" disabled={busy}>{children}</fieldset>
       {error && (
-        <p className="error" role="alert">
+        <Notice className="error" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
-      <button className="primary" disabled={busy}>
-        {busy ? "A processar…" : submitLabel}
-      </button>
-    </form>
+      {!hideSubmit && <div className="ui-dialog-actions">
+      {onCancel && <ActionButton type="button" disabled={busy} onClick={onCancel}>Cancelar</ActionButton>}
+      <ActionButton className={destructive ? "danger" : "primary"} disabled={busy}>
+        {busy ? "A guardar…" : submitLabel}
+      </ActionButton>
+      </div>}
+    </ManagedForm>
   );
 }
 export function Field({
@@ -185,12 +230,19 @@ export function Field({
   children: React.ReactNode;
 }) {
   const id = useId();
+  const errors = useFieldErrors();
+  const windowBusy = useWindowBusy();
+  const child = isValidElement(children) ? children as ReactElement<{ id?: string; name?: string; disabled?: boolean; "aria-describedby"?: string }> : null;
+  const aliases: [RegExp, string[]][] = [[/^nome/i, ["name"]], [/^nif/i, ["nif", "tax_number"]], [/^email/i, ["email"]], [/^(valor|montante)/i, ["amount", "amount_cents"]], [/^motivo|^justifica/i, ["reason"]], [/^estabelecimento|^loja/i, ["store_id"]], [/^moeda/i, ["currency"]], [/^data/i, ["date", "document_date", "payment_date"]]];
+  const names = child?.props.name ? [child.props.name] : aliases.find(([pattern]) => typeof label === "string" && pattern.test(label))?.[1] || [];
+  const error = errors[child?.props.name || id] || Object.entries(errors).find(([name]) => names.some(key => name === key || name.endsWith(`.${key}`)))?.[1];
   return (
-    <div className="field">
+    <div className="field" data-ignore-dirty={typeof label === "string" && /^(Pesquisar|Procurar)/i.test(label) || undefined}>
       <label htmlFor={id}>{label}</label>
       {isValidElement(children)
-        ? cloneElement(children as ReactElement<{ id?: string }>, { id })
+        ? cloneElement(children as ReactElement<{ id?: string; disabled?: boolean; "aria-invalid"?: boolean; "aria-describedby"?: string }>, { id, disabled: child?.props.disabled || windowBusy, ...(error ? { "aria-invalid": true, "aria-describedby": [child?.props["aria-describedby"], `${id}-error`].filter(Boolean).join(" ") } : {}) })
         : children}
+      {error && <small id={`${id}-error`} className="ui-field-error">{error}</small>}
     </div>
   );
 }
@@ -199,14 +251,20 @@ function Select({
   rows,
   labelKey = "name",
   id,
+  onChange,
+  ...validation
 }: {
   name: string;
   rows: Row[];
   labelKey?: string;
   id?: string;
+  onChange?: (event: React.ChangeEvent<HTMLSelectElement>) => void;
+  disabled?: boolean;
+  "aria-invalid"?: boolean;
+  "aria-describedby"?: string;
 }) {
   return (
-    <select id={id} name={name} required>
+    <select {...validation} id={id} name={name} required onChange={onChange}>
       <option value="">Selecionar…</option>
       {rows.map((r) => (
         <option key={r.id} value={r.id}>
@@ -232,6 +290,8 @@ export default function App() {
   const dataVersions = useRef<Record<DataTarget, number>>({ bootstrap: 0, sessions: 0, movements: 0, dashboard: 0 });
   const [paymentReturn, setPaymentReturn] = useState<PaymentReturn | null>(null);
   const pendingPaymentReturn = useRef<PaymentReturn | null>(null);
+  const removingRegister = useRef(false);
+  const [registerBusy, setRegisterBusy] = useState("");
   const [boot, setBoot] = useState<Bootstrap | null>(null),
     [loading, setLoading] = useState(true),
     [page, setPage] = useState("Dashboard"),
@@ -240,6 +300,8 @@ export default function App() {
     [dashboard, setDashboard] = useState<Row>({}),
     [audit, setAudit] = useState<Row[]>([]),
     [modal, setModal] = useState(""),
+    [movementPayment, setMovementPayment] = useState("numerario"),
+    [movementSession, setMovementSession] = useState(""),
     [customBank, setCustomBank] = useState(false),
     [selected, setSelected] = useState<Row | null>(null),
     [notice, setNotice] = useState(""),
@@ -256,10 +318,22 @@ export default function App() {
     [tablesOpen, setTablesOpen] = useState(false),
     [store, setStore] = useState(""),
     [requestKey, setRequestKey] = useState(crypto.randomUUID());
-  function navigatePage(next: string) {
+  useOverlayFocus(mobile, ".sidebar", () => setMobile(false));
+  const pageTitle = page === "Dashboard" ? "Visão geral" : page;
+  useEffect(() => {
+    document.title = boot ? `${pageTitle} · Zela` : "Entrar · Zela";
+  }, [pageTitle, !!boot]);
+  const navigationPending = useRef(false);
+  async function navigatePage(next: string) {
+    if (next === page || navigationPending.current) return;
+    navigationPending.current = true;
+    try {
+    if (!(await confirmFormExit(document.querySelector(".workspace")))) return;
     if (next === "Organização" || [
+      "Configuração inicial",
       "Integrações",
       "Regime de IVA",
+      "Apar?ncia",
       "Anexos",
       "Digitalização",
       "Verificação automática e-Fatura",
@@ -273,6 +347,7 @@ export default function App() {
       setPaymentReturn(null);
     }
     setPage(next);
+    } finally { navigationPending.current = false; }
   }
   function closePaymentMethods() {
     const destination = paymentReturn || { page: "Dashboard", scrollY: 0, focus: null };
@@ -363,13 +438,14 @@ export default function App() {
     return () => { active = false; };
   }, [page, boot]);
   const save = async (path: string, data: unknown) => {
-    await api(path, data);
+    const saved = await api(path, data);
+    if (/^\/registers\/[^/]+$/.test(path)) setBoot(current => current ? { ...current, registers: current.registers.map(row => row.id === saved.id ? saved : row) } : current);
     setModal("");
     setSelected(null);
     setNotice("Operação concluída com sucesso.");
     try {
       if (path === "/auth/password") return;
-      if (["/stores", "/registers", "/accounts", "/categories", "/users"].includes(path)) await reload(["bootstrap"]);
+      if (["/stores", "/registers", "/accounts", "/categories", "/users"].includes(path) || /^\/(accounts|registers)\/[^/]+$/.test(path)) await reload(["bootstrap"]);
       else if (path === "/cash/payment-methods") await reload(["bootstrap", "sessions"]);
       else await reload();
     } catch {
@@ -384,24 +460,24 @@ export default function App() {
       setError((e as Error).message);
     }
   };
-  if (loading) return <div className="loading">A iniciar o GPGest…</div>;
+  if (loading) return <div className="loading" role="status">A iniciar a Zela…</div>;
+  if (!boot && window.location.pathname === "/" && !new URLSearchParams(window.location.search).has("nif") && !new URLSearchParams(window.location.search).has("empresa")) return <Suspense fallback={<div className="loading" role="status">A carregar a IAZELA…</div>}><HomePage /></Suspense>;
   if (!boot)
     return (
       <div className="login">
         <div className="login-story">
           <div className="brand">
-            GP<span>Gest</span>
+            <Brand />
           </div>
-          <span className="eyebrow">ANÁLISE E CONTROLO DO NEGÓCIO</span>
+          <span className="eyebrow">GESTÃO EMPRESARIAL</span>
           <h1>
-            Conheça a sua empresa.
+            O seu negócio,
             <br />
-            Decida com confiança.
+            com clareza.
           </h1>
           <p>
-            Uma solução que vai além do registo de operações: analisa a situação
-            da empresa, identifica problemas, recomenda ações e ajuda o
-            administrador a manter o controlo do negócio.
+            Caixa, bancos e documentos num único espaço de trabalho.
+            Acompanhe os movimentos, confira os valores e mantenha a informação organizada.
           </p>
           <div className="login-note">
             <ShieldCheck /> Acesso reservado à sua equipa
@@ -409,7 +485,7 @@ export default function App() {
         </div>
         <div className="login-form">
           <span className="eyebrow">BEM-VINDO</span>
-          <h2>Entrar no GPGest</h2>
+          <h2>Entrar na Zela</h2>
           <p>Utilize as credenciais da sua empresa.</p>
           <Form
             submitLabel="Entrar"
@@ -452,10 +528,10 @@ export default function App() {
               />
             </Field>
           </Form>
-          <button type="button" onClick={async () => {
+          <ActionButton type="button" onClick={async () => {
             await api("/company/clear", {});
             window.location.reload();
-          }}>Limpar acesso anterior</button>
+          }}>Limpar acesso anterior</ActionButton>
           <small>
             Ferramenta de gestão interna. Não emite documentos fiscais.
           </small>
@@ -492,11 +568,14 @@ export default function App() {
   ] as const;
   const configurationMenu = [
     ["Organização", Building2],
+    ["Email", Mail],
     ["Parâmetros", SlidersHorizontal],
   ] as const;
   const parameterMenu = [
+    ["Configuração inicial", Settings],
     ["Integrações", Plug],
     ["Regime de IVA", FileBarChart],
+    ["Aparência", Settings],
     ["Anexos", Package],
     ["Digitalização", Camera],
     ["Verificação automática e-Fatura", CheckCircle],
@@ -507,6 +586,7 @@ export default function App() {
     ["Movimentos previstos", Clock],
     ["Depósitos", Landmark],
     ["Previsão de liquidez", Clock],
+    ...(boot.integration?.mode === "local" ? [["Importar SAF-T de vendas", FileUp] as const] : []),
   ] as const;
 
   const banksMenu = [
@@ -520,13 +600,15 @@ export default function App() {
     ["Fornecedores", Landmark],
     ["Bancos", Landmark],
     ["Artigos e validades", Package],
+    ["Armazéns", Package],
     ["Rubricas", FileBarChart],
     ["Caixas", Wallet],
     ["Meios de pagamento", CreditCard],
     ["Operadores / funcionários", Users],
   ] as const;
   const openModal = async (kind: string, row: Row | null = null) => {
-    if (kind === "account") setCustomBank(false);
+    if (kind === "movement") { setMovementPayment("numerario"); setMovementSession(""); }
+    if (kind === "account" || kind === "edit-account") setCustomBank(kind === "edit-account" && !boot.bank_institutions?.some(bank => bank.name === row?.bank));
     if (kind === "open") {
       try {
         await reload();
@@ -539,6 +621,24 @@ export default function App() {
     setRequestKey(crypto.randomUUID());
     setModal(kind);
   };
+  async function removeRegister(row: Row) {
+    if (removingRegister.current) return;
+    removingRegister.current = true;
+    try {
+      if (!(await confirmAction({
+        title: "Remover caixa?",
+        message: `Pretende remover a caixa «${row.name}» de «${boot!.stores.find(item => item.id === row.store_id)?.name || "Estabelecimento"}»? Esta ação não pode ser anulada. A remoção só é permitida quando não existe histórico nem associações protegidas.`,
+        confirmLabel: "Remover caixa", tone: "danger",
+      }))) return;
+      setRegisterBusy(row.id); setError(""); setNotice("");
+      await api(`/registers/${encodeURIComponent(row.id)}/delete`, { confirmed: true });
+      setBoot(current => current ? { ...current, registers: current.registers.filter(item => item.id !== row.id) } : current);
+      setNotice(`Caixa «${row.name}» removida.`);
+      try { await reload(["bootstrap"]); }
+      catch { setError("A caixa foi removida, mas não foi possível atualizar todos os dados do ecrã. Atualize a página."); }
+    } catch (e) { setError((e as Error).message); }
+    finally { setRegisterBusy(""); removingRegister.current = false; }
+  }
   const filteredCash = open.reduce((sum, s) => sum + s.balance_cents, 0);
   const integratedMode = boot.integration?.mode === "integrated";
   const operatingMode = integratedMode
@@ -549,14 +649,15 @@ export default function App() {
   );
   return (
     <div className={`shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-      {mobile && <button className="sidebar-backdrop" aria-label="Fechar menu" onClick={() => setMobile(false)} />}
-      <aside className={mobile ? "sidebar visible" : "sidebar"}>
+      {mobile && <ActionButton className="sidebar-backdrop" aria-label="Fechar menu" title="Fechar menu" onClick={() => setMobile(false)} />}
+      <aside className={mobile ? "sidebar visible" : "sidebar"} onKeyDown={event => { if (mobile && event.key === "Escape") { event.preventDefault(); setMobile(false); document.querySelector<HTMLElement>('.header-tools button[aria-label],.topbar button[aria-label]')?.focus(); } }}>
+        {mobile && <CloseButton guard={false} className="ui-mobile-menu-close" onClick={() => setMobile(false)} />}
         <div className="brand">
-          <span className="brand-full">GP<span>Gest</span></span>
-          <span className="brand-compact" aria-label="GPGest">GP</span>
-          <small>{boot.company?.name || "GESTÃO DE LOJA"}</small>
+          <span className="brand-full"><Brand /></span>
+          <span className="brand-compact"><Brand compact /></span>
+          <small>GESTÃO EMPRESARIAL</small>
         </div>
-        <button className="sidebar-collapse" aria-label={sidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}><Menu size={18} /><span className="nav-label">Recolher menu</span></button>
+        <ActionButton className="sidebar-collapse" aria-label={sidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>{sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}<span className="nav-label">Recolher menu</span></ActionButton>
         <nav aria-label="Navegação principal">
           {menu.map(([label, Icon]) => {
             const group = label === "Configurações"
@@ -573,7 +674,7 @@ export default function App() {
             const submenuId = group.id;
             return label === "Tesouraria" || label === "Bancos" || label === "Contabilidade" || label === "Tabelas" || label === "Configurações" ? (
               <div className="finance-menu" key={label}>
-                <button
+                <ActionButton
                   className={
                     groupedMenu.some(([name]) => name === page) ||
                     label === "Configurações" && parameterMenu.some(([name]) => name === page)
@@ -592,7 +693,7 @@ export default function App() {
                   ) : (
                     <ChevronRight size={15} />
                   )}
-                </button>
+                </ActionButton>
                 <div
                   id={submenuId}
                   className="finance-submenu"
@@ -601,7 +702,7 @@ export default function App() {
                   {groupedMenu.map(([name, FinanceIcon]) => (
                     name === "Parâmetros" && manager ? (
                       <div className="finance-menu" key={name}>
-                        <button
+                        <ActionButton
                           className={parameterMenu.some(([parameter]) => parameter === page) ? "active" : ""}
                           aria-expanded={parametersOpen}
                           aria-controls="parameters-submenu"
@@ -611,10 +712,10 @@ export default function App() {
                         >
                           <FinanceIcon size={17} /> <span className="nav-label">{name}</span>
                           {parametersOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                        </button>
+                        </ActionButton>
                         <div id="parameters-submenu" className="finance-submenu" hidden={!parametersOpen}>
                           {manager && parameterMenu.map(([parameter, ParameterIcon]) => (
-                            <button
+                            <ActionButton
                               key={parameter}
                               className={page === parameter ? "active" : ""}
                               aria-current={page === parameter ? "page" : undefined}
@@ -628,12 +729,12 @@ export default function App() {
                             >
                               <ParameterIcon size={17} /> <span className="nav-label">{parameter}</span>
                               {page === parameter && <ChevronRight size={15} />}
-                            </button>
+                            </ActionButton>
                           ))}
                         </div>
                       </div>
                     ) : name !== "Parâmetros" ? (
-                      <button
+                      <ActionButton
                         key={name}
                         className={page === name ? "active" : ""}
                         aria-current={page === name ? "page" : undefined}
@@ -647,18 +748,18 @@ export default function App() {
                       >
                         <FinanceIcon size={17} /> <span className="nav-label">{name}</span>
                         {page === name && <ChevronRight size={15} />}
-                      </button>
+                      </ActionButton>
                     ) : null
                   ))}
                 </div>
               </div>
             ) : (
-              <button
+              <ActionButton
                 key={label}
                 className={page === label ? "active" : ""}
                 aria-current={page === label ? "page" : undefined}
-                aria-label={label}
-                title={label}
+                aria-label={label === "Dashboard" ? "Visão geral" : label}
+                title={label === "Dashboard" ? "Visão geral" : label}
                 onClick={() => {
                   navigatePage(label);
                   setMobile(false);
@@ -666,9 +767,9 @@ export default function App() {
                 }}
               >
                 <Icon size={19} />
-                <span className="nav-label">{label}</span>
+                <span className="nav-label">{label === "Dashboard" ? "Visão geral" : label}</span>
                 {page === label && <ChevronRight size={15} />}
-              </button>
+              </ActionButton>
             );
           })}
         </nav>
@@ -691,7 +792,7 @@ export default function App() {
               <strong>{boot.user.name}</strong>
               <small>{boot.user.role}</small>
             </div>
-            <button
+            <ActionButton
               aria-label="Terminar sessão"
               onClick={() =>
                 act(async () => {
@@ -706,23 +807,23 @@ export default function App() {
               }
             >
               <LogOut size={18} />
-            </button>
+            </ActionButton>
           </div>
         </div>
       </aside>
       <div className="workspace">
         <header>
-          <button
+          <ActionButton
             className="mobile-toggle"
             onClick={() => setMobile(!mobile)}
             aria-label="Abrir menu"
           >
             <Menu />
-          </button>
+          </ActionButton>
           <div className="header-context">
-            <span className="active-company">{boot.company?.name || "GPGest"}</span><small className="operating-mode-label">{boot.integration?.mode === "integrated" ? `Modo integrado · ${boot.integration.provider} · ${boot.integration.active ? boot.integration.writes ? "Ligação configurada" : "Apenas leitura" : "Ligação desativada"}` : "Modo local autónomo"}</small>
+            <span className="active-company">{boot.company?.name || "Zela"}</span><small className="operating-mode-label">{boot.integration?.mode === "integrated" ? `Modo integrado · ${boot.integration.provider} · ${boot.integration.active ? boot.integration.writes ? "Ligação configurada" : "Apenas leitura" : "Ligação desativada"}` : "Modo local autónomo"}</small>
             <span className="breadcrumb">
-              GPGest /{" "}
+              Zela /{" "}
               {financeMenu.some(([name]) => name === page)
                 ? "Tesouraria"
                 : banksMenu.some(([name]) => name === page)
@@ -731,13 +832,21 @@ export default function App() {
                   ? "Contabilidade"
                   : tablesMenu.some(([name]) => name === page) ? "Tabelas" : "Gestão"}
             </span>
-            <h2>{page}</h2>
+            <h2>{pageTitle}</h2>
           </div>
           <div className="header-tools">
+            <ThemeSettings compact />
             <select
               aria-label="Filtrar loja"
               value={store}
-              onChange={(e) => setStore(e.target.value)}
+              onChange={async (e) => {
+                const next = e.target.value;
+                if (navigationPending.current) return;
+                navigationPending.current = true;
+                try {
+                  if (await confirmFormExit(document.querySelector(".workspace"))) setStore(next);
+                } finally { navigationPending.current = false; }
+              }}
             >
               <option value="">Todas as lojas</option>
               {boot.stores.map((s) => (
@@ -753,9 +862,9 @@ export default function App() {
                 timeZone: "Europe/Lisbon",
               }).format(new Date())}
             </span>
-            <details className="user-menu">
+            <details className="user-menu" onKeyDown={event => { if (event.key === "Escape") dismissDisclosure(event); }}>
               <summary aria-label="Menu do utilizador"><span className="avatar">{boot.user.name.slice(0, 2).toUpperCase()}</span><span className="user-name">{boot.user.name}</span><ChevronDown size={15} /></summary>
-              <div className="user-menu-panel"><strong>{boot.user.name}</strong><small>{boot.user.role}</small><button onClick={() => act(async () => { await api("/auth/logout", {}); invalidateDataRequests(); setBoot(null); setSessions([]); setMovements([]); setAudit([]); setModal(""); })}><LogOut size={16} />Terminar sessão</button></div>
+              <div className="user-menu-panel"><div className="ui-popover-heading"><strong>{boot.user.name}</strong><CloseButton guard={false} onClick={dismissDisclosure} /></div><small>{boot.user.role}</small><ActionButton onClick={() => act(async () => { await api("/auth/logout", {}); invalidateDataRequests(); setBoot(null); setSessions([]); setMovements([]); setAudit([]); setModal(""); })}><LogOut size={16} />Terminar sessão</ActionButton></div>
             </details>
           </div>
         </header>
@@ -769,33 +878,31 @@ export default function App() {
             </div>
           )}
           {notice && (
-            <div className="success" role="status">
+            <Notice onDismiss={() => setNotice("")} className="success" role="status">
               {notice}
-              <button onClick={() => setNotice("")} aria-label="Fechar aviso">
-                <X size={16} />
-              </button>
-            </div>
+            </Notice>
           )}
           {error && (
-            <p className="error" role="alert">
+            <Notice className="error" role="alert">
               {error}
-            </p>
+            </Notice>
           )}
           {page === "Dashboard" && (
             <>
+              <CompanySetupPanel boot={boot} reload={reload} hasOpenSession={open.length > 0} onNavigate={navigatePage} onAction={openModal} />
               <div className="page-intro">
                 <div>
                   <span className="eyebrow">VISÃO GERAL</span>
-                  <h1>Uma visão clara do seu negócio.</h1>
+                  <h1>Visão geral do negócio</h1>
                   <p>Acompanhe a operação e mantenha a caixa sob controlo.</p>
                 </div>
                 {write && (
-                  <button
+                  <ActionButton
                     className="primary"
                     onClick={() => openModal("movement")}
                   >
                     <Plus size={18} /> Novo movimento
-                  </button>
+                  </ActionButton>
                 )}
               </div>
               <div className="stats">
@@ -808,24 +915,24 @@ export default function App() {
                 </article>
                 <article className="stat">
                   <span>
-                    Saldo bancário <Landmark size={20} />
+                    Contas bancárias <Landmark size={20} />
                   </span>
-                  <strong>—</strong>
-                  <small>Sem extrato importado</small>
+                  <strong>{boot.accounts.filter(account => !store || account.store_id === store).length}</strong>
+                  <small>Contas do contexto selecionado</small>
                 </article>
                 <article className="stat">
                   <span>
-                    Dinheiro em trânsito <ArrowLeftRight size={20} />
+                    Caixas abertas <Wallet size={20} />
                   </span>
-                  <strong>—</strong>
-                  <small>Disponível na fase de depósitos</small>
+                  <strong>{open.length}</strong>
+                  <small>Disponíveis para conferência</small>
                 </article>
                 <article className="stat">
                   <span>
-                    Resultado de gestão <FileBarChart size={20} />
+                    Movimentos na consulta <ArrowLeftRight size={20} />
                   </span>
-                  <strong>—</strong>
-                  <small>Requer receitas e custos reconhecidos</small>
+                  <strong>{visibleMovements.length}</strong>
+                  <small>Registos carregados nesta consulta</small>
                 </article>
               </div>
               <div className="dashboard-grid">
@@ -853,12 +960,12 @@ export default function App() {
                   ) : (
                     <Empty text="Nenhuma caixa aberta" />
                   )}
-                  <button
+                  <ActionButton
                     className="text-button"
-                    onClick={() => setPage("Folha de caixa")}
+                    onClick={() => navigatePage("Folha de caixa")}
                   >
                     Gerir caixas <ChevronRight size={16} />
-                  </button>
+                  </ActionButton>
                 </section>
                 <section className="panel">
                   <div className="panel-title">
@@ -877,13 +984,15 @@ export default function App() {
                     <div>
                       <strong>Reconciliação bancária</strong>
                       <small>Sugestões automáticas com confirmação das associações.</small>
+                      <ActionButton className="text-button" onClick={() => navigatePage("Reconciliação automática")}>Consultar reconciliação</ActionButton>
                     </div>
                   </div>
                   <div className="priority">
                     <b>—</b>
                     <div>
-                      <strong>Alertas de validade</strong>
-                      <small>Aguarda implementação da fase 3.</small>
+                      <strong>Conferência documental</strong>
+                      <small>Reveja as faturas e os anexos da empresa.</small>
+                      <ActionButton className="text-button" onClick={() => navigatePage("Conferência documental")}>Consultar documentos</ActionButton>
                     </div>
                   </div>
                 </section>
@@ -891,12 +1000,12 @@ export default function App() {
               <section className="panel">
                 <div className="panel-title">
                   <h3>Últimos movimentos</h3>
-                  <button
+                  <ActionButton
                     className="text-button"
-                    onClick={() => setPage("Movimentos reais")}
+                    onClick={() => navigatePage("Movimentos reais")}
                   >
                     Ver todos <ChevronRight size={16} />
-                  </button>
+                  </ActionButton>
                 </div>
                 <MovementTable rows={visibleMovements.slice(0, 5)} />
               </section>
@@ -926,6 +1035,7 @@ export default function App() {
                       <Info size={22} aria-hidden="true" />
                     </summary>
                     <div className="cash-page-info-content">
+                      <div className="ui-popover-heading"><strong>Informação</strong><CloseButton guard={false} onClick={dismissDisclosure} /></div>
                       <ReadAloud active={page === "Folha de caixa"}>
                         <p>
                           Fundo de maneio, movimentos por meio de pagamento e contagem
@@ -942,18 +1052,18 @@ export default function App() {
                 }
                 configuration={manager && (
                   <>
-                    <button type="button" onClick={() => { setTablesOpen(true); setPage("Caixas"); }}>
+                    <ActionButton type="button" onClick={() => { setTablesOpen(true); void navigatePage("Caixas"); }}>
                       <Wallet size={18} aria-hidden="true" /> Configurar caixas
-                    </button>
-                    <button type="button" onClick={() => { setTablesOpen(true); navigatePage("Meios de pagamento"); }}>
+                    </ActionButton>
+                    <ActionButton type="button" onClick={() => { setTablesOpen(true); navigatePage("Meios de pagamento"); }}>
                       <CreditCard size={18} aria-hidden="true" /> Configurar meios de pagamento
-                    </button>
+                    </ActionButton>
                   </>
                 )}
                 actions={write && (
-                  <button className="primary" onClick={() => openModal("open")}>
+                  <ActionButton className="primary" onClick={() => openModal("open")}>
                     <Plus size={18} /> Nova folha de caixa
-                  </button>
+                  </ActionButton>
                 )}
               >
                 {(s) => (
@@ -1007,24 +1117,26 @@ export default function App() {
                 </div>
                 <div className="actions">
                   {manager && (
-                    <button onClick={() => openModal("transfer")}>
+                    <ActionButton onClick={() => openModal("transfer")}>
                       Transferir entre caixas
-                    </button>
+                    </ActionButton>
                   )}
                   {write && (
-                    <button
+                    <ActionButton
                       className="primary"
                       onClick={() => openModal("movement")}
                     >
                       <Plus size={18} /> Registar movimento
-                    </button>
+                    </ActionButton>
                   )}
                 </div>
               </div>
               <RealMovements
+                accounts={boot.accounts}
                 localRows={movements}
                 store={store}
                 registers={boot.registers}
+                integrated={integratedMode}
               >
                 {(pageRows) => (
                   <MovementTable
@@ -1045,12 +1157,12 @@ export default function App() {
                   <p>Gira as contas bancárias das suas lojas e consulte os respetivos extratos.</p>
                 </div>
                 {manager && (
-                  <button
+                  <ActionButton
                     className="primary"
                     onClick={() => openModal("account")}
                   >
                     <Plus size={18} /> Nova conta
-                  </button>
+                  </ActionButton>
                 )}
               </div>
               <div className="cash-grid">
@@ -1068,17 +1180,18 @@ export default function App() {
                           Consulte os movimentos e o saldo na área de extratos.
                         </small>
                       </p>
+                      {manager && <ActionButton onClick={() => openModal("edit-account", a)} aria-label={`Editar conta ${a.name}`}><Pencil size={16} />Editar conta</ActionButton>}
                     </section>
                   ))}
               </div>
               {!boot.accounts.some(a => !store || a.store_id === store) && <Empty text="Ainda não existem contas bancárias nesta seleção" />}
-              <button onClick={() => setPage("Extratos")}>Consultar extratos</button>
+              <ActionButton onClick={() => navigatePage("Extratos")}>Consultar extratos</ActionButton>
             </>
           )}
           {page === "Bancos" && <BanksCatalog manager={manager} onChanged={() => reload(["bootstrap"])} />}
           {page === "Extratos" && (
             <>
-              <div className="page-intro"><div><h1>Extratos bancários</h1><p>Selecione uma conta para importar e consultar os movimentos do banco.</p></div><button onClick={() => setPage("Múltiplas contas")}>Gerir contas</button></div>
+              <div className="page-intro"><div><h1>Extratos bancários</h1><p>Selecione uma conta para importar e consultar os movimentos do banco.</p></div><ActionButton onClick={() => navigatePage("Múltiplas contas")}>Gerir contas</ActionButton></div>
               <BankStatements accounts={boot.accounts.filter(a => !store || a.store_id === store)} manager={manager} />
             </>
           )}
@@ -1086,8 +1199,10 @@ export default function App() {
             <Reconciliation stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} />
           )}
           {page === "Conferência documental" && <DocumentControl stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} integration={boot.integration} />}
-          {page === "Entrega à contabilidade" && <AccountingDelivery admin={boot.user.role === "administrador"} onSettings={() => navigatePage(manager ? "Regime de IVA" : "Organização")} />}
-          {page === "Digitalizar documento" && <><div className="page-intro"><div><h1>Digitalizar documento</h1><p>Fotografe ou selecione páginas, reveja o PDF e guarde-o na pasta cloud da empresa.</p></div>{manager && <button onClick={() => setScanMenuOpen(true)}><Camera size={18} />Digitalizar documento</button>}</div>{!manager && <p>A digitalização está disponível para administradores e gestores.</p>}{manager && scanMenuOpen && <DocumentScanner store={store} onClose={() => setScanMenuOpen(false)} onSaved={reload} />}</>}
+          {page === "Entrega à contabilidade" && <AccountingDelivery admin={boot.user.role === "administrador"} company={boot.company || {}} stores={boot.stores} store={store} onEmailSettings={() => navigatePage("Email")} onSettings={() => navigatePage(manager ? "Regime de IVA" : "Organização")} />}
+          {page === "Email" && <EmailSettings admin={boot.user.role === "administrador"} company={boot.company || {}} stores={boot.stores}/>}
+          {page === "Importar SAF-T de vendas" && <SaftSales stores={boot.stores} store={store} admin={boot.user.role === "administrador"} local={boot.integration?.mode === "local"}/>}
+          {page === "Digitalizar documento" && <><div className="page-intro"><div><h1>Digitalizar documento</h1><p>Fotografe ou selecione páginas, reveja o PDF e guarde-o na pasta cloud da empresa.</p></div>{manager && <ActionButton onClick={() => setScanMenuOpen(true)}><Camera size={18} />Digitalizar documento</ActionButton>}</div>{!manager && <p>A digitalização está disponível para administradores e gestores.</p>}{manager && scanMenuOpen && <DocumentScanner store={store} onClose={() => setScanMenuOpen(false)} onSaved={reload} />}</>}
           {page === "Relatórios" && (
             <>
               <div className="page-intro">
@@ -1095,7 +1210,7 @@ export default function App() {
                   <h1>Histórico e auditoria</h1>
                   <p>Registos financeiros e alterações de responsabilidade.</p>
                 </div>
-                <button
+                <ActionButton
                   onClick={() => {
                     const rows = [
                       [
@@ -1145,7 +1260,7 @@ export default function App() {
                   }}
                 >
                   Exportar movimentos CSV
-                </button>
+                </ActionButton>
               </div>
               <section className="panel">
                 <div className="table-wrap">
@@ -1228,20 +1343,24 @@ export default function App() {
                   <p>Caixas configuradas por estabelecimento.</p>
                 </div>
                 {manager && (
-                  <button className="primary" onClick={() => openModal("register")}>
+                  <ActionButton className="primary" onClick={() => openModal("register")}>
                     <Plus size={18} /> Nova caixa
-                  </button>
+                  </ActionButton>
                 )}
               </div>
               <section className="panel">
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>Caixa</th><th>Estabelecimento</th></tr></thead>
+                    <thead><tr><th>Caixa</th><th>Estabelecimento</th>{manager && <th>Ações</th>}</tr></thead>
                     <tbody>
                       {boot.registers.filter(r => !store || r.store_id === store).map(r => (
                         <tr key={r.id}>
                           <td><span className="cash-payment-label"><Wallet size={18} aria-hidden="true" />{r.name}</span></td>
                           <td>{boot.stores.find(s => s.id === r.store_id)?.name || "—"}</td>
+                          {manager && <td><div className="actions">
+                            <ActionButton disabled={!!registerBusy} aria-label={`Editar caixa ${r.name}`} onClick={() => openModal("edit-register", r)}><Pencil size={16} />Editar</ActionButton>
+                            <ActionButton className="danger" disabled={!!registerBusy} aria-label={`Remover caixa ${r.name}`} onClick={() => removeRegister(r)}><Trash2 size={16} />{registerBusy === r.id ? "A remover…" : "Remover"}</ActionButton>
+                          </div></td>}
                         </tr>
                       ))}
                     </tbody>
@@ -1283,9 +1402,9 @@ export default function App() {
                   <div className="panel-title">
                     <h3>Lojas e caixas</h3>
                     {boot.user.role === "administrador" && (
-                      <button onClick={() => openModal("store")}>
+                      <ActionButton onClick={() => openModal("store")}>
                         Nova loja
-                      </button>
+                      </ActionButton>
                     )}
                   </div>
                   {boot.stores.map((s) => (
@@ -1300,9 +1419,9 @@ export default function App() {
                     </div>
                   ))}
                   {manager && (
-                    <button onClick={() => openModal("register")}>
+                    <ActionButton onClick={() => openModal("register")}>
                       Adicionar caixa
-                    </button>
+                    </ActionButton>
                   )}
                 </section>
 
@@ -1310,9 +1429,9 @@ export default function App() {
                   <div className="panel-title">
                     <h3>Equipa</h3>
                     {boot.user.role === "administrador" && (
-                      <button onClick={() => openModal("user")}>
+                      <ActionButton onClick={() => openModal("user")}>
                         Novo utilizador
-                      </button>
+                      </ActionButton>
                     )}
                   </div>
                   {boot.users.map((u) => (
@@ -1327,9 +1446,9 @@ export default function App() {
                 <section className="panel">
                   <ShieldCheck />
                   <h3>Segurança e dados</h3>
-                  <button onClick={() => openModal("password")}>
+                  <ActionButton onClick={() => openModal("password")}>
                     Alterar palavra-passe
-                  </button>
+                  </ActionButton>
                   <p>
                     Sessões de 8 horas, palavras-passe protegidas com Argon2 e
                     permissões verificadas no servidor.
@@ -1344,55 +1463,42 @@ export default function App() {
           )}
           {page === "Depósitos" && <Deposits boot={boot} store={store} reload={reload} />}
           {page === "Previsão de liquidez" && <Liquidity boot={boot} store={store} />}
+          {page === "Armazéns" && <Suspense fallback={<p role="status">A carregar armazéns…</p>}><Warehouses stores={boot.stores} /></Suspense>}
+          {page === "Artigos e validades" && <Suspense fallback={<p role="status">A carregar artigos e stock…</p>}><Inventory stores={boot.stores} admin={boot.user.role === "administrador"} /></Suspense>}
           {[
-            "Artigos e validades",
             "Receitas e despesas",
           ].includes(page) && (
             <section className="panel roadmap">
-              <span className="eyebrow">DESENVOLVIMENTO POR FASES</span>
+              <span className="eyebrow">ÁREA INDISPONÍVEL</span>
               <h1>{page}</h1>
               <p>
-                Este módulo será implementado numa fase seguinte. A Fase 1 já
-                permite gerir lojas, equipa, caixa, movimentos, fechos e
-                auditoria.
+                {page === "Artigos e validades"
+                  ? "O controlo de lotes e validades ainda não está disponível nesta versão."
+                  : "A análise de receitas e despesas ainda não está disponível nesta versão."}
               </p>
               <p>
-                {page === "Clientes" || page === "Fornecedores"
-                  ? `A tabela de ${page.toLowerCase()} será disponibilizada neste espaço.`
-                  : page === "Depósitos"
-                  ? "As retiradas para depósito podem ser registadas na caixa. O controlo de trânsito e talões estará disponível na fase 2."
-                  : page === "Artigos e validades"
-                    ? "Lotes, FEFO e alertas de validade estão previstos para a fase 3."
-                    : page === "Reconciliação"
-                      ? "A importação de extratos, deteção de duplicados e correspondências agrupadas estão previstas para a fase 4."
-                      : "O reconhecimento de receitas, custos e despesas será separado dos movimentos de dinheiro na fase 2."}
+                Pode continuar a consultar os movimentos, conferir a caixa e organizar os documentos nos restantes módulos.
               </p>
-              <button onClick={() => setPage("Folha de caixa")}>
+              <ActionButton onClick={() => navigatePage("Folha de caixa")}>
                 Ir para folha de caixa
-              </button>
+              </ActionButton>
             </section>
           )}
           {(page === "Clientes" || page === "Fornecedores") && <Entities kind={page} manager={manager} categories={boot.categories.map(c => ({ id: c.id, name: c.name }))} />}
           {page === "Regime de IVA" && manager && <FiscalSettings />}
+          {page === "Aparência" && <ThemeSettings />}
+          {page === "Configuração inicial" && <CompanySetupPanel boot={boot} reload={reload} hasOpenSession={open.length > 0} onNavigate={navigatePage} onAction={openModal} standalone />}
           {page === "Anexos" && manager && <AttachmentSettings nif={boot.company?.nif} />}
           {page === "Digitalização" && manager && <ScanSettings admin={boot.user.role === "administrador"} />}
           {page === "Verificação automática e-Fatura" && manager && <InvoiceWorkflowSettings admin={boot.user.role === "administrador"} />}
           <footer>
-            GPGest · Gestão interna <span>Europe/Lisbon · EUR · Fase 1</span>
+            Zela · Gestão empresarial <span>Dados da empresa selecionada</span>
           </footer>
         </main>
       </div>
       {modal && (
-        <div
-          className="overlay"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setModal("");
-          }}
-        >
-          <section
+          <AppDialog autoOpen key={modal} onRequestClose={() => setModal("")} initialFocus={["close", "reopen", "reverse"].includes(modal) ? "cancel" : "first"}
             className="modal"
-            role="dialog"
-            aria-modal="true"
             aria-labelledby="modal-title"
           >
             <div className="panel-title">
@@ -1408,8 +1514,10 @@ export default function App() {
                     transfer: "Transferência entre caixas",
                     store: "Nova loja",
                     register: "Nova caixa",
+                    "edit-register": "Editar caixa",
                     "payment-method": "Novo meio de pagamento",
                     account: "Nova conta bancária",
+                    "edit-account": "Editar conta bancária",
                     category: "Nova categoria",
                     user: "Novo utilizador",
                     attachments: "Anexos do movimento",
@@ -1417,9 +1525,7 @@ export default function App() {
                   }[modal]
                 }
               </h2>
-              <button onClick={() => setModal("")} aria-label="Fechar">
-                <X />
-              </button>
+
             </div>
             {modal === "password" && (
               <Form onSubmit={(v) => save("/auth/password", v)}>
@@ -1470,6 +1576,7 @@ export default function App() {
                 onSubmit={(v) =>
                   save("/movements", {
                     ...v,
+                    terminal_id: v.terminal_id || null,
                     occurred_at: new Date(v.occurred_at).toISOString(),
                     request_key: requestKey,
                   })
@@ -1478,6 +1585,7 @@ export default function App() {
                 <Field label="Sessão aberta">
                   <Select
                     name="session_id"
+                    onChange={event => setMovementSession(event.target.value)}
                     rows={sessions
                       .filter(
                         (s) =>
@@ -1511,7 +1619,7 @@ export default function App() {
                     </select>
                   </Field>
                   <Field label="Meio de pagamento">
-                    <select name="payment">
+                    <select name="payment" value={movementPayment} onChange={event => setMovementPayment(event.target.value)}>
                       {Object.entries(paymentMethods).map(
                         ([k, name]) => (
                           <option key={k} value={k}>
@@ -1521,6 +1629,7 @@ export default function App() {
                       )}
                     </select>
                   </Field>
+                  {["cartao", "mbway"].includes(movementPayment) && !!boot.payment_terminals?.length && <Field label="Terminal de pagamento"><select name="terminal_id" defaultValue=""><option value="">Sem terminal / conta por defeito</option>{boot.payment_terminals.filter(t => (!movementSession || !t.register_id || sessions.find(s => s.id === movementSession)?.register_id === t.register_id) && (movementPayment !== "mbway" || t.mbway)).map(t => <option key={t.id} value={t.id}>{t.name} · {boot.accounts.find(a => a.id === t.account_id)?.name || "Conta de destino"}</option>)}</select></Field>}
                   <Field label="Montante (€)">
                     <input
                       name="amount"
@@ -1566,6 +1675,9 @@ export default function App() {
             )}
             {["handover", "reopen", "reverse"].includes(modal) && selected && (
               <Form
+                submitLabel={modal === "reopen" ? "Confirmar reabertura" : modal === "reverse" ? "Estornar movimento" : "Confirmar passagem"}
+                destructive={modal === "reverse"}
+                onCancel={() => setModal("")}
                 onSubmit={(v) =>
                   save(
                     modal === "reverse"
@@ -1578,6 +1690,7 @@ export default function App() {
                   )
                 }
               >
+                <p>{modal === "reverse" ? `O movimento «${labels[selected.kind] || selected.kind} · ${selected.document || selected.reference || selected.id}» de ${money(selected.amount_cents)} será estornado. O original fica no histórico e será criado o movimento inverso.` : modal === "reopen" ? `A caixa «${rname(selected.register_id)}» de ${selected.sheet?.day?.split("-").reverse().join("/") || date(selected.opened_at)} será reaberta. Os movimentos gerados por esse fecho serão anulados com histórico, para permitir nova conferência sem duplicações. Movimentos registados antes do fecho serão preservados.` : "A responsabilidade desta caixa passará para o operador escolhido. A operação ficará no histórico."}</p>
                 {modal === "handover" && (
                   <Field label="Novo operador">
                     <Select
@@ -1636,16 +1749,19 @@ export default function App() {
                 </p>
               </Form>
             )}
-            {["store", "category", "register", "account", "payment-method"].includes(modal) && (
+            {["store", "category", "register", "edit-register", "account", "edit-account", "payment-method"].includes(modal) && (
               <Form
+                submitLabel={["edit-account", "edit-register"].includes(modal) ? "Guardar alterações" : "Guardar"}
+                onCancel={() => setModal("")}
                 onSubmit={(v) => {
                   let payload = v;
-                  if (modal === "account" && v.bank_choice) {
+                  if (["account", "edit-account"].includes(modal) && v.bank_choice) {
                     const { bank_choice, ...account } = v;
                     payload = { ...account, bank: bank_choice === "__other__" ? account.bank : bank_choice };
                   }
+                  if (modal === "edit-account") payload = { ...payload, principal: v.principal === "on", opening_date: v.opening_date || null } as typeof payload;
                   return save(
-                    "/" +
+                    modal === "edit-register" ? `/registers/${encodeURIComponent(selected!.id)}` : modal === "edit-account" ? `/accounts/${encodeURIComponent(selected!.id)}` : "/" +
                       {
                         store: "stores",
                         category: "categories",
@@ -1658,33 +1774,50 @@ export default function App() {
                 }}
               >
                 <Field label="Nome">
-                  <input name="name" required minLength={2} maxLength={100} />
+                  <input name="name" required minLength={2} maxLength={100} defaultValue={["edit-account", "edit-register"].includes(modal) ? selected?.name : ""} />
                 </Field>
                 {["register", "account"].includes(modal) && (
                   <Field label="Loja">
                     <Select name="store_id" rows={boot.stores} />
                   </Field>
                 )}
-                {modal === "account" && (
+                {modal === "edit-register" && <>
+                  <Field label="Estabelecimento"><select name="store_id" required defaultValue={selected?.store_id}>{boot.stores.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+                  <p className="footnote">As caixas com histórico ou associações protegidas mantêm o estabelecimento. O nome pode ser alterado.</p>
+                </>}
+                {modal === "edit-account" && <div className="form-grid">
+                  <Field label="Estabelecimento"><select disabled defaultValue={selected?.store_id}>{boot.stores.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+                  <Field label="Moeda"><input readOnly value={selected?.currency || "EUR"} /></Field>
+                  <Field label="IBAN completo"><input name="iban" maxLength={42} placeholder={selected?.iban_configured ? "Deixe vazio para manter o IBAN guardado" : "Opcional"} /></Field>
+                  <Field label={`Saldo inicial (${selected?.currency || "EUR"})`}><input name="opening" inputMode="decimal" placeholder="Opcional" /></Field>
+                  <Field label="Data do saldo inicial"><input name="opening_date" type="date" /></Field>
+                  <label className="checkbox"><input name="principal" type="checkbox" defaultChecked={!!JSON.parse(selected?.settings || "{}").principal} /> Conta principal</label>
+                  <p className="footnote">O estabelecimento e a moeda mantêm-se para preservar o histórico. Um saldo inicial já registado é preservado; alterações são revistas em Saldos iniciais.</p>
+                </div>}
+                {["account", "edit-account"].includes(modal) && (
                   <>
                     {boot.bank_institutions?.length ? <>
                       <Field label="Banco">
-                        <select name="bank_choice" required defaultValue="" onChange={(event) => setCustomBank(event.target.value === "__other__")}>
+                        <select name="bank_choice" required defaultValue={modal === "edit-account" ? boot.bank_institutions.some(bank => bank.name === selected?.bank) ? selected?.bank : "__other__" : ""} onChange={(event) => setCustomBank(event.target.value === "__other__")}>
                           <option value="">Selecionar banco…</option>
                           {boot.bank_institutions.map((bank) => <option key={bank.id} value={bank.name}>{bank.name}</option>)}
                           <option value="__other__">Outro banco…</option>
                         </select>
                       </Field>
-                      {customBank && <Field label="Nome do banco"><input name="bank" required minLength={2} maxLength={100} /></Field>}
-                    </> : <Field label="Banco"><input name="bank" required minLength={2} /></Field>}
+                      {customBank && <Field label="Nome do banco"><input name="bank" required minLength={2} maxLength={100} defaultValue={modal === "edit-account" ? selected?.bank : ""} /></Field>}
+                    </> : <Field label="Banco"><input name="bank" required minLength={2} maxLength={100} defaultValue={modal === "edit-account" ? selected?.bank : ""} /></Field>}
                     <Field label="Últimos 4 algarismos do IBAN">
                       <input
                         name="iban_last4"
-                        required
+                        required={modal === "account"}
+                        readOnly={modal === "edit-account" && !!selected?.iban_configured}
                         pattern="[0-9]{4}"
                         maxLength={4}
+                        inputMode="numeric"
+                        defaultValue={modal === "edit-account" ? selected?.iban_last4 : ""}
                       />
                     </Field>
+                    {modal === "edit-account" && selected?.iban_configured && <p className="footnote">Pode substituir o IBAN no campo «IBAN completo». Os últimos quatro algarismos são atualizados automaticamente.</p>}
                   </>
                 )}
               </Form>
@@ -1727,8 +1860,7 @@ export default function App() {
                 </Field>
               </Form>
             )}
-          </section>
-        </div>
+          </AppDialog>
       )}
     </div>
   );
@@ -1750,7 +1882,7 @@ export default function App() {
               <th>Documento</th>
               <th>Entidade</th>
               <th>Pagamento</th>
-              <th>Montante</th>
+              <th className="numeric">Montante</th>
               <th>Origem</th>
               <th>Estado</th>
               <th>Ações</th>
@@ -1774,7 +1906,7 @@ export default function App() {
                   <strong>
                     {m.kind === "documento"
                       ? "Documento de venda"
-                      : labels[m.kind] || m.kind}
+                      : m.origin === "bank_statement" ? "Movimento bancário" : labels[m.kind] || m.kind}
                   </strong>
                   <small>
                     {m.entity || m.document || m.reference || "Manual"}
@@ -1784,13 +1916,13 @@ export default function App() {
                 <td>{m.document || "—"}</td>
                 <td>{m.entity || "—"}</td>
                 <td>{m.payment_name || labels[m.payment] || m.payment || "—"}</td>
-                <td className={m.direction > 0 ? "positive" : "negative"}>
+                <td className={["numeric", m.direction > 0 ? "positive" : "negative"].filter(Boolean).join(" ")}>
                   {m.direction > 0 ? "+" : "−"}
                   {money(m.amount_cents)}
                 </td>
                 <td>
                   <span className="pill neutral">
-                    {m.origin === "fecho_local" ? "Fecho de caixa" : m.external ? "Wintouch" : "GPGest"}
+                    {m.origin === "bank_statement" ? "Extrato bancário" : m.origin === "fecho_local" ? "Fecho de caixa" : m.external ? "Wintouch" : "Zela"}
                   </span>
                 </td>
                 <td>
@@ -1813,11 +1945,11 @@ export default function App() {
                 </td>
                 <td>
                   {!m.external && (
-                    <button onClick={() => openModal("attachments", m.movement_id ? { ...m, id: m.movement_id } : m)}>
+                    <ActionButton onClick={() => openModal("attachments", m.movement_id ? { ...m, id: m.movement_id } : m)}>
                       Anexos
-                    </button>
+                    </ActionButton>
                   )}
-                  {m.external && <small>Gerido na Wintouch</small>}
+                  {m.external && <small>{m.origin === "bank_statement" ? "Gerido nos extratos bancários" : "Gerido na Wintouch"}</small>}
                   {m.origin === "fecho_local" && <small>Gerido na folha de caixa</small>}
                   {onReverse &&
                     !m.external &&
@@ -1826,7 +1958,7 @@ export default function App() {
                     !m.reversed_by &&
                     !m.reversal_of &&
                     !m.transfer_id && (
-                      <button onClick={() => onReverse(m)}>Estornar</button>
+                      <ActionButton onClick={() => onReverse(m)}>Estornar</ActionButton>
                     )}
                 </td>
               </tr>
@@ -1861,7 +1993,7 @@ function AttachmentPanel({
     <div>
       {rows.map((r) => (
         <p key={r.id}>
-          <a href={r.view_url || "/api/attachments/" + r.id}>{r.name} · Descarregar</a>
+          <ActionLink href={r.view_url || "/api/attachments/" + r.id}>{r.name} · Descarregar</ActionLink>
         </p>
       ))}
       {!rows.length && <p>Sem anexos.</p>}
@@ -1903,7 +2035,7 @@ function AttachmentPanel({
           />
         </Field>
       )}
-      {error && <p className="error">{error}</p>}
+      {error && <Notice className="error">{error}</Notice>}
     </div>
   );
 }

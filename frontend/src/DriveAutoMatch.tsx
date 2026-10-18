@@ -1,3 +1,5 @@
+import { ActionLink } from "./components/InteractionUI";
+import { ActionButton, Notice } from "./components/InteractionUI";
 import { useState } from "react";
 import { api } from "./App";
 type Row = Record<string, any>;
@@ -17,17 +19,17 @@ export default function DriveAutoMatch({ documents, onUpdated }: { documents: Ro
   return <section className="panel">
     <h3>Associação automática dos PDFs Drive</h3>
     <p>O sistema cruza todos os documentos do período, sem obrigar a escolher uma fatura. A pesquisa inclui a pasta configurada e todas as subpastas. Os ficheiros permanecem no Drive.</p>
-    <button type="button" className="primary" disabled={busy} onClick={() => find()}>Procurar correspondências automaticamente</button>
+    <ActionButton type="button" className="primary" disabled={busy} onClick={() => find()}>Procurar correspondências automaticamente</ActionButton>
     {!documents.length && <p role="status">Não existem documentos para comparar neste período. Pode consultar os PDFs do Drive; para os associar, importe o ficheiro e-Fatura ou altere as datas.</p>}
     {documents.length > 200 && <p>A análise usa os primeiros 200 documentos. Reduza o período para conferir os restantes.</p>}
-    {busy && <p role="status">A analisar PDFs…</p>}{error && <p className="error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
+    {busy && <p role="status">A analisar PDFs…</p>}{error && <Notice className="error" role="alert">{error}</Notice>}{notice && <p role="status">{notice}</p>}
     <div className="table-wrap"><table><thead><tr><th>Confirmar</th><th>PDF</th><th>Documento identificado</th><th>Confiança e motivo</th></tr></thead><tbody>{rows.map(r => <tr key={r.drive_id}>
       <td><input type="checkbox" aria-label={"Associar " + r.name} disabled={busy || r.status !== "sugerido"} checked={selected.includes(r.drive_id)} onChange={e => { const checked = e.target.checked; setSelected(ids => checked ? [...ids, r.drive_id].slice(0, 20) : ids.filter(id => id !== r.drive_id)); }} /></td>
-      <td><a href={"https://drive.google.com/file/d/" + r.drive_id + "/view"} target="_blank" rel="noreferrer">{r.name}</a></td>
+      <td><ActionLink href={"https://drive.google.com/file/d/" + r.drive_id + "/view"} target="_blank" rel="noreferrer">{r.name}</ActionLink></td>
       <td>{r.match ? `${r.match.supplier} · ${r.match.document}` : r.status === "associado" ? "Já associado" : "Por rever"}</td>
       <td>{r.match ? `${r.match.confidence}/100 · ${r.match.reasons.join("; ")}` : r.error || "Sem correspondência inequívoca; conferir individualmente."}</td>
     </tr>)}</tbody></table></div>
-    {!!rows.length && <button type="button" disabled={busy || !selected.length} onClick={async () => {
+    {!!rows.length && <ActionButton type="button" disabled={busy || !selected.length} onClick={async () => {
       setBusy(true); setError("");
       try {
         const pairs = rows.filter(r => selected.includes(r.drive_id)).map(r => ({ purchase_id: r.match.purchase_id, drive_id: r.drive_id }));
@@ -38,7 +40,7 @@ export default function DriveAutoMatch({ documents, onUpdated }: { documents: Ro
         setRows(current => current.map(r => result.results.some((x: Row) => x.drive_id === r.drive_id && x.status === "associado") ? { ...r, status: "associado", match: null } : r));
         setSelected(failures.map((r: Row) => r.drive_id)); await onUpdated();
       } catch(e) { setError((e as Error).message); } finally { setBusy(false); }
-    }}>Confirmar associações propostas ({selected.length})</button>}
-    {next && <button type="button" disabled={busy} onClick={() => find(next)}>Analisar mais PDFs</button>}
+    }}>Confirmar associações propostas ({selected.length})</ActionButton>}
+    {next && <ActionButton type="button" disabled={busy} onClick={() => find(next)}>Analisar mais PDFs</ActionButton>}
   </section>;
 }

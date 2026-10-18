@@ -276,7 +276,7 @@ def deposit_pdf(db, deposit):
     from reportlab.pdfgen import canvas
 
     stream = io.BytesIO()
-    pdf = canvas.Canvas(stream)
+    pdf = canvas.Canvas(stream, invariant=1)
     pdf.setTitle("Talão interno de depósito " + deposit.number)
     y = 790
 
@@ -292,7 +292,7 @@ def deposit_pdf(db, deposit):
 
     info = projection(db, deposit)
     company = db.info.get("company", {})
-    line(company.get("name", "GPGest"), True)
+    line(company.get("name", "Zela"), True)
     line("NIF: " + str(company.get("nif") or "Não indicado"))
     line("Talão interno de depósito", True)
     line("Documento interno. Não é um comprovativo emitido pelo banco.")
@@ -371,10 +371,10 @@ def period_condition(start, end):
     )
 
 
-def dossier_files(db, start, end):
+def dossier_files(db, start, end, store_ids=None):
     deposits = list(
         db.scalars(
-            select(BankDeposit).where(period_condition(start, end)).order_by(BankDeposit.number)
+            select(BankDeposit).where(period_condition(start, end), *([BankDeposit.store_id.in_(store_ids)] if store_ids is not None else [])).order_by(BankDeposit.number)
         )
     )
     files = {
@@ -767,7 +767,8 @@ def register_routes(app, current, authorize, scope, record):
         )
         reserved = {row.source_receipt for row in claimed}
         query = (
-            select(Movement)
+            select(Movement, Category.name)
+            .join(Category, Category.id == Movement.category_id)
             .outerjoin(CashSession, CashSession.id == Movement.session_id)
             .outerjoin(
                 BankDeposit,
@@ -775,7 +776,15 @@ def register_routes(app, current, authorize, scope, record):
             )
             .where(func.coalesce(CashSession.register_id, BankDeposit.register_id) == register.id)
         )
-        for move in db.scalars(query):
+        movement_descriptions = {
+            "venda": "Venda",
+            "reembolso": "Reembolso",
+            "fornecedor": "Pagamento a fornecedor",
+            "entrada_extra": "Crédito de caixa",
+            "despesa": "Despesa",
+            "diferenca_caixa": "Diferença de caixa",
+        }
+        for move, category_name in db.execute(query):
             if day(move.occurred_at) > selected_date or reference and day(move.occurred_at) < reference.reference_date:
                 continue
             amount = move.amount_cents
@@ -790,11 +799,22 @@ def register_routes(app, current, authorize, scope, record):
             elif move.payment != "numerario":
                 continue
             cash += amount * move.direction
+            movement_description = " · ".join(
+                part
+                for part in (
+                    "Saída" if move.direction < 0 else "Entrada",
+                    movement_descriptions.get(move.kind, move.kind.replace("_", " ").capitalize()),
+                    category_name,
+                    move.entity.strip() if move.entity else "",
+                )
+                if part
+            )
             movements.append(
                 {
                     "source": "movement",
                     "id": move.id,
                     "document": move.document or move.reference or move.kind,
+                    "description": movement_description,
                     "date": day(move.occurred_at),
                     "amount": str(Decimal(amount * move.direction) / 100),
                     "session_id": move.session_id,
@@ -827,6 +847,16 @@ def register_routes(app, current, authorize, scope, record):
                         "source": "wintouch",
                         "id": record.id,
                         "document": item.get("document") or record.id,
+                        "description": " · ".join(
+                            part
+                            for part in (
+                                "Saída" if item["direction"] < 0 else "Entrada",
+                                "Movimento Wintouch",
+                                str(item.get("category_name") or "").strip(),
+                                str(item.get("entity") or "").strip(),
+                            )
+                            if part
+                        ),
                         "date": stamp,
                         "amount": str(Decimal(item["amount_cents"] * item["direction"]) / 100),
                         "session_id": origin_sheet,

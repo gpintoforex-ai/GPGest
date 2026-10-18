@@ -1,3 +1,4 @@
+import { Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
 import { api } from "./App";
 import SyncPanel from "./SyncPanel";
@@ -19,9 +20,9 @@ export default function TenantIntegrations({
     <section className="panel">
       <h3>Wintouch</h3>
       {error && (
-        <p className="error" role="alert">
+        <Notice className="error" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
       {company ? (
         <>

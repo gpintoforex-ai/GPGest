@@ -1,7 +1,16 @@
-# GPGest
+# Zela
+
+Aplicação de gestão empresarial. [Identidade visual Zela e validação](docs/IDENTIDADE-ZELA.md).
+O nome técnico do projeto, os caminhos e os identificadores de integração existentes são mantidos.
+
+Preparar uma empresa: [assistente de configuração inicial](docs/CONFIGURACAO-INICIAL.md), disponível no painel e em Configurações → Parâmetros.
+
+Janelas, confirmações e acessibilidade: [revisão da interface](docs/REVISAO-INTERFACE.md).
 
 Digitalizar fotografias e PDFs para anexos e dossiês: [guia de digitalização](docs/DIGITALIZACAO-DOCUMENTOS.md).
 Conferir e-Fatura, anexos e ERP: [assistente e-Fatura](docs/ASSISTENTE-EFATURA.md).
+Enviar documentação por SMTP: [email e dossiê contabilístico](docs/EMAIL-CONTABILIDADE.md), com pré-visualização, histórico e confirmação manual de receção.
+Importar faturação no modo local: [SAF-T (PT) de vendas](docs/IMPORTACAO-SAFT-VENDAS.md), com validação oficial, revisão de conflitos e referência nas folhas de caixa.
 
 Consulte o [guia dos modos local e integrado](docs/MODOS-FUNCIONAMENTO.md) e a
 [arquitetura local e evolução para vários ERP](docs/ARQUITETURA-LOCAL-ERP.md)
@@ -206,3 +215,6 @@ As opções do menu destas fases indicam explicitamente que ainda não estão di
 Versão e módulos usados; documentação de API ou estrutura de leitura autorizada; formatos de exportação; identificadores de lojas, artigos, recebimentos e documentos; tratamento de anulações; disponibilidade de lotes e validades. A futura integração só irá ler dados e deverá validar reimportações e correções antes de ser ligada à caixa real.
 
 Referências técnicas: [segurança FastAPI](https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/) e [PostgreSQL para Windows](https://www.postgresql.org/download/windows/).
+## Artigos, stock e validades
+
+O módulo integrado está em **Tabelas → Artigos e validades**, com catálogo local/ERP, lotes, FEFO, movimentos, inventários e margem bruta. Consulte [regras, configuração e limitações](docs/ARTIGOS-STOCK-VALIDADES.md). Requer a migração 0044.

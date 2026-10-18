@@ -132,8 +132,8 @@ def cleanup_all():
 def deposit_scans(db, deposit):
     return [r for r in db.scalars(select(DocumentScan).where(DocumentScan.store_id == deposit.store_id, DocumentScan.status == "cloud_saved")) if json.loads(r.data)["metadata"].get("deposit_id") == deposit.id]
 
-def dossier_scan_files(db, start, end):
-    rows = list(db.scalars(select(DocumentScan).where(DocumentScan.status == "cloud_saved", DocumentScan.purchase_id.is_(None), DocumentScan.document_date >= start, DocumentScan.document_date <= end)))
+def dossier_scan_files(db, start, end, store_ids=None):
+    rows = list(db.scalars(select(DocumentScan).where(DocumentScan.status == "cloud_saved", DocumentScan.purchase_id.is_(None), DocumentScan.document_date >= start, DocumentScan.document_date <= end, *([DocumentScan.store_id.in_(store_ids)] if store_ids is not None else []))))
     files, pending = {}, []
     for row in rows:
         try:

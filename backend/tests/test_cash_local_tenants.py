@@ -83,6 +83,7 @@ def test_cash_method_migration_creates_table_without_changing_existing_sheets(se
         assert re.fullmatch(r"test_[0-9a-f]{32}", schema)
         before = connection.scalar(text("SELECT count(*) FROM users"))
         PaymentMethodBankDefault.__table__.drop(connection)
+        connection.execute(text(f'ALTER TABLE "{schema}".movements DROP COLUMN payment_method_id'))
         LocalPaymentMethod.__table__.drop(connection)
         monkeypatch.setattr(helper, "schemas", lambda _: [schema])
         with Operations.context(MigrationContext.configure(connection)):

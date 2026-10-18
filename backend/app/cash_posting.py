@@ -30,7 +30,8 @@ def debit_parts(db, session, register, rows, association):
         names[allocation["name"].strip().casefold()].add(allocation["id"])
     registered = defaultdict(int)
     selected = session.sheet_day or day(session.opened_at)
-    start = datetime.combine(datetime.fromisoformat(selected).date(), time.min, tzinfo=ZoneInfo("Europe/Lisbon"))
+    timezone_name = json.loads(register.settings or "{}").get("timezone", "Europe/Lisbon")
+    start = datetime.combine(datetime.fromisoformat(selected).date(), time.min, tzinfo=ZoneInfo(timezone_name))
     end = start + timedelta(days=1)
 
     def account(payment, entity, amount):
@@ -47,7 +48,7 @@ def debit_parts(db, session, register, rows, association):
             Movement.origin.notin_(("fecho_caixa", "deposito_modulo")),
         )):
             account(move.payment, move.entity, move.amount_cents)
-        for item in real_receipts(db, register.store_id, selected, daily_enterprise(db, session)):
+        for item in real_receipts(db, register.store_id, selected, daily_enterprise(db, session), timezone_name):
             if item.get("source_kind") == "cash_movement" and item.get("direction") == -1 and belongs_to_register(db, session, register, item):
                 key = "mbway" if str(item.get("payment", "")).casefold().replace(" ", "") == "mbway" else payment_key(item)[0]
                 account(key, item.get("entity"), item["amount_cents"])
@@ -113,8 +114,9 @@ def supplier_views(db, movements):
 def post_close(db, session, register, reconciliation, counting, user, record):
     selected = session.sheet_day or day(session.opened_at)
     stamp = now()
-    occurred = stamp if day(stamp) == selected else datetime.combine(
-        datetime.fromisoformat(selected).date(), time(12), tzinfo=ZoneInfo("Europe/Lisbon")
+    timezone_name = json.loads(register.settings or "{}").get("timezone", "Europe/Lisbon")
+    occurred = stamp if day(stamp, timezone_name) == selected else datetime.combine(
+        datetime.fromisoformat(selected).date(), time(12), tzinfo=ZoneInfo(timezone_name)
     )
     association = counting.get("debit_supplier", {})
     allocations = association.get("allocations", [])

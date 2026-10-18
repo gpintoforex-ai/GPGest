@@ -1,3 +1,5 @@
+import { ActionLink } from "./components/InteractionUI";
+import { ActionButton, AppDialog, Notice, confirmAction } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeftRight, Banknote, CreditCard, FileText, LockKeyhole, LockKeyholeOpen, Wallet } from "lucide-react";
 import { api, Field } from "./App";
@@ -121,7 +123,7 @@ export default function CashSheet({
   async function save(closing: boolean, supplierAllocations?: CashSupplierAllocation[]) {
     setError("");
     setNotice("");
-    if (closing && rows.some((row) => amountFor(row.key) === null)) {
+    if (closing && (s.sheet.preferences?.count_required ?? true) && rows.some((row) => amountFor(row.key) === null)) {
       setError(
         "Introduza a contagem de todos os meios de pagamento antes de fechar.",
       );
@@ -131,6 +133,7 @@ export default function CashSheet({
       setSupplierPrompt(true);
       return;
     }
+    if (closing && !supplierAllocations && !(await confirmAction({ title: "Fechar caixa?", message: `Pretende fechar «${register} · ${store}» do dia ${s.sheet.day.split("-").reverse().join("/")}? A contagem e as diferenças serão guardadas no fecho. Para alterar depois, terá de reabrir a caixa.`, confirmLabel: "Confirmar e fechar caixa" }))) return;
     const payments: Record<string, string> = {};
     for (const row of rows)
       if (row.key !== "numerario" && values[row.key]?.trim())
@@ -185,12 +188,12 @@ export default function CashSheet({
           {s.closed_at ? "Fechada" : "Aberta"}
         </span>
       </div>
-      <CashReconciliation opening={s.opening_cents} expected={cashRow.expected_cents} counted={cashCount} />
+      <CashReconciliation opening={s.retained_fund_cents ?? s.opening_cents} expected={cashRow.expected_cents} counted={cashCount} />
       <details className="cash-sheet-details">
         <summary>{s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"}</summary>
-        {canImportErp && <button disabled={busy || !!s.closed_at} title={s.closed_at ? "Reabra a folha para atualizar a conferência." : undefined} onClick={() => { setConfirmDemo(false); setImportPrompt(true); }}>Importar movimentos do ERP</button>}
+        {canImportErp && <ActionButton disabled={busy || !!s.closed_at} title={s.closed_at ? "Reabra a folha para atualizar a conferência." : undefined} onClick={() => { setConfirmDemo(false); setImportPrompt(true); }}>Importar movimentos do ERP</ActionButton>}
       <p className="footnote">
-        Origem dos valores: Manual (GPGest) e ERP (Wintouch).
+        Origem dos valores: Manual (Zela) e ERP (Wintouch).
       </p>
       <p className="footnote">
         {s.sheet.scope === "store_day"
@@ -200,10 +203,10 @@ export default function CashSheet({
       {s.sheet.include_wintouch && (
         <p className="footnote">
           Importe os movimentos do ERP para atualizar a conferência. Evite
-          registar novamente no GPGest os mesmos recebimentos.
+          registar novamente na Zela os mesmos recebimentos.
         </p>
       )}
-      {importPrompt && <dialog className="doc-dialog" ref={importDialog} aria-label="Importar movimentos do ERP" onCancel={e => { e.preventDefault(); if (!busy) setImportPrompt(false); }}><div className="panel-title"><h2>Importar movimentos do ERP</h2><button disabled={busy} aria-label="Fechar" onClick={() => setImportPrompt(false)}>×</button></div><p>Importar os movimentos do estabelecimento para {s.sheet.day.split("-").reverse().join("/")}, usando o ERP configurado na empresa.</p>{error && <p className="error" role="alert">{error}</p>}{demo && <label className="doc-check"><input type="checkbox" checked={confirmDemo} onChange={e => setConfirmDemo(e.target.checked)} disabled={busy} />Confirmo a importação de dados reais do ERP para esta empresa de demonstração.</label>}<button className="primary" disabled={busy || (demo && !confirmDemo)} onClick={async () => { setBusy(true); setError(""); setNotice(""); try { const result = await api(`/sessions/${s.id}/import-erp`, { confirm_demo: confirmDemo }, { timeoutMs: 120000 }); await reload(); window.dispatchEvent(new Event("gpgest-sales-updated")); setImportPrompt(false); setNotice(result.closed ? "Movimentos importados. A folha foi fechada entretanto; os valores do fecho foram preservados." : `Movimentos importados com sucesso: ${result.import.read_count} registos, ${result.import.inserted_count} novos e ${result.import.updated_count} atualizados.`); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>{busy ? "A importar…" : "Importar movimentos"}</button></dialog>}
+      {importPrompt && <AppDialog busy={busy} className="doc-dialog" ref={importDialog} aria-label="Importar movimentos do ERP" onRequestClose={() => {  if (!busy) setImportPrompt(false); }}><div className="panel-title"><h2>Importar movimentos do ERP</h2></div><p>Importar os movimentos do estabelecimento para {s.sheet.day.split("-").reverse().join("/")}, usando o ERP configurado na empresa.</p>{error && <Notice className="error" role="alert">{error}</Notice>}{demo && <label className="doc-check"><input type="checkbox" checked={confirmDemo} onChange={e => setConfirmDemo(e.target.checked)} disabled={busy} />Confirmo a importação de dados reais do ERP para esta empresa de demonstração.</label>}<ActionButton className="primary" disabled={busy || (demo && !confirmDemo)} onClick={async () => { setBusy(true); setError(""); setNotice(""); try { const result = await api(`/sessions/${s.id}/import-erp`, { confirm_demo: confirmDemo }, { timeoutMs: 120000 }); await reload(); window.dispatchEvent(new Event("gpgest-sales-updated")); setImportPrompt(false); setNotice(result.closed ? "Movimentos importados. A folha foi fechada entretanto; os valores do fecho foram preservados." : `Movimentos importados com sucesso: ${result.import.read_count} registos, ${result.import.inserted_count} novos e ${result.import.updated_count} atualizados.`); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>{busy ? "A importar…" : "Importar movimentos"}</ActionButton></AppDialog>}
       {editable && (
         <div className="cash-sheet-sources">
           <strong>Dia dos movimentos reais: {String(s.sheet.day).split("-").reverse().join("/")}</strong>
@@ -215,9 +218,9 @@ export default function CashSheet({
               onChange={(e) => setSourceDay(e.target.value)}
             />
           </Field>
-          <button disabled={busy || !sourceDay} onClick={updateSources}>
+          <ActionButton disabled={busy || !sourceDay} onClick={updateSources}>
             Atualizar dia
-          </button>
+          </ActionButton>
         </div>
       )}
       <div className="table-wrap">
@@ -225,7 +228,7 @@ export default function CashSheet({
           <thead>
             <tr>
               <th>Meio de pagamento</th>
-              <th>GPGest (saldo)</th>
+              <th>Zela (saldo)</th>
               <th>Wintouch (saldo)</th>
               <th>Créditos</th>
               <th>Débitos</th>
@@ -261,7 +264,7 @@ export default function CashSheet({
                   </td>
                   <td>
                     {editable && row.key === "numerario" ? (
-                      <button
+                      <ActionButton
                         className="cash-count-trigger"
                         aria-label="Contar numerário"
                         aria-haspopup="dialog"
@@ -272,7 +275,7 @@ export default function CashSheet({
                           {counted === null ? "Por contar" : money(counted)}
                         </span>
                         <small>Contar notas e moedas</small>
-                      </button>
+                      </ActionButton>
                     ) : editable ? (
                       <input
                         aria-label={`Contagem ${row.name} (€)`}
@@ -369,41 +372,41 @@ export default function CashSheet({
       {s.closed_at && s.close_reason && <p>Justificação: {s.close_reason}</p>}
       {s.closed_at && stored.debit_supplier && <div className="cash-supplier-summary"><strong>Fornecedores dos débitos:</strong>{stored.debit_supplier.allocations?.length ? stored.debit_supplier.allocations.map((allocation: Row) => <p key={allocation.id}>{allocation.name} · {money(allocation.amount_cents)}</p>) : <p>{stored.debit_supplier.answer === "indicado" ? `${stored.debit_supplier.name} · ${money(stored.debit_supplier.debits_cents)}` : stored.debit_supplier.answer === "desconhecido" ? "Não identificado" : "Não aplicável"}</p>}{stored.debit_supplier.unassigned_cents > 0 && <p>Por atribuir: {money(stored.debit_supplier.unassigned_cents)}</p>}</div>}
       {error && (
-        <p className="error" role="alert">
+        <Notice className="error" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
       {notice && <p role="status">{notice}</p>}
       <div className="actions">
         {editable && (
           <>
-            <button disabled={busy} onClick={() => save(false)}>
+            <ActionButton disabled={busy} onClick={() => save(false)}>
               Guardar contagem
-            </button>
-            <button
+            </ActionButton>
+            <ActionButton
               className="primary"
               disabled={busy}
               onClick={() => save(true)}
             >
               Fechar folha de caixa
-            </button>
-            <button disabled={busy} onClick={() => onAction("handover", s)}>
+            </ActionButton>
+            <ActionButton disabled={busy} onClick={() => onAction("handover", s)}>
               Passar caixa
-            </button>
+            </ActionButton>
           </>
         )}
         {s.closed_at && (
-          <a className="download-link" href={`/api/sessions/${s.id}/report`}>
+          <ActionLink className="download-link" href={`/api/sessions/${s.id}/report`}>
             Relatório PDF
-          </a>
+          </ActionLink>
         )}
         {s.closed_at && manager && (
-          <button onClick={() => onAction("reopen", s)}>Reabrir</button>
+          <ActionButton onClick={() => onAction("reopen", s)}>Reabrir</ActionButton>
         )}
       </div>
 
       </details>
-      {supplierPrompt && <CashSupplierDialog total={rows.reduce((sum, row) => sum + row.debits_cents, 0)} initialId={stored.debit_supplier?.id} canCreate={manager} busy={busy} error={error} onCancel={() => setSupplierPrompt(false)} onConfirm={allocations => save(true, allocations)} />}
+      {supplierPrompt && <CashSupplierDialog context={`${register} · ${store} · ${s.sheet.day.split("-").reverse().join("/")}`} total={rows.reduce((sum, row) => sum + row.debits_cents, 0)} initialId={stored.debit_supplier?.id} canCreate={manager} busy={busy} error={error} onCancel={() => setSupplierPrompt(false)} onConfirm={allocations => save(true, allocations)} />}
       {closeNotice && <SettlementConfirmation title="Caixa fechada" message={closeNotice} onClose={() => setCloseNotice("")} />}
     </section>
   );

@@ -356,7 +356,7 @@ def register_routes(app, current, authorize, scope, audit, serial, planned_summa
             if row["kind"] == "previsto" and row["store_id"] in ids:
                 event("wintouch:" + row["id"], row["store_id"], (row.get("entity") or "Entidade não indicada") + " · " + row["document"], row["amount_cents"], row["direction"], row.get("due_date"), currency=row.get("currency") or "EUR", source_url="?page=Movimentos%20previstos", updated_at=str(row["synced_at"]), entity=row.get("entity") or "", document=row["document"], document_id=row.get("source_document_id"), document_date=row.get("document_date") or day(row["occurred_at"]))
                 events[-1]["paid_cents"] = erp_paid.get(row["id"])
-                events[-1]["paid_source"] = "Liquidações no ERP confirmadas através do GPGest; pode não incluir pagamentos anteriores ou feitos diretamente no ERP"
+                events[-1]["paid_source"] = "Liquidações no ERP confirmadas através da Zela; pode não incluir pagamentos anteriores ou feitos diretamente no ERP"
         for row in db.scalars(select(LiquidityManual).where(LiquidityManual.store_id.in_(ids), LiquidityManual.active.is_(True))):
             data = json.loads(row.data)
             for index, occurrence in enumerate(occurrences(data, end)):

@@ -60,6 +60,93 @@ class Register(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"))
     name: Mapped[str] = mapped_column(String(100))
+    settings: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+
+
+class CompanyEmailSettings(Base):
+    __tablename__ = "company_email_settings"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
+    settings: Mapped[str] = mapped_column(Text, default="{}")
+    password_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    updated_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class EmailDispatch(Base):
+    __tablename__ = "email_dispatches"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    request_key: Mapped[str] = mapped_column(String(100), unique=True)
+    kind: Mapped[str] = mapped_column(String(30), default="accounting")
+    status: Mapped[str] = mapped_column(String(20), default="prepared", index=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    start_date: Mapped[str] = mapped_column(String(10))
+    end_date: Mapped[str] = mapped_column(String(10))
+    store_ids: Mapped[str] = mapped_column(Text, default="[]")
+    manifest: Mapped[str] = mapped_column(Text, default="{}")
+    draft: Mapped[str] = mapped_column(Text, default="{}")
+    payload_ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    config_revision: Mapped[int] = mapped_column(Integer, default=0)
+    last_attempt_key: Mapped[str] = mapped_column(String(100), default="")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    received_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    receipt_note: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    uncertain: Mapped[bool] = mapped_column(Boolean, default=False)
+    retry_of: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+
+class EmailDispatchPart(Base):
+    __tablename__ = "email_dispatch_parts"
+    __table_args__ = (UniqueConstraint("dispatch_id", "number"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    dispatch_id: Mapped[str] = mapped_column(ForeignKey("email_dispatches.id"), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="prepared")
+    message_id: Mapped[str] = mapped_column(String(200))
+    message_digest: Mapped[str] = mapped_column(String(64), default="")
+    file_keys: Mapped[str] = mapped_column(Text)
+    recipients: Mapped[str] = mapped_column(Text)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str] = mapped_column(Text, default="")
+
+
+class SaftImport(Base):
+    __tablename__ = "saft_imports"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    filename: Mapped[str] = mapped_column(String(200))
+    fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(20), default="validating", index=True)
+    header: Mapped[str] = mapped_column(Text, default="{}")
+    summary: Mapped[str] = mapped_column(Text, default="{}")
+    error: Mapped[str] = mapped_column(Text, default="")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    processing_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SaftImportItem(Base):
+    __tablename__ = "saft_import_items"
+    __table_args__ = (UniqueConstraint("import_id", "identity"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    import_id: Mapped[str] = mapped_column(ForeignKey("saft_imports.id"), index=True)
+    identity: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(25), index=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    base_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    base_store: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    decision: Mapped[str] = mapped_column(String(20))
+    outcome: Mapped[str] = mapped_column(String(20), default="pending")
+    data: Mapped[str] = mapped_column(Text)
 
 
 class Employee(Base):
@@ -87,6 +174,8 @@ class BankAccount(Base):
     name: Mapped[str] = mapped_column(String(100))
     bank: Mapped[str] = mapped_column(String(100))
     iban_last4: Mapped[str] = mapped_column(String(4))
+    iban_ciphertext: Mapped[str] = mapped_column(Text, default="", server_default="")
+    settings: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
 
 
 class BankInstitution(Base):
@@ -333,6 +422,41 @@ class LocalPaymentMethod(Base):
     id: Mapped[str] = mapped_column(String(20), primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    settings: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+
+
+class CompanySetup(Base):
+    __tablename__ = "company_setup"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    step: Mapped[str] = mapped_column(String(30), default="company")
+    draft: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    settings: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    erp_test: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    erp_preview: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
+class PaymentTerminal(Base):
+    __tablename__ = "payment_terminals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100))
+    identifier: Mapped[str] = mapped_column(String(100), default="")
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"))
+    register_id: Mapped[str | None] = mapped_column(ForeignKey("registers.id"), nullable=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey("bank_accounts.id"))
+    provider: Mapped[str] = mapped_column(String(100), default="")
+    settlement_days: Mapped[int] = mapped_column(Integer, default=1)
+    settlement_mode: Mapped[str] = mapped_column(String(10), default="gross")
+    commission_bps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    commission_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    statement_reference: Mapped[str] = mapped_column(String(200), default="")
+    mbway: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    __table_args__ = (UniqueConstraint("store_id", "name"),)
 
 
 class PaymentMethodBankDefault(Base):
@@ -348,6 +472,7 @@ class CashSession(Base):
     register_id: Mapped[str] = mapped_column(ForeignKey("registers.id"))
     operator_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     opening_cents: Mapped[int] = mapped_column(BigInteger)
+    retained_fund_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     counted_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -375,6 +500,8 @@ class Movement(Base):
     session_id: Mapped[str | None] = mapped_column(ForeignKey("cash_sessions.id"), nullable=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     bank_account_id: Mapped[str | None] = mapped_column(ForeignKey("bank_accounts.id"), nullable=True)
+    terminal_id: Mapped[str | None] = mapped_column(ForeignKey("payment_terminals.id"), nullable=True)
+    payment_method_id: Mapped[str | None] = mapped_column(ForeignKey("local_payment_methods.id"), nullable=True)
     category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
     kind: Mapped[str] = mapped_column(String(40))
     payment: Mapped[str] = mapped_column(String(20))
@@ -694,7 +821,7 @@ class WintouchPaymentMethod(WintouchRecord, Base):
     __table_args__ = (
         UniqueConstraint("enterprise_id", "external_id"),
         CheckConstraint(
-            "local_payment IS NULL OR local_payment IN ('numerario','cartao','transferencia','outro')",
+            "local_payment IS NULL OR local_payment IN ('numerario','cartao','mbway','transferencia','outro') OR local_payment LIKE 'pm_%'",
             name="wt_payment_mapping",
         ),
     )
@@ -732,6 +859,9 @@ class BusinessEntity(Base):
     wintouch_id: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True)
     name: Mapped[str] = mapped_column(String(300))
     tax_number: Mapped[str] = mapped_column(String(40), default="")
+    address: Mapped[str] = mapped_column(String(500), default="")
+    locality: Mapped[str] = mapped_column(String(120), default="")
+    postal_code: Mapped[str] = mapped_column(String(20), default="")
     email: Mapped[str] = mapped_column(String(200), default="")
     phone: Mapped[str] = mapped_column(String(60), default="")
     is_customer: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -1015,3 +1145,81 @@ class InvoiceWorkflowRun(Base):
     detail: Mapped[str] = mapped_column(Text, default="{}")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class StockArticle(Base):
+    __tablename__ = "stock_articles"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    code: Mapped[str] = mapped_column(String(100), unique=True)
+    name: Mapped[str] = mapped_column(String(300))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    erp_id: Mapped[str | None] = mapped_column(ForeignKey("wt_products.id"), unique=True, nullable=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    revision: Mapped[int] = mapped_column(default=0)
+
+
+class StockWarehouse(Base):
+    __tablename__ = "stock_warehouses"
+    __table_args__ = (UniqueConstraint("store_id", "name"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+
+
+class StockLot(Base):
+    __tablename__ = "stock_lots"
+    __table_args__ = (UniqueConstraint("article_id", "number"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    article_id: Mapped[str] = mapped_column(ForeignKey("stock_articles.id"), index=True)
+    number: Mapped[str] = mapped_column(String(100))
+    expiry: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class StockEntry(Base):
+    __tablename__ = "stock_entries"
+    __table_args__ = (UniqueConstraint("request_key", "sequence"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    article_id: Mapped[str] = mapped_column(ForeignKey("stock_articles.id"), index=True)
+    warehouse_id: Mapped[str] = mapped_column(ForeignKey("stock_warehouses.id"), index=True)
+    lot_id: Mapped[str | None] = mapped_column(ForeignKey("stock_lots.id"), nullable=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    kind: Mapped[str] = mapped_column(String(30))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6))
+    unit_cost: Mapped[Decimal | None] = mapped_column(Numeric(24, 8), nullable=True)
+    net_sales: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)
+    direct_cost: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)
+    occurred_on: Mapped[str] = mapped_column(String(10), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    request_key: Mapped[str] = mapped_column(String(200), index=True)
+    sequence: Mapped[int] = mapped_column(default=0)
+    original_id: Mapped[str | None] = mapped_column(ForeignKey("stock_entries.id"), nullable=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class StockInventory(Base):
+    __tablename__ = "stock_inventories"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    warehouse_id: Mapped[str] = mapped_column(ForeignKey("stock_warehouses.id"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revision: Mapped[int] = mapped_column(default=0)
+    data: Mapped[str] = mapped_column(Text, default="[]")
+
+
+class StockSettings(Base):
+    __tablename__ = "stock_settings"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
+    revision: Mapped[int] = mapped_column(default=0)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class StockImport(Base):
+    __tablename__ = "stock_imports"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    status: Mapped[str] = mapped_column(String(20), default="preview")
+    data: Mapped[str] = mapped_column(Text)

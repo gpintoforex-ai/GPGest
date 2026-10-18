@@ -1,3 +1,5 @@
+import { confirmAction } from "./components/InteractionUI";
+import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -66,22 +68,19 @@ function EmployeeDialog({
   useEffect(() => {
     const element = dialog.current!;
     const previous = document.activeElement as HTMLElement | null;
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     element.showModal();
     return () => {
       element.close();
-      document.body.style.overflow = overflow;
       previous?.focus();
     };
   }, []);
   return createPortal(
-    <dialog
+    <AppDialog busy={busy}
       ref={dialog}
       className="doc-dialog employee-dialog"
       aria-labelledby={title}
-      onCancel={(event) => {
-        event.preventDefault();
+      onRequestClose={() => {
+
         if (!busy) onCancel();
       }}
     >
@@ -89,19 +88,12 @@ function EmployeeDialog({
         <h2 id={title}>
           {employee ? "Editar funcionário" : "Novo funcionário"}
         </h2>
-        <button
-          type="button"
-          disabled={busy}
-          aria-label="Fechar funcionário"
-          onClick={onCancel}
-        >
-          <X size={20} aria-hidden="true" />
-        </button>
+
       </div>
       <p className="footnote">
-        Este registo não cria credenciais de entrada no GPGest.
+        Este registo não cria credenciais de entrada na Zela.
       </p>
-      <form
+      <ManagedForm
         className="doc-form"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -177,23 +169,23 @@ function EmployeeDialog({
           <p className="footnote">Selecione pelo menos um estabelecimento.</p>
         )}
         {error && (
-          <p className="error" role="alert">
+          <Notice className="error" role="alert">
             {error}
-          </p>
+          </Notice>
         )}
         <div className="actions">
-          <button type="button" disabled={busy} onClick={onCancel}>
+          <ActionButton type="button" disabled={busy} onClick={onCancel}>
             Cancelar
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
             className="primary"
             disabled={busy || name.trim().length < 2 || !storeIds.length}
           >
             {busy ? "A guardar…" : "Guardar funcionário"}
-          </button>
+          </ActionButton>
         </div>
-      </form>
-    </dialog>,
+      </ManagedForm>
+    </AppDialog>,
     document.body,
   );
 }
@@ -271,6 +263,7 @@ export default function Employees({
     )
     .sort((a, b) => a.name.localeCompare(b.name, "pt-PT"));
   async function toggle(employee: Employee) {
+    if (employee.active && !(await confirmAction({ title: "Inativar funcionário?", message: `«${employee.name}» deixará de estar disponível para novas atribuições. O histórico será preservado.`, confirmLabel: "Inativar funcionário", tone: "warning" }))) return;
     setBusy(employee.id);
     setError("");
     setNotice("");
@@ -296,17 +289,17 @@ export default function Employees({
         <div>
           <h1>Operadores / funcionários</h1>
           <p>
-            Utilizadores com acesso ao GPGest e funcionários sem acesso à
+            Utilizadores com acesso à Zela e funcionários sem acesso à
             aplicação.
           </p>
         </div>
         {admin && (
           <div className="actions">
-            <button disabled={busy !== null} onClick={onNewUser}>
+            <ActionButton disabled={busy !== null} onClick={onNewUser}>
               <UserPlus size={18} aria-hidden="true" />
               Novo utilizador
-            </button>
-            <button
+            </ActionButton>
+            <ActionButton
               className="primary"
               disabled={busy !== null || !stores.length}
               onClick={() => {
@@ -316,24 +309,24 @@ export default function Employees({
             >
               <Plus size={18} aria-hidden="true" />
               Novo funcionário
-            </button>
+            </ActionButton>
           </div>
         )}
       </div>
       {error && (
         <div>
-          <p className="error" role="alert">
+          <Notice className="error" role="alert">
             {error}
-          </p>
-          <button onClick={() => setAttempt((value) => value + 1)}>
+          </Notice>
+          <ActionButton onClick={() => setAttempt((value) => value + 1)}>
             Tentar novamente
-          </button>
+          </ActionButton>
         </div>
       )}
       {notice && (
-        <p className="success" role="status">
+        <Notice onDismiss={() => setNotice("")} className="success" role="status">
           {notice}
-        </p>
+        </Notice>
       )}
       <section className="panel" aria-busy={loading || busy !== null}>
         <div className="employee-filters">
@@ -349,8 +342,8 @@ export default function Employees({
               onChange={(event) => setKind(event.target.value)}
             >
               <option value="all">Todos</option>
-              <option value="with">Com acesso ao GPGest</option>
-              <option value="without">Sem acesso ao GPGest</option>
+              <option value="with">Com acesso à Zela</option>
+              <option value="without">Sem acesso à Zela</option>
             </select>
           </Field>
         </div>
@@ -399,7 +392,7 @@ export default function Employees({
                     <td>
                       {row.employee ? (
                         <div className="employee-row-actions">
-                          <button
+                          <ActionButton
                             disabled={busy !== null}
                             aria-label={`Editar ${row.name}`}
                             onClick={() => {
@@ -409,8 +402,8 @@ export default function Employees({
                           >
                             <Pencil size={16} aria-hidden="true" />
                             Editar
-                          </button>
-                          <button
+                          </ActionButton>
+                          <ActionButton
                             disabled={busy !== null}
                             className={
                               row.active ? "danger" : "employee-activate"
@@ -424,7 +417,7 @@ export default function Employees({
                               <CircleCheck size={16} aria-hidden="true" />
                             )}
                             {row.active ? "Inativar" : "Ativar"}
-                          </button>
+                          </ActionButton>
                         </div>
                       ) : (
                         "—"

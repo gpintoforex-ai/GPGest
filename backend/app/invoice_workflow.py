@@ -187,12 +187,13 @@ def drive_checks(db, settings, force=False):
         db.rollback()
         return {"state":"error","message":"Não foi possível verificar o Drive. Reveja a ligação, a conta e as permissões das pastas; pode repetir.","files":[],"complete":False}
 
-def existing_evidence(db, purchase):
-    keys={"drive:"+row.id:row.digest for row in db.scalars(select(DriveDocumentAttachment).where(DriveDocumentAttachment.purchase_id==purchase.id))}
-    keys.update({row.id:hashlib.sha256(row.data).hexdigest() for row in db.scalars(select(PurchaseAttachment).where(PurchaseAttachment.purchase_id==purchase.id))})
-    for row in db.scalars(select(InvoiceEvidenceValidation).where(InvoiceEvidenceValidation.purchase_id==purchase.id)):
+def existing_evidence(db, purchase, context=None):
+    keys={"drive:"+row.id:row.digest for row in (context.drives[purchase.id] if context is not None else db.scalars(select(DriveDocumentAttachment).where(DriveDocumentAttachment.purchase_id==purchase.id)))}
+    keys.update({row.id:row.digest for row in context.natives[purchase.id]} if context is not None else {row.id:hashlib.sha256(row.data).hexdigest() for row in db.scalars(select(PurchaseAttachment).where(PurchaseAttachment.purchase_id==purchase.id))})
+    for row in (context.validations[purchase.id] if context is not None else db.scalars(select(InvoiceEvidenceValidation).where(InvoiceEvidenceValidation.purchase_id==purchase.id))):
         if keys.get(row.attachment_key)==row.digest: return True
-    for scan in db.scalars(select(DocumentScan).where(DocumentScan.purchase_id==purchase.id,DocumentScan.status=="cloud_saved",DocumentScan.validation_status=="validado")):
+    for scan in (context.scans[purchase.id] if context is not None else db.scalars(select(DocumentScan).where(DocumentScan.purchase_id==purchase.id,DocumentScan.status=="cloud_saved",DocumentScan.validation_status=="validado"))):
+        if scan.validation_status != "validado": continue
         if "drive:"+str(scan.attachment_id) in keys and keys["drive:"+str(scan.attachment_id)]==scan.digest: return True
     return False
 
@@ -209,13 +210,13 @@ def validate_evidence(db,user,purchase,key,digest,source,audit):
 def current_erp_link(db,purchase):
     return db.scalar(select(DocumentERPLink).where(DocumentERPLink.purchase_id==purchase.id,DocumentERPLink.undone_at.is_(None)))
 
-def summarize(db,purchase):
-    check=db.get(InvoiceWorkflowCheck,purchase.id)
-    links=list(db.scalars(select(DriveDocumentAttachment).where(DriveDocumentAttachment.purchase_id==purchase.id)))
-    natives=list(db.scalars(select(PurchaseAttachment).where(PurchaseAttachment.purchase_id==purchase.id)))
+def summarize(db,purchase,context=None):
+    check=context.checks.get(purchase.id) if context is not None else db.get(InvoiceWorkflowCheck,purchase.id)
+    links=context.drives[purchase.id] if context is not None else list(db.scalars(select(DriveDocumentAttachment).where(DriveDocumentAttachment.purchase_id==purchase.id)))
+    natives=context.natives[purchase.id] if context is not None else list(db.scalars(select(PurchaseAttachment).where(PurchaseAttachment.purchase_id==purchase.id)))
     attachments=[{"key":"drive:"+item.id,"name":item.name,"url":"/api/drive-attachments/"+item.id+"/view","drive_url":"https://drive.google.com/file/d/"+item.drive_id+"/view"} for item in links]+[{"key":item.id,"name":item.name,"url":"/api/documents/attachments/"+item.id+"/view"} for item in natives]
-    valid=existing_evidence(db,purchase)
-    erp=current_erp_link(db,purchase)
+    valid=existing_evidence(db,purchase,context)
+    erp=context.links.get(purchase.id) if context is not None else current_erp_link(db,purchase)
     erp_state=check.erp_state if check else "unknown"
     if erp and erp_state not in ("error","divergence"): erp_state="linked"
     drive_state=check.drive_state if check else "unknown"
@@ -372,7 +373,9 @@ def register_routes(app,current,authorize,scope,audit):
         stores=scope(user,db)
         if store_id: authorize(user,db,store_id); stores=[store_id] if store_id in stores else []
         purchases=list(db.scalars(select(Purchase).where(Purchase.store_id.in_(stores),Purchase.document_date>=str(start),Purchase.document_date<=str(end)).order_by(Purchase.document_date.desc(),Purchase.document)))
-        rows=[summarize(db,item) for item in purchases]
+        from .document_projection import WorkflowContext
+        context=WorkflowContext(db,purchases)
+        rows=[summarize(db,item,context) for item in purchases]
         return {"rows":rows,"summary":{"total":len(rows),"completed":sum(row["complete"] for row in rows),"pending":sum(not row["complete"] for row in rows)},"creation_available":False}
 
     @app.post("/api/invoice-workflow/verify")

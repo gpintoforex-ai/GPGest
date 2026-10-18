@@ -56,6 +56,23 @@ Foram cobertos os doze cenários pedidos: mercadorias com ERP/PDF; eletricidade 
 Existem ainda verificações de divergências, preservação de zeros e separadores no número, associação/desassociação auditada, múltiplas taxas de IVA, exportação sem falso lançamento/entrega, ações em lote atómicas, permissões dos anexos, idempotência de pagamentos e partilha de saldos com os movimentos de origem. A interface foi exercitada em desktop e telemóvel.
 
 
+## Carregamento das listas e recuperação de falhas
+
+As listas documental e do assistente e-Fatura usam consultas agrupadas por pedido.
+Os anexos são carregados como metadados; o conteúdo binário não é transferido para
+construir as tabelas. A validação de conteúdo continua a comparar os resumos SHA-256
+dos anexos, incluindo a invalidação de confirmações quando o ficheiro muda.
+
+Uma falha na consulta de pagamentos, reconciliação ou catálogo ERP não elimina as
+faturas que já foram carregadas. O assistente distingue o carregamento, o erro e a
+ausência de faturas no período, e permite repetir a consulta. Depois de uma operação
+confirmada, a atualização secundária da página decorre em segundo plano; uma falha
+nessa atualização não é apresentada como uma falha da gravação.
+
+Esta otimização mantém as pastas, credenciais, agendamento e associações existentes.
+Os testes de regressão incluem os resultados de pagamento e reconciliação, a
+equivalência entre ficha e listagem e o número de consultas com 60 faturas.
+
 ## Associação automática de PDFs no assistente
 
 No segundo passo, «Procurar correspondências automaticamente» compara os PDFs da pasta Drive com os documentos do período, sem seleção obrigatória de uma fatura. Usa o texto extraível do PDF e o nome do ficheiro para comparar número, NIF, montante e data. Propõe apenas resultados com confiança de pelo menos 70/100, número encontrado e vantagem de pelo menos 20 pontos sobre outro candidato. Empates ficam para conferência individual. PDFs digitalizados sem texto continuam a necessitar de revisão, pois não existe OCR.

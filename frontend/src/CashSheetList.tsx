@@ -1,3 +1,4 @@
+import { ActionButton, CloseButton, Notice } from "./components/InteractionUI";
 import { useEffect, useState, type ReactNode } from "react";
 import { Settings, X } from "lucide-react";
 import { useCashPreferences } from "./CashPreferences";
@@ -71,7 +72,7 @@ export default function CashSheetList({
             <div className="cash-page-settings-content">
               <div className="cash-page-settings-heading">
                 <h3>Parâmetros da folha de caixa</h3>
-                <button
+                <CloseButton
                   type="button"
                   className="cash-page-settings-close"
                   aria-label="Fechar parâmetros da folha de caixa"
@@ -83,9 +84,7 @@ export default function CashSheetList({
                       details.querySelector("summary")?.focus();
                     }
                   }}
-                >
-                  <X size={20} aria-hidden="true" />
-                </button>
+                />
               </div>
               <label className="record-field">
                 Folhas por página por defeito
@@ -124,9 +123,9 @@ export default function CashSheetList({
                 utilizador e empresa.
               </p>
               {error && (
-                <p className="error" role="alert">
+                <Notice className="error" role="alert">
                   {error}
-                </p>
+                </Notice>
               )}
               {configuration && (
                 <div className="cash-page-settings-links">{configuration}</div>
@@ -148,23 +147,23 @@ export default function CashSheetList({
           {Math.min(start + size, rows.length)} de {rows.length} folhas
         </span>
         <div>
-          <button
+          <ActionButton
             type="button"
             disabled={current === 1}
             onClick={() => setPage(current - 1)}
           >
             Anterior
-          </button>
+          </ActionButton>
           <span>
             Página {current} de {pages}
           </span>
-          <button
+          <ActionButton
             type="button"
             disabled={current === pages}
             onClick={() => setPage(current + 1)}
           >
             Seguinte
-          </button>
+          </ActionButton>
         </div>
       </nav>
     </>

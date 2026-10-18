@@ -1,5 +1,9 @@
+import { ActionLink } from "./components/InteractionUI";
+import { confirmAction } from "./components/InteractionUI";
+import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
 import { api } from "./App";
+import { uploadPurchaseFile } from "./utils/purchaseImport";
 import Purchases from "./Purchases";
 import GoogleInvoiceInbox from "./GoogleInvoiceInbox";
 import DocumentAssistant from "./DocumentAssistant";
@@ -10,7 +14,7 @@ import ErpAssistantStep from "./ErpAssistantStep";
 import InvoiceWorkflow from "./InvoiceWorkflow";
 import { MetricCard, StatusBadge } from "./components/BusinessUI";
 import AssistantIdentity, { ASSISTANTS } from "./components/AssistantIdentity";
-import { Bot } from "lucide-react";
+import { Bot, Filter } from "lucide-react";
 import { formatEuro } from "./utils/format";
 import "./DocumentControl.css";
 
@@ -123,6 +127,9 @@ export default function DocumentControl({
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false);
+  const actionPending = useRef(false);
+  const [importing, setImporting] = useState("");
+  const [refreshingImport, setRefreshingImport] = useState(false);
   const [file, setFile] = useState<File | null>(null),
     [preview, setPreview] = useState<Row | null>(null);
   const [erpId, setErpId] = useState(""),
@@ -148,21 +155,18 @@ export default function DocumentControl({
     filterYear,
   ])].sort((a, b) => Number(b) - Number(a));
   async function load() {
-    const [documents, erp, identified, recon] = await Promise.all([
-      api("/documents"),
-      api("/documents/erp-catalog"),
-      api("/document-payments"),
-      api("/reconciliation"),
+    const results = await Promise.allSettled([
+      api("/documents", undefined, { timeoutMs: 45_000 }).then(setRows),
+      api("/documents/erp-catalog", undefined, { timeoutMs: 45_000 }).then(setCatalog),
+      api("/document-payments", undefined, { timeoutMs: 45_000 }).then(setPayments),
+      api("/reconciliation", undefined, { timeoutMs: 45_000 }).then(recon => {
+        setBanks(recon.banks);
+        setSources(recon.internals.filter((r: Row) => ["movement", "wintouch"].includes(r.source)));
+      }),
     ]);
-    setRows(documents);
-    setCatalog(erp);
-    setPayments(identified);
-    setBanks(recon.banks);
-    setSources(
-      recon.internals.filter((r: Row) =>
-        ["movement", "wintouch"].includes(r.source),
-      ),
-    );
+    const names = ["documentos", "catálogo ERP", "pagamentos identificados", "reconciliação bancária"];
+    const failed = results.flatMap((result, index) => result.status === "rejected" ? [names[index]] : []);
+    if (failed.length) throw new Error(`Não foi possível atualizar: ${failed.join(", ")}. Os dados já carregados foram mantidos. Volte a tentar a consulta; não é necessário repetir a importação.`);
   }
   useEffect(() => {
     load().catch((e) => setError(e.message)).finally(() => setLoading(false));
@@ -185,6 +189,8 @@ export default function DocumentControl({
     }
   }
   async function act(task: () => Promise<void>) {
+    if (actionPending.current) return;
+    actionPending.current = true;
     setBusy(true);
     setError("");
     setNotice("");
@@ -193,6 +199,7 @@ export default function DocumentControl({
     } catch (e) {
       setError(e instanceof Error ? e.message : "Não foi possível concluir.");
     } finally {
+      actionPending.current = false;
       setBusy(false);
     }
   }
@@ -236,19 +243,13 @@ export default function DocumentControl({
   async function importFile(confirm: boolean, insideAssistant = false) {
     if (!file) return;
     await act(async () => {
-      const body = new FormData();
-      body.append("file", file);
-      const response = await fetch(
-        `/api/purchases/import/${selectedStore}?confirm=${confirm}`,
-        { method: "POST", body, credentials: "same-origin" },
-      );
-      const result = await response.json();
-      if (!response.ok)
-        throw new Error(result.detail || "Falha na importação.");
+      setImporting(confirm ? "A importar documentos…" : "A pré-visualizar ficheiro…");
+      let result;
+      try { result = await uploadPurchaseFile(selectedStore, file, confirm); }
+      finally { setImporting(""); }
       if (!confirm) setPreview(result);
       else {
         const dates = result.rows.map((r: Row) => r.document_date).sort();
-        await load();
         setFilters({
           ...filters,
           from: dates[0] || "",
@@ -257,9 +258,16 @@ export default function DocumentControl({
         if (insideAssistant) { setAssistantStage(2); setModal("assistant"); }
         else setModal("");
         setSelection([]);
+        setFile(null);
+        setPreview(null);
         setNotice(
           `${result.new_count} documentos importados; ${result.duplicate_count} duplicados ignorados.`,
         );
+        // The upload is committed. Refreshing the dashboard must not keep the
+        // import locked or present a read failure as a failed write.
+        setRefreshingImport(true);
+        void load().catch(() => setError("A importação ficou guardada, mas não foi possível atualizar a lista. Atualize a página para consultar os documentos; não é necessário voltar a importar."))
+          .finally(() => setRefreshingImport(false));
       }
     });
   }
@@ -366,18 +374,18 @@ export default function DocumentControl({
     .map((r) => `${r.supplier_name}: ${r.document}`)
     .join(" · ");
   if (gmail)
-    return <><button onClick={() => { setGmail(false); load().catch(e => setError(e.message)); }}>Voltar à conferência documental</button><GoogleInvoiceInbox /></>;
+    return <><ActionButton onClick={() => { setGmail(false); load().catch(e => setError(e.message)); }}>Voltar à conferência documental</ActionButton><GoogleInvoiceInbox /></>;
   if (tools)
     return (
       <>
-        <button
+        <ActionButton
           onClick={() => {
             setTools(false);
             load().catch((e) => setError(e.message));
           }}
         >
           Voltar à conferência documental
-        </button>
+        </ActionButton>
         <Purchases
           stores={stores}
           store={store}
@@ -398,11 +406,11 @@ export default function DocumentControl({
         </div>
         {manager && (
           <div className="actions">
-            <button className="primary" disabled={busy || !stores.length}
+            <ActionButton className="primary" disabled={busy || !stores.length}
               onClick={() => { setError(""); setFile(null); setPreview(null); setAssistantDocId(selection.length === 1 ? selection[0] : ""); setAssistantStage(1); setModal("assistant"); }}>
               <Bot size={16} aria-hidden="true" />{ASSISTANTS.clara.name} · Verificar documentos
-            </button>
-            <button
+            </ActionButton>
+            <ActionButton
               disabled={busy || !selectedStore}
               onClick={() => {
                 setFile(null);
@@ -412,18 +420,18 @@ export default function DocumentControl({
               }}
             >
               Importar e-Fatura
-            </button>
-            <button onClick={() => setModal("new")}>Registar documento</button><ScanButton store={selectedStore} onSaved={load} />
+            </ActionButton>
+            <ActionButton onClick={() => setModal("new")}>Registar documento</ActionButton><ScanButton store={selectedStore} onSaved={load} />
             {admin && canReadErp && (
-              <button onClick={() => setModal("sync")}>
+              <ActionButton onClick={() => setModal("sync")}>
                 Consultar compras no ERP
-              </button>
+              </ActionButton>
             )}
-            <button onClick={() => openPayment(undefined, true)}>
+            <ActionButton onClick={() => openPayment(undefined, true)}>
               Identificar pagamento ou comissão
-            </button>
-            <button onClick={() => setTools(true)}>Acessos e-Fatura</button>
-            <button onClick={() => setGmail(true)}>Anexos Gmail / Drive</button>
+            </ActionButton>
+            <ActionButton onClick={() => setTools(true)}>Acessos e-Fatura</ActionButton>
+            <ActionButton onClick={() => setGmail(true)}>Anexos Gmail / Drive</ActionButton>
           </div>
         )}
       </div>
@@ -504,19 +512,20 @@ export default function DocumentControl({
           ["despesas", "Despesas por tratar"],
           ["contabilidade", "Entrega à contabilidade"],
         ].map(([id, title]) => (
-          <button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>
+          <ActionButton key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>
             {title}
-          </button>
+          </ActionButton>
         ))}
       </div>
       {error && !modal && (
-        <p role="alert" className="error">
+        <Notice role="alert" className="error">
           {error}
-        </p>
+        </Notice>
       )}
-      {notice && <p className="doc-notice" role="status">{notice}</p>}
+      {notice && <Notice className="success" onDismiss={() => setNotice("")}>{notice}</Notice>}
+      {refreshingImport && <p role="status">Importação guardada. A atualizar a lista de documentos…</p>}
       {loading && <p role="status">A carregar documentos e estados de conferência…</p>}
-      {error && !modal && <button onClick={() => { setLoading(true); setError(""); load().catch(e => setError(e.message)).finally(() => setLoading(false)); }}>Tentar novamente</button>}
+      {error && !modal && <ActionButton onClick={() => { setLoading(true); setError(""); load().catch(e => setError(e.message)).finally(() => setLoading(false)); }}>Tentar novamente</ActionButton>}
       <section className="panel">
         <div className="doc-filters">
           <label>
@@ -532,7 +541,7 @@ export default function DocumentControl({
               {years.map(year => <option key={year} value={year}>{year}</option>)}
             </select>
           </label>
-          <button onClick={() => setFilters({ ...filters, ...monthRange(today().slice(0, 4), today().slice(5, 7)) })}>Mês atual</button>
+          <ActionButton onClick={() => setFilters({ ...filters, ...monthRange(today().slice(0, 4), today().slice(5, 7)) })}>Mês atual</ActionButton>
           <label>
             Desde
             <input
@@ -558,6 +567,9 @@ export default function DocumentControl({
               }
             />
           </label>
+          <details className="doc-advanced-filters">
+            <summary><Filter size={16} aria-hidden="true" /> Filtros avançados{Object.entries(filters).some(([key, value]) => !["from", "to", "search"].includes(key) && value) ? ` (${Object.entries(filters).filter(([key, value]) => !["from", "to", "search"].includes(key) && value).length})` : ""}</summary>
+            <div className="doc-advanced-filter-grid">
           {[
             [
               "availability",
@@ -603,18 +615,20 @@ export default function DocumentControl({
               </select>
             </label>
           ))}
+            </div>
+          </details>
         </div>
         <div className="actions">
-          <button
+          <ActionButton
             onClick={() =>
               setSelection(filtered.slice(0, 200).map((r) => r.id))
             }
           >
             Selecionar filtrados (até 200)
-          </button>
-          <button onClick={() => setSelection([])}>Limpar seleção</button>
+          </ActionButton>
+          <ActionButton onClick={() => setSelection([])}>Limpar seleção</ActionButton>
           {manager && (
-            <button
+            <ActionButton
               disabled={!selection.length || busy}
               onClick={() => {
                 setBatchPreview(null);
@@ -622,9 +636,9 @@ export default function DocumentControl({
               }}
             >
               Ação em lote ({selection.length})
-            </button>
+            </ActionButton>
           )}
-          <button
+          <ActionButton
             disabled={!selection.length || busy}
             onClick={() =>
               act(async () => {
@@ -640,14 +654,14 @@ export default function DocumentControl({
             }
           >
             Exportar documentos e controlo
-          </button>
+          </ActionButton>
           {manager && (
-            <button
+            <ActionButton
               disabled={!selection.length || busy}
               onClick={() => openPayment()}
             >
               Identificar pagamento selecionado
-            </button>
+            </ActionButton>
           )}
         </div>
         <p>
@@ -661,7 +675,7 @@ export default function DocumentControl({
             <thead>
               <tr>
                 <th>Selecionar</th>
-                {[ ["document_date", "Data"], ["supplier_name", "Fornecedor"], ["document", "Documento"], ["amount_cents", "Total"] ].map(([key, label]) => <th key={key} aria-sort={sort.key === key ? sort.ascending ? "ascending" : "descending" : "none"}><button onClick={() => sortBy(key)}>{label} {sort.key === key ? sort.ascending ? "↑" : "↓" : "↕"}</button></th>)}
+                {[ ["document_date", "Data"], ["supplier_name", "Fornecedor"], ["document", "Documento"], ["amount_cents", "Total"] ].map(([key, label]) => <th key={key} aria-sort={sort.key === key ? sort.ascending ? "ascending" : "descending" : "none"}><ActionButton onClick={() => sortBy(key)}>{label} {sort.key === key ? sort.ascending ? "↑" : "↓" : "↕"}</ActionButton></th>)}
                 <th>Origem</th>
                 <th>Disponibilidade / anexos</th>
                 <th>ERP</th>
@@ -720,10 +734,10 @@ export default function DocumentControl({
                       <small>Banco: {labels[r.bank_status]}</small>
                     </td>
                     <td>
-                      <button className="primary" disabled={busy} onClick={() => openDoc(r)}>
+                      <ActionButton className="primary" disabled={busy} onClick={() => openDoc(r)}>
                         Conferir
-                      </button>
-                      <button disabled={busy} onClick={() => act(async () => setListPreview(await api(`/documents/${r.id}/detail`)))}>Anexo</button>
+                      </ActionButton>
+                      <ActionButton disabled={busy} onClick={() => act(async () => setListPreview(await api(`/documents/${r.id}/detail`)))}>Anexo</ActionButton>
                     </td>
                   </tr>
                 ))}
@@ -735,21 +749,21 @@ export default function DocumentControl({
         </div>
         {pages > 1 && (
           <div className="actions">
-            <button
+            <ActionButton
               disabled={currentPage <= 1}
               onClick={() => setPage(currentPage - 1)}
             >
               Anterior
-            </button>
+            </ActionButton>
             <span>
               {currentPage} / {pages}
             </span>
-            <button
+            <ActionButton
               disabled={currentPage >= pages}
               onClick={() => setPage(currentPage + 1)}
             >
               Seguinte
-            </button>
+            </ActionButton>
           </div>
         )}
       </section>
@@ -757,11 +771,11 @@ export default function DocumentControl({
         onClose={() => { setAssistant(null); load().catch(e => setError(e.message)); }}
         onPrepare={async () => { const fresh = await api(`/documents/${assistant.id}/detail`); setSelected(fresh); setAssistant(null); setModal("detail"); prepareDraft(fresh); }} />}
       {modal && (
-        <dialog
+        <AppDialog busy={busy}
           className={`doc-dialog ${modal === "detail" ? "invoice-detail-dialog" : ""}`}
           ref={dialog}
-          onCancel={(e) => {
-            e.preventDefault();
+          onRequestClose={() => {
+
             close();
           }}
           aria-label={modal === "assistant" ? `${ASSISTANTS.clara.name} · Conferência e-Fatura` : "Conferência de documentos"}
@@ -780,15 +794,14 @@ export default function DocumentControl({
                         ? "Rever ação em lote"
                         : "Registar documento"}
             </h2>
-            <button disabled={busy} onClick={close} aria-label="Fechar">
-              ×
-            </button>
+
           </div>
           {error && (
-            <p role="alert" className="error">
+            <Notice role="alert" className="error">
               {error}
-            </p>
+            </Notice>
           )}
+          {importing && <p role="status" aria-live="polite">{importing}</p>}
           {modal === "assistant" && <p>{ASSISTANTS.clara.mission}</p>}
           {modal === "assistant" && assistantStage === 1 && <div className="doc-form">
             <h3>1.º passo — Parâmetros e importação</h3>
@@ -800,26 +813,26 @@ export default function DocumentControl({
             <p>As sugestões comparam NIF, montante, data e número. As associações serão revistas antes de confirmar.</p>
             <label>Ficheiro e-Fatura (opcional)<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={e => { setFile(e.target.files?.[0] || null); setPreview(null); }} /></label>
             <p>A confirmação importa todo o ficheiro. O período filtra os documentos a conferir, sem excluir linhas da importação.</p>
-            <button disabled={busy || !file || !selectedStore} onClick={() => importFile(false)}>Pré-visualizar ficheiro</button>
+            <ActionButton disabled={busy || !file || !selectedStore} onClick={() => importFile(false)}>Pré-visualizar ficheiro</ActionButton>
             {preview && <>
               <p>{preview.new_count} novos · {preview.duplicate_count} duplicados · {preview.conflict_count} conflitos</p>
-              <div className="table-wrap"><table><thead><tr><th>Fornecedor</th><th>Documento ERP</th><th>Doc. de refer?ncia</th><th>Data</th><th>Total</th></tr></thead><tbody>{preview.rows.slice(0,20).map((r: Row) => <tr key={r.line}><td>{r.supplier_name}</td><td>{r.document}</td><td>{r.document_date}</td><td>{euro(r.amount_cents)}</td></tr>)}</tbody></table></div>
-              <button className="primary" disabled={busy || !!preview.conflict_count || !preview.rows.length || !assistantFrom || !assistantTo || assistantFrom > assistantTo} onClick={() => importFile(true, true)}>Confirmar importação e continuar</button>
+              <div className="table-wrap"><table><thead><tr><th>Fornecedor</th><th>Documento</th><th>Data</th><th className="numeric">Total</th></tr></thead><tbody>{preview.rows.slice(0,20).map((r: Row) => <tr key={r.line}><td>{r.supplier_name}</td><td>{r.document}</td><td>{r.document_date}</td><td className="numeric">{euro(r.amount_cents)}</td></tr>)}</tbody></table></div>
+              <ActionButton className="primary" disabled={busy || !!preview.conflict_count || !preview.rows.length || !assistantFrom || !assistantTo || assistantFrom > assistantTo} onClick={() => importFile(true, true)}>Confirmar importação e continuar</ActionButton>
             </>}
-            <button disabled={busy || !assistantFrom || !assistantTo || assistantFrom > assistantTo} onClick={() => setAssistantStage(2)}>Continuar com documentos existentes</button>
+            <ActionButton disabled={busy || !assistantFrom || !assistantTo || assistantFrom > assistantTo} onClick={() => setAssistantStage(2)}>Continuar com documentos existentes</ActionButton>
           </div>}
           {modal === "assistant" && assistantStage === 2 && <div className="doc-form">
             <InvoiceWorkflow start={assistantFrom} end={assistantTo} store={store} admin={admin} manager={manager} onUpdated={load} onReview={async row => { const detail=await api(`/documents/${row.id}/detail`); setSelected(detail); setModal("detail"); }} />
-            <button type="button" disabled={busy} onClick={() => setAssistantStage(1)}>Voltar aos parâmetros</button>
+            <ActionButton type="button" disabled={busy} onClick={() => setAssistantStage(1)}>Voltar aos parâmetros</ActionButton>
             <details><summary>Ferramentas anteriores de conferência</summary>
               <DriveAutoMatch documents={storeRows.filter(r => r.document_date >= assistantFrom && r.document_date <= assistantTo)} onUpdated={load} />
-              <button type="button" onClick={() => setAssistantStage(3)}>Abrir conferência ERP detalhada</button>
+              <ActionButton type="button" onClick={() => setAssistantStage(3)}>Abrir conferência ERP detalhada</ActionButton>
             </details>
           </div>}
           {modal === "assistant" && assistantStage === 3 && <div className="doc-form">
             <ErpAssistantStep documents={storeRows.filter(r => r.document_date >= assistantFrom && r.document_date <= assistantTo)} admin={admin && canReadErp} start={assistantFrom} end={assistantTo} onUpdated={load} onReview={doc => { setSelected(doc); setModal("detail"); }} />
-            <button type="button" disabled={busy} onClick={() => setAssistantStage(2)}>Voltar aos anexos Drive</button>
-            <button type="button" onClick={close}>Concluir assistente</button>
+            <ActionButton type="button" disabled={busy} onClick={() => setAssistantStage(2)}>Voltar aos anexos Drive</ActionButton>
+            <ActionButton type="button" onClick={close}>Concluir assistente</ActionButton>
           </div>}
           {modal === "import" && (
             <div className="doc-form">
@@ -828,7 +841,7 @@ export default function DocumentControl({
                 XLSX com as colunas do modelo. Os dados importados não
                 substituem o PDF ou o papel da fatura.
               </p>
-              <a href="/api/purchases/import-template">Modelo CSV</a>
+              <ActionLink href="/api/purchases/import-template">Modelo CSV</ActionLink>
               <label>
                 Ficheiro e-Fatura
                 <input
@@ -841,19 +854,19 @@ export default function DocumentControl({
                   }}
                 />
               </label>
-              <button
+              <ActionButton
                 disabled={busy || !file}
                 onClick={() => importFile(false)}
               >
                 Pré-visualizar
-              </button>
+              </ActionButton>
               {preview && (
                 <>
                   <p>
                     {preview.new_count} novos · {preview.duplicate_count}{" "}
                     duplicados · {preview.conflict_count} conflitos
                   </p>
-                  <button
+                  <ActionButton
                     className="primary"
                     disabled={
                       busy || !preview.rows.length || !!preview.conflict_count
@@ -861,7 +874,7 @@ export default function DocumentControl({
                     onClick={() => importFile(true)}
                   >
                     Confirmar importação
-                  </button>
+                  </ActionButton>
                   <div className="purchase-table">
                     <table>
                       <thead>
@@ -869,7 +882,7 @@ export default function DocumentControl({
                           <th>Documento</th>
                           <th>Fornecedor</th>
                           <th>Data</th>
-                          <th>Total</th>
+                          <th className="numeric">Total</th>
                           <th>Estado</th>
                         </tr>
                       </thead>
@@ -879,7 +892,7 @@ export default function DocumentControl({
                             <td>{r.document}</td>
                             <td>{r.supplier_name}</td>
                             <td>{day(r.document_date)}</td>
-                            <td>{euro(r.amount_cents)}</td>
+                            <td className="numeric">{euro(r.amount_cents)}</td>
                             <td>{r.status}</td>
                           </tr>
                         ))}
@@ -891,7 +904,7 @@ export default function DocumentControl({
             </div>
           )}
           {modal === "new" && (
-            <form
+            <ManagedForm
               className="doc-form"
               onSubmit={(e) => {
                 e.preventDefault();
@@ -953,11 +966,11 @@ export default function DocumentControl({
                 Total (€)
                 <input inputMode="decimal" name="amount" required />
               </label>
-              <button disabled={busy}>Guardar documento</button>
-            </form>
+              <ActionButton disabled={busy}>Guardar documento</ActionButton>
+            </ManagedForm>
           )}
           {modal === "sync" && (
-            <form
+            <ManagedForm
               className="doc-form"
               onSubmit={(e) => {
                 e.preventDefault();
@@ -1012,10 +1025,10 @@ export default function DocumentControl({
                 Confirmo a consulta de documentos reais, incluindo se esta
                 empresa estiver em demonstração.
               </label>
-              <button disabled={busy}>
+              <ActionButton disabled={busy}>
                 Consultar e guardar cópia para conferência
-              </button>
-            </form>
+              </ActionButton>
+            </ManagedForm>
           )}
           {modal === "batch" && (
             <div className="doc-form">
@@ -1073,7 +1086,7 @@ export default function DocumentControl({
                   )}
                 </select>
               </label>
-              <button
+              <ActionButton
                 disabled={busy}
                 onClick={() =>
                   act(async () =>
@@ -1088,7 +1101,7 @@ export default function DocumentControl({
                 }
               >
                 Rever documentos afetados
-              </button>
+              </ActionButton>
               {batchPreview && (
                 <>
                   <p>
@@ -1099,7 +1112,7 @@ export default function DocumentControl({
                     </strong>
                     . Os restantes estados mantêm-se independentes.
                   </p>
-                  <button
+                  <ActionButton
                     className="primary"
                     disabled={busy}
                     onClick={() =>
@@ -1116,13 +1129,13 @@ export default function DocumentControl({
                     }
                   >
                     Confirmar ação em lote
-                  </button>
+                  </ActionButton>
                 </>
               )}
             </div>
           )}
           {modal === "payment" && payment && (
-            <form
+            <ManagedForm
               className="doc-form"
               onSubmit={(e) => {
                 e.preventDefault();
@@ -1376,10 +1389,10 @@ export default function DocumentControl({
                     />
                   </label>
                 ))}
-              <button className="primary" disabled={busy}>
+              <ActionButton className="primary" disabled={busy}>
                 Confirmar pagamento e distribuição
-              </button>
-            </form>
+              </ActionButton>
+            </ManagedForm>
           )}
           {modal === "detail" && selected && (
             <>
@@ -1421,7 +1434,7 @@ export default function DocumentControl({
                     </div>
                     <p><strong>Confiança: {c.confidence || 0}/100</strong> · {c.reasons.join("; ")}</p>
                     <small>Consultado em {day(c.synced_at)}</small>
-                    {!!c.differences?.length && <p className="error">Divergências: {c.differences.join(" · ")}</p>}
+                    {!!c.differences?.length && <Notice className="error">Divergências: {c.differences.join(" · ")}</Notice>}
                   </div>
                 ))}
                 {manager && (
@@ -1458,7 +1471,7 @@ export default function DocumentControl({
                         onChange={(e) => setReason(e.target.value)}
                       />
                     </label>
-                    <button
+                    <ActionButton
                       className={selected.erp_link_id ? "danger" : "primary"}
                       disabled={
                         busy ||
@@ -1467,7 +1480,7 @@ export default function DocumentControl({
                       }
                       onClick={() =>
                         act(async () => {
-                          if (selected.erp_link_id && !window.confirm("Desfazer a associação deste documento ao ERP? O motivo indicado ficará no histórico.")) return;
+                          if (selected.erp_link_id && !(await confirmAction({ title: "Desfazer associação ao ERP?", message: `O documento «${selected.document}» deixará de estar associado ao registo ERP. O motivo indicado ficará no histórico. O documento na origem será preservado.`, confirmLabel: "Desfazer associação", tone: "danger" }))) return;
                           await api(
                             `/documents/${selected.id}/${selected.erp_link_id ? "erp-unlink" : "erp-link"}`,
                             selected.erp_link_id
@@ -1482,19 +1495,19 @@ export default function DocumentControl({
                       {selected.erp_link_id
                         ? "Desfazer associação ERP"
                         : "Confirmar associação ERP"}
-                    </button>
+                    </ActionButton>
                   </div>
                 )}
               </section>
               </div>
               <section className="doc-section">
                 <h3>Pré-visualização do original</h3>
-                {detailPreview ? <InvoiceSidePreview key={selected.id} document={selected} onClose={() => setDetailPreview(false)} /> : <button onClick={() => setDetailPreview(true)}>Mostrar anexo</button>}
+                {detailPreview ? <InvoiceSidePreview key={selected.id} document={selected} onClose={() => setDetailPreview(false)} /> : <ActionButton onClick={() => setDetailPreview(true)}>Mostrar anexo</ActionButton>}
               </section>
               <section className="doc-section">
                 <h3>Disponibilidade e localização</h3>
                 {manager ? (
-                  <form
+                  <ManagedForm
                     className="doc-form"
                     key={`state:${selected.id}:${selected.verified_at}`}
                     onSubmit={(e) => {
@@ -1540,10 +1553,10 @@ export default function DocumentControl({
                         maxLength={5000}
                       />
                     </label>
-                    <button disabled={busy}>
+                    <ActionButton disabled={busy}>
                       Guardar verificação documental
-                    </button>
-                  </form>
+                    </ActionButton>
+                  </ManagedForm>
                 ) : (
                   <p>
                     {labels[selected.availability]} · {selected.location} ·{" "}
@@ -1565,7 +1578,7 @@ export default function DocumentControl({
               <section className="doc-section">
                 <h3>Tratamento da despesa</h3>
                 {manager ? (
-                  <form
+                  <ManagedForm
                     className="doc-form"
                     onSubmit={(e) => {
                       e.preventDefault();
@@ -1601,17 +1614,17 @@ export default function DocumentControl({
                         maxLength={2000}
                       />
                     </label>
-                    <button disabled={busy}>Guardar tratamento</button>
-                  </form>
+                    <ActionButton disabled={busy}>Guardar tratamento</ActionButton>
+                  </ManagedForm>
                 ) : (
                   <p>
                     {labels[selected.treatment]} · {selected.treatment_reason}
                   </p>
                 )}
                 {manager && selected.erp_status === "sem_correspondencia" && (
-                  <button onClick={() => prepareDraft()}>
+                  <ActionButton onClick={() => prepareDraft()}>
                     Preparar proposta de despesa
-                  </button>
+                  </ActionButton>
                 )}
                 {selected.draft && (
                   <p>
@@ -1621,7 +1634,7 @@ export default function DocumentControl({
                   </p>
                 )}
                 {draft && (
-                  <form
+                  <ManagedForm
                     className="doc-form"
                     onSubmit={(e) => {
                       e.preventDefault();
@@ -1694,7 +1707,7 @@ export default function DocumentControl({
                           </label>
                         ))}
                         {draft.lines.length > 1 && (
-                          <button
+                          <ActionButton
                             type="button"
                             onClick={() =>
                               setDraft({
@@ -1706,11 +1719,11 @@ export default function DocumentControl({
                             }
                           >
                             Remover linha
-                          </button>
+                          </ActionButton>
                         )}
                       </fieldset>
                     ))}
-                    <button
+                    <ActionButton
                       type="button"
                       onClick={() =>
                         setDraft({
@@ -1729,7 +1742,7 @@ export default function DocumentControl({
                       }
                     >
                       Adicionar linha / taxa de IVA
-                    </button>
+                    </ActionButton>
                     <label>
                       Justificação de alterações
                       <input
@@ -1748,17 +1761,17 @@ export default function DocumentControl({
                       Revisei fornecedor, documento, datas, categorias, bases,
                       taxas e total.
                     </label>
-                    <button disabled={busy}>
+                    <ActionButton disabled={busy}>
                       {review
                         ? "Confirmar proposta revista"
                         : "Guardar proposta preparada"}
-                    </button>
-                  </form>
+                    </ActionButton>
+                  </ManagedForm>
                 )}
                 {manager &&
                   selected.draft &&
                   ["revisto", "exportado"].includes(selected.draft.status) && (
-                    <button
+                    <ActionButton
                       disabled={busy}
                       onClick={() =>
                         act(async () => {
@@ -1772,13 +1785,13 @@ export default function DocumentControl({
                       }
                     >
                       Exportar proposta revista
-                    </button>
+                    </ActionButton>
                   )}
               </section>
               <section className="doc-section">
                 <h3>Entrega à contabilidade</h3>
                 {manager ? (
-                  <form
+                  <ManagedForm
                     className="doc-form"
                     key={`accounting:${selected.accounting}`}
                     onSubmit={(e) => {
@@ -1807,8 +1820,8 @@ export default function DocumentControl({
                         ])}
                       </select>
                     </label>
-                    <button disabled={busy}>Registar estado da entrega</button>
-                  </form>
+                    <ActionButton disabled={busy}>Registar estado da entrega</ActionButton>
+                  </ManagedForm>
                 ) : (
                   <p>{labels[selected.accounting]}</p>
                 )}
@@ -1832,10 +1845,11 @@ export default function DocumentControl({
                     {euro(p.amount_cents)} · Banco: {labels[p.bank_status]} (
                     {euro(p.reconciled_cents)}){" "}
                     {manager && !p.reconciled_cents && (
-                      <button
+                      <ActionButton
                         disabled={busy || reason.trim().length < 3}
                         onClick={() =>
                           act(async () => {
+                            if (!(await confirmAction({ title: "Desfazer distribuição?", message: `A associação do pagamento «${p.reference || p.id}» à fatura «${selected.document}» será retirada. O pagamento é preservado e o saldo da fatura será recalculado.`, confirmLabel: "Desfazer distribuição", tone: "danger" }))) return;
                             await api(
                               `/document-payments/${p.id}/allocations/${p.allocation_id}/remove`,
                               { reason },
@@ -1845,7 +1859,7 @@ export default function DocumentControl({
                         }
                       >
                         Desfazer distribuição (usar motivo acima)
-                      </button>
+                      </ActionButton>
                     )}
                   </p>
                 ))}
@@ -1856,9 +1870,9 @@ export default function DocumentControl({
                   </p>
                 )}
                 {manager && selected.remaining_cents > 0 && (
-                  <button onClick={() => openPayment(selected)}>
+                  <ActionButton onClick={() => openPayment(selected)}>
                     Identificar pagamento desta fatura
-                  </button>
+                  </ActionButton>
                 )}
               </section>
               <section className="doc-section">
@@ -1880,7 +1894,7 @@ export default function DocumentControl({
               </section>
             </>
           )}
-        </dialog>
+        </AppDialog>
       )}
     </>
   );

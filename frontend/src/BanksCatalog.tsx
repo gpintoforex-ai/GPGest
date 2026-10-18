@@ -1,3 +1,4 @@
+import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
 import { api, Field, Form } from "./App";
 
@@ -24,10 +25,10 @@ export default function BanksCatalog({ manager, onChanged }: { manager: boolean;
         <h1>Bancos</h1>
         <p>Gira as instituições financeiras disponíveis para as contas bancárias.</p>
       </div>
-      {manager && <button className="primary" onClick={() => { setEditing(null); setOpened(true); setError(""); setNotice(""); }}>Adicionar banco</button>}
+      {manager && <ActionButton className="primary" onClick={() => { setEditing(null); setOpened(true); setError(""); setNotice(""); }}>Adicionar banco</ActionButton>}
     </div>
-    {error && <p className="error" role="alert">{error}</p>}
-    {notice && <p className="success" role="status">{notice}</p>}
+    {error && <Notice className="error" role="alert">{error}</Notice>}
+    {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
     <section className="panel">
       <div className="table-wrap">
         <table>
@@ -35,16 +36,15 @@ export default function BanksCatalog({ manager, onChanged }: { manager: boolean;
           <tbody>{rows.map((row) => <tr key={row.id}>
             <td>{row.name}</td>
             <td>{row.active ? "Ativo" : "Inativo"}</td>
-            {manager && <td><button onClick={() => { setEditing(row); setOpened(true); setError(""); setNotice(""); }}>Editar</button></td>}
+            {manager && <td><ActionButton onClick={() => { setEditing(row); setOpened(true); setError(""); setNotice(""); }}>Editar</ActionButton></td>}
           </tr>)}</tbody>
         </table>
       </div>
       {!rows.length && <p>Não existem instituições financeiras registadas.</p>}
     </section>
-    {opened && <div className="overlay" onClick={(event) => { if (event.target === event.currentTarget) setOpened(false); }}>
-      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="bank-title">
-        <div className="panel-title"><h2 id="bank-title">{editing ? "Editar banco" : "Adicionar banco"}</h2><button onClick={() => setOpened(false)}>Fechar</button></div>
-        <Form onSubmit={async (values) => {
+    {opened && <AppDialog autoOpen className="modal" onRequestClose={() => setOpened(false)} aria-labelledby="bank-title">
+        <div className="panel-title"><h2 id="bank-title">{editing ? "Editar banco" : "Adicionar banco"}</h2></div>
+        <Form submitLabel={editing ? "Guardar alterações" : "Adicionar banco"} onCancel={() => setOpened(false)} onSubmit={async (values) => {
           const saved = await api(editing ? `/banks/${encodeURIComponent(editing.id)}` : "/banks", {
             name: values.name,
             ...(editing ? { active: values.active === "on" } : {}),
@@ -66,7 +66,6 @@ export default function BanksCatalog({ manager, onChanged }: { manager: boolean;
           <Field label="Nome do banco"><input name="name" required minLength={2} maxLength={100} defaultValue={editing?.name || ""} /></Field>
           {editing && <label className="checkbox"><input name="active" type="checkbox" defaultChecked={editing.active} /> Ativo</label>}
         </Form>
-      </section>
-    </div>}
+    </AppDialog>}
   </>;
 }

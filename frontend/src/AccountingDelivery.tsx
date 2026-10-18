@@ -1,14 +1,16 @@
+import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { ScanButton } from "./DocumentScanner";
 import { useEffect, useRef, useState } from "react";
 import { api } from "./App";
 import { StatusBadge } from "./components/BusinessUI";
 import AssistantIdentity from "./components/AssistantIdentity";
+import AccountingEmail from "./AccountingEmail";
 
 type Period = { vat_period: string; year: number; number: number; start: string; end: string; documents: number; without_attachment: number; calendar_ended: boolean; closed_at: string | null; reason: string };
 const day = (value: string) => value.slice(0, 10).split("-").reverse().join("/");
 const label = (period: Period) => period.vat_period === "trimestral" ? `${period.number}.º trimestre` : new Intl.DateTimeFormat("pt-PT", { month: "long", timeZone: "UTC" }).format(new Date(`${period.start}T12:00:00Z`));
 
-export default function AccountingDelivery({ admin, onSettings }: { admin: boolean; onSettings: () => void }) {
+export default function AccountingDelivery({ admin, onSettings, onEmailSettings, company = {}, stores = [], store = "" }: { admin: boolean; onSettings: () => void; onEmailSettings?: () => void; company?: Record<string, any>; stores?: Record<string, any>[]; store?: string }) {
   const [year, setYear] = useState(Number(new Intl.DateTimeFormat("en", { year: "numeric", timeZone: "Europe/Lisbon" }).format(new Date())));
   const [periods, setPeriods] = useState<Period[]>([]);
   const [mode, setMode] = useState("");
@@ -41,32 +43,33 @@ export default function AccountingDelivery({ admin, onSettings }: { admin: boole
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   return <>
-    <div className="page-intro"><div><h1>Entrega à contabilidade</h1><p>Encerre os períodos da empresa e prepare o dossiê de documentos e anexos.</p></div>{admin && <div className="actions"><ScanButton onSaved={load} /><button onClick={onSettings}>Configurar regime de IVA</button></div>}</div>
+    <div className="page-intro"><div><h1>Entrega à contabilidade</h1><p>Encerre os períodos da empresa e prepare o dossiê de documentos e anexos.</p></div>{admin && <div className="actions"><ScanButton onSaved={load} /><ActionButton onClick={onSettings}>Configurar regime de IVA</ActionButton></div>}</div>
     <AssistantIdentity assistant="clara" />
+    {admin && <><AccountingEmail company={company} stores={stores} store={store} admin={admin}/>{onEmailSettings && <ActionButton onClick={onEmailSettings}>Configurar email da contabilidade</ActionButton>}</>}
     {!admin ? <section className="panel"><p>O fecho dos períodos e a exportação do dossiê completo da empresa estão reservados ao administrador.</p></section> : <section className="panel">
       <div className="actions"><label>Ano <input type="number" min="2000" max="2100" value={year} disabled={busy} onChange={e => { const value = Number(e.target.value); if (value >= 2000 && value <= 2100) setYear(value); }} /></label><StatusBadge>{mode === "mensal" ? "IVA mensal" : mode === "trimestral" ? "IVA trimestral" : "IVA por configurar"}</StatusBadge><span>Dossiê da empresa · Todas as lojas</span></div>
       {loading && <p role="status">A carregar períodos…</p>}
-      {error && <p className="error" role="alert">{error}</p>}
-      {error && !action && <button disabled={busy} onClick={() => load().then(() => setError("")).catch(e => setError(e.message))}>Tentar novamente</button>}
-      {notice && <p className="success" role="status">{notice}</p>}
-      {!loading && !mode && !error && <div className="empty"><h3>Configure o regime de IVA da empresa</h3><p>Escolha mensal ou trimestral em Configurações &gt; Parâmetros para organizar os períodos.</p><button onClick={onSettings}>Configurar regime de IVA</button></div>}
+      {error && <Notice className="error" role="alert">{error}</Notice>}
+      {error && !action && <ActionButton disabled={busy} onClick={() => load().then(() => setError("")).catch(e => setError(e.message))}>Tentar novamente</ActionButton>}
+      {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
+      {!loading && !mode && !error && <div className="empty"><h3>Configure o regime de IVA da empresa</h3><p>Escolha mensal ou trimestral em Configurações &gt; Parâmetros para organizar os períodos.</p><ActionButton onClick={onSettings}>Configurar regime de IVA</ActionButton></div>}
       {!!mode && <><p>Confirme o fecho depois de conferir o período. O ZIP reúne os documentos e anexos disponíveis, a listagem ERP e as pendências. O fecho desta entrega não bloqueia alterações documentais.</p>
         <div className="purchase-table"><table><thead><tr><th>Período</th><th>Datas</th><th>Documentos</th><th>Sem anexo</th><th>Estado</th><th>Ações</th></tr></thead><tbody>{periods.map(period => <tr key={`${period.vat_period}-${period.number}`}>
           <td><strong>{label(period)} {period.year}</strong>{period.vat_period !== mode && <small> · Regime anterior</small>}</td><td>{day(period.start)} — {day(period.end)}</td><td>{period.documents}</td><td>{period.without_attachment}</td>
           <td><StatusBadge tone={period.closed_at ? "success" : "neutral"}>{period.closed_at ? "Encerrado" : period.calendar_ended ? "Por encerrar" : "Em curso / futuro"}</StatusBadge>{period.closed_at && <small> · {day(period.closed_at)}</small>}</td>
-          <td><div className="actions">{period.closed_at ? <><button className="primary" disabled={busy} onClick={() => exportDossier(period)}>Exportar dossiê</button><button className="danger" disabled={busy} onClick={() => { setAction({ period, reopen: true }); setReason(""); setConfirmed(false); }}>Reabrir</button></> : <button disabled={busy || !period.calendar_ended || period.vat_period !== mode} onClick={() => { setAction({ period, reopen: false }); setReason(""); setConfirmed(false); }}>Encerrar período</button>}</div></td>
+          <td><div className="actions">{period.closed_at ? <><ActionButton className="primary" disabled={busy} onClick={() => exportDossier(period)}>Exportar dossiê</ActionButton><ActionButton className="danger" disabled={busy} onClick={() => { setAction({ period, reopen: true }); setReason(""); setConfirmed(false); }}>Reabrir</ActionButton></> : <ActionButton disabled={busy || !period.calendar_ended || period.vat_period !== mode} onClick={() => { setAction({ period, reopen: false }); setReason(""); setConfirmed(false); }}>Encerrar período</ActionButton>}</div></td>
         </tr>)}</tbody></table></div></>}
     </section>}
-    {action && <dialog ref={dialog} className="doc-dialog" aria-label="Confirmar estado do período" onCancel={e => { e.preventDefault(); if (!busy) setAction(null); }}>
-      <div className="panel-title"><h2>{action.reopen ? "Reabrir" : "Encerrar"} {label(action.period)} {action.period.year}</h2><button disabled={busy} onClick={() => setAction(null)} aria-label="Fechar">×</button></div>
+    {action && <AppDialog busy={busy} initialFocus="cancel" ref={dialog} className="doc-dialog" aria-label="Confirmar estado do período" onRequestClose={() => {  if (!busy) setAction(null); }}>
+      <div className="panel-title"><h2>{action.reopen ? "Reabrir" : "Encerrar"} {label(action.period)} {action.period.year}</h2></div>
       <p>{day(action.period.start)} — {day(action.period.end)} · {action.period.documents} documentos · {action.period.without_attachment} sem anexo.</p>
-      {!!action.period.without_attachment && <p className="error">Existem documentos sem cópia digital. O dossiê incluirá essa pendência; não substitui os originais em falta.</p>}
-      {error && <p className="error" role="alert">{error}</p>}
-      <form className="doc-form" onSubmit={async e => { e.preventDefault(); setBusy(true); setError(""); try { await api(`/accounting/delivery-periods/${action.reopen ? "reopen" : "close"}`, { vat_period: action.period.vat_period, year: action.period.year, number: action.period.number, reason }); await load(); setNotice(action.reopen ? "Período reaberto. A exportação fica indisponível até novo fecho." : "Período encerrado. Pode exportar o dossiê."); setAction(null); } catch(e) { setError((e as Error).message); } finally { setBusy(false); } }}>
+      {!!action.period.without_attachment && <Notice className="error">Existem documentos sem cópia digital. O dossiê incluirá essa pendência; não substitui os originais em falta.</Notice>}
+      {error && <Notice className="error" role="alert">{error}</Notice>}
+      <ManagedForm className="doc-form" onSubmit={async e => { e.preventDefault(); setBusy(true); setError(""); try { await api(`/accounting/delivery-periods/${action.reopen ? "reopen" : "close"}`, { vat_period: action.period.vat_period, year: action.period.year, number: action.period.number, reason }); await load(); setNotice(action.reopen ? "Período reaberto. A exportação fica indisponível até novo fecho." : "Período encerrado. Pode exportar o dossiê."); setAction(null); } catch(e) { setError((e as Error).message); } finally { setBusy(false); } }}>
         <label>Justificação<textarea required minLength={3} maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} /></label>
         <label className="doc-check"><input type="checkbox" required checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />Confirmo esta ação para toda a empresa e revi as pendências do período.</label>
-        <button className={action.reopen ? "danger" : "primary"} disabled={busy || !confirmed || reason.trim().length < 3}>Confirmar {action.reopen ? "reabertura" : "fecho"}</button>
-      </form>
-    </dialog>}
+        <div className="ui-dialog-actions"><ActionButton type="button" disabled={busy} onClick={() => setAction(null)}>Cancelar</ActionButton><ActionButton className={action.reopen ? "danger" : "primary"} disabled={busy || !confirmed || reason.trim().length < 3}>Confirmar {action.reopen ? "reabertura" : "fecho"}</ActionButton></div>
+      </ManagedForm>
+    </AppDialog>}
   </>;
 }

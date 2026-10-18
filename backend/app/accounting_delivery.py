@@ -67,7 +67,94 @@ def csv_file(headers, rows):
     return output.getvalue().encode("utf-8-sig")
 
 
+def dossier_reports(db, rows, erp, state, period):
+    files = {
+        "documentos.json": json.dumps(
+            jsonable_encoder(state), ensure_ascii=False, indent=2
+        ).encode("utf-8"),
+        "periodo.json": json.dumps(
+            {
+                "company": db.info.get("company", {}),
+                "vat_period": period.vat_period,
+                "start": period.start,
+                "end": period.end,
+                "closed_at": period.closed_at.isoformat() if period.closed_at else None,
+                "closed_by": period.closed_by,
+                "reason": period.reason,
+                "exported_at": getattr(period, "exported_at", now().isoformat()),
+                "documents": len(rows),
+                "erp_documents": len(erp),
+                "scope": "Documentos e anexos atualmente disponíveis na Zela para este período. O fecho de entrega não bloqueia alterações aos documentos nem confirma obrigações fiscais.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ).encode("utf-8"),
+        "documentos-erp.csv": csv_file(
+            [
+                "ID",
+                "Empresa ERP",
+                "Fornecedor",
+                "NIF",
+                "Documento",
+                "Referência interna",
+                "Data",
+                "Total cêntimos",
+                "Anulado",
+            ],
+            [
+                (
+                    r.id,
+                    r.enterprise_id,
+                    r.supplier_name,
+                    r.supplier_nif,
+                    r.document,
+                    r.internal_document,
+                    r.document_date,
+                    r.amount_cents,
+                    r.cancelled,
+                )
+                for r in erp
+            ],
+        ),
+        "pendencias.csv": csv_file(
+            ["ID", "Documento", "Fornecedor", "Anexo", "ERP", "Tratamento", "Entrega"],
+            [
+                (
+                    r["id"],
+                    r["document"],
+                    r["supplier_name"],
+                    r["attachment_status"],
+                    r["erp_status"],
+                    r["treatment"],
+                    r["accounting"],
+                )
+                for r in state
+                if r["attachment_status"] == "sem_anexo"
+                or r["erp_status"] != "confirmada"
+                or r["accounting"] != "confirmado"
+            ],
+        ),
+        "anexos.csv": csv_file(
+            ["Documento ID", "Anexo ID", "Nome original", "Ficheiro no ZIP"],
+            [
+                (
+                    r["id"],
+                    a["id"],
+                    a["name"],
+                    f"documentos/{r['id']}/{a['id'].removeprefix('drive:')}{ {'application/pdf': '.pdf', 'image/png': '.png', 'image/jpeg': '.jpg'}.get(a['mime'], '') }",
+                )
+                for r in state
+                for a in r["attachments"]
+            ],
+        ),
+    }
+    return files
+
+
 def register_routes(app, current, authorize, record, projection, build_package):
+    from .accounting_email import register_routes as register_accounting_email_routes
+    register_accounting_email_routes(app, current, authorize, record, projection, build_package)
+
     def period_row(db, data, lock=False):
         query = select(AccountingPeriod).where(
             AccountingPeriod.vat_period == data.vat_period,
@@ -231,86 +318,8 @@ def register_routes(app, current, authorize, record, projection, build_package):
             )
         )
         state = [projection(db, row) for row in rows]
-        files = {
-            "documentos.json": json.dumps(
-                jsonable_encoder(state), ensure_ascii=False, indent=2
-            ).encode("utf-8"),
-            "periodo.json": json.dumps(
-                {
-                    "company": db.info.get("company", {}),
-                    "vat_period": period.vat_period,
-                    "start": period.start,
-                    "end": period.end,
-                    "closed_at": period.closed_at.isoformat(),
-                    "closed_by": period.closed_by,
-                    "reason": period.reason,
-                    "exported_at": now().isoformat(),
-                    "documents": len(rows),
-                    "erp_documents": len(erp),
-                    "scope": "Documentos e anexos atualmente disponíveis no GPGest para este período. O fecho de entrega não bloqueia alterações aos documentos nem confirma obrigações fiscais.",
-                },
-                ensure_ascii=False,
-                indent=2,
-            ).encode("utf-8"),
-            "documentos-erp.csv": csv_file(
-                [
-                    "ID",
-                    "Empresa ERP",
-                    "Fornecedor",
-                    "NIF",
-                    "Documento",
-                    "Referência interna",
-                    "Data",
-                    "Total cêntimos",
-                    "Anulado",
-                ],
-                [
-                    (
-                        r.id,
-                        r.enterprise_id,
-                        r.supplier_name,
-                        r.supplier_nif,
-                        r.document,
-                        r.internal_document,
-                        r.document_date,
-                        r.amount_cents,
-                        r.cancelled,
-                    )
-                    for r in erp
-                ],
-            ),
-            "pendencias.csv": csv_file(
-                ["ID", "Documento", "Fornecedor", "Anexo", "ERP", "Tratamento", "Entrega"],
-                [
-                    (
-                        r["id"],
-                        r["document"],
-                        r["supplier_name"],
-                        r["attachment_status"],
-                        r["erp_status"],
-                        r["treatment"],
-                        r["accounting"],
-                    )
-                    for r in state
-                    if r["attachment_status"] == "sem_anexo"
-                    or r["erp_status"] != "confirmada"
-                    or r["accounting"] != "confirmado"
-                ],
-            ),
-            "anexos.csv": csv_file(
-                ["Documento ID", "Anexo ID", "Nome original", "Ficheiro no ZIP"],
-                [
-                    (
-                        r["id"],
-                        a["id"],
-                        a["name"],
-                        f"documentos/{r['id']}/{a['id'].removeprefix('drive:')}{ {'application/pdf': '.pdf', 'image/png': '.png', 'image/jpeg': '.jpg'}.get(a['mime'], '') }",
-                    )
-                    for r in state
-                    for a in r["attachments"]
-                ],
-            ),
-        }
+        files = dossier_reports(db, rows, erp, state, period)
+
         record(
             db,
             user,

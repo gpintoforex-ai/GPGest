@@ -1,17 +1,20 @@
 import hashlib
 import json
 import os
+import re
 import secrets
-from contextlib import asynccontextmanager
 from collections import defaultdict, deque
+from contextlib import asynccontextmanager
 from datetime import timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from time import monotonic
 
+import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from httpx import Client as HttpxClient
 from pwdlib import PasswordHash
 from pydantic import Field, model_validator
 from sqlalchemy import func, select
@@ -42,6 +45,9 @@ from .models import (
     Audit,
     BankAccount,
     BankInstitution,
+    PaymentTerminal,
+    CompanySetup,
+    AccountBalanceReference,
     BankTransaction,
     BankDeposit,
     BusinessEntity,
@@ -66,6 +72,8 @@ from .platform import SyncRequest, selection_router, sync_company, sync_history
 from .platform import router as platform_router
 from .platform_models import Company
 from .schemas import (
+    BankAccountEdit,
+    BankAccountDetailsEdit,
     BankCreate,
     BankInstitutionEdit,
     CashCount,
@@ -100,7 +108,7 @@ async def integration_lifespan(app):
 
 
 app = FastAPI(
-    title="GPGest",
+    title="Zela",
     version="0.1.0",
     description="Gestão interna. Não emite documentos fiscais.",
     lifespan=integration_lifespan,
@@ -325,11 +333,14 @@ def balance(db, session):
 
 
 def serial(obj):
-    return {
+    result = {
         c.name: getattr(obj, c.name)
         for c in obj.__table__.columns
-        if c.name not in {"password_hash", "token_hash"}
+        if c.name not in {"password_hash", "token_hash", "iban_ciphertext", "password_ciphertext", "payload_ciphertext"}
     }
+    if isinstance(obj, BankAccount):
+        result["iban_configured"] = bool(obj.iban_ciphertext)
+    return result
 
 
 @app.get("/api/health")
@@ -433,14 +444,17 @@ def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
         user_stores[user_id].append(store_id)
     integration = integration_policy(db)
     catalog = cash_local.method_catalog(db) if integration["mode"] == "local" else None
+    setup = db.get(CompanySetup, "default")
+    profile = json.loads(setup.settings or "{}").get("company", {}) if setup else {}
     return {
         "integration": integration,
         "payment_methods": {row["id"]: row["name"] for row in catalog if row["active"]} if catalog is not None else None,
         "payment_method_catalog": catalog,
         "payment_method_bank_defaults": bank_defaults(db, ids),
+        "payment_terminals": [serial(t) for t in db.scalars(select(PaymentTerminal).where(PaymentTerminal.store_id.in_(ids), PaymentTerminal.active.is_(True)))],
         "user": serial(user),
         "mode": db.info.get("company", {}).get("mode", os.getenv("APP_MODE", "real")),
-        "company": db.info.get("company", {}),
+        "company": {**profile, **db.info.get("company", {})},
         "stores": [serial(s) for s in db.scalars(select(Store).where(Store.id.in_(ids)))],
         "registers": [
             {**serial(r), "last_opening_cents": opening}
@@ -526,9 +540,21 @@ def edit_bank(bank_id: str, data: BankInstitutionEdit, user=Depends(current), db
     )
     if duplicate:
         raise HTTPException(409, "Esta instituição financeira já está registada.")
+    previous_name = obj.name
+    renamed_accounts = 0
+    if previous_name != data.name:
+        for account in db.scalars(select(BankAccount).with_for_update()):
+            try:
+                settings = json.loads(account.settings)
+            except (TypeError, ValueError):
+                settings = {}
+            linked_id = settings.get("bank_id") if isinstance(settings, dict) else None
+            if linked_id == obj.id or (not linked_id and account.bank.casefold() == previous_name.casefold()):
+                account.bank = data.name
+                renamed_accounts += 1
     obj.name = data.name
     obj.active = data.active
-    record(db, user, "banco_editado", obj.id, {"name": obj.name, "active": obj.active})
+    record(db, user, "banco_editado", obj.id, {"name": obj.name, "previous_name": previous_name, "active": obj.active, "accounts_updated": renamed_accounts})
     db.commit()
     return serial(obj)
 
@@ -546,6 +572,63 @@ def create_account(data: BankCreate, user=Depends(current), db: Session = Depend
     return serial(obj)
 
 
+@app.post("/api/accounts/{account_id}")
+def edit_account(account_id: str, data: BankAccountDetailsEdit, user=Depends(current), db: Session = Depends(db_session)):
+    account = db.scalar(select(BankAccount).where(BankAccount.id == account_id).with_for_update())
+    if not account:
+        raise HTTPException(404, "Conta bancária não encontrada.")
+    authorize(user, db, account.store_id, ["administrador", "gestor"])
+    from .company_setup import iban as validate_iban, amount as setup_amount, unpack
+    from .models import AccountBalanceReference
+    from .platform import cipher
+    if data.store_id and data.store_id != account.store_id:
+        raise HTTPException(409, "O estabelecimento é preservado para manter o histórico da conta.")
+    if data.currency and data.currency != account.currency:
+        raise HTTPException(409, "A moeda de uma conta existente é preservada. Crie outra conta para uma moeda diferente.")
+    if account.iban_ciphertext and not data.iban.strip() and data.iban_last4 != account.iban_last4:
+        raise HTTPException(409, "Esta conta tem um IBAN completo guardado. Altere o IBAN na configuração inicial; os últimos quatro algarismos não podem ser alterados isoladamente.")
+    if data.bank != account.bank:
+        try:
+            settings = json.loads(account.settings)
+        except (TypeError, ValueError):
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        bank = db.scalar(select(BankInstitution).where(func.lower(BankInstitution.name) == data.bank.lower()))
+        if bank:
+            settings["bank_id"] = bank.id
+        else:
+            settings.pop("bank_id", None)
+        account.settings = json.dumps(settings)
+    if data.iban.strip():
+        clear = validate_iban(data.iban)
+        for other in db.scalars(select(BankAccount).where(BankAccount.id != account.id, BankAccount.iban_ciphertext != "")):
+            if cipher().decrypt(other.iban_ciphertext.encode()).decode() == clear:
+                raise HTTPException(409, "O IBAN já pertence a outra conta desta empresa.")
+        account.iban_ciphertext = cipher().encrypt(clear.encode()).decode()
+        data.iban_last4 = clear[-4:]
+    if data.opening.strip():
+        from datetime import date
+        if not data.opening_date or data.opening_date > date.today():
+            raise HTTPException(422, "Indique uma data de saldo inicial válida e não futura.")
+        value = setup_amount(data.opening, signed=True)
+        ref = db.get(AccountBalanceReference, "bank:" + account.id)
+        if ref and (ref.amount_cents != value or ref.reference_date != data.opening_date.isoformat()):
+            raise HTTPException(409, "Já existe um saldo inicial diferente. Reveja-o em Ligação ERP > Saldos iniciais.")
+        if not ref:
+            db.add(AccountBalanceReference(target="bank:" + account.id, store_id=account.store_id, amount_cents=value, currency=account.currency, reference_date=data.opening_date.isoformat(), user_id=user.id))
+    if data.principal is not None:
+        for other in db.scalars(select(BankAccount)):
+            config = unpack(other.settings)
+            if other.id == account.id or data.principal:
+                other.settings = json.dumps({**config, "principal": data.principal if other.id == account.id else False})
+    before = {key: getattr(account, key) for key in ("name", "bank", "iban_last4")}
+    account.name, account.bank, account.iban_last4 = data.name, data.bank, data.iban_last4
+    record(db, user, "conta_editada", account.id, {"before": before, "after": data.model_dump(mode="json", exclude={"iban"}), "iban_changed": bool(data.iban.strip())}, account.store_id)
+    db.commit()
+    return serial(account)
+
+
 @app.get("/api/accounts/{account_id}/transactions")
 def bank_transactions(account_id: str, user=Depends(current), db: Session = Depends(db_session)):
     account = db.get(BankAccount, account_id)
@@ -555,13 +638,19 @@ def bank_transactions(account_id: str, user=Depends(current), db: Session = Depe
     rows = db.scalars(
         select(BankTransaction)
         .where(BankTransaction.account_id == account_id)
-        .order_by(BankTransaction.movement_date.desc(), BankTransaction.created_at.desc())
+        .order_by(
+            BankTransaction.movement_date.desc(),
+            BankTransaction.exported_at.desc(),
+            BankTransaction.source_position.asc(),
+            BankTransaction.created_at.desc(),
+        )
     ).all()
     return [serial(row) for row in rows]
 
 
 @app.post("/api/accounts/{account_id}/import-bpi")
-async def import_bpi(
+@app.post("/api/accounts/{account_id}/import-statement")
+def import_bpi(
     account_id: str,
     confirm: bool = False,
     file: UploadFile = File(...),
@@ -569,25 +658,30 @@ async def import_bpi(
     db: Session = Depends(db_session),
 ):
     from .bpi_import import parse_bpi
+    from .viva_import import parse_viva
 
     account = db.scalar(select(BankAccount).where(BankAccount.id == account_id).with_for_update())
     if not account:
         raise HTTPException(404, "Conta não encontrada.")
     authorize(user, db, account.store_id, ["administrador", "gestor"])
-    data = await file.read(5_000_001)
+    data = file.file.read(5_000_001)
     if len(data) > 5_000_000:
         raise HTTPException(413, "O limite do ficheiro é 5 MB.")
     try:
-        source, rows = parse_bpi(data)
+        is_viva = not data.startswith(b"PK")
+        source, rows = parse_viva(data) if is_viva else parse_bpi(data)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    format_name = "Viva Wallet" if is_viva else "BPI Net Empresas"
     existing = db.scalars(
         select(BankTransaction).where(BankTransaction.account_id == account_id)
     ).all()
     if existing and any(row.source_account != source for row in existing):
         raise HTTPException(
-            409, "Este extrato pertence a outra conta BPI. Selecione a conta bancária correta."
+            409, "Este extrato pertence a outra conta ou banco. Selecione a conta bancária correta."
         )
+    if account.currency != "EUR":
+        raise HTTPException(422, "Este formato de extrato só pode ser importado numa conta em euros.")
     seen = {row.fingerprint for row in existing}
     new = []
     for row in rows:
@@ -601,9 +695,9 @@ async def import_bpi(
         batch = DocumentImport(
             store_id=account.store_id,
             user_id=user.id,
-            filename=(file.filename or "extrato.xlsx").replace("\\", "/").split("/")[-1][:200],
+            filename=(file.filename or ("extrato.xls" if is_viva else "extrato.xlsx")).replace("\\", "/").split("/")[-1][:200],
             fingerprint=hashlib.sha256(data).hexdigest(),
-            source="bpi_xlsx",
+            source="viva_wallet_xls" if is_viva else "bpi_xlsx",
         )
         db.add(batch)
         db.flush()
@@ -619,7 +713,7 @@ async def import_bpi(
         record(
             db,
             user,
-            "extrato_bpi_importado",
+            "extrato_viva_importado" if is_viva else "extrato_bpi_importado",
             account_id,
             {"novos": len(new), "duplicados": len(rows) - len(new)},
             account.store_id,
@@ -630,6 +724,11 @@ async def import_bpi(
         "new_count": len(new),
         "duplicate_count": len(rows) - len(new),
         "imported": confirm,
+        "format": format_name,
+        "warnings": [
+            "O extrato Viva Wallet não identifica a conta de origem nem a moeda. "
+            "Confirme que pertence à conta selecionada e que os valores estão em euros."
+        ] if is_viva else [],
     }
 
 
@@ -682,10 +781,17 @@ def sessions(user=Depends(current), db: Session = Depends(db_session)):
         .order_by(CashSession.opened_at.desc())
         .limit(200)
     )
-    return [session_result(db, s) for s in rows]
+    rows = list(rows)
+    open_ids = {s.register_id for s in rows if not s.closed_at}
+    context = {"registers": {r.id: r for r in db.scalars(select(Register).where(Register.id.in_(open_ids)))} if open_ids else {},
+               "setup": db.get(CompanySetup, "default") if open_ids else None}
+    return [session_result(db, s, context=context) for s in rows]
 
 
-def session_result(db, s, rows=None):
+def session_result(db, s, rows=None, context=None):
+    context = context or {}
+    register = (context.get("registers", {}).get(s.register_id) or db.get(Register, s.register_id)) if not s.closed_at else None
+    setup = (context["setup"] if "setup" in context else db.get(CompanySetup, "default")) if not s.closed_at else None
     local = cash_local.is_local(db, s, integration_policy)
     if rows is None:
         rows = cash_local.drawer_rows(db, s) if local else sheet_summary(db, s)
@@ -712,6 +818,10 @@ def session_result(db, s, rows=None):
                 "store_day" if not s.closed_at or counting.get("scope") == "store_day" else "session"
             ),
             "rows": rows,
+            "currency": counting.get("currency", "EUR") if s.closed_at else register.currency,
+            "preferences": counting.get("register_preferences", {}) if s.closed_at else json.loads(register.settings or "{}"),
+            "require_reason": counting.get("require_reason", True) if s.closed_at else json.loads(setup.settings or "{}").get("preferences", {}).get("require_reason", True) if setup else True,
+            "manual_realized": counting.get("manual_realized", True) if s.closed_at else json.loads(setup.settings or "{}").get("preferences", {}).get("manual_realized", True) if setup else True,
             "reconciliation": cash_local.reconciliation(db, s, rows) if local else None,
         },
     }
@@ -731,7 +841,18 @@ def opening_suggestion(register_id: str, sheet_day: str, user=Depends(current), 
     authorize(user, db, register.store_id, ["administrador", "gestor", "operador"])
     available = candidates(db, register, selected_day)
     last = db.scalar(select(CashSession.opening_cents).where(CashSession.register_id == register_id).order_by(CashSession.opened_at.desc(), CashSession.id.desc()).limit(1))
-    return {"candidate": available[0] if len(available) == 1 else None, "ambiguous": len(available) > 1, "last_opening_cents": last}
+    preferences = json.loads(register.settings or "{}")
+    suggested = last
+    if preferences:
+        initial = db.get(AccountBalanceReference, "cash:" + register.id)
+        previous = db.scalar(select(CashSession).where(CashSession.register_id == register_id).order_by(CashSession.opened_at.desc(), CashSession.id.desc()).limit(1))
+        if not previous and initial and selected_day >= initial.reference_date:
+            suggested = initial.amount_cents
+        elif preferences.get("balance_mode") == "carry" and previous and previous.closed_at and previous.counted_cents is not None:
+            suggested = previous.counted_cents
+        else:
+            suggested = preferences.get("fund_cents", last)
+    return {"candidate": available[0] if len(available) == 1 else None, "ambiguous": len(available) > 1, "last_opening_cents": suggested}
 
 
 @app.post("/api/sessions")
@@ -746,7 +867,7 @@ def open_session(data: OpenCash, user=Depends(current), db: Session = Depends(db
         raise HTTPException(409, "Esta caixa já tem uma sessão aberta.")
     from zoneinfo import ZoneInfo
 
-    sheet_day = (data.sheet_day or now().astimezone(ZoneInfo("Europe/Lisbon")).date()).isoformat()
+    sheet_day = (data.sheet_day or now().astimezone(ZoneInfo(json.loads(r.settings or "{}").get("timezone", "Europe/Lisbon"))).date()).isoformat()
     if data.opening_wintouch_id:
         from .models import WintouchSaleRecord
         from .opening_fund import candidates
@@ -758,6 +879,7 @@ def open_session(data: OpenCash, user=Depends(current), db: Session = Depends(db
         register_id=r.id,
         operator_id=user.id,
         opening_cents=cents(data.opening, True),
+        retained_fund_cents=json.loads(r.settings or "{}").get("fund_cents"),
         sheet_day=sheet_day,
         wintouch_scope=wintouch_scope,
         wintouch_enterprise=enterprise,
@@ -937,7 +1059,10 @@ def close_session(
     else:
         if data.realized is not None:
             raise HTTPException(409, "Os valores ERP não podem ser substituídos por realizado manual no modo integrado.")
-        counting = {**json.loads(s.count_data or "{}"), **validate_count(data, rows, cents, closing=True)}
+        setup = db.get(CompanySetup, "default")
+        counting = {**json.loads(s.count_data or "{}"), **validate_count(data, rows, cents, closing=True,
+            count_required=json.loads(r.settings or "{}").get("count_required", True),
+            require_reason=json.loads(setup.settings or "{}").get("preferences", {}).get("require_reason", True) if setup else True)}
     local_result = cash_local.reconciliation(db, s, rows, counting) if local else None
     debit_total = sum(row["debits_cents"] for row in (local_result["rows"] if local else rows))
     if debit_total > 0 and data.supplier_answer != "indicado":
@@ -1053,7 +1178,7 @@ def close_session(
             counting["debit_supplier"].update(local_movement_ids=local_ids, imported_movement_ids=imported_ids)
     counting["opening_wintouch_id"] = json.loads(s.count_data or "{}").get("opening_wintouch_id")
     counting["wintouch_excluded"] = json.loads(s.count_data or "{}").get("wintouch_excluded", False)
-    counted = counting["values"]["numerario"]
+    counted = counting["values"].get("numerario")
     expected = next(row["expected_cents"] for row in rows if row["key"] == "numerario")
     ledger_expected = expected
     if local:
@@ -1072,6 +1197,10 @@ def close_session(
         closed_by=user.id,
         closed_by_name=user.name,
         workflow_mode="local" if local else "integrated",
+        register_preferences=json.loads(r.settings or "{}"),
+        currency=r.currency,
+        manual_realized=json.loads(db.get(CompanySetup, "default").settings or "{}").get("preferences", {}).get("manual_realized", True) if db.get(CompanySetup, "default") else True,
+        require_reason=json.loads(db.get(CompanySetup, "default").settings or "{}").get("preferences", {}).get("require_reason", True) if db.get(CompanySetup, "default") else True,
         scope="register_day" if local else "store_day",
         ledger_balance_cents=ledger_expected if local else balance(db, s),
         include_wintouch=bool(daily_enterprise(db, s)),
@@ -1085,7 +1214,7 @@ def close_session(
     s.closed_at = now()
     s.close_reason = data.reason
     s.denominations = json.dumps(data.counts)
-    difference = counted - expected
+    difference = counted - expected if counted is not None else None
     if difference and not local:
         # Keep the pre-adjustment snapshot so the closed sheet retains its discrepancy.
         category = cash_difference_category(db)
@@ -1124,7 +1253,7 @@ def close_session(
         {
             "counted_cents": counted,
             "expected_cents": expected,
-            "difference_cents": counted - expected,
+            "difference_cents": difference,
             "reason": data.reason,
             "payment_counts": counting["values"],
             "debit_supplier": counting.get("debit_supplier"),
@@ -1258,8 +1387,8 @@ def movements(all_records: bool = False, user=Depends(current), db: Session = De
         select(Movement, func.coalesce(CashSession.register_id, BankDeposit.register_id))
         .outerjoin(CashSession, CashSession.id == Movement.session_id)
         .outerjoin(BankDeposit, (BankDeposit.movement_id == Movement.id) | (BankDeposit.reversal_id == Movement.id))
-        .join(Register, Register.id == func.coalesce(CashSession.register_id, BankDeposit.register_id))
-        .where(Register.store_id.in_(scope(user, db)))
+        .outerjoin(Register, Register.id == func.coalesce(CashSession.register_id, BankDeposit.register_id))
+        .where(Register.store_id.in_(scope(user, db)) | Movement.bank_account_id.in_(select(BankAccount.id).where(BankAccount.store_id.in_(scope(user, db)))))
         .where(
             # Reopening cancels generated closing entries as a linked pair.
             # Keep that audit trail in the ledger, but list only current close
@@ -1277,7 +1406,8 @@ def movements(all_records: bool = False, user=Depends(current), db: Session = De
     accounts = {account.id: account for account in db.scalars(select(BankAccount).where(BankAccount.store_id.in_(scope(user, db))))}
     rows = list(rows)
     supplier_views = cash_posting.supplier_views(db, [m for m, _ in rows])
-    return [{**serial(m), **supplier_views.get(m.id, {}), "register_id": register_id, "payment_name": payment_names.get(m.payment),
+    return [{**serial(m), **supplier_views.get(m.id, {}), "register_id": register_id, "payment_name": payment_names.get(m.payment_method_id or m.payment),
+             "bank_store_id": accounts[m.bank_account_id].store_id if m.bank_account_id in accounts else None,
              "bank_account_name": accounts[m.bank_account_id].name if m.bank_account_id in accounts else None,
              "bank_name": accounts[m.bank_account_id].bank if m.bank_account_id in accounts else None} for m, register_id in rows]
 
@@ -1298,7 +1428,15 @@ def add_movement(data, user, db):
         raise HTTPException(422, "Categoria inválida.")
     amount = cents(data.amount)
     direction = 1 if data.kind in IN else -1
-    if data.kind in {"deposito", "reforco"} and data.payment != "numerario":
+    configured = db.get(LocalPaymentMethod, data.payment)
+    preferences = json.loads(configured.settings or "{}") if configured else {}
+    if not preferences.get("receipts" if direction > 0 else "payments", True):
+        raise HTTPException(422, "Este meio de pagamento não está disponível para este tipo de movimento.")
+    terminal = db.get(PaymentTerminal, data.terminal_id) if data.terminal_id else None
+    if data.terminal_id and (not terminal or not terminal.active or terminal.store_id != r.store_id or terminal.register_id and terminal.register_id != r.id
+                             or data.payment not in {"cartao", "mbway"} or data.payment == "mbway" and not terminal.mbway):
+        raise HTTPException(422, "Escolha um terminal ativo desta caixa e deste meio de pagamento.")
+    if data.kind in {"deposito", "reforco"} and data.payment != "numerario" and not preferences.get("cash"):
         raise HTTPException(422, "Este movimento deve ser em numerário.")
     timestamp = data.occurred_at
     if timestamp.tzinfo is None:
@@ -1312,7 +1450,12 @@ def add_movement(data, user, db):
     values["amount_cents"] = amount
     values["direction"] = direction
     values["user_id"] = user.id
-    values["bank_account_id"] = cash_posting.default_bank(db, r.store_id, data.payment)
+    values["bank_account_id"] = terminal.account_id if terminal else cash_posting.default_bank(db, r.store_id, data.payment)
+    if preferences.get("cash") and data.payment != "numerario":
+        values["payment_method_id"], values["payment"] = data.payment, "numerario"
+        values["bank_account_id"] = None
+        if direction < 0 and amount > balance(db, s):
+            raise HTTPException(409, "Numerário insuficiente nesta caixa.")
     m = Movement(**values)
     db.add(m)
     db.flush()
@@ -1497,6 +1640,8 @@ def reverse(
         user_id=user.id,
         category_id=original.category_id,
         bank_account_id=original.bank_account_id,
+        terminal_id=original.terminal_id,
+        payment_method_id=original.payment_method_id,
         kind=original.kind,
         payment=original.payment,
         amount_cents=original.amount_cents,
@@ -1691,7 +1836,7 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
     if not s.closed_at:
         raise HTTPException(409, "Feche a caixa antes de gerar o relatório.")
     file = BytesIO()
-    pdf = canvas.Canvas(file)
+    pdf = canvas.Canvas(file, invariant=1)
     y = 800
 
     def line(value):
@@ -1705,7 +1850,7 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
     def euro(v):
         return f"{Decimal(v) / 100:,.2f}".replace(",", " ").replace(".", ",") + " EUR"
 
-    line("GPGest - Folha de caixa / relatório interno de fecho")
+    line("Zela - Folha de caixa / relatório interno de fecho")
     line("NÃO É UM DOCUMENTO FISCAL")
     if os.getenv("APP_MODE") == "demonstracao":
         line("DEMONSTRAÇÃO - dados de teste")
@@ -1717,8 +1862,8 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
     line("Dia da folha: " + (s.sheet_day or s.opened_at.date().isoformat()))
     line("Fundo de maneio inicial: " + euro(s.opening_cents))
     line("Esperado: " + euro(s.expected_cents))
-    line("Contado: " + euro(s.counted_cents))
-    line("Diferença: " + euro(s.counted_cents - s.expected_cents))
+    line("Contado: " + (euro(s.counted_cents) if s.counted_cents is not None else "Não contado"))
+    line("Diferença: " + (euro(s.counted_cents - s.expected_cents) if s.counted_cents is not None else "Por conferir"))
     counting = json.loads(s.count_data or "{}")
     local_reconciliation = counting.get("local_reconciliation")
     declared_basis = (local_reconciliation or {}).get("expectation_basis") == "declared_sales"
@@ -1752,7 +1897,7 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
     for row in sheet_summary(db, s):
         line(
             row["name"]
-            + " - GPGest: "
+            + " - Zela: "
             + euro(row["local_cents"])
             + " / Wintouch: "
             + euro(row["wintouch_cents"])
@@ -2200,6 +2345,9 @@ class EntityEdit(Strict):
     category_id: str | None = None
     name: str = Field(min_length=2, max_length=300)
     tax_number: str = Field(default="", max_length=40)
+    address: str = Field(default="", max_length=500)
+    locality: str = Field(default="", max_length=120)
+    postal_code: str = Field(default="", max_length=20)
     email: str = Field(default="", max_length=200)
     phone: str = Field(default="", max_length=60)
     is_customer: bool
@@ -2210,6 +2358,9 @@ class EntityEdit(Strict):
     def validate_entity(self):
         self.name = self.name.strip()
         self.tax_number = self.tax_number.strip()
+        self.address = self.address.strip()
+        self.locality = self.locality.strip()
+        self.postal_code = self.postal_code.strip()
         self.email = self.email.strip().lower()
         if len(self.name) < 2 or not (self.is_customer or self.is_supplier):
             raise ValueError("Indique nome e tipo de entidade.")
@@ -2224,10 +2375,13 @@ def entity_view(entity, source, key):
         "source": source,
         "category_id": getattr(entity, "category_id", None),
         **{
-            name: getattr(entity, name)
+            name: getattr(entity, name, "")
             for name in (
                 "name",
                 "tax_number",
+                "address",
+                "locality",
+                "postal_code",
                 "email",
                 "phone",
                 "is_customer",
@@ -2235,6 +2389,117 @@ def entity_view(entity, source, key):
                 "active",
             )
         },
+    }
+
+
+def annotate_entity_movement_history(entities, db):
+    if not entities:
+        return
+    entity_names = {item["name"].strip().casefold() for item in entities if item["name"].strip()}
+    movement_names = set()
+    if entity_names:
+        movement_names = {
+            name.strip().casefold()
+            for name in db.scalars(
+                select(Movement.entity).where(
+                    func.lower(func.trim(Movement.entity)).in_(entity_names),
+                    Movement.entity != "",
+                )
+            )
+            if name
+        }
+    referenced_ids = set()
+    for raw_data in db.scalars(
+        select(CashSession.count_data).where(
+            CashSession.count_data.contains('"debit_supplier"')
+        )
+    ):
+        counting = json.loads(raw_data or "{}")
+        supplier = counting.get("debit_supplier")
+        if not isinstance(supplier, dict):
+            continue
+        if supplier.get("id"):
+            referenced_ids.add(supplier["id"])
+        if supplier.get("name"):
+            movement_names.add(supplier["name"].strip().casefold())
+        allocations = supplier.get("allocations", [])
+        if isinstance(allocations, list):
+            referenced_ids.update(
+                item["id"]
+                for item in allocations
+                if isinstance(item, dict) and item.get("id")
+            )
+    for entity in entities:
+        entity["has_movements"] = (
+            entity["id"] in referenced_ids
+            or entity["name"].strip().casefold() in movement_names
+        )
+
+
+def entity_has_movement_history(db, entity, entity_key):
+    result = entity_view(entity, "", entity_key)
+    annotate_entity_movement_history([result], db)
+    return result["has_movements"]
+
+
+def vies_address_parts(value):
+    address = value.strip() if isinstance(value, str) else ""
+    if address in {"", "---", "----"}:
+        return "", "", ""
+    address = address.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.strip() for line in address.split("\n") if line.strip()]
+    for index, line in enumerate(lines):
+        match = re.search(r"(?<!\d)(\d{4}-\d{3})(?!\d)", line)
+        if not match:
+            continue
+        street_lines = lines[:index]
+        street = line[: match.start()].strip(" ,;")
+        if street:
+            street_lines.append(street)
+        locality_lines = [line[match.end() :].strip(" ,;"), *lines[index + 1 :]]
+        locality = " ".join(part for part in locality_lines if part)
+        return "\n".join(street_lines), locality, match.group(1)
+    return "\n".join(lines), "", ""
+
+
+@app.get("/api/entities/lookup")
+def lookup_entity_by_nif(
+    tax_number: str, user=Depends(current), db: Session = Depends(db_session)
+):
+    authorize(user, db, roles=["administrador", "gestor"])
+    normalized = re.sub(r"[\s.-]", "", tax_number.strip().upper())
+    if normalized.startswith("PT"):
+        normalized = normalized[2:]
+    if not re.fullmatch(r"\d{9}", normalized):
+        raise HTTPException(422, "Indique um NIF português com 9 dígitos.")
+    try:
+        with HttpxClient(timeout=10, follow_redirects=False) as client:
+            response = client.post(
+                "https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number",
+                json={"countryCode": "PT", "vatNumber": normalized},
+                headers={"Accept": "application/json"},
+            )
+            response.raise_for_status()
+            result = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(502, "Não foi possível consultar o VIES. Tente novamente.") from exc
+    if not isinstance(result, dict) or not isinstance(result.get("valid"), bool):
+        raise HTTPException(502, "O VIES devolveu uma resposta inválida.")
+    name = result.get("name", "")
+    raw_address = result.get("address", "")
+    if name is None:
+        name = ""
+    if raw_address is None:
+        raw_address = ""
+    if not isinstance(name, str) or not isinstance(raw_address, str):
+        raise HTTPException(502, "O VIES devolveu dados de entidade inválidos.")
+    address, locality, postal_code = vies_address_parts(raw_address)
+    return {
+        "is_valid": result["valid"],
+        "name": name.strip() if name.strip() not in {"---", "----"} else "",
+        "address": address,
+        "locality": locality,
+        "postal_code": postal_code,
     }
 
 
@@ -2254,6 +2519,7 @@ def list_entities(user=Depends(current), db: Session = Depends(db_session)):
         company = core.get(Company, company_id) if company_id else None
         enterprise = company.api_enterprise if company else None
     if not enterprise:
+        annotate_entity_movement_history(result, db)
         return sorted(result, key=lambda e: e["name"].casefold())
     for imported in db.scalars(
         select(WintouchEntity).where(WintouchEntity.enterprise_id == enterprise)
@@ -2271,6 +2537,7 @@ def list_entities(user=Depends(current), db: Session = Depends(db_session)):
         result[-1]["editable"] = not external_primary
         if external_primary and imported.id in overrides:
             result[-1]["category_id"] = overrides[imported.id].category_id
+    annotate_entity_movement_history(result, db)
     return sorted(result, key=lambda e: e["name"].casefold())
 
 
@@ -2359,12 +2626,24 @@ def remove_entity(entity_key: str, user=Depends(current), db: Session = Depends(
         raise HTTPException(404, "Entidade não encontrada.")
     if not entity or entity.removed:
         raise HTTPException(404, "Entidade não encontrada.")
+    if entity_has_movement_history(db, entity, entity_key):
+        entity.active = False
+        db.flush()
+        record(
+            db,
+            user,
+            "entidade_inativada",
+            entity.id,
+            {"nome": entity.name, "origem": source, "motivo": "movimentos associados"},
+        )
+        db.commit()
+        return {"ok": True, "action": "deactivated"}
     entity.removed = True
     entity.active = False
     db.flush()
     record(db, user, "entidade_removida", entity.id, {"nome": entity.name, "origem": source})
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "action": "removed"}
 
 
 from typing import Literal
@@ -2482,3 +2761,17 @@ register_employee_routes(app, current, authorize, scope, record, serial)
 
 from .payment_methods import register_routes as register_payment_method_routes
 register_payment_method_routes(app, current, authorize, record)
+
+from .company_setup import register_routes as register_setup_routes
+register_setup_routes(app, current, authorize, record, serial, scope)
+
+from .register_management import register_routes as register_register_routes
+register_register_routes(app, current, authorize, record, serial)
+
+from .saft_sales import register_routes as register_saft_routes
+register_saft_routes(app, current, authorize, scope, record)
+from .saft_sales import SaftBodyLimit
+app.add_middleware(SaftBodyLimit)
+
+from .inventory import register_routes as register_inventory_routes
+register_inventory_routes(app, current, authorize, scope, record)

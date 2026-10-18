@@ -1,3 +1,5 @@
+import { ActionLink } from "./components/InteractionUI";
+import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
 import { api, Field, Form } from "./App";
 import { ASSISTANTS } from "./components/AssistantIdentity";
@@ -24,26 +26,26 @@ export default function DocumentAssistant({ document, admin, canReadErp = true, 
     const r = await api(`/documents/${doc.id}/assistant/drive?page_token=${encodeURIComponent(page)}`);
     setFiles(current => page ? [...current, ...r.files] : r.files); setNextPage(r.next_page);
   }
-  return <dialog ref={dialog} className="doc-dialog" aria-label={`${ASSISTANTS.clara.name} · Conferência documental`} onCancel={e => { e.preventDefault(); onClose(); }}>
-    <div className="panel-title"><h2>{ASSISTANTS.clara.name} · {doc.document}</h2><button disabled={busy} onClick={onClose}>Fechar</button></div>
+  return <AppDialog busy={busy} ref={dialog} className="doc-dialog" aria-label={`${ASSISTANTS.clara.name} · Conferência documental`} onRequestClose={() => {  onClose(); }}>
+    <div className="panel-title"><h2>{ASSISTANTS.clara.name} · {doc.document}</h2></div>
     <p>{ASSISTANTS.clara.mission}</p>
     <p><b>Passo {step} de 4:</b> {['Anexo no Drive', 'Fornecedor', 'Verificação ERP', 'Revisão'][step - 1]}</p>
     <p>{doc.supplier_name} · NIF {doc.supplier_nif} · {doc.document_date}</p>
-    {error && <p className="error" role="alert">{error}</p>}
-    {notice && <p className="success" role="status">{notice}</p>}
+    {error && <Notice className="error" role="alert">{error}</Notice>}
+    {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
     {busy && <p role="status">A consultar…</p>}
     {step === 1 && <>
-      <p>Os ficheiros ficam no Drive. Ao associar, o GPGest guarda apenas a referência, nome e metadados, sem guardar o PDF ou imagem na base de dados.</p>
-      <button disabled={busy} onClick={() => act(() => loadDrive())}>Procurar anexos na pasta Drive</button>
+      <p>Os ficheiros ficam no Drive. Ao associar, a Zela guarda apenas a referência, nome e metadados, sem guardar o PDF ou imagem na base de dados.</p>
+      <ActionButton disabled={busy} onClick={() => act(() => loadDrive())}>Procurar anexos na pasta Drive</ActionButton>
       <div className="table-wrap"><table><thead><tr><th>Ficheiro</th><th>Sugestão inicial</th><th>Escolher</th></tr></thead><tbody>{files.map(f => <tr key={f.id}>
-        <td><a href={f.url} target="_blank" rel="noreferrer">{f.name}</a></td>
+        <td><ActionLink href={f.url} target="_blank" rel="noreferrer">{f.name}</ActionLink></td>
         <td>{f.confidence}/100 · {f.reasons.join("; ") || "Rever manualmente"}</td>
-        <td><button disabled={busy} onClick={() => act(async () => {
+        <td><ActionButton disabled={busy} onClick={() => act(async () => {
           setFile(f); setAnalysis(null);
           setAnalysis(await api(`/documents/${doc.id}/assistant/drive-analyze`, { drive_id: f.id, confirmed: false }));
-        })}>Analisar e selecionar</button></td>
+        })}>Analisar e selecionar</ActionButton></td>
       </tr>)}</tbody></table></div>
-      {nextPage && <button disabled={busy} onClick={() => act(() => loadDrive(nextPage))}>Consultar mais ficheiros</button>}
+      {nextPage && <ActionButton disabled={busy} onClick={() => act(() => loadDrive(nextPage))}>Consultar mais ficheiros</ActionButton>}
       {file && analysis && <Form submitLabel="Confirmar referência ao anexo" onSubmit={async v => {
         await act(async () => {
           await api(`/documents/${doc.id}/assistant/drive-attach`, { drive_id: file.id, confirmed: v.confirmed === "on" });
@@ -56,15 +58,15 @@ export default function DocumentAssistant({ document, admin, canReadErp = true, 
         <label className="checkbox"><input name="confirmed" type="checkbox" required /> Confirmei que este ficheiro pertence ao documento.</label>
       </Form>}
       <p>{doc.attachments.length} anexos associados ao documento.</p>
-      <button disabled={busy} onClick={() => act(async () => { await loadEntities(); setStep(2); })}>Continuar para fornecedor</button>
+      <ActionButton disabled={busy} onClick={() => act(async () => { await loadEntities(); setStep(2); })}>Continuar para fornecedor</ActionButton>
     </>}
     {step === 2 && <>
       {supplierReady ? <p>Fornecedor criado e ativo: {suppliers.find(e => e.is_supplier && e.active)?.name}.</p> : <>
-        <p>{suppliers.length ? "A entidade existe, mas precisa de ser identificada como fornecedor ativo." : "Não existe um fornecedor com este NIF. Pode criar um registo no GPGest."}</p>
+        <p>{suppliers.length ? "A entidade existe, mas precisa de ser identificada como fornecedor ativo." : "Não existe um fornecedor com este NIF. Pode criar um registo na Zela."}</p>
         <Form submitLabel={suppliers.length ? "Confirmar fornecedor ativo" : "Criar fornecedor"} onSubmit={async v => {
           await act(async () => {
             await api(`/documents/${doc.id}/assistant/supplier`, { name: v.name, nif: doc.supplier_nif, email: v.email, phone: v.phone, confirmed: v.confirmed === "on" });
-            await loadEntities(); setNotice("Fornecedor validado no GPGest. Esta ação não cria entidades na Wintouch.");
+            await loadEntities(); setNotice("Fornecedor validado na Zela. Esta ação não cria entidades na Wintouch.");
           });
         }}>
           <Field label="Nome do fornecedor"><input name="name" defaultValue={doc.supplier_name} required minLength={2} maxLength={300} /></Field>
@@ -73,29 +75,29 @@ export default function DocumentAssistant({ document, admin, canReadErp = true, 
           <label className="checkbox"><input name="confirmed" type="checkbox" required /> Confirmo o fornecedor com o NIF {doc.supplier_nif}.</label>
         </Form>
       </>}
-      <button disabled={busy} onClick={() => setStep(1)}>Anterior</button>{" "}
-      <button disabled={busy} onClick={() => setStep(3)}>Continuar para ERP</button>
+      <ActionButton disabled={busy} onClick={() => setStep(1)}>Anterior</ActionButton>{" "}
+      <ActionButton disabled={busy} onClick={() => setStep(3)}>Continuar para ERP</ActionButton>
     </>}
     {step === 3 && <>
       <p>{erpChecked ? "Consulta ao ERP concluída para a data do documento." : "Esta informação usa o catálogo ERP já importado. Para verificar a situação atual, consulte o ERP."}</p>
       {admin && canReadErp ? <>
         <label className="checkbox"><input type="checkbox" checked={confirmDemo} onChange={e => setConfirmDemo(e.target.checked)} /> Confirmo a consulta/importação ERP, incluindo dados reais se esta empresa estiver em demonstração.</label>
-        <button disabled={busy || !confirmDemo} onClick={() => act(async () => {
+        <ActionButton disabled={busy || !confirmDemo} onClick={() => act(async () => {
           await api("/documents/erp-sync", { store_id: doc.store_id, start: doc.document_date, end: doc.document_date, confirm_demo: confirmDemo });
           setDoc(await api(`/documents/${doc.id}/detail`)); setErpChecked(true);
-        })}>Verificar agora no ERP</button>
+        })}>Verificar agora no ERP</ActionButton>
       </> : <p>Um administrador pode atualizar a consulta ao ERP. Não se presume que o documento está por lançar quando não há uma consulta atual.</p>}
       {doc.erp_status === "confirmada" && <p>Correspondência ERP já confirmada.</p>}
       {doc.erp_candidates.map((c: Row) => <div key={c.id} className="panel">
         <p>{c.internal_document || c.document} · {c.differences?.length ? "Divergências: " + c.differences.join("; ") : "Correspondência sugerida"}</p>
-        {!c.linked && <button disabled={busy} onClick={() => act(async () => {
+        {!c.linked && <ActionButton disabled={busy} onClick={() => act(async () => {
           await api(`/documents/${doc.id}/erp-link`, { erp_id: c.id, reason: "Correspondência revista no assistente documental" });
           setDoc(await api(`/documents/${doc.id}/detail`));
-        })}>Confirmar correspondência ERP</button>}
+        })}>Confirmar correspondência ERP</ActionButton>}
       </div>)}
       {!doc.erp_candidates.length && <p>{erpChecked ? "Não foi encontrada uma correspondência nesta consulta ao ERP." : "Sem correspondência no catálogo local. Isto não confirma a ausência de lançamento no ERP."} Pode preparar uma proposta de despesa para revisão.</p>}
-      <button disabled={busy} onClick={() => setStep(2)}>Anterior</button>{" "}
-      <button disabled={busy} onClick={() => setStep(4)}>Rever e concluir</button>
+      <ActionButton disabled={busy} onClick={() => setStep(2)}>Anterior</ActionButton>{" "}
+      <ActionButton disabled={busy} onClick={() => setStep(4)}>Rever e concluir</ActionButton>
     </>}
     {step === 4 && <>
       <p>Anexos: {doc.attachments.length} referências/anexos associados.</p>
@@ -103,10 +105,10 @@ export default function DocumentAssistant({ document, admin, canReadErp = true, 
       <p>ERP: {doc.erp_status === "confirmada" ? "correspondência confirmada" : "por confirmar"}.</p>
       {doc.erp_status === "sem_correspondencia" && <>
         <p>Sugestão: preparar uma proposta de lançamento, rever os dados e verificar novamente o ERP antes de exportar. Não será emitido um documento automaticamente na Wintouch.</p>
-        <button disabled={busy} onClick={() => act(async () => { await onPrepare(); })}>Abrir preparação da proposta de despesa</button>
+        <ActionButton disabled={busy} onClick={() => act(async () => { await onPrepare(); })}>Abrir preparação da proposta de despesa</ActionButton>
       </>}
-      <button disabled={busy} onClick={() => setStep(3)}>Anterior</button>{" "}<button disabled={busy} onClick={onClose}>Concluir assistente</button>
+      <ActionButton disabled={busy} onClick={() => setStep(3)}>Anterior</ActionButton>{" "}<ActionButton disabled={busy} onClick={onClose}>Concluir assistente</ActionButton>
       <p>As ações confirmadas ficam guardadas individualmente. O assistente não marca o documento como pago nem entregue à contabilidade.</p>
     </>}
-  </dialog>;
+  </AppDialog>;
 }

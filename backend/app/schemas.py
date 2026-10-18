@@ -33,8 +33,30 @@ class PaymentMethodStatus(Strict):
     active: bool = Field(strict=True)
 
 
-class BankCreate(RegisterCreate):
+class BankAccountEdit(Name):
     bank: str = Field(min_length=2, max_length=100)
+    iban_last4: str = Field(pattern=r"^(?:\d{4})?$")
+
+    @field_validator("bank")
+    @classmethod
+    def meaningful_bank(cls, value):
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("Introduza um banco válido.")
+        return value
+
+
+class BankAccountDetailsEdit(BankAccountEdit):
+    store_id: str | None = None
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+    iban: str = Field(default="", max_length=42)
+    opening: str = Field(default="", max_length=24)
+    opening_date: date | None = None
+    principal: bool | None = None
+
+
+class BankCreate(BankAccountEdit):
+    store_id: str
     iban_last4: str = Field(pattern=r"^\d{4}$")
 
 
@@ -76,6 +98,7 @@ class MovementCreate(Strict):
         "reforco",
     ]
     payment: str = Field(min_length=1, max_length=20)
+    terminal_id: str | None = Field(default=None, max_length=36)
     amount: str
     occurred_at: datetime
     entity: str = Field(default="", max_length=200)

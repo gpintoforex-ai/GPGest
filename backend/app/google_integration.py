@@ -126,7 +126,7 @@ def register_routes(app, current, authorize, record):
             payload = json.loads(cipher().decrypt(state.encode(), ttl=600))
         except (InvalidToken, ValueError, KeyError):
             raise HTTPException(
-                400, "Autoriza??o expirada ou inv?lida. Volte a ligar a conta no GPGest."
+                400, "Autorização expirada ou inválida. Volte a ligar a conta na Zela."
             ) from None
         if not secrets.compare_digest(
             request.cookies.get("gpgest_google_nonce", ""), payload.get("nonce", "")
@@ -151,12 +151,12 @@ def register_routes(app, current, authorize, record):
                 or not user.active
                 or user.role not in {"administrador", "gestor"}
             ):
-                raise HTTPException(400, "Autoriza??o inv?lida ou j? utilizada.")
+                raise HTTPException(400, "Autorização inválida ou j? utilizada.")
             connection.state_hash = ""
             db.commit()
             if error or not code:
                 raise HTTPException(
-                    400, "A autoriza??o Google foi cancelada. Pode tentar novamente no GPGest."
+                    400, "A autorização Google foi cancelada. Pode tentar novamente na Zela."
                 )
             creds = credentials()
             try:
@@ -193,14 +193,14 @@ def register_routes(app, current, authorize, record):
             except (httpx.HTTPError, ValueError, KeyError):
                 raise HTTPException(
                     502,
-                    "N?o foi poss?vel concluir a autoriza??o Google. Confirme as permiss?es e tente novamente.",
+                    "N?o foi poss?vel concluir a autorização Google. Confirme as permiss?es e tente novamente.",
                 ) from None
             connection.token_ciphertext = cipher().encrypt(json.dumps(tokens).encode()).decode()
             connection.email = email
             record(db, user, "google_conta_ligada", "default", {"email": email})
             db.commit()
         return HTMLResponse(
-            "<html><meta name='referrer' content='no-referrer'><title>GPGest</title><h1>Conta Google ligada</h1><p>Autoriza??o guardada. Volte ao GPGest para consultar emails e importar anexos.</p><a href='http://127.0.0.1:5174'>Voltar ao GPGest</a></html>",
+            "<html><meta name='referrer' content='no-referrer'><title>Zela</title><h1>Conta Google ligada</h1><p>Autorização guardada. Volte à Zela para consultar emails e importar anexos.</p><a href='http://127.0.0.1:5174'>Voltar à Zela</a></html>",
             headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
         )
 

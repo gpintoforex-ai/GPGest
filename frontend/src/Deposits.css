@@ -5,6 +5,8 @@
 .deposit-cheque { padding: 16px; border: 1px solid var(--color-border); border-radius: 8px; }
 .deposit-total { display: grid; gap: 10px; padding: 18px; background: var(--color-subtle); border: 1px solid var(--color-border); border-radius: 8px; margin: 12px 0; }
 .deposit-total strong { font-size: 22px; }
+.deposit-origin-description { display: block; margin-top: 4px; color: var(--color-muted); font-size: .85rem; }
+.deposit-origin-description.is-outgoing { font-weight: 600; }
 .deposit-tabs, .deposit-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
 .deposit-tabs button[aria-pressed="true"] { color: #fff; background: var(--color-nav); }
 .deposit-command { border-top: 1px solid var(--color-border); padding-top: 18px; margin-top: 20px; }

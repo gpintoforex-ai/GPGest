@@ -319,20 +319,20 @@ def register_routes(app, current, authorize, scope, record, serial):
         authorize(user, db, row.store_id, ["administrador", "gestor"] if write else None)
         return row
 
-    def matches(db, row):
-        confirmed = db.scalar(
+    def matches(db, row, context=None):
+        confirmed = context.links.get(row.id) if context is not None else db.scalar(
             select(DocumentERPLink).where(
                 DocumentERPLink.purchase_id == row.id, DocumentERPLink.undone_at.is_(None)
             )
         )
         candidates = []
-        for erp in db.scalars(
+        for erp in (context.candidates(row) if context is not None else db.scalars(
             select(ERPDocument).where(
                 ERPDocument.store_id == row.store_id,
                 (ERPDocument.supplier_nif == row.supplier_nif)
                 | (ERPDocument.id == confirmed.erp_id if confirmed else False),
             )
-        ):
+        )):
             result = comparison(row, erp)
             if result or confirmed and confirmed.erp_id == erp.id:
                 candidates.append(
@@ -347,7 +347,7 @@ def register_routes(app, current, authorize, scope, record, serial):
                             }
                         ),
                         "linked": bool(confirmed and confirmed.erp_id == erp.id),
-                        "unavailable": bool(db.scalar(select(DocumentERPLink.id).where(DocumentERPLink.erp_id == erp.id, DocumentERPLink.undone_at.is_(None), DocumentERPLink.purchase_id != row.id))),
+                        "unavailable": bool(context.erp_owners[erp.id] - {row.id}) if context is not None else bool(db.scalar(select(DocumentERPLink.id).where(DocumentERPLink.erp_id == erp.id, DocumentERPLink.undone_at.is_(None), DocumentERPLink.purchase_id != row.id))),
                     }
                 )
         linked = next((c for c in candidates if c["linked"]), None)
@@ -384,10 +384,10 @@ def register_routes(app, current, authorize, scope, record, serial):
             if comparison(proposed, erp)
         ]
 
-    def projection(db, row, detail=False):
+    def projection(db, row, detail=False, context=None):
         from .reconciliation import used
 
-        state = db.get(DocumentState, row.id)
+        state = context.states.get(row.id) if context is not None else db.get(DocumentState, row.id)
         document_state = {
             "availability": "por_verificar",
             "location": "",
@@ -403,15 +403,15 @@ def register_routes(app, current, authorize, scope, record, serial):
         if state:
             document_state.update(serial(state))
         verifier = (
-            db.get(User, document_state["verified_by"]) if document_state["verified_by"] else None
+            (context.users.get(document_state["verified_by"]) if context is not None else db.get(User, document_state["verified_by"])) if document_state["verified_by"] else None
         )
         document_state["verified_by_name"] = verifier.name if verifier else None
-        erp_status, candidates, link = matches(db, row)
+        erp_status, candidates, link = matches(db, row, context)
         attachments = [
             {"id": a.id, "name": a.name, "mime": a.mime}
-            for a in db.scalars(
+            for a in (context.natives[row.id] if context is not None else db.scalars(
                 select(PurchaseAttachment).where(PurchaseAttachment.purchase_id == row.id)
-            )
+            ))
         ]
         attachments.extend(
             {
@@ -422,23 +422,23 @@ def register_routes(app, current, authorize, scope, record, serial):
                 "view_url": "/api/drive-attachments/" + a.id + "/view",
                 "drive_url": "https://drive.google.com/file/d/" + a.drive_id + "/view",
             }
-            for a in db.scalars(
+            for a in (context.drives[row.id] if context is not None else db.scalars(
                 select(DriveDocumentAttachment).where(DriveDocumentAttachment.purchase_id == row.id)
-            )
+            ))
         )
         payments = []
         from .models import DocumentScan
-        scans = {"drive:" + r.attachment_id: r for r in db.scalars(select(DocumentScan).where(DocumentScan.purchase_id == row.id, DocumentScan.status == "cloud_saved", DocumentScan.attachment_id.is_not(None)))}
+        scans = {"drive:" + r.attachment_id: r for r in (context.scans[row.id] if context is not None else db.scalars(select(DocumentScan).where(DocumentScan.purchase_id == row.id, DocumentScan.status == "cloud_saved", DocumentScan.attachment_id.is_not(None))))}
         for attachment in attachments:
             if attachment["id"] in scans:
                 scan = scans[attachment["id"]]
                 attachment.update(scan_id=scan.id, validation_status=scan.validation_status, view_url="/api/scans/"+scan.id+"/pdf")
-        for allocation, payment in db.execute(
+        for allocation, payment in (context.payments[row.id] if context is not None else db.execute(
             select(PaymentDocumentLine, DocumentPayment)
             .join(DocumentPayment)
             .where(PaymentDocumentLine.purchase_id == row.id)
-        ):
-            bank_used = used(db, "payment", payment.id)
+        )):
+            bank_used = context.payment_used.get(payment.id, 0) if context is not None else used(db, "payment", payment.id)
             payments.append(
                 {
                     **serial(payment),
@@ -452,7 +452,7 @@ def register_routes(app, current, authorize, scope, record, serial):
                     else "pendente",
                 }
             )
-        legacy = used(db, "purchase", row.id) - payment_claimed(db, row.id)
+        legacy = context.legacy.get(row.id, 0) if context is not None else used(db, "purchase", row.id) - payment_claimed(db, row.id)
         paid = legacy + sum(p["document_amount_cents"] for p in payments)
         payment_status = (
             "pago" if paid >= abs(row.amount_cents) else "parcial" if paid else "por_pagar"
@@ -477,8 +477,8 @@ def register_routes(app, current, authorize, scope, record, serial):
             if document_state["availability"] not in {"fisico", "digital"}
             else 0
         )
-        batch = db.get(DocumentImport, row.import_id) if row.import_id else None
-        draft = db.get(ExpenseDraft, row.id)
+        batch = (context.imports.get(row.import_id) if context is not None else db.get(DocumentImport, row.import_id)) if row.import_id else None
+        draft = context.drafts.get(row.id) if context is not None else db.get(ExpenseDraft, row.id)
         result = {
             **serial(row),
             **document_state,
@@ -603,14 +603,15 @@ def register_routes(app, current, authorize, scope, record, serial):
 
     @app.get("/api/documents")
     def documents(user=Depends(current), db: Session = Depends(db_session)):
-        return [
-            projection(db, r)
-            for r in db.scalars(
+        from .document_projection import DocumentContext
+
+        rows = list(db.scalars(
                 select(Purchase)
                 .where(Purchase.store_id.in_(scope(user, db)))
                 .order_by(Purchase.document_date.desc())
-            )
-        ]
+        ))
+        context = DocumentContext(db, rows)
+        return [projection(db, row, context=context) for row in rows]
 
     @app.get("/api/documents/{doc_id}/detail")
     def detail(doc_id: str, user=Depends(current), db: Session = Depends(db_session)):
@@ -936,114 +937,9 @@ def register_routes(app, current, authorize, scope, record, serial):
         rows = [get_doc(db, user, i) for i in sorted(set(data.ids))]
         return build_package(rows, user, db)
 
-    def build_package(rows, user, db, extra_files=None, filename="entrega-contabilidade.zip"):
-        buffer = io.BytesIO()
-        listing = io.StringIO()
-        writer = csv.writer(listing, delimiter=";")
-        writer.writerow(
-            [
-                "ID",
-                "NIF",
-                "Fornecedor",
-                "Documento",
-                "Tipo",
-                "Data",
-                "Base EUR",
-                "IVA EUR",
-                "Total EUR",
-                "Disponibilidade",
-                "Localização",
-                "Anexos",
-                "ERP",
-                "Tratamento",
-                "Contabilidade",
-                "Pagamento",
-                "Banco",
-            ]
-        )
-        total_bytes = 0
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for row in rows:
-                result = projection(db, row)
-                writer.writerow(
-                    safe_cells(
-                        [
-                            row.id,
-                            row.supplier_nif,
-                            row.supplier_name,
-                            row.document,
-                            row.document_type,
-                            date.fromisoformat(row.document_date).strftime("%d/%m/%Y"),
-                            euros(row.base_cents) if row.base_cents is not None else "",
-                            euros(row.tax_cents),
-                            euros(row.amount_cents),
-                            result["availability"],
-                            result["location"],
-                            result["attachment_status"],
-                            result["erp_status"],
-                            result["treatment"],
-                            result["accounting"],
-                            result["payment_status"],
-                            result["bank_status"],
-                        ]
-                    )
-                )
-                for attachment in db.scalars(
-                    select(PurchaseAttachment).where(PurchaseAttachment.purchase_id == row.id)
-                ):
-                    total_bytes += len(attachment.data)
-                    if total_bytes > 100_000_000:
-                        raise HTTPException(
-                            413, "Selecione menos documentos: o pacote excede 100 MB."
-                        )
-                    extension = {
-                        "application/pdf": ".pdf",
-                        "image/png": ".png",
-                        "image/jpeg": ".jpg",
-                    }[attachment.mime]
-                    archive.writestr(
-                        f"documentos/{row.id}/{attachment.id}{extension}", attachment.data
-                    )
-                from .drive_documents import read_link
-
-                for remote in db.scalars(
-                    select(DriveDocumentAttachment).where(
-                        DriveDocumentAttachment.purchase_id == row.id
-                    )
-                ):
-                    raw, mime = read_link(db, remote)
-                    total_bytes += len(raw)
-                    if total_bytes > 100_000_000:
-                        raise HTTPException(
-                            413, "Selecione menos documentos: o pacote excede 100 MB."
-                        )
-                    extension = {
-                        "application/pdf": ".pdf",
-                        "image/png": ".png",
-                        "image/jpeg": ".jpg",
-                    }[mime]
-                    archive.writestr(f"documentos/{row.id}/{remote.id}{extension}", raw)
-                record(
-                    db,
-                    user,
-                    "pacote_contabilidade_exportado",
-                    row.id,
-                    {"delivery_changed": False, "attachments": len(result["attachments"])},
-                    row.store_id,
-                )
-            archive.writestr("controlo.csv", listing.getvalue().encode("utf-8-sig"))
-            archive.writestr(
-                "LEIA-ME.txt",
-                "Exportar não marca os documentos como entregues nem lançados no ERP. Os documentos físicos sem anexo devem acompanhar a listagem. Os nomes dos anexos usam identificadores da aplicação.\n",
-            )
-            for name, contents in (extra_files or {}).items():
-                archive.writestr(name, contents)
-        db.commit()
-        return Response(
-            buffer.getvalue(),
-            media_type="application/zip",
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
-        )
+    def build_package(rows, user, db, extra_files=None, filename="entrega-contabilidade.zip", return_files=False, allow_missing=False):
+        from .dossier_package import document_files
+        return document_files(rows, user, db, projection, record, extra_files, filename, return_files, allow_missing)
 
     from .accounting_delivery import register_routes as register_delivery_routes
 

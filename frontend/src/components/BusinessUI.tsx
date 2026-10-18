@@ -5,7 +5,7 @@ export function MetricCard({ label, value, description, tone = "neutral", classN
   tone?: "neutral" | "success" | "warning" | "danger";
   className?: string;
 }) {
-  return <section className={`metric-card metric-${tone} ${className}`}>
+  return <section className={`metric-card metric-${tone} ${className}`} title={description}>
     <h3>{label}</h3><strong>{value}</strong><p>{description}</p>
   </section>;
 }

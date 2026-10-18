@@ -1,6 +1,6 @@
 .invoice-workflow .workflow-summary,.workflow-filters,.workflow-pagination {display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:16px 0;}
 .workflow-summary span {display:flex;gap:8px;align-items:center;padding:12px 16px;background:#eef7f2;border-radius:8px;font-weight:600;}
-.workflow-filters button.active {background:#245fc5;color:white;border-color:#245fc5;}
+.workflow-filters button.active {background:var(--color-primary);color:white;border-color:var(--color-primary);}
 .workflow-link {display:inline-flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;}
 .invoice-workflow td {vertical-align:top;}.invoice-workflow td>button {margin-bottom:8px;}
 .workflow-warning {padding:12px;background:#fff5e5;border-radius:8px;color:#80510d;}

@@ -1,3 +1,4 @@
+import { ActionButton, Notice, confirmFormExit } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
 import { api, Field, Form } from "./App";
 import RecordList from "./RecordList";
@@ -28,6 +29,7 @@ export default function PlannedMovements({
   const [create, setCreate] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
   const [selected, setSelected] = useState<Row | null>(null);
+  const [savedNotice, setSavedNotice] = useState("");
   const [key, setKey] = useState(crypto.randomUUID());
   const load = async () => {
     const [local, imported] = await Promise.all([
@@ -87,37 +89,41 @@ export default function PlannedMovements({
           </p>
         </div>
         {write && (
-          <button
+          <ActionButton
             className="primary"
-            onClick={() => {
+            onClick={async () => {
+              if (create && !(await confirmFormExit(document.querySelector(".planned-editor")))) return;
               setCreate(!create);
               setEditing(null);
               setSelected(null);
             }}
           >
-            Novo movimento previsto
-          </button>
+            {create ? "Voltar" : "Novo movimento previsto"}
+          </ActionButton>
         )}
       </div>
       {notice && (
         <SettlementConfirmation message={notice} onClose={() => setNotice("")} />
       )}
       {error && (
-        <p className="error" role="alert">
+        <Notice className="error" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
+      {savedNotice && <Notice tone="success" onDismiss={() => setSavedNotice("")}>{savedNotice}</Notice>}
       {create && (
-        <section className="panel">
+        <section className="panel planned-editor">
           <h2>{editing ? "Editar documento de gest\u00e3o" : "Novo documento a cr\u00e9dito"}</h2>
           <Form key={editing?.id || "new"}
+            onCancel={() => setCreate(false)}
             onSubmit={async (v) => {
               await api(editing ? `/planned-movements/${editing.id}/edit` : "/planned-movements", {
                 ...v,
                 direction: Number(v.direction),
               });
-              await load();
               setCreate(false);
+              setSavedNotice("Documento de gestão guardado com sucesso.");
+              try { await load(); } catch { setError("O documento foi guardado, mas não foi possível atualizar a lista. Atualize a página antes de repetir a gravação."); }
             }}
           >
             <Field label="Loja">
@@ -253,7 +259,7 @@ export default function PlannedMovements({
               </Field>
             </Form>
           )}
-          <button onClick={() => setSelected(null)}>Fechar</button>
+          <ActionButton onClick={() => setSelected(null)}>Voltar</ActionButton>
         </section>
       )}
       <section className="panel">
@@ -277,9 +283,9 @@ export default function PlannedMovements({
                     <th>Doc. de referência</th>
                     <th>Entidade</th>
                     <th>Tipo</th>
-                    <th>Total</th>
-                    <th>Liquidado</th>
-                    <th>Por liquidar</th>
+                    <th className="numeric">Total</th>
+                    <th className="numeric">Liquidado</th>
+                    <th className="numeric">Por liquidar</th>
                     <th>Estado</th>
                     <th>Origem</th>
                     <th>Ações</th>
@@ -293,39 +299,39 @@ export default function PlannedMovements({
                       <td>{r.document_reference || "—"}</td>
                       <td>{r.entity}</td>
                       <td>{r.direction === 1 ? "A receber" : "A pagar"}</td>
-                      <td>{money(r.amount_cents)}</td>
-                      <td>
+                      <td className="numeric">{money(r.amount_cents)}</td>
+                      <td className="numeric">
                         {r.paid_cents === null ? "—" : money(r.paid_cents)}
                       </td>
-                      <td>{money(r.remaining_cents)}</td>
+                      <td className="numeric">{money(r.remaining_cents)}</td>
                       <td>
                         <StatusBadge tone={r.status === "Liquidado" ? "success" : "warning"}>{r.status}</StatusBadge>
                       </td>
                       <td>
                         <span className="pill neutral">
-                          {r.external ? "Wintouch" : "GPGest"}
+                          {r.external ? "Wintouch" : "Zela"}
                         </span>
                       </td>
-                      <td>
-                        {!r.external && ["administrador", "gestor"].includes(boot.user.role) && <button onClick={() => { setEditing(r); setCreate(true); setSelected(null); }}>Editar</button>}
+                      <td className="numeric">
+                        {!r.external && ["administrador", "gestor"].includes(boot.user.role) && <ActionButton onClick={() => { setEditing(r); setCreate(true); setSelected(null); }}>Editar</ActionButton>}
                         {r.external &&
                           ((boot.integration?.capabilities?.write_settlements ?? true) && (boot.user.role === "administrador" ||
                           boot.user.role === "gestor") ? (
-                            <button
+                            <ActionButton
                               onClick={() => {
                                 setSelected(r);
                                 setCreate(false);
                               }}
                             >
                               Liquidar na Wintouch
-                            </button>
+                            </ActionButton>
                           ) : (
                             <small>
                               Liquidação pelo administrador ou gestor.
                             </small>
                           ))}
                         {write && !r.external && r.remaining_cents > 0 && (
-                          <button
+                          <ActionButton
                             onClick={() => {
                               setSelected(r);
                               setKey(crypto.randomUUID());
@@ -333,7 +339,7 @@ export default function PlannedMovements({
                             }}
                           >
                             Liquidar
-                          </button>
+                          </ActionButton>
                         )}
                         {r.settlements.map((m: Row) => (
                           <small key={m.id}>

@@ -1,8 +1,10 @@
+import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { api } from "./App";
 import SupplierPicker from "./components/SupplierPicker";
+import EntityCreateDialog, { type CreatedEntity } from "./EntityCreateDialog";
 
 export type CashSupplier = { id: string; name: string; tax_number?: string };
 export type CashSupplierAllocation = CashSupplier & { amount_cents: number; payment?: string };
@@ -22,6 +24,7 @@ function cents(value: string): number | null {
 
 export default function CashSupplierDialog({
   total,
+  context,
   initialId,
   payments,
   canCreate,
@@ -31,6 +34,7 @@ export default function CashSupplierDialog({
   onConfirm,
 }: {
   total: number;
+  context?: string;
   initialId?: string;
   payments?: DebitPayment[];
   canCreate: boolean;
@@ -49,15 +53,14 @@ export default function CashSupplierDialog({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const [createSupplier, setCreateSupplier] = useState<{ allocationKey: number; name: string } | null>(null);
+  const initialAllocations = useRef<string | null>(null);
   useEffect(() => {
     const element = dialog.current!;
     const previous = document.activeElement as HTMLElement | null;
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     element.showModal();
     return () => {
       element.close();
-      document.body.style.overflow = overflow;
       previous?.focus();
     };
   }, []);
@@ -74,7 +77,9 @@ export default function CashSupplierDialog({
         setItems(suppliers);
         const initialSupplier =
           suppliers.find((item: CashSupplier) => item.id === initialId) || null;
-        setAllocations([{ key: 0, supplier: initialSupplier, amount: euros(total), payment: payments?.length === 1 ? payments[0].id : "" }]);
+        const next = [{ key: 0, supplier: initialSupplier, amount: euros(total), payment: payments?.length === 1 ? payments[0].id : "" }];
+        initialAllocations.current = JSON.stringify(next);
+        setAllocations(next);
       })
       .catch((e) => {
         if (active) setLoadError((e as Error).message);
@@ -102,31 +107,26 @@ export default function CashSupplierDialog({
         : payments?.some(payment => allocations.filter(a => a.payment === payment.id).reduce((sum, a) => sum + (cents(a.amount) || 0), 0) > payment.amount_cents)
           ? "O valor atribuído aos fornecedores ultrapassa os débitos do meio de pagamento selecionado."
           : "";
-  return createPortal(
-    <dialog
+  return <>
+    {createPortal(
+    <AppDialog busy={busy} initialFocus="cancel" dirty={initialAllocations.current !== null && initialAllocations.current !== JSON.stringify(allocations)}
       ref={dialog}
       className="doc-dialog"
       style={{ maxWidth: 560 }}
       aria-labelledby={titleId}
       aria-describedby={helpId}
-      onCancel={(event) => {
-        event.preventDefault();
+      onRequestClose={() => {
+
         if (!busy) onCancel();
       }}
     >
       <div className="panel-title">
         <h2 id={titleId}>Identificar fornecedor</h2>
-        <button
-          type="button"
-          disabled={busy}
-          aria-label="Fechar pergunta do fornecedor"
-          onClick={onCancel}
-        >
-          <X size={20} aria-hidden="true" />
-        </button>
+
       </div>
+      {context && <p><strong>Fecho de caixa: {context}</strong></p>}
       <p id={helpId}>Existem <strong>{new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(total / 100)}</strong> em débitos nesta folha. Indique o fornecedor e o montante a atribuir a cada um.</p>
-      <form
+      <ManagedForm
         className="doc-form"
         onSubmit={(event) => {
           event.preventDefault();
@@ -151,12 +151,10 @@ export default function CashSupplierDialog({
                 selectedName={allocation.supplier?.name || ""}
                 loading={loading || !!loadError}
                 canCreate={canCreate}
+                onRequestCreate={(name) => setCreateSupplier({ allocationKey: allocation.key, name })}
                 onSelect={(supplier) => setAllocations((previous) => previous.map((item) =>
                   item.key === allocation.key ? { ...item, supplier } : item,
                 ))}
-                onCreated={(supplier) =>
-                  setItems((previous) => [...previous, supplier])
-                }
               />
               {payments && payments.length > 1 && (
                 <label>
@@ -181,18 +179,18 @@ export default function CashSupplierDialog({
                 />
               </label>
               {allocations.length > 1 && (
-                <button
+                <ActionButton
                   type="button"
                   disabled={busy}
                   aria-label={`Remover fornecedor ${index + 1}`}
                   onClick={() => setAllocations((previous) => previous.filter((item) => item.key !== allocation.key))}
                 >
                   Remover
-                </button>
+                </ActionButton>
               )}
             </div>
           ))}
-          <button
+          <ActionButton
             type="button"
             disabled={busy || allocations.length >= 50}
             onClick={() => setAllocations((previous) => [
@@ -201,42 +199,58 @@ export default function CashSupplierDialog({
             ])}
           >
             Adicionar fornecedor
-          </button>
+          </ActionButton>
         </fieldset>
         <p className="footnote">Montante atribuído: {new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(allocatedCents / 100)} · Por atribuir: {new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(Math.max(remainingCents, 0) / 100)}. {payments ? "O fecho cria os pagamentos em falta numa linha por fornecedor e meio de pagamento. Os valores já registados são descontados." : "A repartição fica registada no fecho; não associa valores a movimentos individuais."}</p>
-        {allocationError && <p className="error" role="alert">{allocationError}</p>}
+        {allocationError && <Notice className="error" role="alert">{allocationError}</Notice>}
         {loadError && (
           <div>
-            <p className="error" role="alert">
+            <Notice className="error" role="alert">
               {loadError}
-            </p>
-            <button
+            </Notice>
+            <ActionButton
               type="button"
               onClick={() => setAttempt((value) => value + 1)}
             >
               Tentar novamente
-            </button>
+            </ActionButton>
           </div>
         )}
         {error && (
-          <p className="error" role="alert">
+          <Notice className="error" role="alert">
             {error}
-          </p>
+          </Notice>
         )}
         <div className="actions">
-          <button type="button" disabled={busy} onClick={onCancel}>
+          <ActionButton type="button" disabled={busy} onClick={onCancel}>
             Cancelar
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
             type="submit"
             className="primary"
             disabled={busy || loading || !!loadError || !!allocationError}
           >
             {busy ? "A fechar…" : "Confirmar e fechar caixa"}
-          </button>
+          </ActionButton>
         </div>
-      </form>
-    </dialog>,
+      </ManagedForm>
+    </AppDialog>,
     document.body,
-  );
+  )}
+    {createSupplier && <EntityCreateDialog
+      kind="Fornecedores"
+      initialName={createSupplier.name}
+      onCancel={() => setCreateSupplier(null)}
+      onCreated={(entity: CreatedEntity) => {
+        const supplier = { id: entity.id, name: entity.name, tax_number: entity.tax_number };
+        setItems((previous) => [...previous, supplier]);
+        setAllocations((previous) => previous.map((allocation) =>
+          allocation.key === createSupplier.allocationKey
+            ? { ...allocation, supplier }
+            : allocation,
+        ));
+        setCreateSupplier(null);
+      }}
+    />}
+  </>;
 }

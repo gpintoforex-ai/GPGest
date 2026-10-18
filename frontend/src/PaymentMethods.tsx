@@ -1,3 +1,5 @@
+import { confirmAction } from "./components/InteractionUI";
+import { ActionButton, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
 import {
   CircleCheck,
@@ -97,6 +99,7 @@ export default function PaymentMethods({
     }
   }
   async function toggle(method: PaymentMethod) {
+    if (method.active && !(await confirmAction({ title: "Inativar meio de pagamento?", message: `«${method.name}» deixará de ser considerado nas novas conferências da folha de caixa. O histórico será preservado.`, confirmLabel: "Inativar meio", tone: "warning" }))) return;
     setBusy(method.id);
     setError("");
     setNotice("");
@@ -126,24 +129,24 @@ export default function PaymentMethods({
         </div>
         <div className="payment-method-page-actions">
           {manager && local && (
-            <button
+            <ActionButton
               className="primary"
               disabled={busy !== null}
               onClick={onNew}
             >
               <Plus size={18} aria-hidden="true" /> Novo meio de pagamento
-            </button>
+            </ActionButton>
           )}
-          <button
+          <ActionButton
             type="button"
-            className="payment-method-close"
-            aria-label="Fechar meios de pagamento e voltar"
-            title="Fechar e voltar ao local anterior"
+            className="ui-return"
+            aria-label="Voltar ao local anterior"
+            title="Voltar ao local anterior"
             disabled={busy !== null}
             onClick={onClose}
           >
-            <X size={22} aria-hidden="true" />
-          </button>
+            Voltar
+          </ActionButton>
         </div>
       </div>
       <section className="panel" aria-busy={busy !== null}>
@@ -182,14 +185,14 @@ export default function PaymentMethods({
           </p>
         )}
         {error && (
-          <p className="error" role="alert">
+          <Notice className="error" role="alert">
             {error}
-          </p>
+          </Notice>
         )}
         {notice && (
-          <p className="success" role="status">
+          <Notice onDismiss={() => setNotice("")} className="success" role="status">
             {notice}
-          </p>
+          </Notice>
         )}
         <div className="table-wrap">
           <table>
@@ -275,7 +278,7 @@ export default function PaymentMethods({
                           Obrigatório
                         </span>
                       ) : (
-                        <button
+                        <ActionButton
                           type="button"
                           className={`payment-method-action ${method.active ? "is-deactivate" : "is-activate"}`}
                           disabled={busy !== null}
@@ -292,7 +295,7 @@ export default function PaymentMethods({
                             : method.active
                               ? "Inativar"
                               : "Ativar"}
-                        </button>
+                        </ActionButton>
                       )}
                     </td>
                   )}

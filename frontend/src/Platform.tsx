@@ -1,3 +1,7 @@
+import { ActionLink } from "./components/InteractionUI";
+import Brand from "./components/Brand";
+import ThemeSettings from "./ThemeSettings";
+import { ActionButton, AppDialog, Notice, confirmFormExit } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
 import { ShieldCheck, Building2, Plus, LogOut, KeyRound } from "lucide-react";
 import { api, Form, Field } from "./App";
@@ -20,7 +24,7 @@ export default function Platform() {
   const [resetUser, setResetUser] = useState<string | null>(null);
   const [editingEmail, setEditingEmail] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
-  const [resettingData, setResettingData] = useState(false);
+  const [resettingData, setResettingData] = useState<"movements" | "all" | null>(null);
   const [previousCompanies, setPreviousCompanies] = useState<Company[]>([]);
   const [pendingCreation, setPendingCreation] = useState<Record<string, any> | null>(null);
   const [admin, setAdmin] = useState<{ email: string; mode: string } | null>(null),
@@ -38,14 +42,14 @@ export default function Platform() {
     setAudit(await api("/platform/audit"));
   }
   useEffect(() => {
+    document.title = "Plataforma · Zela";
+  }, []);
+  useEffect(() => {
     if (!selected || !companyDialog.current) return;
     const dialog = companyDialog.current;
-    const previousOverflow = document.body.style.overflow;
     dialog.showModal();
-    document.body.style.overflow = "hidden";
     return () => {
       dialog.close();
-      document.body.style.overflow = previousOverflow;
     };
   }, [selected?.id]);
   useEffect(() => {
@@ -54,7 +58,7 @@ export default function Platform() {
     setResetUser(null);
     setEditingEmail(null);
     setRemoving(false);
-    setResettingData(false);
+    setResettingData(null);
     if (selected) api("/platform/companies/" + selected.id + "/users")
       .then((rows) => { if (current) setUsers(rows); })
       .catch((e) => { if (current) setError(e.message); });
@@ -77,15 +81,14 @@ export default function Platform() {
     return () => window.removeEventListener("gpgest-expired", expired);
   }, []);
   if (loading)
-    return <div className="loading">A verificar acesso à plataforma…</div>;
+    return <div className="loading" role="status">A verificar acesso à plataforma…</div>;
   if (!admin)
     return (
       <div className="login">
         <section className="login-story">
           <div className="brand">
-            GP<span>Gest</span>
+            <Brand /><ThemeSettings compact />
           </div>
-          <ShieldCheck size={40} />
           <h1>
             Administração
             <br />
@@ -123,7 +126,7 @@ export default function Platform() {
             </Field>
           </Form>
           <p>
-            <a href="/">Ir para acesso da empresa</a>
+            <ActionLink href="/">Ir para acesso da empresa</ActionLink>
           </p>
         </section>
       </div>
@@ -131,11 +134,12 @@ export default function Platform() {
   return (
     <div className="platform-page">
       <header>
+        <Brand /><ThemeSettings compact />
         <div>
-          <span className="eyebrow">GPGEST · ACESSO RESERVADO</span>
+          <span className="eyebrow">ZELA · ACESSO RESERVADO</span>
           <h2>Gestão da plataforma</h2>
         </div>
-        <button
+        <ActionButton
           onClick={async () => {
             try {
               await api("/platform/logout", {});
@@ -149,17 +153,17 @@ export default function Platform() {
         >
           <LogOut size={18} />
           Sair
-        </button>
+        </ActionButton>
       </header>
       <main>
         <div className="page-intro">
           <div>
             <h1>Empresas e ligações</h1>
             <p>
-              Crie v?rias empresas, cada uma com o seu NIF, utilizadores, lojas e dados pr?prios.
+              Crie várias empresas, cada uma com o seu NIF, utilizadores, lojas e dados próprios.
             </p>
           </div>
-          <button
+          <ActionButton
             className="primary"
             onClick={() => {
               setCreating(true);
@@ -170,30 +174,30 @@ export default function Platform() {
           >
             <Plus size={18} />
             Criar empresa
-          </button>
+          </ActionButton>
         </div>
         {notice && (
-          <div className="success" role="status">
+          <Notice onDismiss={() => setNotice("")} className="success" role="status">
             {notice}
-          </div>
+          </Notice>
         )}
         {error && (
-          <p className="error" role="alert">
+          <Notice className="error" role="alert">
             {error}
-          </p>
+          </Notice>
         )}
         {creating && (
           <section className="panel platform-editor">
             <div className="panel-title">
               <h3>Nova empresa</h3>
-              <button onClick={() => setCreating(false)}>Cancelar</button>
+              <ActionButton onClick={() => setCreating(false)}>Cancelar</ActionButton>
             </div>
-            <div className="success" role="note">
+            <Notice tone="info" role="note">
               <strong>Modo da nova empresa: {admin.mode === "demonstracao" ? "Demonstração" : "Real"}</strong>
               <p>{admin.mode === "demonstracao"
                 ? "Esta empresa será criada em modo de demonstração, conforme a configuração atual da plataforma."
                 : "Esta empresa será criada em modo real, conforme a configuração atual da plataforma."}</p>
-            </div>
+            </Notice>
             <Form
               onSubmit={async (v) => {
                 const previous = await api("/platform/removed-companies/" + v.nif);
@@ -277,17 +281,11 @@ export default function Platform() {
           </section>
         )}
         {selected && (
-          <dialog
+          <AppDialog
             ref={companyDialog}
             className="company-config-dialog"
             aria-labelledby="company-config-title"
-            onCancel={() => setSelected(null)}
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                const bounds = e.currentTarget.getBoundingClientRect();
-                if (e.clientX < bounds.left || e.clientX > bounds.right || e.clientY < bounds.top || e.clientY > bounds.bottom) setSelected(null);
-              }
-            }}
+            onRequestClose={() => setSelected(null)}
           >
           <section
             className="panel platform-editor"
@@ -295,17 +293,17 @@ export default function Platform() {
           >
             <div className="panel-title">
               <h3 id="company-config-title">{selected.name} · Configuração</h3>
-              <button onClick={() => setSelected(null)}>Fechar</button>
+
             </div>
-            {notice && <div className="success" role="status">{notice}</div>}
-            {error && <p className="error" role="alert">{error}</p>}
+            {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
+            {error && <Notice className="error" role="alert">{error}</Notice>}
             <h3>Utilizadores e acesso</h3>
             {users.map((u) => (
               <div key={u.id}>
                 <p><b>{u.name}</b> · {u.email} · {u.role} · {u.active ? "Ativo" : "Desativado"}</p>
-                <button type="button" onClick={() => setEditingEmail(editingEmail === u.id ? null : u.id)}>
+                <ActionButton type="button" onClick={() => setEditingEmail(editingEmail === u.id ? null : u.id)}>
                   {editingEmail === u.id ? "Cancelar edição do email" : "Editar email"}
-                </button>
+                </ActionButton>
                 {editingEmail === u.id && (
                   <Form submitLabel="Guardar email" onSubmit={async (v) => {
                     await api("/platform/companies/" + selected.id + "/users/" + u.id + "/email", { email: v.email });
@@ -317,9 +315,9 @@ export default function Platform() {
                     <Field label="Email do utilizador"><input name="email" type="email" defaultValue={u.email} required maxLength={200} /></Field>
                   </Form>
                 )}
-                <button type="button" onClick={() => setResetUser(resetUser === u.id ? null : u.id)}>
+                <ActionButton type="button" onClick={() => setResetUser(resetUser === u.id ? null : u.id)}>
                   {resetUser === u.id ? "Cancelar reposição" : "Repor palavra-passe"}
-                </button>
+                </ActionButton>
                 {resetUser === u.id && (
                   <Form submitLabel="Guardar nova palavra-passe" onSubmit={async (v) => {
                     if (v.new_password !== v.confirm_password) throw new Error("As palavras-passe não coincidem.");
@@ -446,7 +444,7 @@ export default function Platform() {
                 documentos, não altera o Wintouch nem importa movimentos.
               </p>
             </Form>
-            <button
+            <ActionButton
               disabled={testing || !selected.api_active || !selected.active}
               onClick={async () => {
                 setTesting(true);
@@ -467,32 +465,45 @@ export default function Platform() {
               }}
             >
               {testing ? "A testar…" : "Testar ligação de leitura"}
-            </button>
+            </ActionButton>
             <div className="company-removal">
-              <button type="button" onClick={() => setResettingData(!resettingData)}>
-                {resettingData ? "Cancelar reinicialização" : "Reinicializar dados"}
-              </button>
+              <div className="actions">
+                <ActionButton type="button" onClick={async e => { if (resettingData && !(await confirmFormExit(e.currentTarget.closest(".company-removal")))) return; setResettingData(resettingData === "movements" ? null : "movements"); }}>
+                  {resettingData === "movements" ? "Cancelar reinicialização" : "Reinicializar movimentos e documentos"}
+                </ActionButton>
+                <ActionButton type="button" onClick={async e => { if (resettingData && !(await confirmFormExit(e.currentTarget.closest(".company-removal")))) return; setResettingData(resettingData === "all" ? null : "all"); }}>
+                  {resettingData === "all" ? "Cancelar reinicialização" : "Reinicializar todos os dados"}
+                </ActionButton>
+              </div>
               {resettingData && (
-                <Form submitLabel="Confirmar reinicialização dos dados" onSubmit={async (v) => {
-                  await api("/platform/companies/" + selected.id + "/reset-data", {
+                <Form key={resettingData} destructive submitLabel={resettingData === "movements" ? "Confirmar reinicialização dos movimentos e documentos" : "Confirmar reinicialização dos dados"} onSubmit={async (v) => {
+                  const scope = resettingData;
+                  await api("/platform/companies/" + selected.id + (scope === "movements" ? "/reset-movements" : "/reset-data"), {
                     confirmation: v.confirmation, acknowledged: v.acknowledged === "on",
                   });
-                  setResettingData(false);
-                  await refresh();
-                  setNotice("Dados reinicializados. Utilizadores e configuração mantidos. As sessões anteriores terminaram; os dados anteriores ficaram numa cópia interna.");
+                  setResettingData(null);
+                  setNotice(scope === "movements"
+                    ? "Movimentos e documentos reinicializados. Tabelas, bancos e configurações preservados. As sessões anteriores terminaram; os dados anteriores ficaram numa cópia interna."
+                    : "Dados reinicializados. Utilizadores e configuração mantidos. As sessões anteriores terminaram; os dados anteriores ficaram numa cópia interna.");
+                  void refresh().catch(() => setError("A reinicialização foi concluída, mas não foi possível atualizar a plataforma. Atualize a página; não repita a operação."));
                 }}>
-                  <p>Retira os movimentos, importações, documentos, pagamentos, reconciliações e histórico operacional da empresa. Mantém utilizadores, palavras-passe, lojas, caixas, categorias e ligação Wintouch. Os dados anteriores ficam guardados numa cópia interna, sem recuperação automática nesta janela.</p>
+                  <h4>{resettingData === "movements" ? "Reinicializar movimentos e documentos" : "Reinicializar todos os dados"} · {selected.name}</h4>
+                  {resettingData === "movements" ? <>
+                    <p>Retira folhas e movimentos de caixa, extratos e movimentos bancários, e-Fatura, compras, documentos e anexos guardados na aplicação, documentos a crédito, pagamentos, depósitos, reconciliações, saldos de referência e histórico operacional desta empresa.</p>
+                    <p><strong>Preserva tabelas e bancos:</strong> utilizadores, funcionários, lojas, caixas, rubricas, clientes, fornecedores, artigos, instituições e contas bancárias, terminais, meios de pagamento, associações aos bancos e configurações. Não altera dados nem ficheiros no ERP, na AT ou no Google Drive.</p>
+                  </> : <p>Retira os movimentos, importações, documentos, pagamentos, reconciliações e histórico operacional da empresa. Mantém utilizadores, palavras-passe, lojas, caixas, categorias e ligação Wintouch.</p>}
+                  <p>Termina as sessões da empresa. Os dados anteriores ficam guardados numa cópia interna, sem recuperação automática nesta janela.</p>
                   <Field label={"Escreva " + (selected.nif || selected.name) + " para confirmar"}>
                     <input name="confirmation" required autoComplete="off" />
                   </Field>
-                  <label className="checkbox"><input name="acknowledged" type="checkbox" required /> Confirmo que pretendo reinicializar os dados desta empresa e terminar as sessões atuais.</label>
+                  <label className="checkbox"><input name="acknowledged" type="checkbox" required /> Confirmo que pretendo reinicializar {resettingData === "movements" ? "os movimentos e documentos, mantendo tabelas e bancos," : "os dados"} desta empresa e terminar as sessões atuais.</label>
                 </Form>
               )}
-              <button type="button" onClick={() => setRemoving(!removing)}>
+              <ActionButton type="button" onClick={() => setRemoving(!removing)}>
                 {removing ? "Cancelar remoção" : "Remover empresa"}
-              </button>
+              </ActionButton>
               {removing && (
-                <Form submitLabel="Confirmar remoção da empresa" onSubmit={async (v) => {
+                <Form destructive submitLabel="Confirmar remoção da empresa" onSubmit={async (v) => {
                   await api("/platform/companies/" + selected.id + "/remove", { confirmation: v.confirmation });
                   setSelected(null);
                   await refresh();
@@ -506,7 +517,7 @@ export default function Platform() {
               )}
             </div>
           </section>
-          </dialog>
+          </AppDialog>
         )}
         <div className="cash-grid">
           {companies.map((c) => (
@@ -519,7 +530,7 @@ export default function Platform() {
               </div>
               <h3>{c.name}</h3>
               <p>
-                NIF: <b>{c.nif || "Por definir na configura??o"}</b> · {c.mode}
+                NIF: <b>{c.nif || "Por definir na configuração"}</b> · {c.mode}
               </p>
               <p>
                 <KeyRound size={15} />{" "}
@@ -527,11 +538,11 @@ export default function Platform() {
                 {c.api_active ? "Ligação ativada" : "Ligação desativada"}
               </p>
               <p>
-                <a href={c.nif ? "/?nif=" + encodeURIComponent(c.nif) : "/?empresa=" + encodeURIComponent(c.slug)}>
+                <ActionLink href={c.nif ? "/?nif=" + encodeURIComponent(c.nif) : "/?empresa=" + encodeURIComponent(c.slug)}>
                   Abrir acesso desta empresa
-                </a>
+                </ActionLink>
               </p>
-              <button
+              <ActionButton
                 onClick={() => {
                   setSelected(c);
                   setCreating(false);
@@ -540,7 +551,7 @@ export default function Platform() {
                 }}
               >
                 Configurar empresa
-              </button>
+              </ActionButton>
             </section>
           ))}
         </div>

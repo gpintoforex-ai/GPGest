@@ -1,3 +1,5 @@
+import { ActionLink } from "./components/InteractionUI";
+import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
 import { api, Field, Form } from "./App";
 
@@ -47,8 +49,8 @@ export default function GoogleInvoiceInbox() {
           <Field label="Emails até"><input name="end_date" type="date" required /></Field>
         </fieldset>
       </Form>
-      {nextPage && period && <button disabled={busy} onClick={() => scan(period, nextPage)}>Consultar mais emails</button>}
-      <button className="primary" disabled={busy || !selected.length} onClick={async () => {
+      {nextPage && period && <ActionButton disabled={busy} onClick={() => scan(period, nextPage)}>Consultar mais emails</ActionButton>}
+      <ActionButton className="primary" disabled={busy || !selected.length} onClick={async () => {
         setBusy(true); setError(""); setNotice("");
         try {
           const result = await api(base + "/import", { ids: selected });
@@ -59,11 +61,11 @@ export default function GoogleInvoiceInbox() {
           await refresh();
         } catch(e) { setError((e as Error).message); }
         finally { setBusy(false); }
-      }}>Guardar selecionados no Drive ({selected.length})</button>
+      }}>Guardar selecionados no Drive ({selected.length})</ActionButton>
     </>}
     {busy && <p role="status">A processar…</p>}
-    {error && <p className="error" role="alert">{error}</p>}
-    {notice && <p className="success" role="status">{notice}</p>}
+    {error && <Notice className="error" role="alert">{error}</Notice>}
+    {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
     <div className="table-wrap"><table><thead><tr><th>Selecionar</th><th>Anexo</th><th>Origem</th><th>Estado</th><th>Ações</th></tr></thead><tbody>
       {files.map(file => <tr key={file.id}>
         <td><input aria-label={"Selecionar " + file.name} type="checkbox" disabled={busy || file.uploaded} checked={selected.includes(file.id)} onChange={e => {
@@ -74,24 +76,24 @@ export default function GoogleInvoiceInbox() {
         <td>{file.sender}<br />{file.subject}<br />{file.received_at.slice(0, 10)}</td>
         <td>{file.purchase_id ? "Associado à fatura" : file.uploaded ? "No Drive · por associar" : "Por importar"}</td>
         <td>{file.uploaded && <>
-          <a href={file.drive_url} target="_blank" rel="noreferrer">Abrir Drive</a>{" "}
-          <a href={"/api" + base + "/files/" + file.id + "/preview"} target="_blank" rel="noreferrer">Ver anexo</a>{" "}
-          {!file.purchase_id && <button disabled={busy} onClick={() => openMatches(file)}>Associar à fatura</button>}
+          <ActionLink href={file.drive_url} target="_blank" rel="noreferrer">Abrir Drive</ActionLink>{" "}
+          <ActionLink href={"/api" + base + "/files/" + file.id + "/preview"} target="_blank" rel="noreferrer">Ver anexo</ActionLink>{" "}
+          {!file.purchase_id && <ActionButton disabled={busy} onClick={() => openMatches(file)}>Associar à fatura</ActionButton>}
         </>}</td>
       </tr>)}
     </tbody></table></div>
     {!files.length && <p>Ainda não existem anexos consultados nesta conta.</p>}
     <p>As sugestões usam o nome do ficheiro, assunto e texto extraível do PDF. Imagens e PDFs digitalizados não têm OCR nesta versão. A confiança é uma pontuação indicativa, não uma garantia.</p>
-    {editing && matches && <div className="overlay"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="gmail-associate-title">
-      <div className="panel-title"><h2 id="gmail-associate-title">Associar {editing.name}</h2><button disabled={busy} onClick={() => setEditing(null)}>Fechar</button></div>
+    {editing && matches && <AppDialog autoOpen className="modal" busy={busy} onRequestClose={() => setEditing(null)} aria-labelledby="gmail-associate-title">
+      <div className="panel-title"><h2 id="gmail-associate-title">Associar {editing.name}</h2></div>
       {matches.suggestions.length ? matches.suggestions.map((r: Row) => <p key={r.id}><b>{r.supplier} · {r.document} · {euro(r.amount_cents)}</b><br />Confiança: {r.confidence}/100 · {r.reasons.join("; ")}</p>) : <p>Sem sugestões suficientes. Pode procurar e escolher a fatura manualmente.</p>}
       <Field label="Procurar fornecedor, NIF ou documento"><input value={search} onChange={e => setSearch(e.target.value)} /></Field>
-      <button disabled={busy} onClick={async () => {
+      <ActionButton disabled={busy} onClick={async () => {
         setBusy(true);
         try { setMatches(await api(base + "/files/" + editing.id + "/suggestions?search=" + encodeURIComponent(search))); }
         catch(e) { setError((e as Error).message); }
         finally { setBusy(false); }
-      }}>Pesquisar faturas</button>
+      }}>Pesquisar faturas</ActionButton>
       {matches.limited && <p>Lista limitada a 1000 faturas. Refine a pesquisa para encontrar documentos mais antigos.</p>}
       <Form submitLabel="Confirmar associação" onSubmit={async v => {
         await api(base + "/files/" + editing.id + "/associate", { purchase_id: v.purchase_id, confirmed: v.confirmed === "on" });
@@ -103,6 +105,6 @@ export default function GoogleInvoiceInbox() {
         </select></Field>
         <label className="checkbox"><input name="confirmed" type="checkbox" required /> Confirmei que este anexo pertence à fatura selecionada.</label>
       </Form>
-    </section></div>}
+    </AppDialog>}
   </section>;
 }

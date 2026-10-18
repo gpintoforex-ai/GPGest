@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -199,6 +199,33 @@ def test_available_cash_suggestion_uses_opening_and_confirmed_deposits(deposits)
     delivered(deposits, "10")
     assert client.get(path).json()["cash_amount"] == "90"
     assert client.get(path.replace(today(), "2000-01-01")).json()["cash_amount"] == "0"
+
+
+def test_cash_balance_explains_the_source_of_negative_movements(deposits):
+    client, ids, _, session, _, _ = deposits
+    response = client.post(
+        "/api/movements",
+        json={
+            "session_id": session,
+            "category_id": ids["category"],
+            "kind": "fornecedor",
+            "payment": "numerario",
+            "amount": "5",
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "entity": "Fornecedor Demo",
+            "document": f"Fecho de caixa {today()}",
+            "request_key": str(uuid4()),
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    balance = client.get(
+        f"/api/registers/{ids['registers'][0]}/deposit-balance?selected_date={today()}"
+    )
+    assert balance.status_code == 200, balance.text
+    row = next(item for item in balance.json()["movements"] if item["source"] == "movement")
+    assert row["amount"] == "-5"
+    assert row["description"] == "Saída · Pagamento a fornecedor · Geral · Fornecedor Demo"
 
 
 def test_deposit_uses_accumulated_erp_without_any_cash_sheet(deposits):

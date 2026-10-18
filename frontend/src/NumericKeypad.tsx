@@ -1,3 +1,5 @@
+import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
+import { Delete } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Info } from "lucide-react";
 import ReadAloud from "./ReadAloud";
@@ -32,12 +34,13 @@ export default function NumericKeypad({
   const titleId = useId();
   const descriptionId = useId();
   const [showDescription, setShowDescription] = useState(false);
-  const [draft, setDraft] = useState(value.replace(".", ","));
+  const initialValue = (value.trim() || (!decimal && !calculator ? "1" : "")).replace(".", ",");
+  const [draft, setDraft] = useState(initialValue);
   const [replace, setReplace] = useState(true);
   useEffect(() => {
-    setDraft(value.replace(".", ","));
+    setDraft(initialValue);
     setReplace(true);
-  }, [value, label]);
+  }, [initialValue, label]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const element = dialog.current!;
@@ -109,18 +112,18 @@ export default function NumericKeypad({
     setDraft(next);
     setReplace(false);
   }
-  function confirm() {
+  function applyValue() {
     if (valid) onConfirm(calculator ? result! : number.replace(/,$/, ""));
   }
   return (
-    <dialog
+    <AppDialog dirty={draft !== initialValue}
       ref={dialog}
       className="numeric-keypad"
       aria-labelledby={titleId}
       tabIndex={-1}
-      onCancel={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      onRequestClose={() => {
+
+
         onCancel();
       }}
       onKeyDown={(e) => {
@@ -145,7 +148,7 @@ export default function NumericKeypad({
           }
         } else if (e.key === "Backspace") backspace();
         else if (e.key === "Delete") clear();
-        else if (e.key === "Enter") confirm();
+        else if (e.key === "Enter") applyValue();
         else return;
         e.preventDefault();
         e.stopPropagation();
@@ -158,7 +161,7 @@ export default function NumericKeypad({
               {calculator ? "Calculadora" : "Teclado numérico"}
             </h3>
             {description && (
-              <button
+              <ActionButton
                 type="button"
                 className="numeric-keypad-info"
                 aria-label="Informação da calculadora"
@@ -168,14 +171,12 @@ export default function NumericKeypad({
                 onClick={() => setShowDescription((shown) => !shown)}
               >
                 <Info size={20} aria-hidden="true" />
-              </button>
+              </ActionButton>
             )}
           </div>
           <p>{label}</p>
         </div>
-        <button type="button" aria-label="Fechar teclado" onClick={onCancel}>
-          ×
-        </button>
+
       </div>
       {description && (
         <div
@@ -200,16 +201,16 @@ export default function NumericKeypad({
             ["*", "×", "Multiplicar"],
             ["/", "÷", "Dividir"],
           ].map(([key, symbol, name]) => (
-            <button
+            <ActionButton
               key={key}
               type="button"
               aria-label={name}
               onClick={() => append(key)}
             >
               {symbol}
-            </button>
+            </ActionButton>
           ))}
-          <button
+          <ActionButton
             type="button"
             aria-label="Calcular resultado"
             disabled={!valid}
@@ -219,7 +220,7 @@ export default function NumericKeypad({
             }}
           >
             =
-          </button>
+          </ActionButton>
         </div>
       )}
       {calculator && (
@@ -232,47 +233,47 @@ export default function NumericKeypad({
           {number}
         </output>
         {decimal && (
-          <button type="button" onClick={clear}>
+          <ActionButton type="button" onClick={clear}>
             Limpar
-          </button>
+          </ActionButton>
         )}
       </div>
       <div className="numeric-keypad-keys">
         {["7", "8", "9", "4", "5", "6", "1", "2", "3"].map((key) => (
-          <button key={key} type="button" onClick={() => append(key)}>
+          <ActionButton key={key} type="button" onClick={() => append(key)}>
             {key}
-          </button>
+          </ActionButton>
         ))}
         {decimal ? (
-          <button
+          <ActionButton
             type="button"
             aria-label="Vírgula decimal"
             onClick={() => append(",")}
           >
             ,
-          </button>
+          </ActionButton>
         ) : (
-          <button
+          <ActionButton
             type="button"
             className="numeric-keypad-control"
             onClick={clear}
           >
             Limpar
-          </button>
+          </ActionButton>
         )}
-        <button type="button" onClick={() => append("0")}>
+        <ActionButton type="button" onClick={() => append("0")}>
           0
-        </button>
-        <button
+        </ActionButton>
+        <ActionButton
           type="button"
           aria-label="Apagar último dígito"
           onClick={backspace}
         >
-          ⌫
-        </button>
+          <Delete size={19} aria-hidden="true" />
+        </ActionButton>
       </div>
       {!valid && (
-        <p className="error" role="alert">
+        <Notice className="error" role="alert">
           {exceedsMaximum
             ? "O total ultrapassa o valor máximo permitido."
             : calculator
@@ -280,30 +281,30 @@ export default function NumericKeypad({
               : decimal
                 ? "Introduza um valor válido com até duas casas decimais."
                 : "Introduza uma quantidade entre 0 e 100000."}
-        </p>
+        </Notice>
       )}
       {onReset && (
-        <button
+        <ActionButton
           type="button"
           className="numeric-keypad-reset"
           onClick={onReset}
         >
           {resetLabel}
-        </button>
+        </ActionButton>
       )}
       <div className="numeric-keypad-actions">
-        <button type="button" onClick={onCancel}>
+        <ActionButton type="button" onClick={onCancel}>
           Cancelar
-        </button>
-        <button
+        </ActionButton>
+        <ActionButton
           type="button"
           className="primary"
           disabled={!valid}
-          onClick={confirm}
+          onClick={applyValue}
         >
           {calculator ? "Aplicar valor" : "Confirmar"}
-        </button>
+        </ActionButton>
       </div>
-    </dialog>
+    </AppDialog>
   );
 }

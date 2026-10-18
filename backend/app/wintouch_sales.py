@@ -187,6 +187,7 @@ def payment_record(payment, common, methods, states):
         "direction": -1 if value < 0 else common.get("direction", 1),
         "source_payment_amount_cents": value,
         "payment": string(method.get("Name"), 200, True),
+        "payment_method_id": string(payment.get("PaymentMethodID"), 200),
         "payment_code": string(method.get("SaftPaymentMechanism"), 40),
         "occurred_at": payment.get("PaymentMethodDate") or common["occurred_at"],
     }

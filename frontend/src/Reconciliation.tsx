@@ -1,3 +1,4 @@
+import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
 import { api } from "./App";
 import Purchases from "./Purchases";
@@ -193,7 +194,7 @@ export default function Reconciliation({
             <tr>
               <th>Selecionar</th>
               <th>Movimento</th>
-              <th>Valor / disponível</th>
+              <th className="numeric">Valor / disponível</th>
               <th>Estado</th>
             </tr>
           </thead>
@@ -234,7 +235,7 @@ export default function Reconciliation({
                     {labels[r.source]} {r.account} {r.payment}
                   </small>
                 </td>
-                <td>
+                <td className="numeric">
                   {money(r.amount_cents)}
                   <br />
                   <small>Associado: {money(r.associated_cents)}</small>
@@ -261,7 +262,7 @@ export default function Reconciliation({
                   {manager && (
                     <div>
                       {r.status === "ignorado" ? (
-                        <button
+                        <ActionButton
                           disabled={busy}
                           onClick={() =>
                             act(async () => {
@@ -274,10 +275,10 @@ export default function Reconciliation({
                           }
                         >
                           Reativar
-                        </button>
+                        </ActionButton>
                       ) : (
                         !r.associated_cents && (
-                          <button
+                          <ActionButton
                             disabled={busy}
                             onClick={() => {
                               setAction({ type: "ignore", row: r });
@@ -285,7 +286,7 @@ export default function Reconciliation({
                             }}
                           >
                             Ignorar
-                          </button>
+                          </ActionButton>
                         )
                       )}
                     </div>
@@ -304,11 +305,11 @@ export default function Reconciliation({
         </p>
       )}
       {rows.length > limits[side] && (
-        <button
+        <ActionButton
           onClick={() => setLimits({ ...limits, [side]: limits[side] + 50 })}
         >
           Mostrar mais ({rows.length - limits[side]})
-        </button>
+        </ActionButton>
       )}
     </>
   );
@@ -330,7 +331,7 @@ export default function Reconciliation({
           ["faturas", "Faturas e documentos"],
           ["historico", "Histórico"],
         ].map(([id, label]) => (
-          <button
+          <ActionButton
             key={id}
             aria-pressed={tab === id}
             onClick={() => {
@@ -339,15 +340,15 @@ export default function Reconciliation({
             }}
           >
             {label}
-          </button>
+          </ActionButton>
         ))}
       </div>
       {error && (
-        <p className="error" role="alert">
+        <Notice className="error" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
-      {notice && <p role="status">{notice}</p>}
+      {notice && <Notice onDismiss={() => setNotice("")} tone={notice.includes("selecionad") ? "info" : "success"}>{notice}</Notice>}
       {tab === "faturas" && (
         <Purchases
           stores={stores}
@@ -481,7 +482,7 @@ export default function Reconciliation({
                 />
               </label>
               <div className="actions">
-                <button
+                <ActionButton
                   className="primary"
                   disabled={busy || chosen.length < 2}
                   onClick={() =>
@@ -510,10 +511,10 @@ export default function Reconciliation({
                   }
                 >
                   {busy ? "A processar…" : "Confirmar reconciliação"}
-                </button>
-                <button disabled={busy} onClick={() => setSelected({})}>
+                </ActionButton>
+                <ActionButton disabled={busy} onClick={() => setSelected({})}>
                   Limpar seleção
-                </button>
+                </ActionButton>
               </div>
             </section>
           )}
@@ -555,9 +556,9 @@ export default function Reconciliation({
                     <small>{s.reasons.join(" · ")}</small>
                   </div>
                   {manager && (
-                    <button disabled={busy} onClick={() => chooseCard(s)}>
+                    <ActionButton disabled={busy} onClick={() => chooseCard(s)}>
                       Selecionar agrupamento
-                    </button>
+                    </ActionButton>
                   )}
                 </div>
               ))}
@@ -593,12 +594,12 @@ export default function Reconciliation({
                       <small>{s.reasons.join(" · ")}</small>
                     </div>
                     {manager && (
-                      <button
+                      <ActionButton
                         disabled={busy}
                         onClick={() => chooseSuggestion(s)}
                       >
                         Selecionar sugestão
-                      </button>
+                      </ActionButton>
                     )}
                   </div>
                 );
@@ -668,7 +669,7 @@ export default function Reconciliation({
                   })}
                 </div>
                 {manager && !g.undone_at && (
-                  <button
+                  <ActionButton
                     disabled={busy}
                     onClick={() => {
                       setAction({ type: "undo", group: g });
@@ -676,7 +677,7 @@ export default function Reconciliation({
                     }}
                   >
                     Desfazer
-                  </button>
+                  </ActionButton>
                 )}
               </div>
             ))}
@@ -689,9 +690,8 @@ export default function Reconciliation({
         </section>
       )}
       {action && (
-        <section
-          className="panel reconciliation-action"
-          role="region"
+        <AppDialog autoOpen busy={busy} initialFocus="cancel" onRequestClose={() => setAction(null)}
+          className="doc-dialog reconciliation-action"
           aria-label="Justificar ação"
         >
           <h2>
@@ -699,6 +699,8 @@ export default function Reconciliation({
               ? "Desfazer reconciliação"
               : `Ignorar ${action.row.description}`}
           </h2>
+          {error && <Notice tone="error">{error}</Notice>}
+          <p>{action.type === "undo" ? `As associações da reconciliação «${action.group.id}» serão desfeitas. Os documentos e movimentos originais serão preservados e poderão ser novamente reconciliados. O motivo ficará na auditoria.` : `«${action.row.description}» deixará de ser sugerido nesta reconciliação. O movimento original será preservado e o motivo ficará na auditoria.`}</p>
           <label>
             Justificação obrigatória
             <input
@@ -709,7 +711,7 @@ export default function Reconciliation({
             />
           </label>
           <div className="actions">
-            <button
+            <ActionButton
               disabled={busy || actionReason.trim().length < 3}
               onClick={() =>
                 act(async () => {
@@ -726,12 +728,12 @@ export default function Reconciliation({
               }
             >
               Confirmar
-            </button>
-            <button disabled={busy} onClick={() => setAction(null)}>
+            </ActionButton>
+            <ActionButton disabled={busy} onClick={() => setAction(null)}>
               Cancelar
-            </button>
+            </ActionButton>
           </div>
-        </section>
+        </AppDialog>
       )}
     </>
   );

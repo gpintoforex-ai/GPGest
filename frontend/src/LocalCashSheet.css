@@ -205,7 +205,7 @@
   white-space: nowrap;
 }
 .local-cash-badge {
-  color: #245fc5;
+  color: var(--color-primary);
   background: #eef3ff;
 }
 .local-cash-payment-heading {

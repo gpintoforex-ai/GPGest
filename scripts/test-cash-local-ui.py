@@ -391,8 +391,11 @@ try:
         page.get_by_role("button", name="Fechar caixa", exact=True).click()
         supplier_dialog.get_by_role("combobox", name="Fornecedor", exact=True).fill("Fornecedor UI")
         supplier_dialog.get_by_role("button", name="＋ Criar novo", exact=True).click()
-        supplier_dialog.get_by_label("NIF (opcional)", exact=True).fill("500000000")
-        supplier_dialog.get_by_role("button", name="Criar e selecionar", exact=True).click()
+        entity_dialog = page.get_by_role("dialog", name="Criar entidade — começar pelo NIF", exact=True)
+        entity_dialog.get_by_role("button", name="Preencher manualmente", exact=True).click()
+        entity_dialog = page.get_by_role("dialog", name="Criar entidade", exact=True)
+        entity_dialog.get_by_label("NIF", exact=True).fill("500000000")
+        entity_dialog.get_by_role("button", name="Criar fornecedor", exact=True).click()
         expect(supplier_dialog.get_by_role("button", name="Confirmar e fechar caixa", exact=True)).to_be_enabled()
         assert not close_requests
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

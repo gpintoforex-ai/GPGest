@@ -1,3 +1,4 @@
+import { ActionButton, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
 import { api, Field, Form } from "./App";
 import RecordList, { calendarDay, currentMonth } from "./RecordList";
@@ -33,9 +34,9 @@ export function SalesImportPanel({ company }: { company: Row }) {
         Wintouch.
       </p>
       {error && (
-        <p className="error" role="alert">
+        <Notice className="error" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
       {notice && <p role="status">{notice}</p>}
       {company.active && company.api_active && stores.length > 0 ? (
@@ -141,15 +142,15 @@ export default function WintouchSales({
           </p>
         </div>
         {kind === "real" && (
-          <button onClick={() => setDocuments(!documents)}>
+          <ActionButton onClick={() => setDocuments(!documents)}>
             {documents ? "Ver recebimentos" : "Ver documentos de venda"}
-          </button>
+          </ActionButton>
         )}
       </div>
       {error && (
-        <p className="error" role="alert">
+        <Notice className="error" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
       <RecordList
         totalField={documents ? undefined : "amount_cents"}
@@ -189,7 +190,7 @@ export default function WintouchSales({
                         ? day(r.due_date)
                         : r.payment || "Documento de venda"}
                     </td>
-                    <td className={r.direction > 0 ? "positive" : "negative"}>
+                    <td className={["numeric", r.direction > 0 ? "positive" : "negative"].filter(Boolean).join(" ")}>
                       {r.direction < 0 ? "−" : "+"}
                       {money(r.amount_cents)}
                     </td>

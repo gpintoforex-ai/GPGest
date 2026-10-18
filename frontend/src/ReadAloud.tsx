@@ -1,3 +1,4 @@
+import { ActionButton } from "./components/InteractionUI";
 import {
   useCallback,
   useEffect,
@@ -197,19 +198,19 @@ export default function ReadAloud({
   }
 
   return (
-    <div className="read-aloud">
+    <div className="read-aloud" data-ignore-dirty>
       <div ref={content} className="read-aloud-text">
         {children}
       </div>
       <div className="read-aloud-actions">
-        <button type="button" disabled={!supported} onClick={listen}>
+        <ActionButton type="button" disabled={!supported} onClick={listen}>
           {reading ? (
             <Square size={16} aria-hidden="true" />
           ) : (
             <Volume2 size={16} aria-hidden="true" />
           )}
           {reading ? "Parar leitura" : "Ouvir informação"}
-        </button>
+        </ActionButton>
         {supported && (
           <details className="read-aloud-settings">
             <summary>

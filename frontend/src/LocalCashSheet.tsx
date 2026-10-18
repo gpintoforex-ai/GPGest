@@ -1,3 +1,5 @@
+import { ActionLink } from "./components/InteractionUI";
+import { ActionButton, AppDialog, ManagedForm, Notice, confirmAction } from "./components/InteractionUI";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -23,6 +25,7 @@ import SettlementConfirmation from "./SettlementConfirmation";
 import CashSupplierDialog, { type CashSupplierAllocation } from "./CashSupplierDialog";
 import CashReconciliation from "./CashReconciliation";
 import { useCashPreferences } from "./CashPreferences";
+import { SaftReference } from "./SaftSales";
 import "./CashSheet.css";
 import "./LocalCashSheet.css";
 
@@ -80,29 +83,26 @@ function RealizedDialog({
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const element = dialog.current!;
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     element.showModal();
     const input = element.querySelector("input");
     input?.focus();
     input?.select();
     return () => {
       element.close();
-      document.body.style.overflow = overflow;
       previous?.focus();
     };
   }, []);
   return createPortal(
-    <dialog
+    <AppDialog
       ref={dialog}
       className="local-realized-dialog"
       aria-labelledby={titleId}
-      onCancel={(e) => {
-        e.preventDefault();
+      onRequestClose={() => {
+
         onCancel();
       }}
     >
-      <form
+      <ManagedForm
         onSubmit={(e) => {
           e.preventDefault();
           if (valid) onApply({ ...draft, value: euros(cents!) });
@@ -110,9 +110,7 @@ function RealizedDialog({
       >
         <div className="panel-title">
           <h2 id={titleId}>Registar faturado</h2>
-          <button type="button" aria-label="Fechar" onClick={onCancel}>
-            <X size={20} aria-hidden="true" />
-          </button>
+
         </div>
         <p className="cash-payment-label">
           <Icon size={20} aria-hidden="true" /> {row.name}
@@ -126,9 +124,9 @@ function RealizedDialog({
           />
         </Field>
         {draft.value.trim() && !valid && (
-          <p className="error" role="alert">
+          <Notice className="error" role="alert">
             Introduza um valor válido em euros, com até duas casas decimais.
-          </p>
+          </Notice>
         )}
         <p className="footnote">
           Indique o faturado neste meio de pagamento. Este é o valor esperado
@@ -157,23 +155,23 @@ function RealizedDialog({
           </Field>
         </details>
         <div className="actions">
-          <button className="primary" disabled={!valid}>
+          <ActionButton className="primary" disabled={!valid}>
             Aplicar valor
-          </button>
+          </ActionButton>
           {initial.value.trim() && (
-            <button
+            <ActionButton
               type="button"
               onClick={() => onApply({ ...draft, value: "" })}
             >
               Deixar por preencher
-            </button>
+            </ActionButton>
           )}
-          <button type="button" onClick={onCancel}>
+          <ActionButton type="button" onClick={onCancel}>
             Cancelar
-          </button>
+          </ActionButton>
         </div>
-      </form>
-    </dialog>,
+      </ManagedForm>
+    </AppDialog>,
     document.body,
   );
 }
@@ -210,6 +208,9 @@ export default function LocalCashSheet({
   const [showConferenceHelp, setShowConferenceHelp] = useState(false);
   const { preferences } = useCashPreferences();
   const stored = s.count_data || {};
+  const countRequired = s.sheet.preferences?.count_required ?? true;
+  const requireReason = s.sheet.require_reason ?? true;
+  const manualRealized = s.sheet.manual_realized ?? true;
   const hydrate = () => ({
     values: Object.fromEntries(
       rec.rows.map((row: Row) => [
@@ -276,13 +277,10 @@ export default function LocalCashSheet({
     if (!closeWarnings) return;
     const previous = document.activeElement as HTMLElement | null;
     const element = closeDialog.current!;
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     element.showModal();
     element.querySelector<HTMLButtonElement>(".primary")?.focus();
     return () => {
       element.close();
-      document.body.style.overflow = overflow;
       previous?.focus();
     };
   }, [closeWarnings]);
@@ -471,7 +469,7 @@ export default function LocalCashSheet({
     : null;
   const requiredIssues = [
     ...(missingDeclaredIssue ? [missingDeclaredIssue] : []),
-    ...(counted === null
+    ...(countRequired && counted === null
       ? [
           "Indique o numerário contado, incluindo zero se a gaveta estiver vazia.",
         ]
@@ -480,7 +478,7 @@ export default function LocalCashSheet({
   const closeIssues = [
     ...commonIssues,
     ...requiredIssues,
-    ...(hasDifference && form.reason.trim().length < 5
+    ...(requireReason && hasDifference && form.reason.trim().length < 5
       ? ["Justifique as diferenças com pelo menos 5 caracteres."]
       : []),
   ];
@@ -510,6 +508,7 @@ export default function LocalCashSheet({
       setSupplierPrompt(true);
       return;
     }
+    if (action === "close" && !supplierAllocations && !(await confirmAction({ title: "Fechar caixa?", message: `Pretende fechar «${register} · ${store}» do dia ${s.sheet.day.split("-").reverse().join("/")}? Os valores da conferência serão guardados e serão criados apenas os movimentos ainda em falta. Para alterar depois, terá de reabrir a caixa.`, confirmLabel: "Confirmar e fechar caixa" }))) return;
     setBusy(true);
     try {
       const saved = await api(`/sessions/${s.id}/${action}`, {
@@ -585,7 +584,7 @@ export default function LocalCashSheet({
               />
             </Field>
             {editable && (
-              <button
+              <ActionButton
                 disabled={busy || sourceDay === s.sheet.day || dirty}
                 onClick={async () => {
                   setBusy(true);
@@ -603,12 +602,12 @@ export default function LocalCashSheet({
                 }}
               >
                 Atualizar dia
-              </button>
+              </ActionButton>
             )}
             {editable && manager && newMethod === null && (
-              <button disabled={busy || dirty} onClick={() => setNewMethod("")}>
+              <ActionButton disabled={busy || dirty} onClick={() => setNewMethod("")}>
                 Adicionar meio de pagamento
-              </button>
+              </ActionButton>
             )}
           </div>
         </div>
@@ -624,7 +623,7 @@ export default function LocalCashSheet({
         </span>
         {editable && manager && newMethod !== null && (
           <div className="local-cash-methods">
-            <form
+            <ManagedForm
               onSubmit={async (e) => {
                 e.preventDefault();
                 setBusy(true);
@@ -647,37 +646,38 @@ export default function LocalCashSheet({
                   onChange={(e) => setNewMethod(e.target.value)}
                 />
               </Field>
-              <button disabled={busy || !newMethod.trim()}>Guardar meio</button>
-              <button
+              <ActionButton disabled={busy || !newMethod.trim()}>Guardar meio</ActionButton>
+              <ActionButton
                 type="button"
                 disabled={busy}
                 onClick={() => setNewMethod(null)}
               >
                 Cancelar
-              </button>
-            </form>
+              </ActionButton>
+            </ManagedForm>
           </div>
         )}
       </div>
       {error && (
-        <p className="error" role="alert">
+        <Notice className="error" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
-      {notice && <p role="status">{notice}</p>}
+      {notice && <Notice onDismiss={() => setNotice("")} tone="success">{notice}</Notice>}
       <CashReconciliation
-        opening={s.opening_cents}
+        opening={s.retained_fund_cents ?? s.opening_cents}
         expected={cashExpected}
         counted={counted}
         declaredSales={!legacyClose}
       />
+      <SaftReference sessionId={s.id} selectedDay={s.sheet.day}/>
       <details className="cash-sheet-details">
         <summary>
           {s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"}
         </summary>
         <div className="local-cash-conference-heading">
           <h3>Conferência do faturado</h3>
-          <button
+          <ActionButton
             type="button"
             className="local-cash-info"
             aria-label="Informação sobre a conferência do faturado"
@@ -687,7 +687,7 @@ export default function LocalCashSheet({
             onClick={() => setShowConferenceHelp((shown) => !shown)}
           >
             <Info size={20} aria-hidden="true" />
-          </button>
+          </ActionButton>
         </div>
         <div
           id={conferenceHelpId}
@@ -737,7 +737,7 @@ export default function LocalCashSheet({
                 <th>
                   <span className="local-cash-payment-heading">
                     Meio de pagamento
-                    <span className="local-cash-badge">Origem: Manual</span>
+                    <span className="local-cash-badge">Origem: {manualRealized ? "Manual" : "Movimentos"}</span>
                   </span>
                 </th>
                 <th>Faturado</th>
@@ -774,7 +774,7 @@ export default function LocalCashSheet({
                           <Icon size={18} aria-hidden="true" /> {row.name}
                         </span>
                         {editable && (
-                          <button
+                          <ActionButton
                             type="button"
                             className="local-cash-no-movement"
                             aria-label={`Sem movimento — ${row.name}`}
@@ -790,13 +790,13 @@ export default function LocalCashSheet({
                             onClick={() => toggleWithoutMovement(row.key)}
                           >
                             <CircleMinus size={20} aria-hidden="true" />
-                          </button>
+                          </ActionButton>
                         )}
                       </div>
                     </td>
                     <td>
-                      {editable ? (
-                        <button
+                      {editable && manualRealized ? (
+                        <ActionButton
                           className={`local-realized-button local-cash-value-box ${tone(confirmedDifference)}`}
                           disabled={busy}
                           aria-haspopup="dialog"
@@ -811,7 +811,7 @@ export default function LocalCashSheet({
                           {declared === null
                             ? "Registar valor"
                             : money(declared)}
-                        </button>
+                        </ActionButton>
                       ) : (
                         <span
                           className={`local-cash-value-box ${tone(confirmedDifference)}`}
@@ -824,7 +824,7 @@ export default function LocalCashSheet({
                     </td>
                     <td>
                       {editable ? (
-                        <button
+                        <ActionButton
                           className={`local-debit-button local-cash-value-box ${tone(confirmedDifference)}`}
                           aria-label={`Registar débitos / créditos de ${row.name}`}
                           title={`Débitos: ${debit === null ? "Por preencher" : money(debit)} · Créditos: ${credit === null ? "Por preencher" : money(credit)}`}
@@ -841,7 +841,7 @@ export default function LocalCashSheet({
                         >
                           <Calculator size={16} aria-hidden="true" />
                           {adjustmentText}
-                        </button>
+                        </ActionButton>
                       ) : (
                         <span
                           className={`local-cash-value-box ${tone(confirmedDifference)}`}
@@ -863,7 +863,7 @@ export default function LocalCashSheet({
                     </td>
                     <td>
                       {editable && row.key === "numerario" ? (
-                        <button
+                        <ActionButton
                           className={`cash-count-trigger local-cash-value-box ${tone(confirmedDifference)}`}
                           aria-label="Contar numerário"
                           aria-haspopup="dialog"
@@ -876,7 +876,7 @@ export default function LocalCashSheet({
                               : money(confirmed)}
                           </span>
                           <small>Contar notas e moedas</small>
-                        </button>
+                        </ActionButton>
                       ) : editable ? (
                         <input
                           aria-label={`Contagem ${row.name} (€)`}
@@ -1071,22 +1071,22 @@ export default function LocalCashSheet({
               role="group"
               aria-label="Tipo de movimento"
             >
-              <button
+              <ActionButton
                 type="button"
                 aria-label="Débito (saída)"
                 aria-pressed={adjustmentKind === "debits"}
                 onClick={() => setAdjustmentKind("debits")}
               >
                 Débitos <strong>{money(debitFor(debitMethod) ?? 0)}</strong>
-              </button>
-              <button
+              </ActionButton>
+              <ActionButton
                 type="button"
                 aria-label="Crédito (entrada)"
                 aria-pressed={adjustmentKind === "credits"}
                 onClick={() => setAdjustmentKind("credits")}
               >
                 Créditos <strong>{money(creditFor(debitMethod) ?? 0)}</strong>
-              </button>
+              </ActionButton>
             </div>
           </NumericKeypad>
         )}
@@ -1190,64 +1190,58 @@ export default function LocalCashSheet({
         <div className="actions">
           {editable && (
             <>
-              <button disabled={busy} onClick={() => save("count")}>
+              <ActionButton disabled={busy} onClick={() => save("count")}>
                 Guardar rascunho
-              </button>
-              <button
+              </ActionButton>
+              <ActionButton
                 disabled={
                   busy ||
                   !complete ||
                   !debitsValid ||
                   !creditsValid ||
-                  counted === null
+                  (countRequired && counted === null)
                 }
                 onClick={() => save("reconcile")}
               >
                 Conferir
-              </button>
-              <button
+              </ActionButton>
+              <ActionButton
                 className="primary"
                 disabled={busy}
                 onClick={() => save("close")}
               >
                 Fechar caixa
-              </button>
-              <button disabled={busy} onClick={() => onAction("handover", s)}>
+              </ActionButton>
+              <ActionButton disabled={busy} onClick={() => onAction("handover", s)}>
                 Passar caixa
-              </button>
+              </ActionButton>
             </>
           )}
           {s.closed_at && (
-            <a className="download-link" href={`/api/sessions/${s.id}/report`}>
+            <ActionLink className="download-link" href={`/api/sessions/${s.id}/report`}>
               Relatório PDF
-            </a>
+            </ActionLink>
           )}
           {s.closed_at && manager && (
-            <button onClick={() => onAction("reopen", s)}>Reabrir</button>
+            <ActionButton onClick={() => onAction("reopen", s)}>Reabrir</ActionButton>
           )}
         </div>
       </details>
       {closeWarnings && createPortal(
-        <dialog
+        <AppDialog busy={busy}
           ref={closeDialog}
           className="local-realized-dialog local-cash-close-dialog"
           role="alertdialog"
           aria-labelledby={closeTitleId}
           aria-describedby={closeHelpId}
-          onCancel={(e) => {
-            e.preventDefault();
+          onRequestClose={() => {
+
             setCloseWarnings(null);
           }}
         >
           <div className="panel-title">
             <h2 id={closeTitleId}>Para fechar a caixa</h2>
-            <button
-              type="button"
-              aria-label="Fechar aviso"
-              onClick={() => setCloseWarnings(null)}
-            >
-              <X size={20} aria-hidden="true" />
-            </button>
+
           </div>
           <div className="local-cash-close-guidance" id={closeHelpId}>
             <ul>
@@ -1267,19 +1261,20 @@ export default function LocalCashSheet({
             </ul>
           </div>
           <div className="actions">
-            <button
+            <ActionButton
               type="button"
               className="primary"
               onClick={() => setCloseWarnings(null)}
             >
               Voltar à conferência
-            </button>
+            </ActionButton>
           </div>
-        </dialog>,
+        </AppDialog>,
         document.body,
       )}
       {supplierPrompt && (
         <CashSupplierDialog
+          context={`${register} · ${store} · ${s.sheet.day.split("-").reverse().join("/")}`}
           total={debitsTotal || 0}
           payments={rows.filter(row => (debitFor(row.key) || 0) > 0).map(row => ({ id: row.key, name: row.name, amount_cents: debitFor(row.key)! }))}
           initialId={stored.debit_supplier?.id}

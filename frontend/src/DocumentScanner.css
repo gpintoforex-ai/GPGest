@@ -7,9 +7,9 @@
 .scanner-pages article > img { width: 100%; height: 220px; object-fit: contain; background: #f2f5f9; }
 .scanner-crop { position: relative; width: min(100%, 520px); margin: 12px auto; }
 .scanner-crop { touch-action: none; }
-.scanner-corner { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: #245fc5; color: white; display: flex; align-items: center; justify-content: center; transform: translate(-50%, -50%); cursor: grab; touch-action: none; }
+.scanner-corner { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: var(--color-primary); color: white; display: flex; align-items: center; justify-content: center; transform: translate(-50%, -50%); cursor: grab; touch-action: none; }
 .scanner-crop img { display: block; width: 100%; }
-.scanner-crop > div { position: absolute; border: 3px solid #245fc5; background: #245fc51a; pointer-events: none; box-sizing: border-box; }
+.scanner-crop > div { position: absolute; border: 3px solid var(--color-primary); background: #245fc51a; pointer-events: none; box-sizing: border-box; }
 .scanner-pdf { width: 100%; height: 600px; border: 1px solid #d6e0ee; }
 .scanner-warning { padding: 12px; background: #fff5e5; color: #86510b; border-radius: 8px; }
 .scanner-dialog fieldset { min-width: 0; border: 0; padding: 0; }

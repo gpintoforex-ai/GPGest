@@ -19,6 +19,7 @@ from .models import (
     DocumentPayment,
     WintouchCashAccount,
     LocalPaymentMethod,
+    WintouchPaymentMethod,
 )
 
 LABELS = {
@@ -45,14 +46,16 @@ def is_real_cash_movement(data):
 DENOMINATIONS = {1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000}
 
 
-def day(value):
+def day(value, timezone_name="Europe/Lisbon"):
     stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if stamp.tzinfo:
-        stamp = stamp.astimezone(ZoneInfo("Europe/Lisbon"))
+        stamp = stamp.astimezone(ZoneInfo(timezone_name))
     return stamp.date().isoformat()
 
 
 def payment_key(row):
+    if row.get("_local_payment_key"):
+        return row["_local_payment_key"], row["_local_payment_name"]
     code = row.get("payment_code")
     codes = {
         "NU": "numerario",
@@ -134,9 +137,20 @@ def daily_enterprise(db, session):
     return company.api_enterprise if company else None
 
 
-def real_receipts(db, store_id, selected_day, enterprise):
+def real_receipts(db, store_id, selected_day, enterprise, timezone_name="Europe/Lisbon"):
     if not enterprise:
         return
+    mapping_key = (enterprise, db.get_transaction())
+    cached = db.info.setdefault("receipt_method_maps", {})
+    if mapping_key not in cached:
+        mapped, names = {}, {}
+        for remote, native in db.execute(select(WintouchPaymentMethod, LocalPaymentMethod).outerjoin(LocalPaymentMethod, LocalPaymentMethod.id == WintouchPaymentMethod.local_payment).where(WintouchPaymentMethod.enterprise_id == enterprise, WintouchPaymentMethod.local_payment.is_not(None))):
+            target = "numerario" if native and json.loads(native.settings or "{}").get("cash") else remote.local_payment
+            label = native.name if native else LABELS.get(target, remote.name)
+            mapped[remote.external_id] = target, label
+            names.setdefault(remote.name.strip().casefold(), set()).add((target, label))
+        cached[mapping_key] = mapped, {name: next(iter(values)) for name, values in names.items() if len(values) == 1}
+    mapped, names = cached[mapping_key]
     # Use the payment date, which can differ from the invoice date.
     for record in db.scalars(
         select(WintouchSaleRecord).where(
@@ -150,7 +164,10 @@ def real_receipts(db, store_id, selected_day, enterprise):
         if not is_real_cash_movement(data):
             continue
         data["_record_id"] = record.id
-        if day(data["occurred_at"]) == selected_day:
+        chosen = mapped.get(data.get("payment_method_id")) or names.get(str(data.get("payment", "")).strip().casefold())
+        if chosen:
+            data["_local_payment_key"], data["_local_payment_name"] = chosen
+        if day(data["occurred_at"], timezone_name) == selected_day:
             yield data
 
 
@@ -203,6 +220,7 @@ def summary(db, session, register_only=False, methods=None):
 
     register = db.get(Register, session.register_id)
     selected_day = session.sheet_day or day(session.opened_at)
+    timezone_name = json.loads(register.settings or "{}").get("timezone", "Europe/Lisbon")
     query = select(Movement).where(
         (Movement.origin == "deposito_modulo")
         | (Movement.reversed_by.is_(None) & Movement.reversal_of.is_(None)),
@@ -212,9 +230,9 @@ def summary(db, session, register_only=False, methods=None):
         query = query.where(Movement.session_id == session.id)
     else:
         selected_date = datetime.fromisoformat(selected_day).date()
-        start = datetime.combine(selected_date, time.min, tzinfo=ZoneInfo("Europe/Lisbon"))
+        start = datetime.combine(selected_date, time.min, tzinfo=ZoneInfo(timezone_name))
         end = datetime.combine(
-            selected_date + timedelta(days=1), time.min, tzinfo=ZoneInfo("Europe/Lisbon")
+            selected_date + timedelta(days=1), time.min, tzinfo=ZoneInfo(timezone_name)
         )
         query = (
             query.join(CashSession)
@@ -263,7 +281,7 @@ def summary(db, session, register_only=False, methods=None):
     enterprise = (
         daily_enterprise(db, session) if not session.closed_at else session.wintouch_enterprise
     )
-    for data in real_receipts(db, register.store_id, selected_day, enterprise):
+    for data in real_receipts(db, register.store_id, selected_day, enterprise, timezone_name):
         from .opening_fund import included_as_opening
 
         if included_as_opening(session, data):
@@ -271,7 +289,7 @@ def summary(db, session, register_only=False, methods=None):
         if register_only and not belongs_to_register(db, session, register, data):
             continue
         key, name = payment_key(data)
-        if register_only and str(data.get("payment", "")).casefold().replace(" ", "") == "mbway":
+        if register_only and not data.get("_local_payment_key") and str(data.get("payment", "")).casefold().replace(" ", "") == "mbway":
             key, name = "mbway", "MB WAY"
         add(key, name, data["amount_cents"], data["direction"], "wintouch")
     for receipt in db.scalars(
@@ -294,7 +312,7 @@ def summary(db, session, register_only=False, methods=None):
     return list(rows.values())
 
 
-def validate_count(data, rows, parse_money, closing=False):
+def validate_count(data, rows, parse_money, closing=False, count_required=True, require_reason=True):
     if any(
         not k.isdigit() or int(k) not in DENOMINATIONS or not 0 <= v <= 100000
         for k, v in data.counts.items()
@@ -313,13 +331,14 @@ def validate_count(data, rows, parse_money, closing=False):
         )
     if data.cash_total is not None:
         values["numerario"] = parse_money(data.cash_total, True)
-    elif data.counts or closing:
+    elif data.counts or closing and count_required:
         values["numerario"] = sum(int(k) * v for k, v in data.counts.items())
     # Keep the legacy close API (cash only), but check every supplied payment count.
     if (
         closing
         and any(values[key] != expected[key] for key in values)
         and len(data.reason.strip()) < 5
+        and require_reason
     ):
         raise HTTPException(422, "Justifique as diferenças antes de fechar a folha de caixa.")
     return {

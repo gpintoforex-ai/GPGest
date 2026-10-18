@@ -1,3 +1,4 @@
+import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useState, useRef, useId } from "react";
 import { api, Field, Form } from "./App";
 
@@ -54,12 +55,12 @@ export default function WintouchSettlementForm({
   }, [recordId]);
   const series = options?.series.filter((r: Row) => r.type_id === type) || [];
   return (
-    <dialog
+    <AppDialog
       ref={dialog}
       className="wintouch-settlement-dialog"
       aria-labelledby={titleId}
-      onCancel={(event) => {
-        event.preventDefault();
+      onRequestClose={() => {
+
         onCancel();
       }}
     >
@@ -72,9 +73,9 @@ export default function WintouchSettlementForm({
         }).format(row.remaining_cents / 100)}
       </p>
       {error && (
-        <p className="error" role="alert">
+        <Notice className="error" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
       {row.proposed_bank && <p>Banco previsto: <b>{row.proposed_bank}</b>. Confirme que o meio de pagamento escolhido utiliza esta conta na configuração ERP.</p>}
       {!options && !error && <p>A consultar opções Wintouch…</p>}
@@ -178,9 +179,9 @@ export default function WintouchSettlementForm({
           </label>
         </Form>
       )}
-      <button type="button" onClick={onCancel}>
+      <ActionButton type="button" onClick={onCancel}>
         Cancelar
-      </button>
-    </dialog>
+      </ActionButton>
+    </AppDialog>
   );
 }

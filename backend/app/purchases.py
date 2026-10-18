@@ -117,19 +117,23 @@ def register_routes(app, current, authorize, scope, record, serial, cents):
         return Response(content.encode("utf-8-sig"), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=modelo-compras.csv"})
 
     @app.post("/api/purchases/import/{store_id}")
-    async def import_file(store_id: str, confirm: bool = False, file: UploadFile = File(...), user=Depends(current), db: Session = Depends(db_session)):
+    def import_file(store_id: str, confirm: bool = False, file: UploadFile = File(...), user=Depends(current), db: Session = Depends(db_session)):
         from .purchase_import import parse_purchases
         authorize(user, db, store_id, ["administrador", "gestor"])
         if not db.get(Store, store_id):
             raise HTTPException(404, "Loja inexistente.")
-        raw = await file.read(5_000_001)
+        # Parsing and this SQLAlchemy session are synchronous. Run the whole
+        # operation in FastAPI's worker pool, keeping the API event loop free.
+        raw = file.file.read(5_000_001)
         if len(raw) > 5_000_000:
             raise HTTPException(413, "Limite de 5 MB por ficheiro.")
         try:
             rows = parse_purchases(raw, file.filename or "")
         except (ValueError, UnicodeError) as exc:
             raise HTTPException(422, str(exc)) from None
-        db.scalar(select(Store).order_by(Store.id).limit(1).with_for_update())
+        if confirm:
+            # A preview never writes and must not queue behind a saving import.
+            db.scalar(select(Store).order_by(Store.id).limit(1).with_for_update())
         existing = {identity(r.supplier_nif, r.document_type, r.document): r for r in db.scalars(select(Purchase))}
         fresh = {}
         enrich = []

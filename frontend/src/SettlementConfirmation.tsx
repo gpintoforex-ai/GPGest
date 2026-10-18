@@ -1,3 +1,4 @@
+import { ActionButton, AppDialog } from "./components/InteractionUI";
 import { useEffect, useId, useRef } from "react";
 import { CheckCircle } from "lucide-react";
 import "./RecordList.css";
@@ -22,22 +23,22 @@ export default function SettlementConfirmation({
     };
   }, []);
   return (
-    <dialog
+    <AppDialog
       ref={dialog}
       className="settlement-confirmation"
       aria-labelledby={titleId}
       aria-describedby={messageId}
-      onCancel={(event) => {
-        event.preventDefault();
+      onRequestClose={() => {
+
         onClose();
       }}
     >
       <CheckCircle size={44} aria-hidden="true" />
       <h2 id={titleId}>{title}</h2>
       <p id={messageId}>{message}</p>
-      <button type="button" className="primary" autoFocus onClick={onClose}>
+      <ActionButton type="button" className="primary" autoFocus onClick={onClose}>
         OK
-      </button>
-    </dialog>
+      </ActionButton>
+    </AppDialog>
   );
 }

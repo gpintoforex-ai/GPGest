@@ -1,11 +1,13 @@
 import json
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import httpx
 import pytest
 from app import db as database
+from app import main as main_module
 from app.main import app, attempts
-from app.models import CashSession, WintouchSaleRecord
+from app.models import BusinessEntity, CashSession, Category, Movement, Register, User, WintouchSaleRecord
 from app.platform import attempts as platform_attempts
 from app.platform import hasher
 from app.platform_models import Company, PlatformAdmin, PlatformBase
@@ -799,6 +801,73 @@ def test_entities_create_edit_and_company_isolation(platform):
     assert c.post("/api/entities", json=data).status_code == 401
 
 
+def test_entity_vies_lookup_and_address_persistence(platform, monkeypatch):
+    c, _ = platform
+    company = create(c, "entities-vies")
+    enter(c, company["slug"])
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "countryCode": "PT",
+                "vatNumber": "501234567",
+                "valid": True,
+                "name": "Empresa Exemplo, Lda.",
+                "address": "Rua da Empresa, 10\n1000-001 Lisboa",
+            },
+        )
+
+    real_client = httpx.Client
+
+    def mock_client(*args, **kwargs):
+        return real_client(transport=httpx.MockTransport(handle), **kwargs)
+
+    monkeypatch.setattr(main_module, "HttpxClient", mock_client)
+    response = c.get("/api/entities/lookup", params={"tax_number": "PT 501 234 567"})
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "is_valid": True,
+        "name": "Empresa Exemplo, Lda.",
+        "address": "Rua da Empresa, 10",
+        "locality": "Lisboa",
+        "postal_code": "1000-001",
+    }
+    assert requests[0].method == "POST"
+    assert requests[0].url.path.endswith("/rest-api/check-vat-number")
+    assert requests[0].read() == b'{"countryCode":"PT","vatNumber":"501234567"}'
+
+    saved = c.post(
+        "/api/entities",
+        json={
+            "name": response.json()["name"],
+            "address": response.json()["address"],
+            "locality": response.json()["locality"],
+            "postal_code": response.json()["postal_code"],
+            "tax_number": "501234567",
+            "email": "",
+            "phone": "",
+            "is_customer": True,
+            "is_supplier": False,
+            "active": True,
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    entity = saved.json()
+    assert entity["address"] == "Rua da Empresa, 10"
+    assert entity["locality"] == "Lisboa"
+    assert entity["postal_code"] == "1000-001"
+    assert entity["email"] == entity["phone"] == ""
+    listed = c.get("/api/entities").json()
+    assert listed[0]["address"] == entity["address"]
+    assert listed[0]["locality"] == entity["locality"]
+    assert listed[0]["postal_code"] == entity["postal_code"]
+
+    assert c.get("/api/entities/lookup", params={"tax_number": "invalid"}).status_code == 422
+
+
 def test_wintouch_entity_edits_are_local_and_survive_source_updates(platform):
     from app.models import WintouchEntity
 
@@ -881,6 +950,74 @@ def test_entity_removal_hides_and_preserves_record(platform):
         assert tenant.get(BusinessEntity, entity["id"].split(":")[1]).removed
     c.post("/api/auth/logout", json={})
     assert c.post(url, json={}).status_code == 401
+
+
+@pytest.mark.parametrize("history_source", ["movement", "cash_session"])
+def test_entity_with_movements_is_deactivated_instead_of_removed(platform, history_source):
+    c, factory = platform
+    company = create(c, "entity-history-" + history_source.replace("_", "-"))
+    enter(c, company["slug"])
+    entity = c.post(
+        "/api/entities", json={"name": "Supplier with history", "is_customer": True, "is_supplier": True}
+    ).json()
+    with factory() as core:
+        schema = core.get(Company, company["id"]).schema_name
+    with database.SessionLocal(
+        bind=database.engine.execution_options(schema_translate_map={None: schema})
+    ) as tenant:
+        user = tenant.scalar(select(User))
+        if history_source == "movement":
+            category = Category(name="Historical expense")
+            tenant.add(category)
+            tenant.flush()
+            tenant.add(
+                Movement(
+                    user_id=user.id,
+                    category_id=category.id,
+                    kind="despesa",
+                    payment="numerario",
+                    amount_cents=100,
+                    direction=-1,
+                    occurred_at=datetime.now(timezone.utc),
+                    entity=entity["name"],
+                    request_key=str(uuid4()),
+                )
+            )
+        else:
+            register = tenant.scalar(select(Register))
+            tenant.add(
+                CashSession(
+                    register_id=register.id,
+                    operator_id=user.id,
+                    opening_cents=0,
+                    opened_at=datetime.now(timezone.utc),
+                    closed_at=datetime.now(timezone.utc),
+                    count_data=json.dumps(
+                        {
+                            "debit_supplier": {
+                                "allocations": [{"id": entity["id"], "name": entity["name"]}]
+                            }
+                        }
+                    ),
+                )
+            )
+        tenant.commit()
+
+    listed = c.get("/api/entities").json()
+    assert next(item for item in listed if item["id"] == entity["id"])["has_movements"] is True
+    response = c.post("/api/entities/" + entity["id"] + "/remove", json={})
+    assert response.status_code == 200, response.text
+    assert response.json()["action"] == "deactivated"
+    retained = next(item for item in c.get("/api/entities").json() if item["id"] == entity["id"])
+    assert retained["active"] is False
+    assert retained["has_movements"] is True
+    with database.SessionLocal(
+        bind=database.engine.execution_options(schema_translate_map={None: schema})
+    ) as tenant:
+        record = tenant.get(BusinessEntity, entity["id"].split(":")[1])
+        assert record.removed is False
+        assert record.active is False
+    assert "entidade_inativada" in c.get("/api/audit").text
 
 
 def test_attachment_settings_are_company_scoped_and_validate_folder(platform):

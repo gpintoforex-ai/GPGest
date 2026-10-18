@@ -3,8 +3,8 @@ import zipfile
 from xml.sax.saxutils import escape
 
 import pytest
-from app.purchase_import import parse_purchases
 from app.models import Register
+from app.purchase_import import parse_purchases
 
 
 def csv_data(amount="123,00"):
@@ -45,6 +45,40 @@ def test_csv_types_encodings_and_invalid_lines():
         parse_purchases(invalid, "list.csv")
     with pytest.raises(ValueError, match="colunas"):
         parse_purchases(b'Foo;Bar\n1;2', "list.csv")
+
+
+def test_import_does_not_block_other_api_requests(setup, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from app import purchase_import
+
+    client, ids, factory = setup
+    with factory() as db:
+        store = db.get(Register, ids["registers"][0]).store_id
+    entered, release = Event(), Event()
+    original = purchase_import.parse_purchases
+
+    def slow_parse(*args):
+        entered.set()
+        assert release.wait(5), "O teste não libertou a importação."
+        return original(*args)
+
+    monkeypatch.setattr(purchase_import, "parse_purchases", slow_parse)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        importing = workers.submit(
+            client.post, f"/api/purchases/import/{store}?confirm=true",
+            files={"file": ("compras.csv", csv_data())},
+        )
+        try:
+            assert entered.wait(3)
+            health = workers.submit(client.get, "/api/health")
+            assert health.result(timeout=2).status_code == 200
+        finally:
+            release.set()
+        result = importing.result(timeout=5)
+        assert result.status_code == 200, result.text
+        assert result.json()["new_count"] == 1
 
 
 def test_actual_efatura_export_columns():

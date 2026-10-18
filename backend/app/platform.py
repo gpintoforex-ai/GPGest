@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pwdlib import PasswordHash
 from pydantic import Field, field_validator
 from sqlalchemy import delete, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from .db import engine, platform_db
@@ -255,6 +256,22 @@ def reset_company_data(
     admin=Depends(require_platform),
     db: Session = Depends(platform_db),
 ):
+    return reset_data(company_id, data, admin, db, movements_only=False)
+
+
+@router.post("/companies/{company_id}/reset-movements")
+def reset_company_movements(
+    company_id: str,
+    data: CompanyDataReset,
+    admin=Depends(require_platform),
+    db: Session = Depends(platform_db),
+):
+    return reset_data(company_id, data, admin, db, movements_only=True)
+
+
+def reset_data(company_id, data, admin, db, *, movements_only):
+    from .company_reset import copy_company_data
+
     company = db.scalar(select(Company).where(Company.id == company_id).with_for_update())
     if not company or company.removed_at:
         raise HTTPException(404, "Empresa não encontrada.")
@@ -267,29 +284,32 @@ def reset_company_data(
     connection = db.connection()
     central_schema = db.info.get("platform_schema", "public")
     try:
+        if movements_only:
+            # Wait for current writes before taking the retained-document copy.
+            # No partial copy or company switch survives a failed transaction.
+            connection.execute(text("SET LOCAL lock_timeout = '10s'"))
+            tables = ", ".join(f'"{original}"."{table.name}"' for table in Base.metadata.sorted_tables)
+            try:
+                connection.execute(text(f"LOCK TABLE {tables} IN SHARE MODE"))
+            except DBAPIError as error:
+                if getattr(error.orig, "sqlstate", None) in {"55P03", "40P01"}:
+                    raise HTTPException(409, "Existem operações em curso nesta empresa. Termine-as e volte a tentar a reinicialização.") from None
+                raise
         connection.execute(text(f'CREATE SCHEMA "{replacement}"'))
         connection.execution_options(schema_translate_map={None: replacement})
         Base.metadata.create_all(connection)
-        # Preserve configuration and credentials, but no business records or sessions.
-        for name in ("users", "stores", "store_access", "registers", "categories", "employees", "employee_stores"):
-            columns = ", ".join(
-                '"' + column.name + '"' for column in Base.metadata.tables[name].columns
-            )
-            connection.execute(
-                text(
-                    f'INSERT INTO "{replacement}"."{name}" ({columns}) SELECT {columns} FROM "{original}"."{name}"'
-                )
-            )
+        copy_company_data(connection, original, replacement, movements_only)
     finally:
         connection.execution_options(schema_translate_map={None: central_schema})
     company.schema_name = replacement
     db.add(
         PlatformAudit(
-            admin_id=admin.id, company_id=company.id, action="dados_reinicializados:" + original
+            admin_id=admin.id, company_id=company.id,
+            action=("movimentos_reinicializados:" if movements_only else "dados_reinicializados:") + original
         )
     )
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "scope": "movements" if movements_only else "all"}
 
 
 @router.get("/companies/{company_id}/users")

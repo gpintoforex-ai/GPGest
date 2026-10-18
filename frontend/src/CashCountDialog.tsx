@@ -1,3 +1,5 @@
+import { ActionLink } from "./components/InteractionUI";
+import { ActionButton, AppDialog, ManagedForm } from "./components/InteractionUI";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import NumericKeypad from "./NumericKeypad";
@@ -50,15 +52,13 @@ export default function CashCountDialog({
       : initial.total,
   );
   const [keypad, setKeypad] = useState<number | "total" | null>(null);
+  const initialDraft = useRef(JSON.stringify({ mode, quantities, total }));
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const element = dialog.current!;
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     element.showModal();
     return () => {
       element.close();
-      document.body.style.overflow = overflow;
       previous?.focus();
     };
   }, []);
@@ -138,16 +138,16 @@ export default function CashCountDialog({
     );
   }
   return createPortal(
-    <dialog
+    <AppDialog dirty={initialDraft.current !== JSON.stringify({ mode, quantities, total })}
       ref={dialog}
       className="cash-count-dialog"
       aria-labelledby={titleId}
-      onCancel={(e) => {
-        e.preventDefault();
+      onRequestClose={() => {
+
         onCancel();
       }}
     >
-      <form
+      <ManagedForm
         className="cash-count-form"
         onSubmit={(e) => {
           e.preventDefault();
@@ -159,9 +159,7 @@ export default function CashCountDialog({
             <h2 id={titleId}>Contar numerário</h2>
             <p>Conte o dinheiro físico, incluindo o fundo de maneio.</p>
           </div>
-          <button type="button" aria-label="Fechar contagem" onClick={onCancel}>
-            ×
-          </button>
+
         </header>
         <div className="cash-count-body">
           <div
@@ -169,20 +167,20 @@ export default function CashCountDialog({
             role="group"
             aria-label="Forma de contagem"
           >
-            <button
+            <ActionButton
               type="button"
               aria-pressed={mode === "denominations"}
               onClick={() => setMode("denominations")}
             >
               Notas e moedas
-            </button>
-            <button
+            </ActionButton>
+            <ActionButton
               type="button"
               aria-pressed={mode === "total"}
               onClick={() => setMode("total")}
             >
               Valor total
-            </button>
+            </ActionButton>
           </div>
           {mode === "denominations" && needsBreakdown && (
             <p className="footnote">
@@ -209,13 +207,13 @@ export default function CashCountDialog({
               </div>
               <p className="footnote">
                 Imagens:{" "}
-                <a
+                <ActionLink
                   href="https://www.ecb.europa.eu/euro/banknotes/html/index.pt.html"
                   target="_blank"
                   rel="noreferrer"
                 >
                   Banco Central Europeu
-                </a>
+                </ActionLink>
                 .
               </p>
             </>
@@ -272,15 +270,15 @@ export default function CashCountDialog({
             </div>
           </div>
           <div className="actions">
-            <button type="button" onClick={onCancel}>
+            <ActionButton type="button" onClick={onCancel}>
               Cancelar
-            </button>
-            <button className="primary" disabled={!valid} type="submit">
+            </ActionButton>
+            <ActionButton className="primary" disabled={!valid} type="submit">
               Aplicar contagem
-            </button>
+            </ActionButton>
           </div>
         </footer>
-      </form>
+      </ManagedForm>
       {keypad !== null && (
         <NumericKeypad
           label={
@@ -299,7 +297,7 @@ export default function CashCountDialog({
           }}
         />
       )}
-    </dialog>,
+    </AppDialog>,
     document.body,
   );
 }

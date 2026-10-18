@@ -8,7 +8,7 @@
 .liquidity-selected-total small { display: block; color: var(--color-muted); font-size: 11px; }
 .liquidity-flow-filter { display: flex; flex-wrap: wrap; gap: 18px; border: 0; padding: 0; margin: 0; }
 .liquidity-flow-filter label { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; cursor: pointer; }
-.liquidity-flow-filter input[type="radio"] { width: 16px; height: 16px; min-height: 16px; margin: 0; accent-color: #245fc5; }
+.liquidity-flow-filter input[type="radio"] { width: 16px; height: 16px; min-height: 16px; margin: 0; accent-color: var(--color-primary); }
 .liquidity-filters > * { min-width: 155px; flex: 1; }
 .liquidity-accounts { display: grid; gap: 12px; margin: 16px 0; }
 .liquidity-account-label { display: inline-flex; align-items: center; gap: 8px; }
@@ -24,7 +24,7 @@
 .liquidity-edit-link:hover { background: transparent; color: #12386f; }
 .liquidity-simulation-link,
 .liquidity-simulation-link:hover { color: inherit; font-variant-numeric: tabular-nums; }
-.liquidity-edit-link:focus-visible { outline: 2px solid #245fc5; outline-offset: 4px; border-radius: 3px; }
+.liquidity-edit-link:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 4px; border-radius: 3px; }
 .liquidity-origin-positive { color: var(--color-success); font-weight: 700; }
 .liquidity-origin-negative { color: var(--color-danger); font-weight: 700; }
 .liquidity-origin-missing { color: var(--color-muted); }
@@ -47,7 +47,7 @@
   text-align: center;
 }
 .liquidity-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 20px 0; }
-.liquidity-metrics .liquidity-balance { border-top-color: #245fc5; background: #f5f8ff; }
+.liquidity-metrics .liquidity-balance { border-top-color: var(--color-primary); background: #f5f8ff; }
 .liquidity-metrics .liquidity-balance > strong { color: #174d9d; }
 .liquidity-metrics .metric-success { border-top-color: #186442; background: #f1f9f4; }
 .liquidity-metrics .metric-success > strong { color: #186442; }
@@ -68,6 +68,6 @@
 :is(.liquidity-daily, .liquidity-conditions) > summary { cursor: pointer; padding: 12px 0; font-weight: 700; color: var(--color-nav, #14263f); }
 :is(.liquidity-daily, .liquidity-conditions) > summary span { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--color-muted); }
 :is(.liquidity-daily, .liquidity-conditions)[open] > summary { margin-bottom: 8px; }
-:is(.liquidity-daily, .liquidity-conditions) > summary:focus-visible { outline: 2px solid #245fc5; outline-offset: 4px; border-radius: 4px; }
+:is(.liquidity-daily, .liquidity-conditions) > summary:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 4px; border-radius: 4px; }
 @media (max-width: 800px) { .liquidity-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 480px) { .liquidity-metrics { grid-template-columns: 1fr; } .liquidity-filters > * { min-width: 0; flex-basis: 100%; } .liquidity-dialog { width: calc(100vw - 16px); } }

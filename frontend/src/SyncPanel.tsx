@@ -1,3 +1,4 @@
+import { Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
 import { api, Form } from "./App";
 
@@ -35,12 +36,12 @@ export default function SyncPanel({
       <h3>Importação Wintouch</h3>
       <p>
         Importa o catálogo desta empresa por leitura. Atualiza IDs existentes
-        sem duplicar registos. Os saldos de caixa GPGest permanecem separados.
+        sem duplicar registos. Os saldos de caixa Zela permanecem separados.
       </p>
       {error && (
-        <p role="alert" className="error">
+        <Notice role="alert" className="error">
           {error}
-        </p>
+        </Notice>
       )}
       {notice && <p role="status">{notice}</p>}
       {company.active && company.api_active && company.operating_mode !== "local" ? (

@@ -94,7 +94,7 @@ export default function OpenCashForm({
       </Field>
       <p className="footnote">
         O fundo de maneio é o numerário disponível no início. Os movimentos
-        reais GPGest e os recebimentos Wintouch já importados são calculados
+        reais Zela e os recebimentos Wintouch já importados são calculados
         automaticamente para a folha. Cada loja e dia pode incluir Wintouch numa
         única folha.
       </p>

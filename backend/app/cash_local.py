@@ -17,7 +17,7 @@ from .cash_sheet import (
     summary,
     validate_count,
 )
-from .models import CashSession, LocalPaymentMethod, Movement, Register, now
+from .models import CashSession, CompanySetup, LocalPaymentMethod, Movement, Register, now
 
 BASE_METHODS = {
     "numerario": "Numerário",
@@ -29,6 +29,8 @@ BASE_METHODS = {
 
 
 def method_catalog(db):
+    setup = db.get(CompanySetup, "default")
+    disabled = json.loads(setup.settings or "{}").get("disabled_base_methods", []) if setup else []
     configured = {
         row.id: row
         for row in db.scalars(select(LocalPaymentMethod).order_by(LocalPaymentMethod.name))
@@ -38,9 +40,10 @@ def method_catalog(db):
         {
             "id": key,
             "name": name,
-            "active": key == "numerario" or key not in configured or configured[key].active,
+            "active": key == "numerario" or (configured[key].active if key in configured else key not in disabled),
             "kind": "base" if key in BASE_METHODS else "custom",
             "required": key == "numerario",
+            "cash": key == "numerario" or (json.loads(configured[key].settings or "{}").get("cash", False) if key in configured else False),
         }
         for key, name in names.items()
     ]
@@ -70,6 +73,7 @@ def drawer_rows(db, session):
         # method names and statuses. No current catalogue lookup is needed.
         return stored["summary"]
     catalog = method_catalog(db)
+    catalog = [row for row in catalog if row["id"] == "numerario" or not row["cash"]]
     rows = summary(db, session, register_only=True, methods={r["id"]: r["name"] for r in catalog})
     if session.closed_at:
         return rows
@@ -81,9 +85,10 @@ def receipt_rows(db, session, drawer):
     register = db.get(Register, session.register_id)
     selected = session.sheet_day or day(session.opened_at)
     selected_date = datetime.fromisoformat(selected).date()
-    start = datetime.combine(selected_date, time.min, tzinfo=ZoneInfo("Europe/Lisbon"))
+    timezone_name = json.loads(register.settings or "{}").get("timezone", "Europe/Lisbon")
+    start = datetime.combine(selected_date, time.min, tzinfo=ZoneInfo(timezone_name))
     end = datetime.combine(
-        selected_date + timedelta(days=1), time.min, tzinfo=ZoneInfo("Europe/Lisbon")
+        selected_date + timedelta(days=1), time.min, tzinfo=ZoneInfo(timezone_name)
     )
     rows = {
         row["key"]: {
@@ -131,14 +136,14 @@ def receipt_rows(db, session, drawer):
             movement.direction * movement.amount_cents,
             "manual",
         )
-    for data in real_receipts(db, register.store_id, selected, daily_enterprise(db, session)):
+    for data in real_receipts(db, register.store_id, selected, daily_enterprise(db, session), timezone_name):
         if data.get("source_kind") in {
             "cash_movement",
             "opening_balance",
         } or not belongs_to_register(db, session, register, data):
             continue
         key, name = payment_key(data)
-        if str(data.get("payment", "")).casefold().replace(" ", "") == "mbway":
+        if not data.get("_local_payment_key") and str(data.get("payment", "")).casefold().replace(" ", "") == "mbway":
             key, name = "mbway", "MB WAY"
         add(key, name, data["direction"] * data["amount_cents"], "erp")
     return list(rows.values())
@@ -160,9 +165,11 @@ def reconciliation(db, session, drawer, counting=None):
         return stored["local_reconciliation"]
     realized = realized_for(session, stored)
     rows = receipt_rows(db, session, drawer)
+    setup = db.get(CompanySetup, "default")
+    manual = json.loads(setup.settings or "{}").get("preferences", {}).get("manual_realized", True) if setup else True
     balances = {row["key"]: row for row in drawer}
     for row in rows:
-        declared = realized.get("values", {}).get(row["key"])
+        declared = realized.get("values", {}).get(row["key"]) if manual else row["registered_cents"]
         balance = balances[row["key"]]
         fund = balance["fund_cents"]
         # Declared debits are the day's total, including recorded non-sale outflows.
@@ -178,7 +185,7 @@ def reconciliation(db, session, drawer, counting=None):
         row.update(
             declared_cents=declared,
             difference_cents=None if declared is None else row["registered_cents"] - declared,
-            declared_source="Manual",
+            declared_source="Manual" if manual else "Movimentos",
             fund_cents=fund,
             other_credits_cents=credits,
             registered_credits_cents=registered_credits,
@@ -318,14 +325,18 @@ def validate(db, session, data, drawer, parse_money, user, complete=False, closi
                 422,
                 "Preencha o realizado de todos os meios de pagamento. Confirme zero nos meios sem vendas/recebimentos.",
             )
-        if "numerario" not in counting["values"]:
+        register = db.get(Register, session.register_id)
+        if "numerario" not in counting["values"] and json.loads(register.settings or "{}").get("count_required", True):
             raise HTTPException(
                 422, "Indique o numerário contado, incluindo zero quando a gaveta estiver vazia."
             )
     if closing:
+        setup = db.get(CompanySetup, "default")
+        require_reason = json.loads(setup.settings or "{}").get("preferences", {}).get("require_reason", True) if setup else True
         if (
             any(row["count_difference_cents"] not in (None, 0) for row in result["rows"])
             and len(data.reason.strip()) < 5
+            and require_reason
         ):
             raise HTTPException(
                 422,
