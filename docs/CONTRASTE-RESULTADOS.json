@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-18",
+  "themes": [
+    "current",
+    "dark"
+  ],
+  "resolutions": [
+    [
+      375,
+      812
+    ],
+    [
+      430,
+      932
+    ],
+    [
+      768,
+      1024
+    ],
+    [
+      1366,
+      768
+    ],
+    [
+      1920,
+      1080
+    ]
+  ],
+  "screen_states": 120,
+  "text_checks": 10240,
+  "text_failures": 0,
+  "minimum_text_ratio": 4.65,
+  "nontext_checks": 1694,
+  "nontext_failures": 0,
+  "minimum_nontext_ratio": 3.13,
+  "operational_text_below_12px": 0,
+  "overflow_screens": 0,
+  "states": [
+    "normal",
+    "hover",
+    "focus",
+    "selected",
+    "disabled (excluded from minimum contrast)"
+  ],
+  "test_data": "Mock API responses only; no real database or ERP writes",
+  "limitations": [
+    "DOM contrast uses solid computed background and alpha compositing; gradients/images also checked visually.",
+    "Not an exhaustive WCAG certification or test of every real record and modal."
+  ]
+}

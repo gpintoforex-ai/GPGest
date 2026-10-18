@@ -1,0 +1,394 @@
+.ui-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  vertical-align: middle;
+  max-width: 100%;
+  white-space: normal;
+}
+.ui-action > svg {
+  flex: none;
+}
+.ui-action-danger:not(.primary) {
+  color: var(--color-danger, #ba2739);
+  border-color: var(--color-danger, #ba2739);
+  background: var(--color-danger-bg, #fff0f1);
+}
+.ui-action-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger-bg, #fff0f1) 78%, var(--color-danger, #ba2739));
+}
+.ui-warning-action {
+  background: var(--color-warning-bg, #fff5e5);
+  border-color: var(--color-warning, #805400);
+  color: var(--color-warning, #805400);
+}
+.ui-close {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 8px;
+  border: 1px solid var(--color-border, #d4dfee);
+  border-radius: 9px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #18344f);
+  flex: none;
+  cursor: pointer;
+}
+.ui-close:hover:not(:disabled) {
+  background: var(--color-subtle, #eef3fa);
+  color: var(--color-primary, var(--color-primary));
+}
+.ui-close:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+:where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--color-primary, var(--color-primary));
+  outline-offset: 3px;
+}
+.ui-dialog {
+  box-sizing: border-box;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  color: var(--color-text, #18344f);
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #d4dfee);
+  border-radius: 14px;
+  padding: 24px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  box-shadow: 0 24px 80px #102b4b44;
+}
+.ui-dialog::backdrop {
+  background: #102b4b88;
+}
+.ui-dialog-dismissbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  height: 0;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+  flex: none;
+}
+.ui-dialog-dismissbar > .ui-close {
+  pointer-events: auto;
+  box-shadow: 0 1px 4px #102b4b14;
+}
+.ui-dialog > .panel-title,
+.ui-dialog > h2,
+.ui-dialog > .numeric-keypad-title,
+.ui-dialog > .setup-dialog-header,
+.ui-dialog > .cash-count-header {
+  padding-right: 52px;
+  min-height: 40px;
+}
+.ui-dialog .panel-title:has(> h2),
+.ui-dialog .panel-title:has(> h3) {
+  gap: 16px;
+}
+.ui-dialog.company-config-dialog .platform-editor > .panel-title > h3 {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ui-dialog h2,
+.ui-dialog h3 {
+  overflow-wrap: anywhere;
+}
+.ui-dialog [aria-busy="true"] {
+  cursor: progress;
+}
+.ui-dialog input,
+.ui-dialog select,
+.ui-dialog textarea {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.ui-dialog input[type="file"] {
+  width: 100%;
+}
+.ui-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+.ui-dialog .actions {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ui-confirmation {
+  width: 510px;
+}
+.ui-confirmation h2 {
+  font-size: 1.25rem;
+  margin: 0 0 18px;
+}
+.ui-confirmation-message {
+  line-height: 1.65;
+}
+.ui-confirmation-message p:first-child {
+  margin-top: 0;
+}
+.ui-dialog.setup-dialog {
+  padding: 0;
+  overflow: hidden;
+}
+.setup-dialog > .ui-dialog-dismissbar {
+  top: 16px;
+  margin: 0 16px;
+}
+.ui-dialog.setup-dialog > .setup-dialog-header {
+  padding-right: 72px;
+}
+.ui-dialog.company-config-dialog {
+  padding: 24px;
+}
+.ui-dialog.company-config-dialog > .platform-editor {
+  padding: 0;
+  box-shadow: none;
+  border: 0;
+}
+.ui-dialog.company-config-dialog > .platform-editor > .panel-title {
+  padding-right: 76px;
+  min-height: 64px;
+}
+.ui-dialog.settlement-confirmation {
+  padding-top: 30px;
+}
+.ui-dialog.settlement-confirmation > .ui-dialog-dismissbar {
+  align-self: stretch;
+}
+.ui-dialog.settlement-confirmation > h2 {
+  padding-right: 0;
+}
+.ui-saving {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-muted, #5c738a);
+  font-size: 0.88rem;
+}
+.ui-saving svg {
+  animation: ui-spin 1s linear infinite;
+}
+@keyframes ui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-saving svg {
+    animation: none;
+  }
+}
+.ui-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 16px;
+  border: 1px solid var(--color-border, #d4dfee);
+  border-radius: 10px;
+  line-height: 1.55;
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.ui-notice > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.ui-notice > div {
+  flex: 1;
+  min-width: 0;
+}
+.ui-notice .ui-close {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 5px;
+  background: transparent;
+  border-color: transparent;
+}
+.ui-notice-success {
+  background: var(--color-success-bg, #eaf6ee);
+  color: var(--color-success, #176b45);
+  border-color: var(--color-success, #176b45);
+}
+.ui-notice-error {
+  background: var(--color-danger-bg, #fff0f1);
+  color: var(--color-danger, #ad2935);
+  border-color: var(--color-danger, #ad2935);
+}
+.ui-notice-warning {
+  background: var(--color-warning-bg, #fff5e5);
+  color: var(--color-warning, #805400);
+  border-color: var(--color-warning, #805400);
+}
+.ui-notice-info {
+  background: var(--color-info-bg, #eef4ff);
+  color: var(--color-info, #24559a);
+  border-color: var(--color-info, #24559a);
+}
+.ui-notifications {
+  position: fixed;
+  z-index: 900;
+  top: 76px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(430px, calc(100vw - 24px));
+  pointer-events: none;
+  max-height: calc(100dvh - 100px);
+  overflow: auto;
+}
+.ui-notifications > .ui-notice {
+  margin: 0;
+  pointer-events: auto;
+  box-shadow: 0 8px 30px #18344f20;
+}
+.ui-field-error {
+  display: block;
+  color: var(--color-danger, #ab2036);
+  font-size: 0.82rem;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+[aria-invalid="true"] {
+  border-color: var(--color-danger, #ab2036) !important;
+  box-shadow: 0 0 0 1px var(--color-danger, #ab2036);
+}
+.invoice-side-preview > .panel-title {
+  position: sticky;
+  top: 0;
+  background: var(--color-surface, #fff);
+  padding: 8px 0;
+  z-index: 2;
+}
+@media (max-width: 600px) {
+  .ui-dialog {
+    padding: 18px;
+    width: calc(100vw - 20px);
+    max-width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+  .ui-dialog-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .ui-dialog-actions > button {
+    width: 100%;
+    min-height: 44px;
+  }
+  .ui-dialog .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ui-notifications {
+    top: 12px;
+    right: 12px;
+  }
+  .ui-dialog.setup-dialog {
+    max-width: 100vw;
+    width: 100vw;
+    max-height: 100dvh;
+  }
+  .ui-close {
+    width: 40px;
+    height: 40px;
+  }
+  .ui-dialog .panel-title {
+    align-items: flex-start;
+  }
+  .ui-dialog.company-config-dialog {
+    padding: 18px;
+  }
+}
+
+.ui-dialog .ui-close {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+}
+.ui-action-warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+}
+.ui-action-success {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.ui-form-fields {
+  display: contents;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.ui-popover-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.ui-mobile-menu-close {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 3;
+}
+.ui-dialog .ui-dialog-actions > .danger {
+  order: 1;
+}
+.ui-notice p {
+  color: inherit;
+}
+
+.ui-action-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+}
+.ui-action-link > svg {
+  flex: none;
+}
+.ui-dialog .ui-form-fields > .primary:last-child,
+.ui-dialog .ui-form-fields > .danger:last-child {
+  justify-self: end;
+  margin-left: auto;
+}
+.setup-dialog > .ui-dialog-dismissbar {
+  top: 24px;
+  margin: 0 24px;
+}
+@media (max-width: 600px) {
+  .setup-dialog > .ui-dialog-dismissbar {
+    top: 18px;
+    margin: 0 18px;
+  }
+}
+
+.ui-dialog
+  :is(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+.field > label {
+  color: var(--color-muted);
+}
