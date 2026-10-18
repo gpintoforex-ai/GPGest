@@ -13,6 +13,10 @@ def customer(code="C1", nif="500000002", name="Cliente fictício"):
     return f"<Customer><CustomerID>{code}</CustomerID><AccountID>Desconhecido</AccountID><CustomerTaxID>{nif}</CustomerTaxID><CompanyName>{escape(name)}</CompanyName><BillingAddress>{address()}</BillingAddress><SelfBillingIndicator>0</SelfBillingIndicator></Customer>"
 
 
+def supplier(code="F1", nif="500000003", name="Fornecedor fictício"):
+    return f"<Supplier><SupplierID>{code}</SupplierID><AccountID>Desconhecido</AccountID><SupplierTaxID>{nif}</SupplierTaxID><CompanyName>{escape(name)}</CompanyName><BillingAddress>{address()}</BillingAddress><SelfBillingIndicator>0</SelfBillingIndicator></Supplier>"
+
+
 def payment(value="12.30", code="NU", day="2026-01-10", tag="Payment"):
     return (
         f"<{tag}>"

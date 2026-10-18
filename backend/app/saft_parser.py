@@ -80,9 +80,12 @@ def validate(path):
         # File-like input + allow=none forbids instance location hints/resources.
         # Complete the validator iteration before closing its input: xmlschema
         # lazy identity counters own nested generators which need to reach EOF.
+        # lazy=1, not 2: with lazy=2 (xmlschema 4.3.2) the key counters lose MasterFiles
+        # entries once ~100 customers are pruned, rejecting valid files with a false
+        # "not found for CustomerIDConstraint"; lazy=3 crashes with an internal KeyError.
         first_error = None
         with open(path, "rb") as stream:
-            resource = xmlschema.XMLResource(stream, lazy=2, defuse="always", allow="none")
+            resource = xmlschema.XMLResource(stream, lazy=1, defuse="always", allow="none")
             if resource.root.tag != NS + "AuditFile":
                 raise SaftError(
                     "Namespace ou versão não suportados. Selecione SAF-T (PT) 1.04_01 completo."

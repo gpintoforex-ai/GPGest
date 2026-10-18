@@ -10,7 +10,7 @@ from app.models import (
     WintouchSaleRecord,
 )
 from app.saft_parser import extract, validate
-from saft_fixtures import customer, invoice, payment, receipt, saft
+from saft_fixtures import customer, invoice, payment, receipt, saft, supplier
 from sqlalchemy import func, select
 
 
@@ -75,6 +75,26 @@ def test_official_xsd_and_incremental_extraction(tmp_path):
         for kind, value in records
         if kind == "record"
     )
+
+
+def test_xsd_accepts_reference_to_last_customer_before_suppliers(tmp_path):
+    # Exportação Eticadata: «CONSUMIDOR FINAL» é o último cliente, seguido de fornecedores.
+    # Com lazy=2 e ~100 clientes, o xmlschema perdia esse cliente nas chaves e rejeitava
+    # o ficheiro válido.
+    path = tmp_path / "last-customer.xml"
+    customers = (
+        customer()
+        + "".join(customer(f"C{i}", f"5{i:08d}") for i in range(2, 102))
+        + customer("CONSUMIDOR FINAL", "999999990", "CONSUMIDOR FINAL")
+        + supplier()
+    )
+    path.write_bytes(
+        saft(
+            [invoice(), invoice(number=2, customer_id="CONSUMIDOR FINAL")],
+            customers=customers,
+        )
+    )
+    validate(path)
 
 
 def test_initial_repeat_overlapping_period_and_no_ledger_changes(saft_case):
