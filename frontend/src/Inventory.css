@@ -1,0 +1,121 @@
+.stock-module .stock-actions,
+.stock-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.stock-tabs {
+  margin: 1rem 0;
+}
+.stock-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+.stock-summary > div {
+  border-left: 3px solid var(--color-accent-ink);
+  padding: 0.5rem 0.85rem;
+}
+.stock-summary span,
+.stock-summary strong {
+  display: block;
+}
+.stock-summary strong {
+  font-size: 1.25rem;
+  margin-top: 0.4rem;
+  font-variant-numeric: tabular-nums;
+}
+.stock-module td small {
+  display: block;
+  max-width: 32rem;
+  margin-top: 0.25rem;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+.stock-module td .stock-actions {
+  min-width: 95px;
+}
+.stock-module .stock-check {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  margin: 1rem 0;
+}
+.stock-module .stock-check input {
+  width: auto;
+  flex: 0 0 auto;
+  margin-top: 0.2rem;
+}
+.stock-dialog {
+  width: min(1080px, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+}
+.stock-dialog .stock-check {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0.8rem 0;
+}
+.stock-dialog .stock-check input {
+  width: auto;
+}
+.stock-dialog textarea {
+  min-height: 80px;
+}
+.stock-dialog td input {
+  min-width: 110px;
+}
+.stock-rank {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  border-top: 1px solid var(--color-border);
+  margin-top: 1rem;
+}
+.stock-photo {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  float: left;
+  margin-right: 0.6rem;
+}
+.stock-warning {
+  color: var(--color-warning);
+}
+.stock-module .stock-filters {
+  align-items: end;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+.stock-module dl dd {
+  margin: 0.25rem 0 1rem;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 640px) {
+  .stock-rank {
+    grid-template-columns: 1fr;
+  }
+  .stock-tabs {
+    gap: 0.35rem;
+  }
+  .stock-tabs button {
+    padding: 0.55rem 0.65rem;
+  }
+  .stock-module .page-intro {
+    display: block;
+  }
+  .stock-module .page-intro .stock-actions {
+    margin-top: 0.8rem;
+  }
+  .stock-dialog {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+  }
+  .stock-module .stock-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+  .stock-module .numeric {
+    white-space: nowrap;
+  }
+}
