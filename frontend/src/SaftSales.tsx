@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FileUp, Eye, RefreshCw, Check, Save } from "lucide-react";
-import { api, Field } from "./App";
+import { api } from "./lib/api";
+import { Field } from "./components/Form";
 import { ActionButton, AppDialog, ManagedForm, Notice, markDialogSaved } from "./components/InteractionUI";
 import { StatusBadge } from "./components/BusinessUI";
 
@@ -60,7 +61,7 @@ export default function SaftSales({ stores, store, admin, local }: { stores: Row
       <Field label="Estabelecimento de destino"><select required value={target} onChange={e => setTarget(e.target.value)}>{stores.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>
       <Field label="Ficheiro XML SAF-T (PT)"><input type="file" accept=".xml,application/xml,text/xml" required onChange={e => setFile(e.target.files?.[0] || null)}/></Field>
     </div><p>Versão suportada: {history?.versions.join(", ") || "1.04_01"}. Limite: {Math.round((history?.max_bytes || 100000000) / 1000000)} MB. Validação XSD oficial no servidor; processamento em segundo plano.</p>
-      <p className="footnote">Confirme o estabelecimento: o ficheiro não identifica necessariamente a loja ou gaveta da Zela. Nenhum documento é aplicado antes da confirmação. Transportes e encomendas não são faturação. Os artigos importados não alteram stock.</p>
+      <p className="footnote">Confirme o estabelecimento: o ficheiro não identifica necessariamente a loja ou gaveta da IAZELA. Nenhum documento é aplicado antes da confirmação. Transportes e encomendas não são faturação. Os artigos importados não alteram stock.</p>
       <ActionButton className="primary" disabled={busy || !file || (!!history && file.size > history.max_bytes)}><FileUp size={17}/>{busy ? "A carregar…" : "Validar e pré-visualizar"}</ActionButton>
       {!!file && !!history && file.size > history.max_bytes && <Notice tone="error">O ficheiro excede o limite. Exporte um período menor.</Notice>}
     </fieldset></ManagedForm></section>
@@ -97,7 +98,7 @@ function ImportDialog({ initial, onClose, onUpdated }: { initial: Row; onClose: 
     {!!Object.keys(counts).length && <><p><strong>{counts.new || 0}</strong> novos · <strong>{counts.existing || 0}</strong> já existentes · <strong>{counts.conflict || 0}</strong> conflitos · <strong>{counts.cancelled || 0}</strong> anulados</p>
       <p>Faturação após notas de crédito: <strong>{money(totals.gross_cents)}</strong> · Base: {money(totals.net_cents)} · Impostos: {money(totals.tax_cents)} · Notas de crédito: {money(totals.credit_notes_cents)}</p>
       <p>Clientes: {counts.customer || 0} · Artigos / serviços: {counts.product || 0} · Sem pagamentos identificados: {counts.without_payments || 0}</p>
-      <p>Códigos de pagamento presentes: {Object.keys(row.summary.payment_codes || {}).join(", ") || "Nenhum — informação de recebimento indisponível"}. As associações aos meios da Zela são manuais.</p>
+      <p>Códigos de pagamento presentes: {Object.keys(row.summary.payment_codes || {}).join(", ") || "Nenhum — informação de recebimento indisponível"}. As associações aos meios da IAZELA são manuais.</p>
       <p>{Object.entries(row.summary.types || {}).map(([key, value]) => { const [section, type] = key.split(":"); return `${section === "invoice" ? "Vendas" : "Recibos"} ${type}: ${value}`; }).join(" · ")}</p>
       <details><summary>Avisos e limitações da informação importada</summary>{row.summary.warnings?.map((message: string) => <p key={message}>{message}</p>)}</details>
     </>}

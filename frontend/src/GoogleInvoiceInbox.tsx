@@ -1,7 +1,8 @@
 import { ActionLink } from "./components/InteractionUI";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
-import { api, Field, Form } from "./App";
+import { api } from "./lib/api";
+import { Field, Form } from "./components/Form";
 
 type Row = Record<string, any>;
 const base = "/integrations/attachments/google";

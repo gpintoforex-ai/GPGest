@@ -4,7 +4,8 @@ import ThemeSettings from "./ThemeSettings";
 import { ActionButton, AppDialog, Notice, confirmFormExit } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
 import { ShieldCheck, Building2, Plus, LogOut, KeyRound } from "lucide-react";
-import { api, Form, Field } from "./App";
+import { api } from "./lib/api";
+import { Field, Form } from "./components/Form";
 type Company = {
   id: string;
   name: string;
@@ -42,7 +43,7 @@ export default function Platform() {
     setAudit(await api("/platform/audit"));
   }
   useEffect(() => {
-    document.title = "Plataforma · Zela";
+    document.title = "Plataforma · IAZELA";
   }, []);
   useEffect(() => {
     if (!selected || !companyDialog.current) return;
@@ -136,7 +137,7 @@ export default function Platform() {
       <header>
         <Brand /><ThemeSettings compact />
         <div>
-          <span className="eyebrow">ZELA · ACESSO RESERVADO</span>
+          <span className="eyebrow">IAZELA · ACESSO RESERVADO</span>
           <h2>Gestão da plataforma</h2>
         </div>
         <ActionButton

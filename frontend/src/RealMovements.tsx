@@ -1,6 +1,6 @@
 import { ActionButton, Notice } from "./components/InteractionUI";
 import { useEffect, useState, type ReactNode } from "react";
-import { api } from "./App";
+import { api } from "./lib/api";
 import RecordList, { calendarDay, paymentGroup } from "./RecordList";
 
 type Row = Record<string, any>;

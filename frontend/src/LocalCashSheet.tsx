@@ -17,7 +17,8 @@ import {
   Calculator,
   Info,
 } from "lucide-react";
-import { api, Field } from "./App";
+import { api } from "./lib/api";
+import { Field } from "./components/Form";
 import CashCountDialog from "./CashCountDialog";
 import NumericKeypad from "./NumericKeypad";
 import ReadAloud from "./ReadAloud";

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Mail, Save, Plug } from "lucide-react";
-import { api, Field } from "./App";
+import { api } from "./lib/api";
+import { Field } from "./components/Form";
 import { ActionButton, ManagedForm, Notice } from "./components/InteractionUI";
 import { AccountingEmailDialog, EmailHistory } from "./AccountingEmail";
 

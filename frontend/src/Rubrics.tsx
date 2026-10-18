@@ -1,6 +1,7 @@
 import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
-import { api, Field } from "./App";
+import { api } from "./lib/api";
+import { Field } from "./components/Form";
 import RubricBadge, { rubricIcons } from "./components/RubricBadge";
 import { suggestRubricColor } from "./components/rubricColors";
 type Row = Record<string, any>;
@@ -46,14 +47,14 @@ export default function Rubrics({ manager, admin, reload, policy }: { manager: b
       {error && <Notice className="error" role="alert">{error}</Notice>}
       {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
       {["import", "send"].includes(modal) && <><p>{erp ? `ERP configurado: ${erp.name}` : busy ? "A consultar a configuração do ERP…" : "Sincronização indisponível. Consulte as configurações da empresa."}</p><div className="actions"><ActionButton disabled={busy || !erp} onClick={() => { setModal("import"); setIds([]); setConfirmed(false); }}>Importar do ERP</ActionButton>{admin && (policy?.capabilities.write_rubrics ?? true) && <ActionButton disabled={busy || !erp || !rows.length} onClick={() => { setModal("send"); setProposals([]); setIds([]); act(prepareSend); }}>Enviar para o ERP</ActionButton>}</div></>}
-      {modal === "remove" ? <><p>Confirma a remoção da rubrica <b>{selected?.name}</b> da Zela?</p><p>Se existir no ERP, a rubrica mantém-se na origem.</p><div className="actions"><ActionButton disabled={busy} onClick={() => setModal("")}>Cancelar</ActionButton><ActionButton className="danger" disabled={busy} onClick={() => act(async () => { await api(`/categories/${selected!.id}/remove`, { confirmed: true }); await reload(); await load(); setModal(""); setNotice("Rubrica removida."); })}>Confirmar remoção</ActionButton></div></> : modal === "edit" ? <ManagedForm className="doc-form" onSubmit={e => { e.preventDefault(); act(async () => { await api(selected ? `/categories/${selected.id}` : "/categories", { name, icon, color, cash_difference: cashDifference }); await reload(); await load(); setModal(""); setNotice("Rubrica guardada."); }); }}>
+      {modal === "remove" ? <><p>Confirma a remoção da rubrica <b>{selected?.name}</b> da IAZELA?</p><p>Se existir no ERP, a rubrica mantém-se na origem.</p><div className="actions"><ActionButton disabled={busy} onClick={() => setModal("")}>Cancelar</ActionButton><ActionButton className="danger" disabled={busy} onClick={() => act(async () => { await api(`/categories/${selected!.id}/remove`, { confirmed: true }); await reload(); await load(); setModal(""); setNotice("Rubrica removida."); })}>Confirmar remoção</ActionButton></div></> : modal === "edit" ? <ManagedForm className="doc-form" onSubmit={e => { e.preventDefault(); act(async () => { await api(selected ? `/categories/${selected.id}` : "/categories", { name, icon, color, cash_difference: cashDifference }); await reload(); await load(); setModal(""); setNotice("Rubrica guardada."); }); }}>
         <Field label="Nome"><input value={name} onChange={e => setName(e.target.value)} required minLength={2} maxLength={100} /></Field>
         <Field label="Ícone"><select value={icon} onChange={e => setIcon(e.target.value)}>{Object.entries(rubricIcons).map(([key, value]) => <option key={key} value={key}>{value[0]}</option>)}</select></Field>
         <label className="doc-check"><input type="checkbox" checked={cashDifference} onChange={e => setCashDifference(e.target.checked)} />Usar nas diferenças de caixa</label><small>Apenas uma rubrica pode estar selecionada. Será usada para faltas e sobras no fecho da caixa.</small>
         <Field label="Cor"><input type="color" value={color} onChange={e => setColor(e.target.value)} /></Field>
         <RubricBadge name={name || "Pré-visualização da rubrica"} icon={icon} color={color} /><ActionButton className="primary" disabled={busy}>Guardar rubrica</ActionButton>
       </ManagedForm> : modal === "import" ? <>
-        <p>Escolha as rubricas a importar. As rubricas já associadas à Zela não aparecem nesta lista.</p>
+        <p>Escolha as rubricas a importar. As rubricas já associadas à IAZELA não aparecem nesta lista.</p>
         {busy && <p role="status">A consultar o ERP…</p>}
         <div className="rubric-import-list">{importable.map(row => <label key={row.id} className="doc-check"><input type="checkbox" checked={ids.includes(row.id)} disabled={busy} onChange={e => setIds(e.target.checked ? [...ids, row.id] : ids.filter(id => id !== row.id))} />{row.code} · {row.name}</label>)}</div>
         {!busy && erp && !importable.length && <p>Não existem rubricas novas para importar.</p>}

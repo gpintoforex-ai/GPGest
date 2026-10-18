@@ -1,7 +1,8 @@
 import { ActionLink } from "./components/InteractionUI";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
-import { api, Field, Form } from "./App";
+import { api } from "./lib/api";
+import { Field, Form } from "./components/Form";
 import { ASSISTANTS } from "./components/AssistantIdentity";
 type Row = Record<string, any>;
 export default function DocumentAssistant({ document, admin, canReadErp = true, onClose, onPrepare }: {
@@ -35,7 +36,7 @@ export default function DocumentAssistant({ document, admin, canReadErp = true, 
     {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
     {busy && <p role="status">A consultar…</p>}
     {step === 1 && <>
-      <p>Os ficheiros ficam no Drive. Ao associar, a Zela guarda apenas a referência, nome e metadados, sem guardar o PDF ou imagem na base de dados.</p>
+      <p>Os ficheiros ficam no Drive. Ao associar, a IAZELA guarda apenas a referência, nome e metadados, sem guardar o PDF ou imagem na base de dados.</p>
       <ActionButton disabled={busy} onClick={() => act(() => loadDrive())}>Procurar anexos na pasta Drive</ActionButton>
       <div className="table-wrap"><table><thead><tr><th>Ficheiro</th><th>Sugestão inicial</th><th>Escolher</th></tr></thead><tbody>{files.map(f => <tr key={f.id}>
         <td><ActionLink href={f.url} target="_blank" rel="noreferrer">{f.name}</ActionLink></td>
@@ -62,11 +63,11 @@ export default function DocumentAssistant({ document, admin, canReadErp = true, 
     </>}
     {step === 2 && <>
       {supplierReady ? <p>Fornecedor criado e ativo: {suppliers.find(e => e.is_supplier && e.active)?.name}.</p> : <>
-        <p>{suppliers.length ? "A entidade existe, mas precisa de ser identificada como fornecedor ativo." : "Não existe um fornecedor com este NIF. Pode criar um registo na Zela."}</p>
+        <p>{suppliers.length ? "A entidade existe, mas precisa de ser identificada como fornecedor ativo." : "Não existe um fornecedor com este NIF. Pode criar um registo na IAZELA."}</p>
         <Form submitLabel={suppliers.length ? "Confirmar fornecedor ativo" : "Criar fornecedor"} onSubmit={async v => {
           await act(async () => {
             await api(`/documents/${doc.id}/assistant/supplier`, { name: v.name, nif: doc.supplier_nif, email: v.email, phone: v.phone, confirmed: v.confirmed === "on" });
-            await loadEntities(); setNotice("Fornecedor validado na Zela. Esta ação não cria entidades na Wintouch.");
+            await loadEntities(); setNotice("Fornecedor validado na IAZELA. Esta ação não cria entidades na Wintouch.");
           });
         }}>
           <Field label="Nome do fornecedor"><input name="name" defaultValue={doc.supplier_name} required minLength={2} maxLength={300} /></Field>

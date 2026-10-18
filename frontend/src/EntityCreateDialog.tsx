@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, Field, Form } from "./App";
+import { api } from "./lib/api";
+import { Field, Form } from "./components/Form";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import RubricSelect, { type RubricOption } from "./components/RubricSelect";
 

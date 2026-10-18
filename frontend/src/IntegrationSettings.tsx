@@ -1,7 +1,8 @@
 import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
 import { Link2, Plug, ShieldCheck } from "lucide-react";
-import { api, Field } from "./App";
+import { api } from "./lib/api";
+import { Field } from "./components/Form";
 import { StatusBadge } from "./components/BusinessUI";
 import SyncPanel from "./SyncPanel";
 import "./IntegrationSettings.css";
@@ -29,7 +30,7 @@ export default function IntegrationSettings({ boot, reload }: { boot: Row; reloa
   return <section className="integration-settings">
     <div className="page-intro"><div><h2>Modo e ligação ERP</h2><p>Modo de funcionamento e origem dos dados de {boot.company?.name || "esta empresa"}.</p></div><StatusBadge tone={data.policy.mode === "local" ? "neutral" : "success"}>{data.policy.mode === "local" ? "Modo local autónomo" : "Modo integrado com ERP"}</StatusBadge></div>
     {error && <Notice className="error" role="alert">{error}</Notice>}{notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
-    <section className="panel"><h3>Modo e ligação</h3><p>O modo local permite gerir os dados na Zela. Não implica funcionamento sem Internet. Os documentos locais são documentos de gestão, sem emissão fiscal.</p>
+    <section className="panel"><h3>Modo e ligação</h3><p>O modo local permite gerir os dados na IAZELA. Não implica funcionamento sem Internet. Os documentos locais são documentos de gestão, sem emissão fiscal.</p>
       <ManagedForm className="doc-form" onSubmit={e => { e.preventDefault(); run(async () => { setPreview(await api("/company/integration/preview", payload())); setConfirmed(false); setPendingReviewed(false); setModal("preview"); }); }}>
         <fieldset disabled={!admin || busy} className="integration-config-grid">
           <Field label="Modo de funcionamento"><select value={draft.mode} onChange={e => setDraft({ ...draft, mode: e.target.value, interval_minutes: 0 })}><option value="local">Modo local autónomo</option><option value="integrated">Modo integrado com ERP</option></select></Field>
@@ -44,8 +45,8 @@ export default function IntegrationSettings({ boot, reload }: { boot: Row; reloa
             <p className="footnote">A atualização periódica consulta apenas artigos, entidades e caixas selecionados. Documentos financeiros exigem período e estabelecimento no formulário de importação. Não há envios automáticos.</p>
             {boot.mode === "demonstracao" && Number(draft.interval_minutes) > 0 && <label className="doc-check"><input type="checkbox" checked={draft.periodic_demo_confirmed} onChange={e => setDraft({ ...draft, periodic_demo_confirmed: e.target.checked })} />Confirmo a importação periódica de dados reais nesta empresa de demonstração.</label>}
             <h3>Dados a sincronizar e origem principal</h3>
-            {Object.entries(data.resource_labels).map(([key, label]) => <div className="integration-resource" key={key}><label className="doc-check"><input type="checkbox" checked={draft.resources.includes(key)} onChange={e => setDraft({ ...draft, resources: e.target.checked ? [...draft.resources, key] : draft.resources.filter((r: string) => r !== key) })} />{String(label)}</label><Field label={`Origem principal: ${label}`}><select value={draft.authority[key] || "erp"} onChange={e => setDraft({ ...draft, authority: { ...draft.authority, [key]: e.target.value } })}><option value="erp">ERP</option><option value="local">Zela / local</option></select></Field></div>)}
-            <p className="footnote">Números, totais e liquidações externos pertencem ao ERP. Anexos, observações, responsáveis e estimativas pertencem à Zela. As associações e cópias locais são explícitas.</p>
+            {Object.entries(data.resource_labels).map(([key, label]) => <div className="integration-resource" key={key}><label className="doc-check"><input type="checkbox" checked={draft.resources.includes(key)} onChange={e => setDraft({ ...draft, resources: e.target.checked ? [...draft.resources, key] : draft.resources.filter((r: string) => r !== key) })} />{String(label)}</label><Field label={`Origem principal: ${label}`}><select value={draft.authority[key] || "erp"} onChange={e => setDraft({ ...draft, authority: { ...draft.authority, [key]: e.target.value } })}><option value="erp">ERP</option><option value="local">IAZELA / local</option></select></Field></div>)}
+            <p className="footnote">Números, totais e liquidações externos pertencem ao ERP. Anexos, observações, responsáveis e estimativas pertencem à IAZELA. As associações e cópias locais são explícitas.</p>
           </>}
           <Field label="Justificação da alteração"><textarea value={draft.reason} minLength={3} required onChange={e => setDraft({ ...draft, reason: e.target.value })} /></Field>
         </fieldset>{admin && <ActionButton className="primary" disabled={busy}>Pré-visualizar alteração</ActionButton>}

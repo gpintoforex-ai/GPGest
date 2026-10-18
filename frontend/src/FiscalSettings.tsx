@@ -1,6 +1,6 @@
 import { ActionButton, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
-import { api } from "./App";
+import { api } from "./lib/api";
 export default function FiscalSettings() {
   const [period, setPeriod] = useState(""), [busy, setBusy] = useState(true), [error, setError] = useState(""), [notice, setNotice] = useState("");
   useEffect(() => { api("/settings/fiscal").then(r => setPeriod(r.vat_period)).catch(e => setError(e.message)).finally(() => setBusy(false)); }, []);

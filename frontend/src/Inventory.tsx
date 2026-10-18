@@ -11,7 +11,8 @@ import {
   Settings,
   Trash2,
 } from "lucide-react";
-import { api, Field, Form } from "./App";
+import { api } from "./lib/api";
+import { Field, Form } from "./components/Form";
 import {
   ActionButton,
   AppDialog,
@@ -2346,7 +2347,7 @@ function StockImports({
           As vendas já importadas continuam disponíveis para análise fiscal em
           “Importar SAF-T de vendas”. Não geram stock por omissão. Consulte as
           linhas, associe cada código e defina a data a partir da qual assume o
-          controlo na Zela.
+          controlo na IAZELA.
         </p>
         <ActionButton
           disabled={busy}
@@ -2373,7 +2374,7 @@ function StockImports({
                   <tr>
                     <th>Data / documento</th>
                     <th>Código SAF-T</th>
-                    <th>Associação Zela</th>
+                    <th>Associação IAZELA</th>
                     <th className="numeric">Quantidade / líquido</th>
                     <th>Estado</th>
                   </tr>

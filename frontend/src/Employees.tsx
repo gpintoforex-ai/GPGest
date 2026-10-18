@@ -10,7 +10,8 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { api, Field } from "./App";
+import { api } from "./lib/api";
+import { Field } from "./components/Form";
 import "./Employees.css";
 
 type Store = { id: string; name: string };
@@ -91,7 +92,7 @@ function EmployeeDialog({
 
       </div>
       <p className="footnote">
-        Este registo não cria credenciais de entrada na Zela.
+        Este registo não cria credenciais de entrada na IAZELA.
       </p>
       <ManagedForm
         className="doc-form"
@@ -289,7 +290,7 @@ export default function Employees({
         <div>
           <h1>Operadores / funcionários</h1>
           <p>
-            Utilizadores com acesso à Zela e funcionários sem acesso à
+            Utilizadores com acesso à IAZELA e funcionários sem acesso à
             aplicação.
           </p>
         </div>
@@ -342,8 +343,8 @@ export default function Employees({
               onChange={(event) => setKind(event.target.value)}
             >
               <option value="all">Todos</option>
-              <option value="with">Com acesso à Zela</option>
-              <option value="without">Sem acesso à Zela</option>
+              <option value="with">Com acesso à IAZELA</option>
+              <option value="without">Sem acesso à IAZELA</option>
             </select>
           </Field>
         </div>

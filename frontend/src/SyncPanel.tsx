@@ -1,6 +1,7 @@
 import { Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
-import { api, Form } from "./App";
+import { api } from "./lib/api";
+import { Form } from "./components/Form";
 
 const resources = [
   { id: "products", label: "Artigos" },
@@ -36,7 +37,7 @@ export default function SyncPanel({
       <h3>Importação Wintouch</h3>
       <p>
         Importa o catálogo desta empresa por leitura. Atualiza IDs existentes
-        sem duplicar registos. Os saldos de caixa Zela permanecem separados.
+        sem duplicar registos. Os saldos de caixa IAZELA permanecem separados.
       </p>
       {error && (
         <Notice role="alert" className="error">

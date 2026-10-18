@@ -2,7 +2,7 @@ import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/Inter
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import { api } from "./App";
+import { api } from "./lib/api";
 import SupplierPicker from "./components/SupplierPicker";
 import EntityCreateDialog, { type CreatedEntity } from "./EntityCreateDialog";
 

@@ -1,6 +1,7 @@
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
-import { api, Field, Form } from "./App";
+import { api } from "./lib/api";
+import { Field, Form } from "./components/Form";
 
 type Institution = { id: string; name: string; active: boolean };
 

@@ -1,7 +1,7 @@
 import { ActionLink } from "./components/InteractionUI";
 import { ActionButton, Notice } from "./components/InteractionUI";
 import { useState } from "react";
-import { api } from "./App";
+import { api } from "./lib/api";
 type Row = Record<string, any>;
 export default function DriveAutoMatch({ documents, onUpdated }: { documents: Row[]; onUpdated: () => Promise<void> }) {
   const [rows, setRows] = useState<Row[]>([]), [selected, setSelected] = useState<string[]>([]);

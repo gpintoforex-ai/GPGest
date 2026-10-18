@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api, Field, Form } from "./App";
+import { api } from "./lib/api";
+import { Field, Form } from "./components/Form";
 import { calendarDay } from "./RecordList";
 
 type Row = Record<string, any>;
@@ -94,7 +95,7 @@ export default function OpenCashForm({
       </Field>
       <p className="footnote">
         O fundo de maneio é o numerário disponível no início. Os movimentos
-        reais Zela e os recebimentos Wintouch já importados são calculados
+        reais IAZELA e os recebimentos Wintouch já importados são calculados
         automaticamente para a folha. Cada loja e dia pode incluir Wintouch numa
         única folha.
       </p>

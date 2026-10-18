@@ -1,6 +1,6 @@
 import { Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
-import { api } from "./App";
+import { api } from "./lib/api";
 import SyncPanel from "./SyncPanel";
 import { SalesImportPanel } from "./WintouchSales";
 

@@ -1,6 +1,6 @@
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
-import { api } from "./App";
+import { api } from "./lib/api";
 import Purchases from "./Purchases";
 import AssistantIdentity from "./components/AssistantIdentity";
 import "./Reconciliation.css";

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Mail, Eye, Send, RefreshCw, CheckCircle, Download } from "lucide-react";
-import { api, Field } from "./App";
+import { api } from "./lib/api";
+import { Field } from "./components/Form";
 import { ActionButton, ActionLink, AppDialog, ManagedForm, Notice, confirmAction, confirmFormExit, markDialogSaved } from "./components/InteractionUI";
 import { StatusBadge } from "./components/BusinessUI";
 

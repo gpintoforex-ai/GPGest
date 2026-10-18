@@ -1,7 +1,7 @@
 import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { ScanButton } from "./DocumentScanner";
 import { useEffect, useRef, useState } from "react";
-import { api } from "./App";
+import { api } from "./lib/api";
 import { StatusBadge } from "./components/BusinessUI";
 import AssistantIdentity from "./components/AssistantIdentity";
 import AccountingEmail from "./AccountingEmail";

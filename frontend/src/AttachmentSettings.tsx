@@ -1,7 +1,8 @@
 import { ActionLink } from "./components/InteractionUI";
 import { ActionButton, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
-import { api, Field, Form } from "./App";
+import { api } from "./lib/api";
+import { Field, Form } from "./components/Form";
 import GoogleInvoiceInbox from "./GoogleInvoiceInbox";
 export default function AttachmentSettings({ nif }: { nif?: string }) {
   const [config, setConfig] = useState<Record<string, string> | null>(null);
@@ -17,16 +18,16 @@ export default function AttachmentSettings({ nif }: { nif?: string }) {
     <p>Defina as contas e a pasta de destino para esta empresa.</p>
     <p className="pill neutral">{google?.connected ? "Conta ligada: " + google.email : "Conta Google ainda não ligada"}</p>
     <p>Consulte os emails, guarde os anexos selecionados no Drive e confirme a associação às faturas abaixo ou na Conferência documental.</p>
-    <p>Para usar a pasta Drive existente, poderá ser necessário desligar e voltar a ligar a conta. A nova autorização solicita acesso de leitura e gestão ao Drive; a Zela usa a pasta configurada e não apaga ficheiros.</p>
+    <p>Para usar a pasta Drive existente, poderá ser necessário desligar e voltar a ligar a conta. A nova autorização solicita acesso de leitura e gestão ao Drive; a IAZELA usa a pasta configurada e não apaga ficheiros.</p>
     {google?.configured && <>
-      {window.location.hostname !== "localhost" && <p>Para autorizar, <ActionLink href={"http://localhost:5174/?nif=" + encodeURIComponent(nif || "")}>abre a Zela em localhost</ActionLink>, entra na empresa e volta a Configurações.</p>}
+      {window.location.hostname !== "localhost" && <p>Para autorizar, <ActionLink href={"http://localhost:5174/?nif=" + encodeURIComponent(nif || "")}>abre a IAZELA em localhost</ActionLink>, entra na empresa e volta a Configurações.</p>}
       <ActionButton disabled={busy || window.location.hostname !== "localhost" && !google.connected} onClick={async () => {
         setBusy(true); setError("");
         try {
           if (google.connected) {
             await api("/integrations/attachments/google/disconnect", {}, { timeoutMs: 15000 });
             setGoogle({ ...google, connected: false, email: "" });
-            setNotice("Conta Google desligada da Zela. Pode voltar a ligar para autorizar as novas permissões.");
+            setNotice("Conta Google desligada da IAZELA. Pode voltar a ligar para autorizar as novas permissões.");
           }
           else { const result = await api("/integrations/attachments/google/connect", {}, { timeoutMs: 15000 }); window.location.assign(result.url); }
         } catch(e) { setError((e as Error).name === "TimeoutError" ? "O servidor demorou a responder. Atualize a página para confirmar o estado da ligação e tente novamente." : (e as Error).message); }

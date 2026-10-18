@@ -1,7 +1,8 @@
 import { confirmAction } from "./components/InteractionUI";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
-import { api, Field, Form } from "./App";
+import { api } from "./lib/api";
+import { Field, Form } from "./components/Form";
 import RubricSelect, { type RubricOption } from "./components/RubricSelect";
 type Entity = { id: string; source: string; name: string; tax_number: string; address: string; locality: string; postal_code: string; email: string; phone: string; is_customer: boolean; is_supplier: boolean; active: boolean; category_id: string | null; has_movements?: boolean; editable?: boolean };
 export default function Entities({ kind, manager, categories }: { kind: "Clientes" | "Fornecedores"; manager: boolean; categories: RubricOption[] }) {
@@ -46,11 +47,11 @@ export default function Entities({ kind, manager, categories }: { kind: "Cliente
     }
   };
   return <>
-    <div className="page-intro"><div><h1>{kind}</h1><p>Entidades da empresa, importadas da Wintouch ou registadas na Iazela.</p></div>{manager && <div className="entity-create-controls"><ActionButton className="primary" onClick={() => { setEditing(null); setCreationDraft({}); setCategoryId(""); setCreationStep("nif"); setLookupMessage(""); lastLookupNif.current = ""; setOpened(true); }}>Criar {kind === "Clientes" ? "cliente" : "fornecedor"}</ActionButton><small>Ao indicar o NIF, o VIES pode preencher automaticamente o nome e a morada.</small></div>}</div>
+    <div className="page-intro"><div><h1>{kind}</h1><p>Entidades da empresa, importadas da Wintouch ou registadas na IAZELA.</p></div>{manager && <div className="entity-create-controls"><ActionButton className="primary" onClick={() => { setEditing(null); setCreationDraft({}); setCategoryId(""); setCreationStep("nif"); setLookupMessage(""); lastLookupNif.current = ""; setOpened(true); }}>Criar {kind === "Clientes" ? "cliente" : "fornecedor"}</ActionButton><small>Ao indicar o NIF, o VIES pode preencher automaticamente o nome e a morada.</small></div>}</div>
     {error && <Notice className="error" role="alert">{error}</Notice>}
     {notice && <Notice onDismiss={() => setNotice("")} tone="success">{notice}</Notice>}
     <section className="panel"><Field label="Pesquisar por nome, NIF ou contacto"><input value={search} onChange={e => setSearch(e.target.value)} /></Field>
-    <div className="table-wrap"><table><thead><tr><th>Nome</th><th>NIF</th><th>Email</th><th>Telefone</th><th>Rubrica</th><th>Tipo</th><th>Origem</th><th>Estado</th>{manager && <th>Ações</th>}</tr></thead><tbody>{visible.map(e => <tr key={e.id}><td>{e.name}</td><td>{e.tax_number || "—"}</td><td>{e.email || "—"}</td><td>{e.phone || "—"}</td><td>{categories.find(c => c.id === e.category_id)?.name || "?"}</td><td>{[e.is_customer && "Cliente", e.is_supplier && "Fornecedor"].filter(Boolean).join(" / ")}</td><td>{e.source === "GPGest" ? "Iazela" : e.source}</td><td>{e.active ? "Ativo" : "Desativado"}</td>{manager && <td><ActionButton disabled={removing !== null} onClick={() => { setEditing(e); setCategoryId(e.category_id || ""); setCreationStep("details"); setLookupMessage(""); lastLookupNif.current = ""; setOpened(true); }}>{e.editable === false ? "Informações locais" : "Editar"}</ActionButton> <ActionButton disabled={e.editable === false || removing !== null || (e.has_movements && !e.active)} onClick={async () => {
+    <div className="table-wrap"><table><thead><tr><th>Nome</th><th>NIF</th><th>Email</th><th>Telefone</th><th>Rubrica</th><th>Tipo</th><th>Origem</th><th>Estado</th>{manager && <th>Ações</th>}</tr></thead><tbody>{visible.map(e => <tr key={e.id}><td>{e.name}</td><td>{e.tax_number || "—"}</td><td>{e.email || "—"}</td><td>{e.phone || "—"}</td><td>{categories.find(c => c.id === e.category_id)?.name || "?"}</td><td>{[e.is_customer && "Cliente", e.is_supplier && "Fornecedor"].filter(Boolean).join(" / ")}</td><td>{e.source === "GPGest" ? "IAZELA" : e.source}</td><td>{e.active ? "Ativo" : "Desativado"}</td>{manager && <td><ActionButton disabled={removing !== null} onClick={() => { setEditing(e); setCategoryId(e.category_id || ""); setCreationStep("details"); setLookupMessage(""); lastLookupNif.current = ""; setOpened(true); }}>{e.editable === false ? "Informações locais" : "Editar"}</ActionButton> <ActionButton disabled={e.editable === false || removing !== null || (e.has_movements && !e.active)} onClick={async () => {
       if (removing) return;
       const action = e.has_movements ? "deactivate" : "remove";
       if (!(await confirmAction({
@@ -106,7 +107,7 @@ export default function Entities({ kind, manager, categories }: { kind: "Cliente
       <label className="checkbox"><input type="checkbox" disabled={editing?.editable === false} name="is_customer" defaultChecked={editing ? !!editing.is_customer : kind === "Clientes"} /> Cliente</label>
       <label className="checkbox"><input type="checkbox" disabled={editing?.editable === false} name="is_supplier" defaultChecked={editing ? !!editing.is_supplier : kind === "Fornecedores"} /> Fornecedor</label>
       <label className="checkbox"><input type="checkbox" disabled={editing?.editable === false} name="active" defaultChecked={editing ? editing.active : true} /> Ativo</label>
-      {editing?.source.startsWith("Wintouch") && <p>{editing.editable === false ? "Os dados principais pertencem ao ERP. A rubrica associada fica guardada localmente." : "A edição fica guardada na Iazela e preservada nas sincronizações, sem alterar o ERP."}</p>}
+      {editing?.source.startsWith("Wintouch") && <p>{editing.editable === false ? "Os dados principais pertencem ao ERP. A rubrica associada fica guardada localmente." : "A edição fica guardada na IAZELA e preservada nas sincronizações, sem alterar o ERP."}</p>}
     </Form>}</AppDialog>}
   </>;
 }

@@ -1,8 +1,7 @@
-import { ActionLink } from "./components/InteractionUI";
 import Brand from "./components/Brand";
 import EmailSettings from "./EmailSettings";
 import SaftSales from "./SaftSales";
-import { ActionButton, AppDialog, ManagedForm, Notice, confirmAction } from "./components/InteractionUI";
+import { ActionButton, AppDialog, Notice, confirmAction } from "./components/InteractionUI";
 import Deposits from "./Deposits";
 import Liquidity from "./Liquidity";
 import IntegrationSettings from "./IntegrationSettings";
@@ -13,11 +12,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useId,
-  cloneElement,
-  isValidElement,
-  type ReactElement,
-  type FormEvent,
 } from "react";
 import {
   LayoutDashboard,
@@ -47,7 +41,6 @@ import {
   ChevronDown,
   Receipt,
   Camera,
-  X,
   Users,
 } from "lucide-react";
 
@@ -74,13 +67,16 @@ import FiscalSettings from "./FiscalSettings";
 import ThemeSettings from "./ThemeSettings";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { formatEuro } from "./utils/format";
+import { formatDateTime as date, movementLabels as labels } from "./utils/movements";
+import { api } from "./lib/api";
+import { Empty, Field, Form, Select } from "./components/Form";
+import AttachmentPanel from "./AttachmentPanel";
+import MovementTable from "./MovementTable";
 import AccountingDelivery from "./AccountingDelivery";
-import DocumentScanner, { ScanButton, ScanSettings } from "./DocumentScanner";
+import DocumentScanner, { ScanSettings } from "./DocumentScanner";
 import { InvoiceWorkflowSettings } from "./InvoiceWorkflow";
 import Rubrics from "./Rubrics";
-import RubricBadge from "./components/RubricBadge";
-import { ApiError, beginOperation, reportFormError, responseError, useDialogWorking, useFieldErrors, markDialogSaved, useWindowBusy, confirmFormExit } from "./components/InteractionUI";
-import { CloseButton, dismissDisclosure, useOverlayFocus } from "./components/InteractionUI";
+import { CloseButton, confirmFormExit, dismissDisclosure, useOverlayFocus } from "./components/InteractionUI";
 const Inventory = lazy(() => import("./Inventory"));
 const HomePage = lazy(() => import("./HomePage"));
 const Warehouses = lazy(() => import("./Warehouses"));
@@ -101,189 +97,6 @@ type Bootstrap = {
   users: Row[];
 };
 const money = formatEuro;
-const date = (v: string) =>
-  new Intl.DateTimeFormat("pt-PT", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "Europe/Lisbon",
-  }).format(new Date(v));
-const labels: Record<string, string> = {
-  venda: "Recebimento de venda",
-  cliente: "Recebimento de cliente",
-  entrada_extra: "Entrada extraordinária",
-  entrada_caixa: "Entrada de caixa",
-  saida_caixa: "Saída de caixa",
-  fornecedor: "Pagamento a fornecedor",
-  despesa: "Pequena despesa",
-  reembolso: "Reembolso",
-  diferenca_caixa: "Diferença de caixa",
-  deposito: "Retirada para depósito",
-  reforco: "Reforço de fundo",
-  transferencia_caixa: "Transferência entre caixas",
-  numerario: "Numerário",
-  cartao: "Multibanco / cartão",
-  mbway: "MB WAY",
-  transferencia: "Transferência",
-  outro: "Outro",
-  cheque: "Cheques",
-  misto: "Numerário e cheques",
-};
-export async function api(path: string, body?: unknown, options?: { timeoutMs?: number; method?: "POST" | "PUT" | "DELETE" }) {
-  const operation = beginOperation(path, body !== undefined);
-  try {
-  const r = await fetch("/api" + path, {
-    credentials: "same-origin",
-    ...(options?.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}),
-    ...(body !== undefined
-      ? {
-          method: options?.method || "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        }
-      : {}),
-  });
-  const text = await r.text();
-  let data;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error("Não foi possível concluir a operação porque o servidor não respondeu como esperado. Os dados preenchidos foram mantidos. Tente novamente dentro de instantes.");
-  }
-  if (r.status === 401) window.dispatchEvent(new Event("gpgest-expired"));
-  if (!r.ok) {
-    const error = responseError(data.detail, r.status);
-    reportFormError(operation.form, error);
-    throw error;
-  }
-  operation.saved();
-  return data;
-  } catch (error) {
-    if (error instanceof TypeError) throw new Error("Não foi possível contactar o servidor. Verifique a ligação e volte a tentar; os dados preenchidos foram mantidos.");
-    if (error instanceof DOMException && ["TimeoutError", "AbortError"].includes(error.name)) throw new Error(body === undefined ? "O servidor demorou a carregar os dados. Volte a tentar a consulta." : "O servidor demorou a responder. Confirme se a operação ficou registada antes de repetir.");
-    throw error;
-  } finally { operation.end(); }
-}
-export function Form({
-  onSubmit,
-  children,
-  submitLabel = "Guardar",
-  onCancel,
-  destructive = false,
-  hideSubmit = false,
-}: {
-  submitLabel?: string;
-  onSubmit: (v: Row) => Promise<void | false>;
-  children: React.ReactNode;
-  onCancel?: () => void;
-  destructive?: boolean;
-  hideSubmit?: boolean;
-}) {
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const saving = useRef(false);
-  useDialogWorking(busy);
-  async function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (saving.current) return;
-    saving.current = true;
-    const form = e.currentTarget;
-    const data = Object.fromEntries(new FormData(e.currentTarget));
-    setBusy(true);
-    setError("");
-    try {
-      const completed = await onSubmit(data);
-      if (completed === false) return;
-      markDialogSaved(form);
-    } catch (e) {
-      if (e instanceof ApiError) reportFormError(form, e);
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-      saving.current = false;
-    }
-  }
-  return (
-    <ManagedForm onSubmit={submit} aria-busy={busy || undefined}>
-      <fieldset className="ui-form-fields" disabled={busy}>{children}</fieldset>
-      {error && (
-        <Notice className="error" role="alert">
-          {error}
-        </Notice>
-      )}
-      {!hideSubmit && <div className="ui-dialog-actions">
-      {onCancel && <ActionButton type="button" disabled={busy} onClick={onCancel}>Cancelar</ActionButton>}
-      <ActionButton className={destructive ? "danger" : "primary"} disabled={busy}>
-        {busy ? "A guardar…" : submitLabel}
-      </ActionButton>
-      </div>}
-    </ManagedForm>
-  );
-}
-export function Field({
-  label,
-  children,
-}: {
-  label: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  const id = useId();
-  const errors = useFieldErrors();
-  const windowBusy = useWindowBusy();
-  const child = isValidElement(children) ? children as ReactElement<{ id?: string; name?: string; disabled?: boolean; "aria-describedby"?: string }> : null;
-  const aliases: [RegExp, string[]][] = [[/^nome/i, ["name"]], [/^nif/i, ["nif", "tax_number"]], [/^email/i, ["email"]], [/^(valor|montante)/i, ["amount", "amount_cents"]], [/^motivo|^justifica/i, ["reason"]], [/^estabelecimento|^loja/i, ["store_id"]], [/^moeda/i, ["currency"]], [/^data/i, ["date", "document_date", "payment_date"]]];
-  const names = child?.props.name ? [child.props.name] : aliases.find(([pattern]) => typeof label === "string" && pattern.test(label))?.[1] || [];
-  const error = errors[child?.props.name || id] || Object.entries(errors).find(([name]) => names.some(key => name === key || name.endsWith(`.${key}`)))?.[1];
-  return (
-    <div className="field" data-ignore-dirty={typeof label === "string" && /^(Pesquisar|Procurar)/i.test(label) || undefined}>
-      <label htmlFor={id}>{label}</label>
-      {isValidElement(children)
-        ? cloneElement(children as ReactElement<{ id?: string; disabled?: boolean; "aria-invalid"?: boolean; "aria-describedby"?: string }>, { id, disabled: child?.props.disabled || windowBusy, ...(error ? { "aria-invalid": true, "aria-describedby": [child?.props["aria-describedby"], `${id}-error`].filter(Boolean).join(" ") } : {}) })
-        : children}
-      {error && <small id={`${id}-error`} className="ui-field-error">{error}</small>}
-    </div>
-  );
-}
-function Select({
-  name,
-  rows,
-  labelKey = "name",
-  id,
-  onChange,
-  ...validation
-}: {
-  name: string;
-  rows: Row[];
-  labelKey?: string;
-  id?: string;
-  onChange?: (event: React.ChangeEvent<HTMLSelectElement>) => void;
-  disabled?: boolean;
-  "aria-invalid"?: boolean;
-  "aria-describedby"?: string;
-}) {
-  return (
-    <select {...validation} id={id} name={name} required onChange={onChange}>
-      <option value="">Selecionar…</option>
-      {rows.map((r) => (
-        <option key={r.id} value={r.id}>
-          {r[labelKey]}
-        </option>
-      ))}
-    </select>
-  );
-}
-function Empty({ text = "Ainda não existem registos." }: { text?: string }) {
-  return (
-    <div className="empty">
-      <Receipt size={32} />
-      <h3>{text}</h3>
-      <p>Os dados aparecerão aqui assim que forem registados.</p>
-    </div>
-  );
-}
-
 export default function App() {
   type PaymentReturn = { page: string; scrollY: number; focus: HTMLElement | null };
   type DataTarget = "bootstrap" | "sessions" | "movements" | "dashboard";
@@ -321,7 +134,7 @@ export default function App() {
   useOverlayFocus(mobile, ".sidebar", () => setMobile(false));
   const pageTitle = page === "Dashboard" ? "Visão geral" : page;
   useEffect(() => {
-    document.title = boot ? `${pageTitle} · Zela` : "Entrar · Zela";
+    document.title = boot ? `${pageTitle} · IAZELA` : "Entrar · IAZELA";
   }, [pageTitle, !!boot]);
   const navigationPending = useRef(false);
   async function navigatePage(next: string) {
@@ -460,7 +273,7 @@ export default function App() {
       setError((e as Error).message);
     }
   };
-  if (loading) return <div className="loading" role="status">A iniciar a Zela…</div>;
+  if (loading) return <div className="loading" role="status">A iniciar a IAZELA…</div>;
   if (!boot && window.location.pathname === "/" && !new URLSearchParams(window.location.search).has("nif") && !new URLSearchParams(window.location.search).has("empresa")) return <Suspense fallback={<div className="loading" role="status">A carregar a IAZELA…</div>}><HomePage /></Suspense>;
   if (!boot)
     return (
@@ -485,7 +298,7 @@ export default function App() {
         </div>
         <div className="login-form">
           <span className="eyebrow">BEM-VINDO</span>
-          <h2>Entrar na Zela</h2>
+          <h2>Entrar na IAZELA</h2>
           <p>Utilize as credenciais da sua empresa.</p>
           <Form
             submitLabel="Entrar"
@@ -821,9 +634,9 @@ export default function App() {
             <Menu />
           </ActionButton>
           <div className="header-context">
-            <span className="active-company">{boot.company?.name || "Zela"}</span><small className="operating-mode-label">{boot.integration?.mode === "integrated" ? `Modo integrado · ${boot.integration.provider} · ${boot.integration.active ? boot.integration.writes ? "Ligação configurada" : "Apenas leitura" : "Ligação desativada"}` : "Modo local autónomo"}</small>
+            <span className="active-company">{boot.company?.name || "IAZELA"}</span><small className="operating-mode-label">{boot.integration?.mode === "integrated" ? `Modo integrado · ${boot.integration.provider} · ${boot.integration.active ? boot.integration.writes ? "Ligação configurada" : "Apenas leitura" : "Ligação desativada"}` : "Modo local autónomo"}</small>
             <span className="breadcrumb">
-              Zela /{" "}
+              IAZELA /{" "}
               {financeMenu.some(([name]) => name === page)
                 ? "Tesouraria"
                 : banksMenu.some(([name]) => name === page)
@@ -1007,7 +820,7 @@ export default function App() {
                     Ver todos <ChevronRight size={16} />
                   </ActionButton>
                 </div>
-                <MovementTable rows={visibleMovements.slice(0, 5)} />
+                <MovementTable categories={boot.categories} onAttachments={(m) => openModal("attachments", m)} rows={visibleMovements.slice(0, 5)} />
               </section>
             </>
           )}
@@ -1139,7 +952,7 @@ export default function App() {
                 integrated={integratedMode}
               >
                 {(pageRows) => (
-                  <MovementTable
+                  <MovementTable categories={boot.categories} onAttachments={(m) => openModal("attachments", m)}
                     rows={pageRows}
                     onReverse={
                       manager ? (r) => openModal("reverse", r) : undefined
@@ -1492,7 +1305,7 @@ export default function App() {
           {page === "Digitalização" && manager && <ScanSettings admin={boot.user.role === "administrador"} />}
           {page === "Verificação automática e-Fatura" && manager && <InvoiceWorkflowSettings admin={boot.user.role === "administrador"} />}
           <footer>
-            Zela · Gestão empresarial <span>Dados da empresa selecionada</span>
+            IAZELA · Gestão empresarial <span>Dados da empresa selecionada</span>
           </footer>
         </main>
       </div>
@@ -1864,178 +1677,5 @@ export default function App() {
       )}
     </div>
   );
-  function MovementTable({
-    rows,
-    onReverse,
-  }: {
-    rows: Row[];
-    onReverse?: (r: Row) => void;
-  }) {
-    return rows.length ? (
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Data</th>
-              <th>Movimento</th>
-              <th>Rubrica</th>
-              <th>Documento</th>
-              <th>Entidade</th>
-              <th>Pagamento</th>
-              <th className="numeric">Montante</th>
-              <th>Origem</th>
-              <th>Estado</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((m) => (
-              <tr key={m.id}>
-                <td>
-                  {m.external && !/(Z|[+-]\d{2}:?\d{2})$/.test(m.occurred_at)
-                    ? m.occurred_at
-                        .slice(0, 10)
-                        .split("-")
-                        .reverse()
-                        .join("/") +
-                      " " +
-                      m.occurred_at.slice(11, 16)
-                    : date(m.occurred_at)}
-                </td>
-                <td>
-                  <strong>
-                    {m.kind === "documento"
-                      ? "Documento de venda"
-                      : m.origin === "bank_statement" ? "Movimento bancário" : labels[m.kind] || m.kind}
-                  </strong>
-                  <small>
-                    {m.entity || m.document || m.reference || "Manual"}
-                  </small>
-                </td>
-                <td>{(() => { const category = boot?.categories.find(row => row.id === m.category_id || (m.category_name && row.name.toLocaleLowerCase("pt-PT") === m.category_name.toLocaleLowerCase("pt-PT"))); return <RubricBadge name={m.category_name || category?.name || (m.external ? "Não indicada na origem" : "—")} icon={category?.icon} color={category?.color} />; })()}</td>
-                <td>{m.document || "—"}</td>
-                <td>{m.entity || "—"}</td>
-                <td>{m.payment_name || labels[m.payment] || m.payment || "—"}</td>
-                <td className={["numeric", m.direction > 0 ? "positive" : "negative"].filter(Boolean).join(" ")}>
-                  {m.direction > 0 ? "+" : "−"}
-                  {money(m.amount_cents)}
-                </td>
-                <td>
-                  <span className="pill neutral">
-                    {m.origin === "bank_statement" ? "Extrato bancário" : m.origin === "fecho_local" ? "Fecho de caixa" : m.external ? "Wintouch" : "Zela"}
-                  </span>
-                </td>
-                <td>
-                  <span
-                    className={
-                      "pill " +
-                      (m.reversed_by || m.reversal_of ? "neutral" : "")
-                    }
-                  >
-                    {m.cancelled
-                      ? "Anulado"
-                      : m.kind === "documento"
-                        ? "Documento"
-                        : m.reversed_by
-                          ? "Estornado"
-                          : m.reversal_of
-                            ? "Estorno"
-                            : "Confirmado"}
-                  </span>
-                </td>
-                <td>
-                  {!m.external && (
-                    <ActionButton onClick={() => openModal("attachments", m.movement_id ? { ...m, id: m.movement_id } : m)}>
-                      Anexos
-                    </ActionButton>
-                  )}
-                  {m.external && <small>{m.origin === "bank_statement" ? "Gerido nos extratos bancários" : "Gerido na Wintouch"}</small>}
-                  {m.origin === "fecho_local" && <small>Gerido na folha de caixa</small>}
-                  {onReverse &&
-                    !m.external &&
-                    m.origin !== "fecho_caixa" &&
-                    m.origin !== "fecho_local" &&
-                    !m.reversed_by &&
-                    !m.reversal_of &&
-                    !m.transfer_id && (
-                      <ActionButton onClick={() => onReverse(m)}>Estornar</ActionButton>
-                    )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    ) : (
-      <Empty text="Sem movimentos registados" />
-    );
-  }
-}
 
-function AttachmentPanel({
-  movement,
-  writable,
-  canScan = false,
-}: {
-  movement: Row;
-  writable: boolean;
-  canScan?: boolean;
-}) {
-  const [rows, setRows] = useState<Row[]>([]),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const load = () =>
-    api("/movements/" + movement.id + "/attachments").then(setRows);
-  useEffect(() => {
-    load().catch((e) => setError(e.message));
-  }, [movement.id]);
-  return (
-    <div>
-      {rows.map((r) => (
-        <p key={r.id}>
-          <ActionLink href={r.view_url || "/api/attachments/" + r.id}>{r.name} · Descarregar</ActionLink>
-        </p>
-      ))}
-      {!rows.length && <p>Sem anexos.</p>}
-      {canScan && writable && <ScanButton movement={movement} onSaved={load} />}
-      {rows.filter(r => r.scan_id && r.validation_status !== "validado").map(r => <p key={r.id}>Anexo por validar: {r.name}</p>)}
-      {writable && (
-        <Field label="Adicionar PDF, JPG ou PNG (até 5 MB, máximo 3)">
-          <input
-            type="file"
-            accept="application/pdf,image/jpeg,image/png"
-            disabled={busy}
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              setBusy(true);
-              setError("");
-              try {
-                if (file.size > 5 * 1024 * 1024)
-                  throw new Error("O ficheiro excede 5 MB.");
-                const data = new FormData();
-                data.append("file", file);
-                const r = await fetch(
-                  "/api/movements/" + movement.id + "/attachments",
-                  { method: "POST", body: data },
-                );
-                if (!r.ok) {
-                  const v = await r.json();
-                  throw new Error(
-                    v.detail || "Não foi possível guardar o anexo.",
-                  );
-                }
-                await load();
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          />
-        </Field>
-      )}
-      {error && <Notice className="error">{error}</Notice>}
-    </div>
-  );
 }

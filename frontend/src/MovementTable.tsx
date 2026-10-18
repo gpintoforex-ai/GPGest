@@ -1,0 +1,118 @@
+import RubricBadge from "./components/RubricBadge";
+import { Empty } from "./components/Form";
+import { ActionButton } from "./components/InteractionUI";
+import { formatEuro as money } from "./utils/format";
+import { formatDateTime as date, movementLabels as labels } from "./utils/movements";
+
+type Row = Record<string, any>;
+
+export default function MovementTable({
+  rows,
+  categories,
+  onAttachments,
+  onReverse,
+}: {
+  rows: Row[];
+  categories: Row[];
+  onAttachments: (r: Row) => void;
+  onReverse?: (r: Row) => void;
+}) {
+  return rows.length ? (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Movimento</th>
+            <th>Rubrica</th>
+            <th>Documento</th>
+            <th>Entidade</th>
+            <th>Pagamento</th>
+            <th className="numeric">Montante</th>
+            <th>Origem</th>
+            <th>Estado</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((m) => (
+            <tr key={m.id}>
+              <td>
+                {m.external && !/(Z|[+-]\d{2}:?\d{2})$/.test(m.occurred_at)
+                  ? m.occurred_at
+                      .slice(0, 10)
+                      .split("-")
+                      .reverse()
+                      .join("/") +
+                    " " +
+                    m.occurred_at.slice(11, 16)
+                  : date(m.occurred_at)}
+              </td>
+              <td>
+                <strong>
+                  {m.kind === "documento"
+                    ? "Documento de venda"
+                    : m.origin === "bank_statement" ? "Movimento bancário" : labels[m.kind] || m.kind}
+                </strong>
+                <small>
+                  {m.entity || m.document || m.reference || "Manual"}
+                </small>
+              </td>
+              <td>{(() => { const category = categories.find(row => row.id === m.category_id || (m.category_name && row.name.toLocaleLowerCase("pt-PT") === m.category_name.toLocaleLowerCase("pt-PT"))); return <RubricBadge name={m.category_name || category?.name || (m.external ? "Não indicada na origem" : "—")} icon={category?.icon} color={category?.color} />; })()}</td>
+              <td>{m.document || "—"}</td>
+              <td>{m.entity || "—"}</td>
+              <td>{m.payment_name || labels[m.payment] || m.payment || "—"}</td>
+              <td className={["numeric", m.direction > 0 ? "positive" : "negative"].filter(Boolean).join(" ")}>
+                {m.direction > 0 ? "+" : "−"}
+                {money(m.amount_cents)}
+              </td>
+              <td>
+                <span className="pill neutral">
+                  {m.origin === "bank_statement" ? "Extrato bancário" : m.origin === "fecho_local" ? "Fecho de caixa" : m.external ? "Wintouch" : "IAZELA"}
+                </span>
+              </td>
+              <td>
+                <span
+                  className={
+                    "pill " +
+                    (m.reversed_by || m.reversal_of ? "neutral" : "")
+                  }
+                >
+                  {m.cancelled
+                    ? "Anulado"
+                    : m.kind === "documento"
+                      ? "Documento"
+                      : m.reversed_by
+                        ? "Estornado"
+                        : m.reversal_of
+                          ? "Estorno"
+                          : "Confirmado"}
+                </span>
+              </td>
+              <td>
+                {!m.external && (
+                  <ActionButton onClick={() => onAttachments(m.movement_id ? { ...m, id: m.movement_id } : m)}>
+                    Anexos
+                  </ActionButton>
+                )}
+                {m.external && <small>{m.origin === "bank_statement" ? "Gerido nos extratos bancários" : "Gerido na Wintouch"}</small>}
+                {m.origin === "fecho_local" && <small>Gerido na folha de caixa</small>}
+                {onReverse &&
+                  !m.external &&
+                  m.origin !== "fecho_caixa" &&
+                  m.origin !== "fecho_local" &&
+                  !m.reversed_by &&
+                  !m.reversal_of &&
+                  !m.transfer_id && (
+                    <ActionButton onClick={() => onReverse(m)}>Estornar</ActionButton>
+                  )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  ) : (
+    <Empty text="Sem movimentos registados" />
+  );
+}

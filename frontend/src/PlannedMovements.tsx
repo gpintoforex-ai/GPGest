@@ -1,6 +1,7 @@
 import { ActionButton, Notice, confirmFormExit } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
-import { api, Field, Form } from "./App";
+import { api } from "./lib/api";
+import { Field, Form } from "./components/Form";
 import RecordList from "./RecordList";
 import { StatusBadge } from "./components/BusinessUI";
 import WintouchSettlementForm from "./WintouchSettlementForm";
@@ -309,7 +310,7 @@ export default function PlannedMovements({
                       </td>
                       <td>
                         <span className="pill neutral">
-                          {r.external ? "Wintouch" : "Zela"}
+                          {r.external ? "Wintouch" : "IAZELA"}
                         </span>
                       </td>
                       <td className="numeric">

@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from "react";
-import { api, Field, Form } from "./App";
+import { api } from "./lib/api";
+import { Field, Form } from "./components/Form";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 type Row = Record<string, any>;
 export default function Warehouses({ stores }: { stores: Row[] }) {

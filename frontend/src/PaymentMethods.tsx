@@ -9,7 +9,7 @@ import {
   Plus,
   X,
 } from "lucide-react";
-import { api } from "./App";
+import { api } from "./lib/api";
 import "./PaymentMethods.css";
 
 export type PaymentMethod = {

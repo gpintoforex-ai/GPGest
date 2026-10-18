@@ -1,7 +1,8 @@
 import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Building2, CheckCircle, CircleHelp, CreditCard, Landmark, Plus, Save, Settings, Trash2, Wallet, X } from "lucide-react";
-import { api, Field } from "./App";
+import { api } from "./lib/api";
+import { Field } from "./components/Form";
 import "./CompanySetup.css";
 
 type Row = Record<string, any>;
@@ -29,10 +30,10 @@ export default function CompanySetupPanel(props: Props) {
   if (status?.completed && !status.pending?.length && !status.unclosed_count && !props.standalone && !opened) return null;
   const completed = Boolean(status?.completed);
   return <>
-    <section className={`setup-widget surface-light ${completed ? "setup-reminder" : ""}`} aria-label="Configuração inicial da Zela">
+    <section className={`setup-widget surface-light ${completed ? "setup-reminder" : ""}`} aria-label="Configuração inicial da IAZELA">
       <div className="setup-widget-icon">{completed ? <CheckCircle size={26} /> : <Settings size={28} />}</div>
       <div className="setup-widget-copy">
-        <h2>{props.standalone ? "Configuração inicial" : completed ? "Configuração com passos opcionais pendentes" : "Vamos preparar a sua Zela"}</h2>
+        <h2>{props.standalone ? "Configuração inicial" : completed ? "Configuração com passos opcionais pendentes" : "Vamos preparar a sua IAZELA"}</h2>
         <p>{completed ? "A empresa está pronta a utilizar. Pode completar as integrações e os restantes parâmetros quando precisar." : "Escolha como pretende trabalhar e prepare as caixas, contas bancárias e meios de pagamento da empresa."}</p>
         {!completed && <div className="setup-widget-progress"><progress value={status?.progress || 0} max={100} aria-label="Progresso da configuração" /><span>{status?.progress || 0}%</span></div>}
         {completed && !!status?.pending?.length && <ul>{status.pending.map((item: string) => <li key={item}>{item}</li>)}</ul>}
@@ -118,9 +119,9 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
   function deleteButton(section: string, index: number) { return <ActionButton type="button" className="setup-remove" aria-label={`Retirar ${section === "registers" ? "caixa" : section === "accounts" ? "conta" : "terminal"} ${index + 1}`} onClick={() => remove(section, index)}><Trash2 size={17} />Retirar da configuração</ActionButton>; }
   const currency = data?.company.currency || "EUR";
   return <AppDialog busy={busy} dirty={!!data && !!state && !done && JSON.stringify(data) !== JSON.stringify(state.data)} ref={dialog} className="setup-dialog surface-light" aria-labelledby="setup-title" onRequestClose={() => { if (!busy) onClose(); }}>
-    <header className="setup-dialog-header"><div><small>CONFIGURAÇÃO DA EMPRESA</small><h2 id="setup-title">Vamos preparar a sua Zela</h2></div></header>
+    <header className="setup-dialog-header"><div><small>CONFIGURAÇÃO DA EMPRESA</small><h2 id="setup-title">Vamos preparar a sua IAZELA</h2></div></header>
     {!data || !state ? <div className="setup-content">{error ? <Notice className="error" role="alert">{error}</Notice> : <p role="status">A carregar os dados existentes…</p>}</div> : done ? <div className="setup-content setup-completed">
-      <CheckCircle size={52} aria-hidden="true" /><h2>A sua Zela está pronta</h2><p>A configuração foi guardada para toda a empresa.</p>
+      <CheckCircle size={52} aria-hidden="true" /><h2>A sua IAZELA está pronta</h2><p>A configuração foi guardada para toda a empresa.</p>
       {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
       {!!state.pending?.length && <div className="setup-note"><b>Pode completar mais tarde</b><ul>{state.pending.map((item: string) => <li key={item}>{item}</li>)}</ul></div>}
       <div className="setup-next-actions"><ActionButton type="button" className="primary" onClick={() => { onClose(); onNavigate("Folha de caixa"); void onAction("open"); }}><Wallet size={19} />Abrir primeira folha de caixa</ActionButton>
@@ -148,14 +149,14 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
               {currency !== "EUR" && <p className="setup-note">A moeda é aplicada às novas caixas e contas. Os saldos existentes conservam a sua moeda. A contagem por notas e moedas de euro deve ser substituída pela introdução do valor total nas restantes moedas.</p>}
             </>}
             {step === 1 && <>
-              <h4>Como pretende trabalhar com a Zela?</h4>
-              <div className="setup-mode-options">{[["local", "Modo local autónomo", "Caixas, bancos, recebimentos e pagamentos na Zela. Introduza manualmente o faturado diário para conferir."], ["integrated", "Ligação a ERP", "Ligue um conector disponível e escolha os dados que pretende importar."]].map(([value, label, explanation]) => <label className={data.mode.mode === value ? "selected" : ""} key={value}><input type="radio" name="setup-mode" value={value} checked={data.mode.mode === value} onChange={() => change("mode", "mode", value)} /><strong>{label}</strong><span>{explanation}</span></label>)}</div>
-              <p className="setup-note">Autónomo significa independente de ERP. O acesso à Zela e à base de dados pode continuar a precisar de Internet.</p>
+              <h4>Como pretende trabalhar com a IAZELA?</h4>
+              <div className="setup-mode-options">{[["local", "Modo local autónomo", "Caixas, bancos, recebimentos e pagamentos na IAZELA. Introduza manualmente o faturado diário para conferir."], ["integrated", "Ligação a ERP", "Ligue um conector disponível e escolha os dados que pretende importar."]].map(([value, label, explanation]) => <label className={data.mode.mode === value ? "selected" : ""} key={value}><input type="radio" name="setup-mode" value={value} checked={data.mode.mode === value} onChange={() => change("mode", "mode", value)} /><strong>{label}</strong><span>{explanation}</span></label>)}</div>
+              <p className="setup-note">Autónomo significa independente de ERP. O acesso à IAZELA e à base de dados pode continuar a precisar de Internet.</p>
               {data.mode.mode === "integrated" && <>
                 <div className="setup-grid"><Field label="Conector ERP"><select value={data.mode.provider} onChange={e => change("mode", "provider", e.target.value)}>{state.connectors.map((c: Row) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
                   <Field label="Empresa no ERP"><input value={data.mode.enterprise} maxLength={100} placeholder="Identificador da empresa na ligação ERP" onChange={e => change("mode", "enterprise", e.target.value)} /></Field>
                   <Field label="Chave de acesso ERP"><input type="password" autoComplete="new-password" value={data.mode.api_key || ""} placeholder={state.has_api_key ? "Chave já guardada; preencha apenas para substituir" : "Introduza a chave da ligação"} onChange={e => change("mode", "api_key", e.target.value)} /></Field></div>
-                <Hint><p>A empresa é identificada pelo código usado pelo conector Wintouch. As caixas importadas podem ser associadas a estabelecimentos da Zela na etapa seguinte. A chave é cifrada e nunca é devolvida pelo servidor.</p><Field label="Endereço da API ERP"><input value={data.mode.api_url} onChange={e => change("mode", "api_url", e.target.value)} /></Field></Hint>
+                <Hint><p>A empresa é identificada pelo código usado pelo conector Wintouch. As caixas importadas podem ser associadas a estabelecimentos da IAZELA na etapa seguinte. A chave é cifrada e nunca é devolvida pelo servidor.</p><Field label="Endereço da API ERP"><input value={data.mode.api_url} onChange={e => change("mode", "api_url", e.target.value)} /></Field></Hint>
                 <div className="setup-inline-actions"><ActionButton type="button" onClick={() => void run(async () => { const saved = await persist(); const checked = await api("/setup/erp/test", { revision: saved.revision }); hydrate(checked); setNotice(checked.test_message); })}>Testar ligação</ActionButton><span className={`setup-connection ${state.connection_tested ? "confirmed" : ""}`}>{state.connection_tested ? "Ligação testada com sucesso" : "Ligação pendente de teste"}</span></div>
                 <h4>Dados disponíveis para importar</h4><div className="setup-check-grid">{Object.entries(state.resource_labels).map(([id, label]) => <label key={id}><input type="checkbox" checked={data.mode.resources.includes(id)} onChange={e => change("mode", "resources", e.target.checked ? [...data.mode.resources, id] : data.mode.resources.filter((r: string) => r !== id))} />{String(label)}</label>)}</div>
                 <p>O assistente pré-visualiza os catálogos de caixas, entidades e artigos. Documentos, movimentos e rubricas mantêm os mecanismos de importação e conferência na área Integrações.</p>
@@ -169,7 +170,7 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
             {step === 2 && <>
               <p>Quantas caixas pretende gerir? Reutilize as caixas existentes ou acrescente as que faltam.</p>
               <div className="setup-inline-actions"><Field label="Número de caixas"><input type="number" min={0} max={100} value={data.registers.length} onChange={e => { const count = Math.max(0, Math.min(100, Number(e.target.value))); setData(previous => ({ ...previous, registers: Array.from({ length: count }, (_, i) => previous!.registers[i] || { key: key(), name: i ? `Caixa ${i + 1}` : "Caixa principal", store_id: data.company.store_id, responsible: "", start_date: today(), fund: "0,00", opening: null, count_required: true, balance_mode: "fixed", erp_id: null }) })); }} /></Field></div>
-              <Hint><p>O fundo habitual é o montante que pretende manter na gaveta. O saldo inicial é todo o numerário existente na data de início. É registado uma única vez como saldo de partida, sem ser tratado como venda ou receita.</p><p>Retirar um registo existente deste assistente conserva os seus dados e o respetivo histórico na Zela.</p></Hint>
+              <Hint><p>O fundo habitual é o montante que pretende manter na gaveta. O saldo inicial é todo o numerário existente na data de início. É registado uma única vez como saldo de partida, sem ser tratado como venda ou receita.</p><p>Retirar um registo existente deste assistente conserva os seus dados e o respetivo histórico na IAZELA.</p></Hint>
               {data.registers.map((r: Row, i: number) => <section className="setup-record" key={r.key}><div className="setup-record-title"><h4><Wallet size={19} />{r.name || `Caixa ${i + 1}`}</h4>{deleteButton("registers", i)}</div><div className="setup-grid">
                 <Field label={`Nome da caixa ${i + 1}`}><input value={r.name} maxLength={100} onChange={e => itemChange("registers", i, "name", e.target.value)} /></Field>
                 <Field label={`Estabelecimento da caixa ${i + 1}`}>{storeSelect(r.store_id, value => itemChange("registers", i, "store_id", value))}</Field>

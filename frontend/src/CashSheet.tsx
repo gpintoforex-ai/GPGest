@@ -2,7 +2,8 @@ import { ActionLink } from "./components/InteractionUI";
 import { ActionButton, AppDialog, Notice, confirmAction } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeftRight, Banknote, CreditCard, FileText, LockKeyhole, LockKeyholeOpen, Wallet } from "lucide-react";
-import { api, Field } from "./App";
+import { api } from "./lib/api";
+import { Field } from "./components/Form";
 import CashCountDialog from "./CashCountDialog";
 import SettlementConfirmation from "./SettlementConfirmation";
 import { useCashPreferences } from "./CashPreferences";
@@ -193,7 +194,7 @@ export default function CashSheet({
         <summary>{s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"}</summary>
         {canImportErp && <ActionButton disabled={busy || !!s.closed_at} title={s.closed_at ? "Reabra a folha para atualizar a conferência." : undefined} onClick={() => { setConfirmDemo(false); setImportPrompt(true); }}>Importar movimentos do ERP</ActionButton>}
       <p className="footnote">
-        Origem dos valores: Manual (Zela) e ERP (Wintouch).
+        Origem dos valores: Manual (IAZELA) e ERP (Wintouch).
       </p>
       <p className="footnote">
         {s.sheet.scope === "store_day"
@@ -203,7 +204,7 @@ export default function CashSheet({
       {s.sheet.include_wintouch && (
         <p className="footnote">
           Importe os movimentos do ERP para atualizar a conferência. Evite
-          registar novamente na Zela os mesmos recebimentos.
+          registar novamente na IAZELA os mesmos recebimentos.
         </p>
       )}
       {importPrompt && <AppDialog busy={busy} className="doc-dialog" ref={importDialog} aria-label="Importar movimentos do ERP" onRequestClose={() => {  if (!busy) setImportPrompt(false); }}><div className="panel-title"><h2>Importar movimentos do ERP</h2></div><p>Importar os movimentos do estabelecimento para {s.sheet.day.split("-").reverse().join("/")}, usando o ERP configurado na empresa.</p>{error && <Notice className="error" role="alert">{error}</Notice>}{demo && <label className="doc-check"><input type="checkbox" checked={confirmDemo} onChange={e => setConfirmDemo(e.target.checked)} disabled={busy} />Confirmo a importação de dados reais do ERP para esta empresa de demonstração.</label>}<ActionButton className="primary" disabled={busy || (demo && !confirmDemo)} onClick={async () => { setBusy(true); setError(""); setNotice(""); try { const result = await api(`/sessions/${s.id}/import-erp`, { confirm_demo: confirmDemo }, { timeoutMs: 120000 }); await reload(); window.dispatchEvent(new Event("gpgest-sales-updated")); setImportPrompt(false); setNotice(result.closed ? "Movimentos importados. A folha foi fechada entretanto; os valores do fecho foram preservados." : `Movimentos importados com sucesso: ${result.import.read_count} registos, ${result.import.inserted_count} novos e ${result.import.updated_count} atualizados.`); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>{busy ? "A importar…" : "Importar movimentos"}</ActionButton></AppDialog>}
@@ -228,7 +229,7 @@ export default function CashSheet({
           <thead>
             <tr>
               <th>Meio de pagamento</th>
-              <th>Zela (saldo)</th>
+              <th>IAZELA (saldo)</th>
               <th>Wintouch (saldo)</th>
               <th>Créditos</th>
               <th>Débitos</th>

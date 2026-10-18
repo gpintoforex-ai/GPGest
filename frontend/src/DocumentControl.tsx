@@ -2,7 +2,7 @@ import { ActionLink } from "./components/InteractionUI";
 import { confirmAction } from "./components/InteractionUI";
 import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
-import { api } from "./App";
+import { api } from "./lib/api";
 import { uploadPurchaseFile } from "./utils/purchaseImport";
 import Purchases from "./Purchases";
 import GoogleInvoiceInbox from "./GoogleInvoiceInbox";

@@ -1,6 +1,6 @@
 import { ActionButton, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
-import { api } from "./App";
+import { api } from "./lib/api";
 import "./RecordList.css";
 
 type Row = Record<string, any>;

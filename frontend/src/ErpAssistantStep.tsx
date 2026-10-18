@@ -1,6 +1,6 @@
 import { ActionButton, Notice } from "./components/InteractionUI";
 import { useState } from "react";
-import { api } from "./App";
+import { api } from "./lib/api";
 type Row = Record<string, any>;
 export default function ErpAssistantStep({ documents, admin, start, end, onUpdated, onReview }: { documents: Row[]; admin: boolean; start: string; end: string; onUpdated: () => Promise<void>; onReview: (doc: Row) => void }) {
   const [rows, setRows] = useState<Row[]>([]), [busy, setBusy] = useState(false), [error, setError] = useState(""), [checked, setChecked] = useState(false), [confirmed, setConfirmed] = useState(false);
