@@ -462,7 +462,7 @@ def register_routes(app, current, authorize, record):
         purchase = doc(db, user, key)
         if not data.confirmed or data.nif.strip() != purchase.supplier_nif.strip():
             raise HTTPException(422, "Confirme o fornecedor e o NIF do documento.")
-        from .main import EntityEdit, create_entity, edit_entity, list_entities
+        from .entities import EntityEdit, create_entity, edit_entity, list_entities
 
         db.execute(
             select(

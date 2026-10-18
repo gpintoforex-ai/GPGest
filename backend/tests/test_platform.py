@@ -5,7 +5,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from app import db as database
-from app import main as main_module
+from app import entities as entities_module
 from app.main import app, attempts
 from app.models import BusinessEntity, CashSession, Category, Movement, Register, User, WintouchSaleRecord
 from app.platform import attempts as platform_attempts
@@ -825,7 +825,7 @@ def test_entity_vies_lookup_and_address_persistence(platform, monkeypatch):
     def mock_client(*args, **kwargs):
         return real_client(transport=httpx.MockTransport(handle), **kwargs)
 
-    monkeypatch.setattr(main_module, "HttpxClient", mock_client)
+    monkeypatch.setattr(entities_module, "HttpxClient", mock_client)
     response = c.get("/api/entities/lookup", params={"tax_number": "PT 501 234 567"})
     assert response.status_code == 200, response.text
     assert response.json() == {

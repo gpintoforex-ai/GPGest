@@ -1,22 +1,18 @@
 import hashlib
 import json
 import os
-import re
 import secrets
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from time import monotonic
 
-import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from httpx import Client as HttpxClient
 from pwdlib import PasswordHash
-from pydantic import Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -38,7 +34,9 @@ from .cash_sheet import (
 )
 from .cash_sheet import day as sheet_day_of
 from .cash_sheet import summary as sheet_summary
+from .access import authorize, cents, current, record, scope, serial
 from .db import db_session
+from .entities import list_entities
 from .models import (
     Access,
     Attachment,
@@ -48,10 +46,7 @@ from .models import (
     PaymentTerminal,
     CompanySetup,
     AccountBalanceReference,
-    BankTransaction,
     BankDeposit,
-    BusinessEntity,
-    AttachmentIntegrationConfig,
     CashSession,
     Category,
     LoginSession,
@@ -63,7 +58,6 @@ from .models import (
     Store,
     User,
     WintouchCashAccount,
-    WintouchEntity,
     WintouchSaleRecord,
     now,
     uid,
@@ -72,10 +66,6 @@ from .platform import SyncRequest, selection_router, sync_company, sync_history
 from .platform import router as platform_router
 from .platform_models import Company
 from .schemas import (
-    BankAccountEdit,
-    BankAccountDetailsEdit,
-    BankCreate,
-    BankInstitutionEdit,
     CashCount,
     CashSources,
     CloseCash,
@@ -208,71 +198,6 @@ async def validation_error(request: Request, exc: RequestValidationError):
     return JSONResponse({"detail": " ".join(messages)}, status_code=422)
 
 
-def cents(value: str, zero=False):
-    try:
-        amount = Decimal(value.replace(",", "."))
-        if (
-            not amount.is_finite()
-            or amount < 0
-            or (not zero and amount == 0)
-            or amount > Decimal("999999999")
-            or amount * 100 != (amount * 100).to_integral_value()
-        ):
-            raise ValueError()
-        return int(amount * 100)
-    except (InvalidOperation, ValueError):
-        raise HTTPException(
-            422, "Introduza um montante positivo com, no máximo, duas casas decimais."
-        )
-
-
-def current(request: Request, db: Session = Depends(db_session)):
-    token = request.cookies.get("gpgest_session", "")
-    selected = db.execute(
-        select(LoginSession, User)
-        .join(User, User.id == LoginSession.user_id)
-        .where(LoginSession.token_hash == hashlib.sha256(token.encode()).hexdigest())
-    ).first()
-    if not selected:
-        raise HTTPException(401, "Inicie sessão para continuar.")
-    login, user = selected
-    expires = (
-        login.expires_at.replace(tzinfo=timezone.utc)
-        if login.expires_at.tzinfo is None
-        else login.expires_at
-    )
-    if expires <= now() or not user or not user.active:
-        raise HTTPException(401, "A sessão expirou.")
-    return user
-
-
-def authorize(user, db, store_id=None, roles=None):
-    if roles and user.role not in roles:
-        raise HTTPException(403, "O seu perfil não permite esta ação.")
-    if store_id and user.role != "administrador" and not db.get(Access, (user.id, store_id)):
-        raise HTTPException(403, "Não tem acesso a esta loja.")
-
-
-def scope(user, db):
-    return (
-        [s.id for s in db.scalars(select(Store))]
-        if user.role == "administrador"
-        else list(db.scalars(select(Access.store_id).where(Access.user_id == user.id)))
-    )
-
-
-def record(db, user, action, target, detail, store_id=None):
-    db.add(
-        Audit(
-            user_id=user.id,
-            store_id=store_id,
-            action=action,
-            target_id=target,
-            detail=json.dumps(detail, ensure_ascii=False),
-        )
-    )
-
-
 def cash(db, user, session_id, write=False):
     session = (
         db.scalar(select(CashSession).where(CashSession.id == session_id).with_for_update())
@@ -330,17 +255,6 @@ def balance(db, session):
                     continue
                 total += data["amount_cents"] * data["direction"]
     return total
-
-
-def serial(obj):
-    result = {
-        c.name: getattr(obj, c.name)
-        for c in obj.__table__.columns
-        if c.name not in {"password_hash", "token_hash", "iban_ciphertext", "password_ciphertext", "payload_ciphertext"}
-    }
-    if isinstance(obj, BankAccount):
-        result["iban_configured"] = bool(obj.iban_ciphertext)
-    return result
 
 
 @app.get("/api/health")
@@ -507,229 +421,9 @@ def create_register(data: RegisterCreate, user=Depends(current), db: Session = D
     return serial(obj)
 
 
-@app.get("/api/banks")
-def list_banks(user=Depends(current), db: Session = Depends(db_session)):
-    rows = db.scalars(select(BankInstitution).order_by(BankInstitution.name)).all()
-    return [serial(row) for row in rows]
+from .banks import router as banks_router
 
-
-@app.post("/api/banks")
-def create_bank(data: Name, user=Depends(current), db: Session = Depends(db_session)):
-    authorize(user, db, roles=["administrador", "gestor"])
-    if db.scalar(select(BankInstitution.id).where(func.lower(BankInstitution.name) == data.name.lower())):
-        raise HTTPException(409, "Esta instituição financeira já está registada.")
-    obj = BankInstitution(name=data.name)
-    db.add(obj)
-    db.flush()
-    record(db, user, "banco_criado", obj.id, {"name": obj.name})
-    db.commit()
-    return serial(obj)
-
-
-@app.post("/api/banks/{bank_id}")
-def edit_bank(bank_id: str, data: BankInstitutionEdit, user=Depends(current), db: Session = Depends(db_session)):
-    authorize(user, db, roles=["administrador", "gestor"])
-    obj = db.get(BankInstitution, bank_id)
-    if not obj:
-        raise HTTPException(404, "Instituição financeira não encontrada.")
-    duplicate = db.scalar(
-        select(BankInstitution.id).where(
-            func.lower(BankInstitution.name) == data.name.lower(),
-            BankInstitution.id != bank_id,
-        )
-    )
-    if duplicate:
-        raise HTTPException(409, "Esta instituição financeira já está registada.")
-    previous_name = obj.name
-    renamed_accounts = 0
-    if previous_name != data.name:
-        for account in db.scalars(select(BankAccount).with_for_update()):
-            try:
-                settings = json.loads(account.settings)
-            except (TypeError, ValueError):
-                settings = {}
-            linked_id = settings.get("bank_id") if isinstance(settings, dict) else None
-            if linked_id == obj.id or (not linked_id and account.bank.casefold() == previous_name.casefold()):
-                account.bank = data.name
-                renamed_accounts += 1
-    obj.name = data.name
-    obj.active = data.active
-    record(db, user, "banco_editado", obj.id, {"name": obj.name, "previous_name": previous_name, "active": obj.active, "accounts_updated": renamed_accounts})
-    db.commit()
-    return serial(obj)
-
-
-@app.post("/api/accounts")
-def create_account(data: BankCreate, user=Depends(current), db: Session = Depends(db_session)):
-    authorize(user, db, data.store_id, ["administrador", "gestor"])
-    if not db.get(Store, data.store_id):
-        raise HTTPException(404, "Loja não encontrada.")
-    obj = BankAccount(**data.model_dump())
-    db.add(obj)
-    db.flush()
-    record(db, user, "conta_criada", obj.id, {"bank": obj.bank}, data.store_id)
-    db.commit()
-    return serial(obj)
-
-
-@app.post("/api/accounts/{account_id}")
-def edit_account(account_id: str, data: BankAccountDetailsEdit, user=Depends(current), db: Session = Depends(db_session)):
-    account = db.scalar(select(BankAccount).where(BankAccount.id == account_id).with_for_update())
-    if not account:
-        raise HTTPException(404, "Conta bancária não encontrada.")
-    authorize(user, db, account.store_id, ["administrador", "gestor"])
-    from .company_setup import iban as validate_iban, amount as setup_amount, unpack
-    from .models import AccountBalanceReference
-    from .platform import cipher
-    if data.store_id and data.store_id != account.store_id:
-        raise HTTPException(409, "O estabelecimento é preservado para manter o histórico da conta.")
-    if data.currency and data.currency != account.currency:
-        raise HTTPException(409, "A moeda de uma conta existente é preservada. Crie outra conta para uma moeda diferente.")
-    if account.iban_ciphertext and not data.iban.strip() and data.iban_last4 != account.iban_last4:
-        raise HTTPException(409, "Esta conta tem um IBAN completo guardado. Altere o IBAN na configuração inicial; os últimos quatro algarismos não podem ser alterados isoladamente.")
-    if data.bank != account.bank:
-        try:
-            settings = json.loads(account.settings)
-        except (TypeError, ValueError):
-            settings = {}
-        if not isinstance(settings, dict):
-            settings = {}
-        bank = db.scalar(select(BankInstitution).where(func.lower(BankInstitution.name) == data.bank.lower()))
-        if bank:
-            settings["bank_id"] = bank.id
-        else:
-            settings.pop("bank_id", None)
-        account.settings = json.dumps(settings)
-    if data.iban.strip():
-        clear = validate_iban(data.iban)
-        for other in db.scalars(select(BankAccount).where(BankAccount.id != account.id, BankAccount.iban_ciphertext != "")):
-            if cipher().decrypt(other.iban_ciphertext.encode()).decode() == clear:
-                raise HTTPException(409, "O IBAN já pertence a outra conta desta empresa.")
-        account.iban_ciphertext = cipher().encrypt(clear.encode()).decode()
-        data.iban_last4 = clear[-4:]
-    if data.opening.strip():
-        from datetime import date
-        if not data.opening_date or data.opening_date > date.today():
-            raise HTTPException(422, "Indique uma data de saldo inicial válida e não futura.")
-        value = setup_amount(data.opening, signed=True)
-        ref = db.get(AccountBalanceReference, "bank:" + account.id)
-        if ref and (ref.amount_cents != value or ref.reference_date != data.opening_date.isoformat()):
-            raise HTTPException(409, "Já existe um saldo inicial diferente. Reveja-o em Ligação ERP > Saldos iniciais.")
-        if not ref:
-            db.add(AccountBalanceReference(target="bank:" + account.id, store_id=account.store_id, amount_cents=value, currency=account.currency, reference_date=data.opening_date.isoformat(), user_id=user.id))
-    if data.principal is not None:
-        for other in db.scalars(select(BankAccount)):
-            config = unpack(other.settings)
-            if other.id == account.id or data.principal:
-                other.settings = json.dumps({**config, "principal": data.principal if other.id == account.id else False})
-    before = {key: getattr(account, key) for key in ("name", "bank", "iban_last4")}
-    account.name, account.bank, account.iban_last4 = data.name, data.bank, data.iban_last4
-    record(db, user, "conta_editada", account.id, {"before": before, "after": data.model_dump(mode="json", exclude={"iban"}), "iban_changed": bool(data.iban.strip())}, account.store_id)
-    db.commit()
-    return serial(account)
-
-
-@app.get("/api/accounts/{account_id}/transactions")
-def bank_transactions(account_id: str, user=Depends(current), db: Session = Depends(db_session)):
-    account = db.get(BankAccount, account_id)
-    if not account:
-        raise HTTPException(404, "Conta não encontrada.")
-    authorize(user, db, account.store_id)
-    rows = db.scalars(
-        select(BankTransaction)
-        .where(BankTransaction.account_id == account_id)
-        .order_by(
-            BankTransaction.movement_date.desc(),
-            BankTransaction.exported_at.desc(),
-            BankTransaction.source_position.asc(),
-            BankTransaction.created_at.desc(),
-        )
-    ).all()
-    return [serial(row) for row in rows]
-
-
-@app.post("/api/accounts/{account_id}/import-bpi")
-@app.post("/api/accounts/{account_id}/import-statement")
-def import_bpi(
-    account_id: str,
-    confirm: bool = False,
-    file: UploadFile = File(...),
-    user=Depends(current),
-    db: Session = Depends(db_session),
-):
-    from .bpi_import import parse_bpi
-    from .viva_import import parse_viva
-
-    account = db.scalar(select(BankAccount).where(BankAccount.id == account_id).with_for_update())
-    if not account:
-        raise HTTPException(404, "Conta não encontrada.")
-    authorize(user, db, account.store_id, ["administrador", "gestor"])
-    data = file.file.read(5_000_001)
-    if len(data) > 5_000_000:
-        raise HTTPException(413, "O limite do ficheiro é 5 MB.")
-    try:
-        is_viva = not data.startswith(b"PK")
-        source, rows = parse_viva(data) if is_viva else parse_bpi(data)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    format_name = "Viva Wallet" if is_viva else "BPI Net Empresas"
-    existing = db.scalars(
-        select(BankTransaction).where(BankTransaction.account_id == account_id)
-    ).all()
-    if existing and any(row.source_account != source for row in existing):
-        raise HTTPException(
-            409, "Este extrato pertence a outra conta ou banco. Selecione a conta bancária correta."
-        )
-    if account.currency != "EUR":
-        raise HTTPException(422, "Este formato de extrato só pode ser importado numa conta em euros.")
-    seen = {row.fingerprint for row in existing}
-    new = []
-    for row in rows:
-        row["duplicate"] = row["fingerprint"] in seen
-        if not row["duplicate"]:
-            new.append(row)
-            seen.add(row["fingerprint"])
-    if confirm:
-        from .models import DocumentImport
-
-        batch = DocumentImport(
-            store_id=account.store_id,
-            user_id=user.id,
-            filename=(file.filename or ("extrato.xls" if is_viva else "extrato.xlsx")).replace("\\", "/").split("/")[-1][:200],
-            fingerprint=hashlib.sha256(data).hexdigest(),
-            source="viva_wallet_xls" if is_viva else "bpi_xlsx",
-        )
-        db.add(batch)
-        db.flush()
-        for row in new:
-            db.add(
-                BankTransaction(
-                    account_id=account_id,
-                    source_account=source,
-                    import_id=batch.id,
-                    **{k: v for k, v in row.items() if k != "duplicate"},
-                )
-            )
-        record(
-            db,
-            user,
-            "extrato_viva_importado" if is_viva else "extrato_bpi_importado",
-            account_id,
-            {"novos": len(new), "duplicados": len(rows) - len(new)},
-            account.store_id,
-        )
-        db.commit()
-    return {
-        "rows": rows,
-        "new_count": len(new),
-        "duplicate_count": len(rows) - len(new),
-        "imported": confirm,
-        "format": format_name,
-        "warnings": [
-            "O extrato Viva Wallet não identifica a conta de origem nem a moeda. "
-            "Confirme que pertence à conta selecionada e que os valores estão em euros."
-        ] if is_viva else [],
-    }
+app.include_router(banks_router)
 
 
 from .rubrics import CategoryEdit, cash_difference_category, set_cash_difference
@@ -2341,389 +2035,14 @@ from .documents import register_routes as register_document_routes
 register_document_routes(app, current, authorize, scope, record, serial)
 
 
-class EntityEdit(Strict):
-    category_id: str | None = None
-    name: str = Field(min_length=2, max_length=300)
-    tax_number: str = Field(default="", max_length=40)
-    address: str = Field(default="", max_length=500)
-    locality: str = Field(default="", max_length=120)
-    postal_code: str = Field(default="", max_length=20)
-    email: str = Field(default="", max_length=200)
-    phone: str = Field(default="", max_length=60)
-    is_customer: bool
-    is_supplier: bool
-    active: bool = True
+from .entities import router as entities_router
 
-    @model_validator(mode="after")
-    def validate_entity(self):
-        self.name = self.name.strip()
-        self.tax_number = self.tax_number.strip()
-        self.address = self.address.strip()
-        self.locality = self.locality.strip()
-        self.postal_code = self.postal_code.strip()
-        self.email = self.email.strip().lower()
-        if len(self.name) < 2 or not (self.is_customer or self.is_supplier):
-            raise ValueError("Indique nome e tipo de entidade.")
-        if self.email and ("@" not in self.email or any(c.isspace() for c in self.email)):
-            raise ValueError("Email inválido.")
-        return self
+app.include_router(entities_router)
 
 
-def entity_view(entity, source, key):
-    return {
-        "id": key,
-        "source": source,
-        "category_id": getattr(entity, "category_id", None),
-        **{
-            name: getattr(entity, name, "")
-            for name in (
-                "name",
-                "tax_number",
-                "address",
-                "locality",
-                "postal_code",
-                "email",
-                "phone",
-                "is_customer",
-                "is_supplier",
-                "active",
-            )
-        },
-    }
+from .settings import router as settings_router
 
-
-def annotate_entity_movement_history(entities, db):
-    if not entities:
-        return
-    entity_names = {item["name"].strip().casefold() for item in entities if item["name"].strip()}
-    movement_names = set()
-    if entity_names:
-        movement_names = {
-            name.strip().casefold()
-            for name in db.scalars(
-                select(Movement.entity).where(
-                    func.lower(func.trim(Movement.entity)).in_(entity_names),
-                    Movement.entity != "",
-                )
-            )
-            if name
-        }
-    referenced_ids = set()
-    for raw_data in db.scalars(
-        select(CashSession.count_data).where(
-            CashSession.count_data.contains('"debit_supplier"')
-        )
-    ):
-        counting = json.loads(raw_data or "{}")
-        supplier = counting.get("debit_supplier")
-        if not isinstance(supplier, dict):
-            continue
-        if supplier.get("id"):
-            referenced_ids.add(supplier["id"])
-        if supplier.get("name"):
-            movement_names.add(supplier["name"].strip().casefold())
-        allocations = supplier.get("allocations", [])
-        if isinstance(allocations, list):
-            referenced_ids.update(
-                item["id"]
-                for item in allocations
-                if isinstance(item, dict) and item.get("id")
-            )
-    for entity in entities:
-        entity["has_movements"] = (
-            entity["id"] in referenced_ids
-            or entity["name"].strip().casefold() in movement_names
-        )
-
-
-def entity_has_movement_history(db, entity, entity_key):
-    result = entity_view(entity, "", entity_key)
-    annotate_entity_movement_history([result], db)
-    return result["has_movements"]
-
-
-def vies_address_parts(value):
-    address = value.strip() if isinstance(value, str) else ""
-    if address in {"", "---", "----"}:
-        return "", "", ""
-    address = address.replace("\r\n", "\n").replace("\r", "\n")
-    lines = [line.strip() for line in address.split("\n") if line.strip()]
-    for index, line in enumerate(lines):
-        match = re.search(r"(?<!\d)(\d{4}-\d{3})(?!\d)", line)
-        if not match:
-            continue
-        street_lines = lines[:index]
-        street = line[: match.start()].strip(" ,;")
-        if street:
-            street_lines.append(street)
-        locality_lines = [line[match.end() :].strip(" ,;"), *lines[index + 1 :]]
-        locality = " ".join(part for part in locality_lines if part)
-        return "\n".join(street_lines), locality, match.group(1)
-    return "\n".join(lines), "", ""
-
-
-@app.get("/api/entities/lookup")
-def lookup_entity_by_nif(
-    tax_number: str, user=Depends(current), db: Session = Depends(db_session)
-):
-    authorize(user, db, roles=["administrador", "gestor"])
-    normalized = re.sub(r"[\s.-]", "", tax_number.strip().upper())
-    if normalized.startswith("PT"):
-        normalized = normalized[2:]
-    if not re.fullmatch(r"\d{9}", normalized):
-        raise HTTPException(422, "Indique um NIF português com 9 dígitos.")
-    try:
-        with HttpxClient(timeout=10, follow_redirects=False) as client:
-            response = client.post(
-                "https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number",
-                json={"countryCode": "PT", "vatNumber": normalized},
-                headers={"Accept": "application/json"},
-            )
-            response.raise_for_status()
-            result = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(502, "Não foi possível consultar o VIES. Tente novamente.") from exc
-    if not isinstance(result, dict) or not isinstance(result.get("valid"), bool):
-        raise HTTPException(502, "O VIES devolveu uma resposta inválida.")
-    name = result.get("name", "")
-    raw_address = result.get("address", "")
-    if name is None:
-        name = ""
-    if raw_address is None:
-        raw_address = ""
-    if not isinstance(name, str) or not isinstance(raw_address, str):
-        raise HTTPException(502, "O VIES devolveu dados de entidade inválidos.")
-    address, locality, postal_code = vies_address_parts(raw_address)
-    return {
-        "is_valid": result["valid"],
-        "name": name.strip() if name.strip() not in {"---", "----"} else "",
-        "address": address,
-        "locality": locality,
-        "postal_code": postal_code,
-    }
-
-
-@app.get("/api/entities")
-def list_entities(user=Depends(current), db: Session = Depends(db_session)):
-    local = list(db.scalars(select(BusinessEntity).order_by(BusinessEntity.name)))
-    overrides = {e.wintouch_id: e for e in local if e.wintouch_id}
-    config = integration_policy(db)
-    external_primary = config["mode"] == "integrated" and config.get("authority", {}).get("entities", "erp") == "erp" and bool(db.info.get("company", {}).get("id"))
-    result = [
-        entity_view(e, "GPGest", "local:" + e.id)
-        for e in local
-        if not e.wintouch_id and not e.removed
-    ]
-    with database.next_platform_session() as core:
-        company_id = db.info.get("company", {}).get("id")
-        company = core.get(Company, company_id) if company_id else None
-        enterprise = company.api_enterprise if company else None
-    if not enterprise:
-        annotate_entity_movement_history(result, db)
-        return sorted(result, key=lambda e: e["name"].casefold())
-    for imported in db.scalars(
-        select(WintouchEntity).where(WintouchEntity.enterprise_id == enterprise)
-    ):
-        entity = imported if external_primary else overrides.get(imported.id, imported)
-        if isinstance(entity, BusinessEntity) and entity.removed:
-            continue
-        result.append(
-            entity_view(
-                entity,
-                "Wintouch (edição local)" if imported.id in overrides else "Wintouch",
-                "wt:" + imported.id,
-            )
-        )
-        result[-1]["editable"] = not external_primary
-        if external_primary and imported.id in overrides:
-            result[-1]["category_id"] = overrides[imported.id].category_id
-    annotate_entity_movement_history(result, db)
-    return sorted(result, key=lambda e: e["name"].casefold())
-
-
-@app.post("/api/entities")
-def create_entity(data: EntityEdit, user=Depends(current), db: Session = Depends(db_session)):
-    authorize(user, db, roles=["administrador", "gestor"])
-    if data.category_id and not db.get(Category, data.category_id):
-        raise HTTPException(422, "Rubrica não encontrada.")
-    entity = BusinessEntity(**data.model_dump())
-    db.add(entity)
-    db.flush()
-    record(db, user, "entidade_criada", entity.id, data.model_dump())
-    db.commit()
-    return entity_view(entity, "GPGest", "local:" + entity.id)
-
-
-@app.post("/api/entities/{entity_key}")
-def edit_entity(
-    entity_key: str, data: EntityEdit, user=Depends(current), db: Session = Depends(db_session)
-):
-    authorize(user, db, roles=["administrador", "gestor"])
-    if data.category_id and not db.get(Category, data.category_id):
-        raise HTTPException(422, "Rubrica não encontrada.")
-    source, separator, key = entity_key.partition(":")
-    if not separator or source not in {"local", "wt"}:
-        raise HTTPException(404, "Entidade não encontrada.")
-    if source == "local":
-        entity = db.get(BusinessEntity, key)
-    else:
-        imported = db.get(WintouchEntity, key)
-        with database.next_platform_session() as core:
-            company = core.get(Company, db.info["company"]["id"])
-            enterprise = company.api_enterprise
-        if not imported or imported.enterprise_id != enterprise:
-            raise HTTPException(404, "Entidade não encontrada.")
-        config = integration_policy(db)
-        if config["mode"] == "integrated" and config.get("authority", {}).get("entities", "erp") == "erp":
-            if any((getattr(data, field) or "") != (getattr(imported, field) or "") for field in ("name", "tax_number", "email", "phone", "is_customer", "is_supplier", "active")):
-                raise HTTPException(409, "Os dados principais desta entidade são geridos pelo ERP. Pode manter as informações locais associadas.")
-        entity = db.scalar(select(BusinessEntity).where(BusinessEntity.wintouch_id == key))
-        if not entity:
-            entity = BusinessEntity(wintouch_id=key, **data.model_dump())
-            db.add(entity)
-    if not entity or entity.removed:
-        raise HTTPException(404, "Entidade não encontrada.")
-    before = entity_view(entity, source, entity_key) if entity.id else {}
-    for name, value in data.model_dump().items():
-        setattr(entity, name, value)
-    db.flush()
-    record(db, user, "entidade_alterada", entity.id, {"antes": before, "depois": data.model_dump()})
-    db.commit()
-    return entity_view(
-        entity, "GPGest" if source == "local" else "Wintouch (edição local)", entity_key
-    )
-
-
-@app.post("/api/entities/{entity_key}/remove")
-def remove_entity(entity_key: str, user=Depends(current), db: Session = Depends(db_session)):
-    authorize(user, db, roles=["administrador", "gestor"])
-    source, _, key = entity_key.partition(":")
-    if source == "local":
-        entity = db.get(BusinessEntity, key)
-    elif source == "wt":
-        imported = db.get(WintouchEntity, key)
-        with database.next_platform_session() as core:
-            company = core.get(Company, db.info["company"]["id"])
-            enterprise = company.api_enterprise
-        if not imported or imported.enterprise_id != enterprise:
-            raise HTTPException(404, "Entidade não encontrada.")
-        config = integration_policy(db)
-        if config["mode"] == "integrated" and config.get("authority", {}).get("entities", "erp") == "erp":
-            raise HTTPException(409, "A entidade pertence ao ERP. Altere o estado na origem ou escolha explicitamente a gest\u00e3o local.")
-        entity = db.scalar(select(BusinessEntity).where(BusinessEntity.wintouch_id == key))
-        if not entity:
-            entity = BusinessEntity(
-                wintouch_id=key,
-                name=imported.name,
-                tax_number=imported.tax_number or "",
-                email=imported.email or "",
-                phone=imported.phone or "",
-                is_customer=bool(imported.is_customer),
-                is_supplier=bool(imported.is_supplier),
-            )
-            db.add(entity)
-    else:
-        raise HTTPException(404, "Entidade não encontrada.")
-    if not entity or entity.removed:
-        raise HTTPException(404, "Entidade não encontrada.")
-    if entity_has_movement_history(db, entity, entity_key):
-        entity.active = False
-        db.flush()
-        record(
-            db,
-            user,
-            "entidade_inativada",
-            entity.id,
-            {"nome": entity.name, "origem": source, "motivo": "movimentos associados"},
-        )
-        db.commit()
-        return {"ok": True, "action": "deactivated"}
-    entity.removed = True
-    entity.active = False
-    db.flush()
-    record(db, user, "entidade_removida", entity.id, {"nome": entity.name, "origem": source})
-    db.commit()
-    return {"ok": True, "action": "removed"}
-
-
-from typing import Literal
-
-
-class FiscalSettingsEdit(Strict):
-    vat_period: Literal["", "mensal", "trimestral"]
-
-
-@app.get("/api/settings/fiscal")
-def fiscal_settings(user=Depends(current), db: Session = Depends(db_session)):
-    from .models import CompanyFiscalSettings
-    authorize(user, db, roles=["administrador", "gestor"])
-    config = db.get(CompanyFiscalSettings, "default")
-    return {"vat_period": config.vat_period if config else ""}
-
-
-@app.post("/api/settings/fiscal")
-def save_fiscal_settings(data: FiscalSettingsEdit, user=Depends(current), db: Session = Depends(db_session)):
-    from .models import CompanyFiscalSettings
-    authorize(user, db, roles=["administrador", "gestor"])
-    config = db.get(CompanyFiscalSettings, "default")
-    if not config:
-        config = CompanyFiscalSettings(id="default")
-        db.add(config)
-    before = config.vat_period
-    config.vat_period = data.vat_period
-    record(db, user, "configuracao_fiscal_alterada", "default", {"antes": before, "depois": data.model_dump()})
-    db.commit()
-    return {"vat_period": config.vat_period}
-
-
-class AttachmentConfigEdit(Strict):
-    outlook_email: str = Field(max_length=200)
-    google_email: str = Field(max_length=200)
-    drive_folder: str = Field(max_length=300)
-    mail_folder: str = Field(min_length=1, max_length=100)
-
-    @model_validator(mode="after")
-    def validate_settings(self):
-        import re
-
-        for field in ("outlook_email", "google_email"):
-            value = getattr(self, field).strip().lower()
-            if value and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
-                raise ValueError("Email invalid")
-            setattr(self, field, value)
-        folder = self.drive_folder.strip()
-        if folder.startswith("https://drive.google.com/drive/folders/"):
-            folder = folder.split("/folders/", 1)[1].split("?", 1)[0].strip("/")
-        if folder and not re.fullmatch(r"[A-Za-z0-9_-]{10,200}", folder):
-            raise ValueError("Invalid Google Drive folder")
-        self.drive_folder = folder
-        self.mail_folder = self.mail_folder.strip()
-        if not self.mail_folder:
-            raise ValueError("Mail folder required")
-        return self
-
-
-@app.get("/api/settings/attachments")
-def attachment_settings(user=Depends(current), db: Session = Depends(db_session)):
-    authorize(user, db, roles=["administrador", "gestor"])
-    config = db.get(AttachmentIntegrationConfig, "default")
-    return {"config": serial(config) if config else {}, "connected": False}
-
-
-@app.post("/api/settings/attachments")
-def save_attachment_settings(
-    data: AttachmentConfigEdit, user=Depends(current), db: Session = Depends(db_session)
-):
-    authorize(user, db, roles=["administrador", "gestor"])
-    config = db.get(AttachmentIntegrationConfig, "default")
-    if not config:
-        config = AttachmentIntegrationConfig(id="default")
-        db.add(config)
-    for name, value in data.model_dump().items():
-        setattr(config, name, value)
-    record(db, user, "configuracao_anexos_alterada", "default", data.model_dump())
-    db.commit()
-    return {"ok": True}
+app.include_router(settings_router)
 
 
 from .google_integration import register_routes as register_google_routes
