@@ -1,0 +1,16 @@
+# Normalização de finais de linha: LF no repositório e no disco,
+# exceto scripts Windows, que precisam de CRLF.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binários
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary
+*.zip binary
+
+# Esquema oficial SAF-T: conservar byte a byte
+backend/app/saft_schemas/SAFTPT1.04_01.xsd -text
