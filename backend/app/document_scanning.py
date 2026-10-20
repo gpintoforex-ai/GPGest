@@ -17,7 +17,7 @@ from pydantic import Field, model_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageStat
+from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps, ImageStat
 from pypdf import PdfReader
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
@@ -38,7 +38,7 @@ Image.MAX_IMAGE_PIXELS = 40_000_000
 class ScanBodyLimit:
     def __init__(self, app): self.app = app
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or not scope.get("path", "").startswith("/api/scans/") or scope.get("method") != "POST":
+        if scope["type"] != "http" or not scope.get("path", "").startswith(("/api/scans/", "/api/quick-scan/")) or scope.get("method") != "POST":
             return await self.app(scope, receive, send)
         from starlette.responses import JSONResponse
         headers = dict(scope.get("headers", []))
@@ -67,7 +67,8 @@ class PageEdit(Strict):
     top: float = Field(default=0, ge=0, lt=1)
     width: float = Field(default=1, gt=0.03, le=1)
     height: float = Field(default=1, gt=0.03, le=1)
-    colour: Literal["colour", "grey", "contrast"] = "colour"
+    # colour = original; enhanced = cor realçada; bw = preto e branco com limiar adaptativo.
+    colour: Literal["colour", "enhanced", "grey", "contrast", "bw"] = "colour"
     quality: Literal[70, 85] = 85
     corners: list[list[float]] | None = None
 
@@ -119,6 +120,8 @@ def scan_settings(db):
 
 def cleanup(db):
     db.execute(update(DocumentScan).where(DocumentScan.expires_at < now(), DocumentScan.pdf_ciphertext.is_not(None)).values(pdf_ciphertext=None))
+    from .quick_scan import cleanup as quick_cleanup
+    quick_cleanup(db)
 
 def cleanup_all():
     from . import db as database
@@ -166,10 +169,16 @@ def process_image(raw, edit):
             raise ValueError()
         if edit.rotation:
             image = image.rotate(-edit.rotation, expand=True)
-        if edit.colour != "colour":
+        if edit.colour == "enhanced":
+            image = ImageEnhance.Sharpness(ImageEnhance.Color(ImageOps.autocontrast(image, cutoff=1)).enhance(1.15)).enhance(1.3)
+        elif edit.colour != "colour":
             image = ImageOps.grayscale(image)
         if edit.colour == "contrast":
             image = ImageEnhance.Contrast(ImageOps.autocontrast(image)).enhance(1.6)
+        if edit.colour == "bw":
+            # Limiar local: tinta = mais escura do que o fundo à volta (sombras e iluminação desigual).
+            background = image.filter(ImageFilter.GaussianBlur(max(6, min(image.size) // 50)))
+            image = ImageChops.subtract(background, image).point(lambda value: 0 if value > 16 else 255)
         warnings = []
         sample = ImageOps.grayscale(image.copy()); sample.thumbnail((512, 512))
         edge_image = sample.filter(ImageFilter.FIND_EDGES)
@@ -242,7 +251,7 @@ def make_pdf(files, edits, limits):
     return output.getvalue(), len(files), warnings
 
 def scan_view(row):
-    return {"id": row.id, "status": row.status, "validation_status": row.validation_status, "name": row.name, "size": row.size, "pages": row.pages, "digest": row.digest, "provider": row.provider, "folder": row.drive_folder, "cloud_id": row.drive_id, "purchase_id": row.purchase_id, "movement_id": row.movement_id, "error": row.error, "created_at": row.created_at, "expires_at": row.expires_at, "view_url": f"/api/scans/{row.id}/pdf", "metadata": json.loads(row.data)["metadata"]}
+    return {"id": row.id, "status": row.status, "validation_status": row.validation_status, "name": row.name, "size": row.size, "pages": row.pages, "digest": row.digest, "provider": row.provider, "folder": row.drive_folder, "cloud_id": row.drive_id, "purchase_id": row.purchase_id, "movement_id": row.movement_id, "error": row.error, "created_at": row.created_at, "expires_at": row.expires_at, "view_url": f"/api/scans/{row.id}/pdf", "metadata": json.loads(row.data)["metadata"], "origin": row.origin, "quick": json.loads(row.data).get("quick")}
 
 def register_routes(app, current, authorize, scope, audit):
     def get_scan(db, user, identifier, lock=False):
@@ -378,6 +387,8 @@ def register_routes(app, current, authorize, scope, audit):
     def upload_scan(identifier: str, data: ConfirmScan, user=Depends(current), db: Session=Depends(db_session)):
         row = get_scan(db, user, identifier, True)
         if row.status == "cloud_saved": return scan_view(row)
+        if row.origin == "digitalizacao_rapida":
+            raise HTTPException(409, "Digitalização rápida: o envio repete-se no próprio acesso rápido e nunca cria compras automaticamente.")
         if row.status == "uploading" and (now()-row.updated_at).total_seconds() < 900:
             raise HTTPException(409, "O envio está em curso. Aguarde antes de repetir.")
         row.status, row.error, row.updated_at = "uploading", "", now(); db.commit()
@@ -443,7 +454,7 @@ def register_routes(app, current, authorize, scope, audit):
     @app.post("/api/scans/{identifier}/associate")
     def recover_association(identifier: str, payload: ScanMetadata, user=Depends(current), db: Session=Depends(db_session)):
         row = get_scan(db, user, identifier, True)
-        if row.status == "cloud_saved" or payload.store_id != row.store_id or not payload.purchase_id or payload.movement_id:
+        if row.origin == "digitalizacao_rapida" or row.status == "cloud_saved" or payload.store_id != row.store_id or not payload.purchase_id or payload.movement_id:
             raise HTTPException(409, "Escolha a ficha existente da mesma loja para recuperar a associação.")
         purchase = db.get(Purchase, payload.purchase_id)
         if not purchase or purchase.store_id != row.store_id: raise HTTPException(404, "Documento indisponível.")

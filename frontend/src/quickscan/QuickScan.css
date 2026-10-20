@@ -1,0 +1,421 @@
+/* Digitalização rápida: ecrã inteiro, pensado para telemóvel (Safari iPhone e Chrome Android). */
+.qs {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.qs-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  padding-top: max(var(--space-2), env(safe-area-inset-top));
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+.qs-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+  min-width: 0;
+}
+.qs-brand svg,
+.qs-brand img {
+  max-height: 28px;
+  width: auto;
+}
+.qs-where {
+  margin: 0 0 0 auto;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qs-exit {
+  margin-left: auto;
+  flex: none;
+}
+.qs-where + .qs-exit {
+  margin-left: 0;
+}
+.qs-main {
+  flex: 1;
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--space-4);
+  padding-bottom: calc(var(--space-8) + 72px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.qs-main h1 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 1.35rem;
+  margin: 0;
+}
+.qs-narrow {
+  max-width: 480px;
+}
+.qs-center {
+  align-items: center;
+  justify-content: center;
+}
+.qs-small {
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  margin: 0;
+}
+.qs-message {
+  margin: 0;
+}
+.qs-steps {
+  padding-left: 1.25rem;
+  display: grid;
+  gap: var(--space-2);
+}
+.qs-form {
+  display: grid;
+  gap: var(--space-2);
+}
+.qs-form label,
+.qs-types legend {
+  font-weight: 600;
+}
+.qs-form input {
+  min-height: var(--touch-target, 44px);
+  font-size: 1rem;
+}
+.qs-pin {
+  font-size: 1.5rem !important;
+  letter-spacing: 0.4em;
+  text-align: center;
+}
+.qs-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.qs-name input {
+  flex: 1;
+  min-width: 0;
+}
+.qs-busy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-info-bg);
+  color: var(--color-text);
+}
+.qs-busy progress {
+  flex-basis: 100%;
+  width: 100%;
+}
+.qs-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  animation: qs-spin 0.9s linear infinite;
+}
+@keyframes qs-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qs-spinner {
+    animation-duration: 3s;
+  }
+}
+.qs-actions {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+.qs-actions .ui-action,
+.qs-toolbar .ui-action {
+  min-height: var(--touch-target, 44px);
+}
+
+/* Captura */
+.qs-dark {
+  background: #111;
+  color: #f2f2f2;
+}
+.qs-dark .qs-small {
+  color: #c9c9c9;
+}
+.qs-camera {
+  position: relative;
+  width: 100%;
+  max-height: 68dvh;
+  aspect-ratio: 3 / 4;
+  margin: 0 auto;
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+  background: #000;
+}
+.qs-camera video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.qs-frame {
+  position: absolute;
+  inset: 6% 8%;
+  border: 2px dashed rgba(255, 255, 255, 0.85);
+  border-radius: 6px;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+}
+.qs-frame span {
+  margin-bottom: var(--space-2);
+  padding: 2px var(--space-2);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.8rem;
+  text-align: center;
+}
+.qs-capture-actions {
+  background: #1b1b1b;
+  border-top-color: #333;
+  justify-content: space-between;
+}
+.qs-shutter {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 4px solid #fff;
+  background: transparent;
+  padding: 4px;
+  cursor: pointer;
+}
+.qs-shutter span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: #fff;
+}
+.qs-shutter:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.qs-shutter:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+/* Editor de cantos */
+.qs-editor {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.qs-editor img {
+  display: block;
+  max-width: 100%;
+  max-height: 58dvh;
+  -webkit-touch-callout: none;
+}
+.qs-editor svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.qs-editor polygon {
+  fill: rgba(42, 120, 214, 0.18);
+  stroke: #2a78d6;
+  stroke-width: 4;
+  vector-effect: non-scaling-stroke;
+}
+.qs-editor polygon.invalid {
+  fill: rgba(200, 40, 40, 0.18);
+  stroke: #c62828;
+}
+.qs-handle {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  background: rgba(42, 120, 214, 0.75);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  touch-action: none;
+  cursor: grab;
+  padding: 0;
+}
+.qs-handle:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.qs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.qs-chip {
+  min-height: var(--touch-target, 44px);
+  padding: 0 var(--space-3);
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+}
+.qs-chip.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+/* Revisão */
+.qs-pages {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-3);
+}
+.qs-pages li {
+  position: relative;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.qs-pages img {
+  width: 100%;
+  height: 180px;
+  object-fit: contain;
+  background: var(--color-subtle, #eee);
+}
+.qs-page-number {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  min-width: 26px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--color-text);
+  color: var(--color-surface);
+  font-size: 0.8rem;
+  text-align: center;
+}
+.qs-page-tools {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid var(--color-border);
+}
+.qs-icon {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.qs-icon:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.qs-icon.danger {
+  color: var(--color-danger);
+}
+.qs-types {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.qs-types legend {
+  margin-bottom: var(--space-2);
+}
+.qs-types label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--touch-target, 44px);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  cursor: pointer;
+}
+.qs-types label.active {
+  border-color: var(--color-primary);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+.qs-summary {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+}
+.qs-summary p {
+  margin-top: 0;
+}
+.qs-warnings {
+  color: var(--color-warning);
+  margin: 0 0 var(--space-2);
+}
+.qs-done {
+  align-items: center;
+  text-align: center;
+}
+.qs-ok {
+  color: var(--color-success);
+}
+@media (max-width: 520px) {
+  .qs-brand span {
+    display: none;
+  }
+  .qs-actions .ui-action {
+    flex: 1 1 auto;
+  }
+}

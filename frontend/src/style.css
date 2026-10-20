@@ -713,6 +713,20 @@ footer {
   display: block;
   margin-top: 25px;
 }
+.login-quick-scan {
+  margin-top: 25px;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-border);
+  display: grid;
+  gap: 8px;
+}
+.login-quick-scan .ui-action {
+  justify-content: center;
+  width: 100%;
+}
+.login-quick-scan small {
+  color: var(--color-muted);
+}
 @media (min-width: 1500px) {
   main {
     padding-top: 35px;

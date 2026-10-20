@@ -14,3 +14,12 @@
 .scanner-warning { padding: 12px; background: #fff5e5; color: #86510b; border-radius: 8px; }
 .scanner-dialog fieldset { min-width: 0; border: 0; padding: 0; }
 @media (max-width: 600px) { .scanner-dialog { width: calc(100vw - 12px); padding: 16px; }.scanner-actions > button, .scanner-actions > .button { flex: 1 1 140px; }.scanner-pages { grid-template-columns: 1fr; }.scanner-pdf { height: 450px; } }
+
+/* Acessos de digitalização rápida (administração) */
+.quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.quick-form { margin-top: 16px; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-panel); display: grid; gap: 12px; }
+.quick-check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; }
+.quick-pairing { margin: 16px 0; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-surface); display: grid; gap: 12px; justify-items: start; }
+.quick-pairing img { background: #fff; padding: 12px; border-radius: 8px; image-rendering: pixelated; }
+.quick-pairing-link { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+.quick-pairing-link input { flex: 1 1 260px; min-width: 0; }

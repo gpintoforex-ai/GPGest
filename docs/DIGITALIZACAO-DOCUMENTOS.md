@@ -15,7 +15,7 @@ O servidor verifica a pasta e a capacidade de escrita antes de enviar. Mudanças
 
 Fotografar usa o seletor de ficheiros com indicação da câmara traseira (`capture=environment`), sujeito ao comportamento do navegador. Há alternativas de galeria e PDF existente. Fotografias aceites: JPEG, PNG e WebP, até 15 MB cada e 50 MB no conjunto. HEIC requer exportação para JPEG.
 
-Pode adicionar, repetir, eliminar e reordenar páginas; rodar, recortar, ajustar quatro cantos para perspetiva e escolher cor, cinzentos ou contraste. A orientação EXIF é aplicada antes das alterações. Não há deteção automática do papel nem OCR. O aviso de possível desfocagem é uma estimativa visual e não substitui a revisão.
+Pode adicionar, repetir, eliminar e reordenar páginas; rodar, recortar, ajustar quatro cantos para perspetiva e escolher cor, cinzentos ou contraste. O servidor aceita ainda os modos «cor realçada» e «preto e branco» (limiar local), usados pela [digitalização rápida por PIN](DIGITALIZACAO-RAPIDA.md), que inclui deteção automática das margens. A orientação EXIF é aplicada antes das alterações. Não há deteção automática do papel nem OCR. O aviso de possível desfocagem é uma estimativa visual e não substitui a revisão.
 
 Os PDFs de fotografias conservam as proporções, incluindo talões compridos. PDFs existentes são verificados e conservam os bytes originais; PDFs cifrados ou com conteúdos ativos não suportados são rejeitados. A pré-visualização e o descarregamento permitem rever antes de confirmar o envio. Sem data, é necessário introduzi-la ou confirmar explicitamente a data de hoje.
 

@@ -2165,3 +2165,6 @@ app.include_router(management_maps_router)
 
 from .dashboard import router as dashboard_router
 app.include_router(dashboard_router)
+
+from .quick_scan import router as quick_scan_router
+app.include_router(quick_scan_router)

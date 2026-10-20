@@ -81,12 +81,14 @@ import RubricExpenses from "./RubricExpenses";
 import ManagementDashboard from "./ManagementDashboard";
 import ManagementMaps from "./ManagementMaps";
 import DocumentScanner, { ScanSettings } from "./DocumentScanner";
+import QuickScanAccesses from "./QuickScanAccesses";
 import { InvoiceWorkflowSettings } from "./InvoiceWorkflow";
 import Rubrics from "./Rubrics";
 import { CloseButton, confirmFormExit, dismissDisclosure, useOverlayFocus } from "./components/InteractionUI";
 const Inventory = lazy(() => import("./Inventory"));
 const Procurement = lazy(() => import("./Procurement"));
 const HomePage = lazy(() => import("./HomePage"));
+const QuickScan = lazy(() => import("./quickscan/QuickScan"));
 const Warehouses = lazy(() => import("./Warehouses"));
 type Bootstrap = {
   payment_methods?: Record<string, string>;
@@ -114,6 +116,8 @@ export default function App() {
   const removingRegister = useRef(false);
   const [registerBusy, setRegisterBusy] = useState("");
   const [boot, setBoot] = useState<Bootstrap | null>(null),
+    // Digitalização rápida por PIN: ecrã próprio, sem a sessão da aplicação.
+    [quickScan, setQuickScan] = useState(() => window.location.pathname === "/digitalizar" || new URLSearchParams(window.location.search).has("digitalizar")),
     [loading, setLoading] = useState(true),
     [page, setPage] = useState("Dashboard"),
     [sessions, setSessions] = useState<Row[]>([]),
@@ -282,6 +286,7 @@ export default function App() {
       setError((e as Error).message);
     }
   };
+  if (quickScan) return <Suspense fallback={<div className="loading" role="status">A preparar a digitalização…</div>}><QuickScan onExit={() => { window.history.replaceState(null, "", "/entrar"); setQuickScan(false); }} /></Suspense>;
   if (loading) return <div className="loading" role="status">A iniciar a IAZELA…</div>;
   if (!boot && window.location.pathname === "/" && !new URLSearchParams(window.location.search).has("nif") && !new URLSearchParams(window.location.search).has("empresa")) return <Suspense fallback={<div className="loading" role="status">A carregar a IAZELA…</div>}><HomePage /></Suspense>;
   if (!boot)
@@ -355,6 +360,10 @@ export default function App() {
             await api("/company/clear", {});
             window.location.reload();
           }}>Limpar acesso anterior</ActionButton>
+          <div className="login-quick-scan">
+            <ActionButton type="button" action="Digitalizar" onClick={() => { window.history.pushState(null, "", "/digitalizar"); setQuickScan(true); }}><Camera size={18} aria-hidden="true" />Digitalizar documento</ActionButton>
+            <small>Acesso rápido por PIN, em dispositivos emparelhados: só fotografa e guarda documentos na pasta cloud da empresa.</small>
+          </div>
           <small>
             Ferramenta de gestão interna. Não emite documentos fiscais.
           </small>
@@ -1246,6 +1255,7 @@ export default function App() {
           {page === "Configuração inicial" && <CompanySetupPanel boot={boot} reload={reload} hasOpenSession={open.length > 0} onNavigate={navigatePage} onAction={openModal} standalone />}
           {page === "Anexos" && manager && <AttachmentSettings nif={boot.company?.nif} />}
           {page === "Digitalização" && manager && <ScanSettings admin={boot.user.role === "administrador"} />}
+          {page === "Digitalização" && boot.user.role === "administrador" && <QuickScanAccesses />}
           {page === "Verificação automática e-Fatura" && manager && <InvoiceWorkflowSettings admin={boot.user.role === "administrador"} />}
           <footer>
             IAZELA · Gestão empresarial <span>Dados da empresa selecionada</span>

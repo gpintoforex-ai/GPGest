@@ -1,4 +1,5 @@
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import HTTPException, Request
@@ -34,6 +35,13 @@ def db_session(request: Request):
             raise HTTPException(
                 401, "Empresa indisponível. Selecione uma empresa ativa para entrar."
             )
+    with company_db(company) as db:
+        yield db
+
+
+@contextmanager
+def company_db(company):
+    """Sessão no esquema de uma empresa já validada (ativa) pelo chamador."""
     bind = (
         engine
         if company.schema_name == "public"

@@ -1005,6 +1005,42 @@ class DocumentScan(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # «digitalizacao» (área autenticada) ou «digitalizacao_rapida» (acesso por PIN).
+    origin: Mapped[str] = mapped_column(String(40), default="digitalizacao", server_default="digitalizacao")
+    quick_access_id: Mapped[str | None] = mapped_column(ForeignKey("quick_scan_accesses.id"), nullable=True, index=True)
+
+
+class QuickScanAccess(Base):
+    """Acesso de digitalização rápida: um dispositivo emparelhado, uma loja, uma pasta cloud e um PIN."""
+    __tablename__ = "quick_scan_accesses"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100))
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"))
+    folder_id: Mapped[str] = mapped_column(String(200))
+    folder_name: Mapped[str] = mapped_column(String(300), default="")
+    pin_hash: Mapped[str] = mapped_column(String(300))
+    pairing_hash: Mapped[str] = mapped_column(String(64), default="")
+    pairing_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    device_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    paired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class QuickScanSession(Base):
+    """Sessão curta, só de digitalização; o token fica apenas em memória no dispositivo."""
+    __tablename__ = "quick_scan_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    access_id: Mapped[str] = mapped_column(ForeignKey("quick_scan_accesses.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class ScanCloudFolder(Base):

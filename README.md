@@ -8,6 +8,7 @@ Preparar uma empresa: [assistente de configuração inicial](docs/CONFIGURACAO-I
 Janelas, confirmações e acessibilidade: [revisão da interface](docs/REVISAO-INTERFACE.md).
 
 Digitalizar fotografias e PDFs para anexos e dossiês: [guia de digitalização](docs/DIGITALIZACAO-DOCUMENTOS.md).
+Digitalização rápida por PIN a partir do ecrã de entrada, em dispositivos emparelhados: [digitalização rápida](docs/DIGITALIZACAO-RAPIDA.md).
 Conferir e-Fatura, anexos e ERP: [assistente e-Fatura](docs/ASSISTENTE-EFATURA.md).
 Custos, proveitos e mapa de IVA indicativos: [mapas de gestão](docs/MAPAS-DE-GESTAO.md).
 Painel inicial com indicadores, gráficos e alertas: [dashboard de gestão](docs/DASHBOARD.md).
