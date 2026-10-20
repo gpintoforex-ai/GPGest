@@ -35,6 +35,8 @@ from .models import (
     PaymentMethodBankDefault,
     PaymentTerminal,
     Register,
+    SaftImport,
+    StockWarehouse,
     Store,
     User,
     WintouchCashAccount,
@@ -45,6 +47,7 @@ from .models import (
 from .operating_modes import CONNECTORS, RESOURCES, pending_operations
 from .platform import cipher, validate_url
 from .platform_models import Company
+from .settings import save_vat_regime, vat_period_for, vat_settings
 from .setup_schemas import STEPS, DraftSave, Finish, ImportPreview, Revision, SetupData
 from .wintouch_sync import RESOURCES as CATALOGS
 from .wintouch_sync import SyncError, normalize, string
@@ -124,6 +127,13 @@ def initial(db, company):
     profile = {"name": company["name"], "trade_name": company["name"], "nif": company["nif"] or "",
                "store_id": primary, "store_name": next((s.name for s in stores if s.id == primary), "Loja principal"),
                **config.get("company", {})}
+    # O regime de IVA pode ter sido alterado depois nas Configurações: prevalece o valor em vigor.
+    fiscal = vat_settings(db)
+    if fiscal["vat_regime"]:
+        profile.update(fiscal)
+    existing = db.scalar(select(StockWarehouse.name).where(StockWarehouse.store_id == primary).order_by(StockWarehouse.name).limit(1))
+    if existing:
+        profile.update(create_warehouse=False, warehouse_name=existing)
     registers = []
     for row in db.scalars(select(Register).order_by(Register.name)):
         ref = db.get(AccountBalanceReference, "cash:" + row.id)
@@ -219,6 +229,12 @@ def pending(db, raw, row, company):
         config = db.get(AttachmentIntegrationConfig, "default")
         if not google or not google.token_ciphertext or not config or not config.drive_folder:
             result.append("Ligar o Google Drive e escolher a pasta de arquivo")
+    if data.mode.mode == "local" and "saft" not in data.skipped:
+        stored = db.get(CompanySetup, "default")
+        if not json.loads(stored.settings or "{}").get("saft_payment_mapping") if stored else True:
+            result.append("Associar os códigos de pagamento SAF-T aos meios de pagamento")
+        if not db.scalar(select(SaftImport.id).where(SaftImport.status == "completed")):
+            result.append("Importar o primeiro ficheiro SAF-T de vendas")
     return result
 
 
@@ -242,6 +258,7 @@ def view(db, company, serial):
             "iban_configured": [a["key"] for a in raw.get("accounts", []) if a.get("iban_ciphertext") or a.get("id") and db.get(BankAccount, a["id"]) and db.get(BankAccount, a["id"]).iban_ciphertext],
             "connectors": [{"id": key, "name": value["name"], "capabilities": value["capabilities"]} for key, value in CONNECTORS.items() if value["operational"]],
             "resource_labels": RESOURCES, "catalog_labels": {**RESOURCES, "payment_methods": "Meios de pagamento"}, "stores": [serial(s) for s in db.scalars(select(Store).order_by(Store.name))],
+            "warehouses": [{"id": w.id, "name": w.name, "store_id": w.store_id} for w in db.scalars(select(StockWarehouse).order_by(StockWarehouse.name))],
             "banks": [serial(b) for b in db.scalars(select(BankInstitution).where(BankInstitution.active.is_(True)).order_by(BankInstitution.name))],
             "responsibles": [{"id": "user:" + u.id, "name": u.name} for u in db.scalars(select(User).where(User.active == 1, User.role != "consulta"))]
                 + [{"id": "employee:" + e.id, "name": e.name} for e in db.scalars(select(Employee).where(Employee.active.is_(True)))],
@@ -261,6 +278,11 @@ def validate_final(db, raw, company, row):
         raise HTTPException(422, "Preencha o nome da empresa, o NIF de nove dígitos e o estabelecimento principal.")
     if len(data.company.trade_name.strip()) < 2:
         raise HTTPException(422, "Indique o nome comercial da empresa.")
+    if not data.company.vat_regime:
+        raise HTTPException(422, "Escolha o regime de IVA da empresa.")
+    data.company.vat_period = vat_period_for(data.company.vat_regime, data.company.vat_period)
+    if data.company.create_warehouse and len(data.company.warehouse_name.strip()) < 2:
+        raise HTTPException(422, "Indique o nome do armazém a criar, ou desmarque a criação do armazém.")
     if data.mode.mode == "integrated" and not CONNECTORS.get(data.mode.provider, {}).get("operational"):
         raise HTTPException(422, "Escolha um conector efetivamente disponível.")
     if data.mode.mode == "integrated" and not data.mode.defer and not tested(row, raw, company):
@@ -524,7 +546,18 @@ def apply_configuration(db, data, raw, row, company, table, user, audit):
             db.add(Category(name=clean))
     profile = data.company.model_dump()
     profile["store_id"] = primary.id
-    row.settings = json.dumps({"company": profile, "preferences": data.preferences.model_dump(), "disabled_base_methods": disabled_base})
+    save_vat_regime(db, user, data.company.vat_regime, data.company.vat_period)
+    warehouse = data.company.warehouse_name.strip()
+    if data.company.create_warehouse and not db.scalar(
+        select(StockWarehouse.id).where(StockWarehouse.store_id == primary.id, StockWarehouse.name == warehouse)
+    ):
+        db.flush()
+        created = StockWarehouse(store_id=primary.id, name=warehouse)
+        db.add(created)
+        db.flush()
+        audit(db, user, "stock_warehouse", created.id, {"name": warehouse, "origem": "configuracao_inicial"}, primary.id)
+    # Preservar outras chaves guardadas na empresa (ex.: associação de códigos SAF-T).
+    row.settings = json.dumps({**json.loads(row.settings or "{}"), "company": profile, "preferences": data.preferences.model_dump(), "disabled_base_methods": disabled_base})
     active = data.mode.mode == "integrated" and not data.mode.defer and tested(row, raw, company)
     values = {"name": data.company.name.strip(), "nif": data.company.nif, "operating_mode": data.mode.mode,
               "api_active": int(active), "integration_revision": company["integration_revision"] + 1,

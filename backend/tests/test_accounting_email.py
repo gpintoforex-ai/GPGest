@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import os
 import smtplib
 import zipfile
@@ -452,7 +453,59 @@ def test_store_and_document_category_filtering(email_case):
     assert all(item.get("supplier") != "Outra loja" for item in row["manifest"]["pending"])
 
 
-def test_smtp_tls_and_size_negotiation_without_sending(monkeypatch):
+@pytest.mark.parametrize("port,security", [(587, "ssl"), (465, "starttls")])
+def test_smtp_rejects_incompatible_port_and_security(port, security, monkeypatch):
+    from app.email_settings import EmailConfigInput
+    from app.email_transport import DeliveryFailure, connect
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match=str(port)):
+        EmailConfigInput(port=port, security=security)
+    def unexpected_connection(*args, **kwargs):
+        pytest.fail("Invalid security must be rejected before opening a connection")
+    monkeypatch.setattr(smtplib, "SMTP", unexpected_connection)
+    monkeypatch.setattr(smtplib, "SMTP_SSL", unexpected_connection)
+    with pytest.raises(DeliveryFailure, match=str(port)):
+        connect({"port": port, "security": security}, "unused")
+
+
+def test_saved_smtp_mismatch_has_actionable_error(email_case):
+    client, factory, *_ = email_case
+    with factory.begin() as db:
+        row = db.get(CompanyEmailSettings, "default")
+        settings = json.loads(row.settings)
+        settings.update(port=587, security="ssl")
+        row.settings = json.dumps(settings)
+    response = client.post("/api/settings/email/test", json={})
+    assert response.status_code == 422
+    assert "STARTTLS" in response.json()["detail"]
+
+
+def test_smtp_test_exposes_safe_explanation(email_case, monkeypatch):
+    from app.email_transport import DeliveryFailure
+
+    def failed(*args):
+        raise DeliveryFailure("Reveja a configuração TLS do servidor SMTP.")
+    monkeypatch.setattr("app.email_transport.connect", failed)
+    response = email_case[0].post("/api/settings/email/test", json={})
+    assert response.status_code == 502
+    assert response.json()["detail"]["public_message"] == "Reveja a configuração TLS do servidor SMTP."
+
+
+def test_gmail_authentication_failure_does_not_expose_credentials(monkeypatch):
+    from app.email_transport import DeliveryFailure, connect
+
+    def refused(*args, **kwargs):
+        raise smtplib.SMTPAuthenticationError(535, b"secret-server-response")
+    monkeypatch.setattr(smtplib, "SMTP", refused)
+    with pytest.raises(DeliveryFailure, match="palavra-passe de aplicação") as result:
+        connect({"host": "smtp.gmail.com", "port": 587, "security": "starttls"}, "private-password")
+    assert "secret-server-response" not in str(result.value)
+    assert "private-password" not in str(result.value)
+
+
+@pytest.mark.parametrize("security,port", [("starttls", 587), ("ssl", 465)])
+def test_smtp_tls_and_size_negotiation_without_sending(monkeypatch, security, port):
     from app import email_transport
 
     calls = []
@@ -462,6 +515,7 @@ def test_smtp_tls_and_size_negotiation_without_sending(monkeypatch):
 
         def __init__(self, host, port, **kwargs):
             assert host == "smtp.example.test" and kwargs["timeout"] == 15
+            assert kwargs["local_hostname"] == "Gonçalo.Home".encode("idna").decode("ascii")
             calls.append("connect")
 
         def ehlo(self):
@@ -476,11 +530,14 @@ def test_smtp_tls_and_size_negotiation_without_sending(monkeypatch):
             calls.append("login")
 
     monkeypatch.setattr(smtplib, "SMTP", Connection)
+    monkeypatch.setattr(smtplib, "SMTP_SSL", Connection)
+    monkeypatch.setattr("app.email_transport.socket.getfqdn", lambda: "Gonçalo.Home")
     _, limit = email_transport.connect(
-        {"host": "smtp.example.test", "port": 587, "security": "starttls", "username": "test"},
+        {"host": "smtp.example.test", "port": port, "security": security, "username": "test"},
         "fictitious",
     )
-    assert limit == 123456 and calls == ["connect", "ehlo", "tls", "ehlo", "login"]
+    expected = ["connect", "ehlo", "tls", "ehlo", "login"] if security == "starttls" else ["connect", "ehlo", "login"]
+    assert limit == 123456 and calls == expected
 
 
 def test_all_categories_and_cloud_failure_preserve_available_documents(email_case, monkeypatch):

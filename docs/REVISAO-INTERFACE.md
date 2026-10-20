@@ -18,6 +18,8 @@ A gravação de uma parte de uma janela atualiza apenas a referência dos campos
 
 A navegação principal e a mudança do filtro de loja também verificam os formulários da página. «Continuar a editar» conserva o formulário e a loja atual; «Descartar alterações» permite a navegação pretendida. Uma submissão em curso impede a saída até à resposta da operação.
 
+Os filtros de consulta por intervalo de datas têm **períodos rápidos** (componente `DatePresets`): Hoje, Esta semana (segunda a domingo), lista **Mês** (qualquer mês do ano de referência), 1.º a 4.º trimestre e lista **Ano** (ano atual e nove anteriores), com datas em Europe/Lisbon. Escolher um ano aplica o ano completo e torna-o a referência dos meses e trimestres; sem escolha, a referência é o ano da data inicial do filtro. Os trimestres de outro ano indicam o ano no botão. O período escolhido fica destacado enquanto as datas lhe corresponderem; as datas continuam editáveis. Nas consultas que não aceitam datas futuras (saldos bancários, faturação e recebimentos), o fim é limitado ao dia atual e os trimestres futuros não aparecem. Estão disponíveis em movimentos e listagens, compras, compras e stock, inventário, conferência documental (filtros, assistente e exportação), reconciliação, saldos bancários, faturação e recebimentos, análise SAF-T, vendas Wintouch, email da contabilidade e consulta de emails Gmail. A previsão de liquidez mantém os seus horizontes próprios, por ser apenas futura.
+
 ## Áreas abrangidas
 
 Foram aplicados os componentes às janelas principais e secundárias de caixas, faturado, calculadora, contagem, fornecedores, bancos, contas, entidades, funcionários, rubricas, extratos, reconciliação, depósitos, movimentos previstos e reais, compras, conferência documental, digitalização, pré-visualização de anexos, assistentes, liquidez, integrações, contabilidade, configuração inicial e administração da plataforma.
@@ -31,7 +33,7 @@ npm.cmd --prefix frontend run check:ui
 npm.cmd --prefix frontend run build
 ```
 
-`scripts/check-interactions.cjs` verifica a utilização dos componentes, ações de fecho explícitas, nomes dos botões apenas com ícone e ausência de confirmações nativas. O inventário atual inclui 26 janelas, 380 botões, 64 formulários e 98 mensagens. Links de ação também usam a biblioteca partilhada. A identidade atual segue o [sistema visual Zela](IDENTIDADE-ZELA.md).
+`scripts/check-interactions.cjs` verifica a utilização dos componentes, ações de fecho explícitas, nomes dos botões apenas com ícone e ausência de confirmações nativas. O inventário atual inclui 26 janelas, 380 botões, 64 formulários e 98 mensagens. Links de ação também usam a biblioteca partilhada. A identidade atual segue o [sistema visual IAZELA](IDENTIDADE-IAZELA.md).
 
 `scripts/test-interactions-ui.py` testa no navegador real:
 

@@ -1,3 +1,4 @@
+import DatePresets from "./components/DatePresets";
 import { ActionLink } from "./components/InteractionUI";
 import { confirmAction } from "./components/InteractionUI";
 import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
@@ -11,6 +12,7 @@ import DriveAutoMatch from "./DriveAutoMatch";
 import InvoiceSidePreview from "./InvoiceSidePreview";
 import { ScanButton } from "./DocumentScanner";
 import ErpAssistantStep from "./ErpAssistantStep";
+import ConferenceAssistant from "./ConferenceAssistant";
 import InvoiceWorkflow from "./InvoiceWorkflow";
 import { MetricCard, StatusBadge } from "./components/BusinessUI";
 import AssistantIdentity, { ASSISTANTS } from "./components/AssistantIdentity";
@@ -541,7 +543,7 @@ export default function DocumentControl({
               {years.map(year => <option key={year} value={year}>{year}</option>)}
             </select>
           </label>
-          <ActionButton onClick={() => setFilters({ ...filters, ...monthRange(today().slice(0, 4), today().slice(5, 7)) })}>Mês atual</ActionButton>
+          <DatePresets from={filters.from} to={filters.to} onSelect={(from, to) => setFilters({ ...filters, from, to })} />
           <label>
             Desde
             <input
@@ -803,37 +805,18 @@ export default function DocumentControl({
           )}
           {importing && <p role="status" aria-live="polite">{importing}</p>}
           {modal === "assistant" && <p>{ASSISTANTS.clara.mission}</p>}
-          {modal === "assistant" && assistantStage === 1 && <div className="doc-form">
-            <h3>1.º passo — Parâmetros e importação</h3>
+          {modal === "assistant" && <ConferenceAssistant stores={stores} defaultStore={selectedStore} filterStore={store} admin={admin} manager={manager}
+            onUpdated={load} onClose={close} onReview={async row => { const detail = await api(`/documents/${row.id}/detail`); setSelected(detail); setModal("detail"); }} />}
+          {modal === "assistant" && <details className="doc-form"><summary>Ferramentas anteriores de conferência</summary>
             <div className="form-grid">
+              <DatePresets from={assistantFrom} to={assistantTo} onSelect={(from, to) => { setAssistantFrom(from); setAssistantTo(to); }} />
               <label>Data início<input type="date" value={assistantFrom} onChange={e => setAssistantFrom(e.target.value)} /></label>
               <label>Data fim<input type="date" value={assistantTo} onChange={e => setAssistantTo(e.target.value)} /></label>
             </div>
-            <p>Loja de importação: {stores.find(s => s.id === selectedStore)?.name || "Selecione uma loja na página principal"}.</p>
-            <p>As sugestões comparam NIF, montante, data e número. As associações serão revistas antes de confirmar.</p>
-            <label>Ficheiro e-Fatura (opcional)<input type="file" accept=".csv,.xlsx" disabled={busy} onChange={e => { setFile(e.target.files?.[0] || null); setPreview(null); }} /></label>
-            <p>A confirmação importa todo o ficheiro. O período filtra os documentos a conferir, sem excluir linhas da importação.</p>
-            <ActionButton disabled={busy || !file || !selectedStore} onClick={() => importFile(false)}>Pré-visualizar ficheiro</ActionButton>
-            {preview && <>
-              <p>{preview.new_count} novos · {preview.duplicate_count} duplicados · {preview.conflict_count} conflitos</p>
-              <div className="table-wrap"><table><thead><tr><th>Fornecedor</th><th>Documento</th><th>Data</th><th className="numeric">Total</th></tr></thead><tbody>{preview.rows.slice(0,20).map((r: Row) => <tr key={r.line}><td>{r.supplier_name}</td><td>{r.document}</td><td>{r.document_date}</td><td className="numeric">{euro(r.amount_cents)}</td></tr>)}</tbody></table></div>
-              <ActionButton className="primary" disabled={busy || !!preview.conflict_count || !preview.rows.length || !assistantFrom || !assistantTo || assistantFrom > assistantTo} onClick={() => importFile(true, true)}>Confirmar importação e continuar</ActionButton>
-            </>}
-            <ActionButton disabled={busy || !assistantFrom || !assistantTo || assistantFrom > assistantTo} onClick={() => setAssistantStage(2)}>Continuar com documentos existentes</ActionButton>
-          </div>}
-          {modal === "assistant" && assistantStage === 2 && <div className="doc-form">
-            <InvoiceWorkflow start={assistantFrom} end={assistantTo} store={store} admin={admin} manager={manager} onUpdated={load} onReview={async row => { const detail=await api(`/documents/${row.id}/detail`); setSelected(detail); setModal("detail"); }} />
-            <ActionButton type="button" disabled={busy} onClick={() => setAssistantStage(1)}>Voltar aos parâmetros</ActionButton>
-            <details><summary>Ferramentas anteriores de conferência</summary>
-              <DriveAutoMatch documents={storeRows.filter(r => r.document_date >= assistantFrom && r.document_date <= assistantTo)} onUpdated={load} />
-              <ActionButton type="button" onClick={() => setAssistantStage(3)}>Abrir conferência ERP detalhada</ActionButton>
-            </details>
-          </div>}
-          {modal === "assistant" && assistantStage === 3 && <div className="doc-form">
+            <InvoiceWorkflow start={assistantFrom} end={assistantTo} store={store} admin={admin} manager={manager} onUpdated={load} onReview={async row => { const detail = await api(`/documents/${row.id}/detail`); setSelected(detail); setModal("detail"); }} />
+            <DriveAutoMatch documents={storeRows.filter(r => r.document_date >= assistantFrom && r.document_date <= assistantTo)} onUpdated={load} />
             <ErpAssistantStep documents={storeRows.filter(r => r.document_date >= assistantFrom && r.document_date <= assistantTo)} admin={admin && canReadErp} start={assistantFrom} end={assistantTo} onUpdated={load} onReview={doc => { setSelected(doc); setModal("detail"); }} />
-            <ActionButton type="button" disabled={busy} onClick={() => setAssistantStage(2)}>Voltar aos anexos Drive</ActionButton>
-            <ActionButton type="button" onClick={close}>Concluir assistente</ActionButton>
-          </div>}
+          </details>}
           {modal === "import" && (
             <div className="doc-form">
               <p>
@@ -1002,6 +985,7 @@ export default function DocumentControl({
                   ))}
                 </select>
               </label>
+              <DatePresets names={["start", "end"]} />
               <label>
                 Desde
                 <input

@@ -116,8 +116,10 @@ try:
         page.get_by_label("Palavra-passe", exact=True).fill(password)
         page.get_by_role("button", name="Entrar", exact=True).click()
         page.get_by_role("button", name="Iniciar configuração", exact=True).click()
-        wizard = page.get_by_role("dialog", name="Vamos preparar a sua Zela", exact=True)
+        wizard = page.get_by_role("dialog", name="Vamos preparar a sua IAZELA", exact=True)
         expect(wizard.get_by_label("Nome comercial", exact=True)).to_have_value("Empresa fictícia UI")
+        wizard.get_by_label("Regime de IVA", exact=True).select_option("pequenos_retalhistas")
+        expect(wizard.get_by_label("Periodicidade da declaração de IVA", exact=True)).to_be_disabled()
         wizard.get_by_role("button", name="Guardar e continuar", exact=True).click()
         if erp:
             wizard.get_by_role("radio", name="Ligação a ERP", exact=False).check()
@@ -139,7 +141,7 @@ try:
             wizard.get_by_label("Data de início da caixa 1", exact=True).fill(date.today().isoformat())
         wizard.get_by_role("button", name="Guardar e continuar", exact=True).click()
         if erp:
-            wizard.get_by_role("button", name="Configurar mais tarde", exact=True).click()
+            wizard.get_by_role("button", name="Guardar e continuar", exact=True).click()
         else:
             for i, suffix in enumerate(("A", "B"), 1):
                 wizard.get_by_role("button", name="Adicionar conta bancária", exact=True).click()
@@ -167,7 +169,7 @@ try:
                 wizard.get_by_label(f"Conta de liquidação do terminal {i}", exact=True).select_option(label=f"Banco {suffix} · Conta {suffix}")
             wizard.get_by_role("button", name="Guardar e continuar", exact=True).click()
         else:
-            wizard.get_by_role("button", name="Configurar mais tarde", exact=True).click()
+            wizard.get_by_role("button", name="Guardar e continuar", exact=True).click()
         wizard.get_by_role("button", name="Guardar e continuar", exact=True).click()
         expect(wizard.get_by_role("heading", name="Resumo", exact=True)).to_be_visible()
         expect(wizard.get_by_role("button", name="Guardar e começar", exact=True)).to_be_enabled()
@@ -180,7 +182,14 @@ try:
         expect(wizard.locator(".setup-step-nav [aria-current=step]")).to_be_in_viewport()
         page.screenshot(path=str(output / ("erp-summary-mobile.png" if erp else "local-summary-mobile.png")), full_page=True)
         wizard.get_by_role("button", name="Guardar e começar", exact=True).click()
-        expect(wizard.get_by_role("heading", name="A sua Zela está pronta", exact=True)).to_be_visible()
+        expect(wizard.get_by_role("heading", name="A sua IAZELA está pronta", exact=True)).to_be_visible()
+        saft_button = page.get_by_role("button", name="Importar SAF-T de vendas", exact=True)
+        if erp:
+            expect(saft_button).to_have_count(0)
+        else:
+            expect(saft_button).to_be_visible()
+            saft_button.click()
+            expect(page.get_by_role("heading", name="Importar SAF-T de vendas", exact=True)).to_be_visible()
         expect(wizard).not_to_have_attribute("aria-busy", "true")
         assert not errors, errors
         page.wait_for_load_state("networkidle")

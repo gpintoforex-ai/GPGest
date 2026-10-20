@@ -22,7 +22,30 @@ def parse_fiscal_qr(text):
         amount = Decimal(fields["O"])
         if not amount.is_finite() or amount < 0 or amount > Decimal("100000000000") or amount != amount.quantize(Decimal("0.01")): return None
     except (KeyError, ValueError, InvalidOperation): return None
-    return {"nif":fields["A"],"document_type":fields["D"],"document_date":day,"document":fields["G"],"amount_cents":int(amount*100),"atcud":fields.get("H", ""),"status":fields.get("E", "")}
+    return {"nif":fields["A"],"document_type":fields["D"],"document_date":day,"document":fields["G"],"amount_cents":int(amount*100),"atcud":fields.get("H", ""),"status":fields.get("E", ""),"tax_breakdown":tax_breakdown(fields)}
+
+# Campos do QR fiscal com bases e IVA por taxa (I = continente/espaço fiscal indicado em I1).
+QR_RATES = (("I2", None, "isenta"), ("I3", "I4", "reduzida"), ("I5", "I6", "intermedia"), ("I7", "I8", "normal"))
+MAINLAND_RATES = {"isenta": 0, "reduzida": 6, "intermedia": 13, "normal": 23}
+
+def tax_breakdown(fields):
+    """Bases e IVA por taxa indicados no QR. A taxa só é deduzida no continente (I1=PT) e quando
+    o IVA declarado corresponde a essa taxa; nos restantes casos fica por indicar."""
+    region = fields.get("I1", "")
+    result = []
+    for base_key, tax_key, kind in QR_RATES:
+        try:
+            base = int(Decimal(fields[base_key]) * 100) if fields.get(base_key) else 0
+            tax = int(Decimal(fields[tax_key]) * 100) if tax_key and fields.get(tax_key) else 0
+        except InvalidOperation:
+            return []
+        if not base and not tax:
+            continue
+        rate = MAINLAND_RATES[kind] if region == "PT" else None
+        if rate is not None and abs(round(base * rate / 100) - tax) > 1:
+            rate = None
+        result.append({"region": region, "kind": kind, "base_cents": base, "tax_cents": tax, "rate": rate})
+    return result
 
 def extract_pdf_qr(raw, limits):
     from .document_scanning import make_pdf
@@ -43,7 +66,7 @@ def extract_pdf_qr(raw, limits):
                             codes=zxingcpp.read_barcodes(image,formats=zxingcpp.BarcodeFormat.QRCode)
                             for code in codes:
                                 data=parse_fiscal_qr(code.text)
-                                if data: found.setdefault(tuple(data.items()), {**data,"page":index+1})
+                                if data: found.setdefault(tuple((k, v) for k, v in data.items() if k != "tax_breakdown"), {**data,"page":index+1})
                         finally: image.close()
                     finally: bitmap.close()
                 finally: page.close()

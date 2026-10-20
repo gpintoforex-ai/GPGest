@@ -15,6 +15,7 @@ from app.models import (
     Movement,
     PaymentTerminal,
     Register,
+    StockWarehouse,
 )
 from app.platform_models import Company
 from sqlalchemy import func, select
@@ -29,7 +30,9 @@ def start(client, slug="setup-a"):
     boot = enter(client, company["slug"])
     response = client.get("/api/setup")
     assert response.status_code == 200, response.text
-    return company, boot, response.json()
+    state = response.json()
+    state["data"]["company"].update(vat_regime="normal", vat_period="trimestral")
+    return company, boot, state
 
 
 def save(client, state, step="summary"):
@@ -165,6 +168,7 @@ def test_only_administrators_and_current_company_can_change_setup(platform):
     client.cookies.clear()
     other_boot = enter(client, b["slug"])
     other = client.get("/api/setup").json()
+    other["data"]["company"].update(vat_regime="normal", vat_period="mensal")
     other["data"]["accounts"] = [{**saved["data"]["accounts"][0], "store_id": other_boot["stores"][0]["id"]}]
     other = save(client, other)
     result = client.post("/api/setup/preview", json={"revision": other["revision"]})
@@ -364,3 +368,95 @@ def test_erp_receipts_respect_explicit_payment_associations(platform):
         rows = receipt_rows(db, sheet, [{"key": "pm_mobile", "name": "Serviço móvel"}, {"key": "mbway", "name": "MB WAY"}])
         assert {r["key"]: r["registered_cents"] for r in rows} == {"pm_mobile": 2500, "mbway": 0}
         assert db.scalar(select(func.count()).select_from(Movement)) == 0
+
+
+def test_finish_preserves_saft_mapping_and_lists_saft_steps(platform):
+    client, factory = platform
+    company, boot, state = start(client, "setup-saft")
+    state["data"]["mode"]["mode"] = "local"
+    state = save(client, state, "saft")
+    assert state["step"] == "saft"
+    preview = client.post("/api/setup/preview", json={"revision": state["revision"]}).json()
+    assert "Associar os códigos de pagamento SAF-T aos meios de pagamento" in preview["pending"]
+    assert "Importar o primeiro ficheiro SAF-T de vendas" in preview["pending"]
+    finished, _ = complete(client, state)
+    with tenant(company, factory) as db:
+        row = db.get(CompanySetup, "default")
+        row.settings = json.dumps({**json.loads(row.settings), "saft_payment_mapping": {"NU": "numerario"}})
+        db.commit()
+    # Repetir a configuração não pode apagar a associação SAF-T guardada na empresa.
+    complete(client, save(client, client.get("/api/setup").json()))
+    with tenant(company, factory) as db:
+        stored = json.loads(db.get(CompanySetup, "default").settings)
+        assert stored["saft_payment_mapping"] == {"NU": "numerario"}
+        assert stored["preferences"]["saft_block_unmapped"] is True
+    state = client.get("/api/setup").json()
+    assert "Associar os códigos de pagamento SAF-T aos meios de pagamento" not in state["pending"]
+
+
+def test_vat_regime_is_required_applied_and_prefilled(platform):
+    client, factory = platform
+    company, boot, state = start(client, "setup-iva")
+    state["data"]["company"].update(vat_regime="", vat_period="")
+    state = save(client, state)
+    preview = client.post("/api/setup/preview", json={"revision": state["revision"]})
+    assert preview.status_code == 422 and "regime de IVA" in preview.json()["detail"]
+    state["data"]["company"].update(vat_regime="isento_53", vat_period="")
+    state = save(client, state)
+    assert client.post("/api/setup/preview", json={"revision": state["revision"]}).status_code == 422
+    # Os pequenos retalhistas declaram sempre trimestralmente, qualquer que seja o pedido.
+    state["data"]["company"].update(vat_regime="pequenos_retalhistas", vat_period="mensal")
+    complete(client, save(client, state))
+    assert client.get("/api/settings/fiscal").json() == {"vat_regime": "pequenos_retalhistas", "vat_period": "trimestral"}
+    with tenant(company, factory) as db:
+        assert db.scalar(select(func.count()).select_from(Audit).where(Audit.action == "configuracao_fiscal_alterada")) == 1
+    # Uma alteração posterior nas Configurações aparece ao rever a configuração.
+    assert client.post("/api/settings/fiscal", json={"vat_regime": "isento_53", "vat_period": "mensal"}).status_code == 200
+    with tenant(company, factory) as db:
+        db.get(CompanySetup, "default").draft = "{}"
+        db.commit()
+    data = client.get("/api/setup").json()["data"]["company"]
+    assert (data["vat_regime"], data["vat_period"]) == ("isento_53", "mensal")
+
+
+def test_fiscal_settings_accept_previous_requests_without_regime(platform):
+    client, _ = platform
+    start(client, "setup-iva-legado")
+    assert client.post("/api/settings/fiscal", json={"vat_period": "mensal"}).json() == {"vat_regime": "normal", "vat_period": "mensal"}
+    assert client.post("/api/settings/fiscal", json={"vat_regime": "normal", "vat_period": ""}).status_code == 422
+    assert client.post("/api/settings/fiscal", json={"vat_regime": "", "vat_period": ""}).json() == {"vat_regime": "", "vat_period": ""}
+
+
+def test_setup_proposes_one_warehouse_for_the_main_store(platform):
+    client, factory = platform
+    company, boot, state = start(client, "setup-armazem")
+    assert state["data"]["company"]["create_warehouse"] is True
+    assert state["data"]["company"]["warehouse_name"] == "Armazém principal"
+    state["data"]["company"]["warehouse_name"] = " "
+    state = save(client, state)
+    assert client.post("/api/setup/preview", json={"revision": state["revision"]}).status_code == 422
+    state["data"]["company"]["warehouse_name"] = "Armazém da loja"
+    complete(client, save(client, state))
+    # Repetir a configuração não duplica o armazém.
+    complete(client, save(client, client.get("/api/setup").json()))
+    with tenant(company, factory) as db:
+        rows = list(db.scalars(select(StockWarehouse)))
+        assert [(row.name, row.store_id) for row in rows] == [("Armazém da loja", state["data"]["company"]["store_id"])]
+        assert db.scalar(select(func.count()).select_from(Audit).where(Audit.action == "stock_warehouse")) == 1
+    view = client.get("/api/setup").json()
+    assert [w["name"] for w in view["warehouses"]] == ["Armazém da loja"]
+    # Sem rascunho, um estabelecimento com armazém não volta a propor outro.
+    with tenant(company, factory) as db:
+        db.get(CompanySetup, "default").draft = "{}"
+        db.commit()
+    data = client.get("/api/setup").json()["data"]["company"]
+    assert (data["create_warehouse"], data["warehouse_name"]) == (False, "Armazém da loja")
+
+
+def test_setup_without_warehouse_creates_none(platform):
+    client, factory = platform
+    company, boot, state = start(client, "setup-sem-armazem")
+    state["data"]["company"]["create_warehouse"] = False
+    complete(client, save(client, state))
+    with tenant(company, factory) as db:
+        assert db.scalar(select(func.count()).select_from(StockWarehouse)) == 0

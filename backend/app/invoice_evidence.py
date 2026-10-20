@@ -34,7 +34,10 @@ def ocr_image(image):
     command=ocr_command()
     if not command: return ""
     output=io.BytesIO(); image.save(output,"PNG")
-    result=subprocess.run([command,"stdin","stdout","-l",os.getenv("GPGEST_OCR_LANG","eng"),"--psm","6"],input=output.getvalue(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30,check=False)
+    # GPGEST_OCR_TESSDATA permite idiomas numa pasta própria (por exemplo, .local/tessdata), sem instalar no sistema.
+    tessdata=os.getenv("GPGEST_OCR_TESSDATA","")
+    extra=["--tessdata-dir",tessdata] if tessdata and os.path.isdir(tessdata) else []
+    result=subprocess.run([command,*extra,"stdin","stdout","-l",os.getenv("GPGEST_OCR_LANG","eng"),"--psm","6"],input=output.getvalue(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30,check=False)
     if result.returncode: raise ValueError("O OCR local não conseguiu ler o documento. Verifique o executável e os idiomas instalados.")
     return result.stdout.decode("utf-8",errors="replace")[:60000]
 
@@ -62,7 +65,12 @@ def text_fields(text):
         value=money(raw)
         if value is not None: totals.add(abs(value))
     currencies=set(re.findall(r"\b(EUR|USD|GBP|CHF|BRL|AOA)\b",text.upper()))
-    return {"nifs":sorted(nifs),"numbers":[{"kind":kind,"number":number} for kind,number in sorted(numbers)],"dates":sorted(dates),"totals":sorted(totals),"currencies":sorted(currencies)}
+    # Vencimento indicado no documento (texto ou OCR); nunca é deduzido de outras datas.
+    dues=set()
+    for raw in re.findall(r"(?i)(?:data\s*(?:de\s*)?vencimento|vencimento|data\s*limite(?:\s*(?:de|para)\s*pagamento)?|(?:pagamento|pagar)\s*at[eé])\s*[:.-]?\s*(\d{4}-\d{2}-\d{2}|\d{2}[/.-]\d{2}[/.-]\d{4})",text):
+        try: dues.add(datetime.strptime(raw.replace(".","-").replace("/","-"),"%Y-%m-%d" if raw[4:5]=="-" else "%d-%m-%Y").date().isoformat())
+        except ValueError: pass
+    return {"due_dates":sorted(dues),"nifs":sorted(nifs),"numbers":[{"kind":kind,"number":number} for kind,number in sorted(numbers)],"dates":sorted(dates),"totals":sorted(totals),"currencies":sorted(currencies)}
 
 def extract(raw, mime, use_ocr=False):
     documents=[]; warnings=[]; source="text"; text=pdf_text(raw,mime); incomplete=False

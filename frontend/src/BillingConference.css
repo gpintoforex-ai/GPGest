@@ -1,0 +1,46 @@
+.billing-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+.billing-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+.billing-card span { font-size: 0.85rem; color: var(--color-muted); }
+.billing-card strong { font-size: 1.25rem; }
+.billing-card small { color: var(--color-muted); }
+.billing-difference { margin-top: 12px; }
+.billing-difference small { display: block; color: var(--color-muted); }
+.conference-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.conference-tabs button {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.conference-tabs button.active { background: var(--color-primary); color: var(--color-surface); border-color: transparent; }
+.conference-selection, .conference-suggestion {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+}
+.conference-selection { flex-direction: column; background: var(--color-bg); }
+.conference-suggestion > div:first-child { flex: 1 1 360px; min-width: 0; }
+.conference-suggestion ul { margin: 6px 0; padding-left: 18px; }
+.conference-actions { display: flex; flex-direction: column; gap: 8px; min-width: 240px; }
+.conference-amount { width: 7.5em; text-align: right; }
+.conference-target td { font-weight: 600; }
+.billing-conference td small { display: block; }

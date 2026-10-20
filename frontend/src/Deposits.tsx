@@ -75,14 +75,20 @@ export default function Deposits({ boot, store, reload }: { boot: Row; store: st
         <Field label="Referência bancária"><input maxLength={200} value={draft.reference} onChange={e => setDraft({ ...draft, reference: e.target.value })} /></Field>
         <h3>Valores provenientes dos movimentos reais</h3>
         {draft.register_id && <div className="deposit-total" role="status">{cashBalance ? <><b>{cashBalance.available ? `Numerário acumulado: ${fmt(cashBalance.cash_amount)}` : "Saldo indisponível"}</b><span>{cashBalance.message}</span><span>Caixa de origem: {register?.name || "—"} · Até {dateText(draft.preparation_date)}</span></> : "A consultar os movimentos reais da caixa…"}</div>}
-        <Field label="Valor em numerário (€)"><input type="number" inputMode="decimal" min="0" step="0.01" max={cashBalance?.available ? cashBalance.cash_amount : undefined} required disabled={busy || !cashBalance?.available} value={draft.cash_amount ?? "0"} onChange={e => setDraft({ ...draft, cash_amount: e.target.value })} /></Field>
-        <div className="table-wrap"><table><thead><tr><th>Data</th><th>Documento / movimento de origem</th><th>Numerário</th></tr></thead><tbody>{(cashBalance?.movements || []).map((row: Row) => <tr key={row.source + row.id}><td>{dateText(row.date)}</td><td>{row.document}{row.description && <small className={`deposit-origin-description${Number(row.amount) < 0 ? " is-outgoing" : ""}`}>{row.description}</small>}</td><td>{fmt(row.amount)}</td></tr>)}</tbody></table></div>
+        <div className="deposit-entry-summary">
+          <Field label="Valor em numerário (€)"><input type="number" inputMode="decimal" min="0" step="0.01" max={cashBalance?.available ? cashBalance.cash_amount : undefined} required disabled={busy || !cashBalance?.available} value={draft.cash_amount ?? "0"} onChange={e => setDraft({ ...draft, cash_amount: e.target.value })} /></Field>
+          <div className="deposit-total">Numerário: {fmt(cash / 100)} · Cheques: {fmt(chequeTotal / 100)}<strong>Total: {fmt((cash + chequeTotal) / 100)}</strong></div>
+          <ActionButton className="primary" disabled={busy || !cashBalance?.available || cash + chequeTotal <= 0}>Guardar rascunho</ActionButton>
+        </div>
+        <details className="deposit-source-history">
+          <summary>Histórico de documentos e movimentos ({cashBalance?.movements?.length || 0})</summary>
+          <div className="table-wrap"><table><thead><tr><th>Data</th><th>Documento / movimento de origem</th><th>Numerário</th></tr></thead><tbody>{(cashBalance?.movements || []).map((row: Row) => <tr key={row.source + row.id}><td>{dateText(row.date)}</td><td>{row.document}{row.description && <small className={`deposit-origin-description${Number(row.amount) < 0 ? " is-outgoing" : ""}`}>{row.description}</small>}</td><td>{fmt(row.amount)}</td></tr>)}</tbody></table></div>
+        </details>
         <h3>Recebimentos por cheque da caixa</h3>
         {(draft.cheques || []).map((cheque: Row, index: number) => <div className="deposit-total" key={cheque.source_receipt || cheque.receipt_id || index}><b>{cheque.number} · {fmt(cheque.amount)}</b><span>{cheque.issuer || "Emitente não indicado"} · {dateText(cheque.cheque_date)}</span><small>{cheque.notes}</small></div>)}
         {!draft.cheques?.length && <p>Não existem recebimentos por cheque disponíveis nesta caixa e data.</p>}
         <Field label="Observações"><textarea value={draft.notes} maxLength={2000} onChange={e => setDraft({ ...draft, notes: e.target.value })} /></Field>
-        <div className="deposit-total">Numerário: {fmt(cash / 100)} · Cheques: {fmt(chequeTotal / 100)}<strong>Total: {fmt((cash + chequeTotal) / 100)}</strong></div>
-        <ActionButton className="primary" disabled={busy || !cashBalance?.available || cash + chequeTotal <= 0}>Guardar rascunho</ActionButton>
+
       </ManagedForm> : selected && <>
         <div className="actions deposit-actions"><span className={`status-badge deposit-status-${selected.status}`}>{status[selected.status]}</span><ActionLink className="button" href={`/api/deposits/${selected.id}/pdf`} target="_blank" rel="noreferrer">Talão interno / imprimir</ActionLink>
           {write && selected.status === "rascunho" && <><ActionButton onClick={() => edit(selected)}>Editar</ActionButton><ActionButton disabled={busy} onClick={() => run(async () => { await api(`/deposits/${selected.id}/prepare`, { request_key: crypto.randomUUID() }); await refresh(selected.id); setNotice("Depósito preparado. Sem alteração de saldos."); })}>Preparar</ActionButton></>}

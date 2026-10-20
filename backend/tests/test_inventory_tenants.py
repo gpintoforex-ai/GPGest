@@ -31,6 +31,9 @@ def test_inventory_company_isolation_and_foreign_identifiers(platform):
     assert client.get("/api/stock/movements").json()["rows"] == []
     assert client.post("/api/stock/movements", json=operation).status_code == 404
     assert client.delete(f"/api/stock/articles/{pid}").status_code == 404
+    assert client.post(
+        f"/api/stock/warehouses/{wid}/delete", json={"confirmed": True}
+    ).status_code == 404
     assert client.get(f"/api/stock/lots?warehouse_id={wid}").status_code == 404
     other = client.post("/api/stock/articles", json={"code": "A", "name": "Empresa B"})
     assert other.status_code == 200

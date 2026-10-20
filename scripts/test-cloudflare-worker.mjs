@@ -16,6 +16,17 @@ test("frontend and SPA routes use static assets", async () => {
   }
 });
 
+test("public legal routes block third-party scripts and frames", async () => {
+  const response = await worker.fetch(new Request(app + "/legal/cookies"), { ASSETS: { fetch: () => new Response("legal page") } });
+  assert.equal(await response.text(), "legal page");
+  assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
+  const policy = response.headers.get("Content-Security-Policy");
+  assert.ok(policy.includes("script-src 'self'"));
+  assert.ok(policy.includes("frame-src 'self' blob:"));
+  assert.ok(!policy.includes("google.com"));
+  assert.equal(response.headers.get("Permissions-Policy"), "camera=(self), microphone=(), geolocation=()");
+});
+
 test("API routes never return the SPA when the backend is missing or invalid", async () => {
   for (const value of [undefined, "", "http://api.example.com", origin + "/api", origin + "?secret=example", "https://user:example@api.example.com", app]) {
     for (const path of ["/api", "/api/bootstrap", "/api/documents/attachments/example/view"]) {

@@ -1,3 +1,4 @@
+import DatePresets from "./components/DatePresets";
 import { ActionButton, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
 import { api } from "./lib/api";
@@ -65,6 +66,7 @@ export function SalesImportPanel({ company }: { company: Row }) {
               ))}
             </select>
           </Field>
+          <DatePresets names={["start_date", "end_date"]} />
           <Field label="Vendas desde">
             <input
               type="date"

@@ -1,4 +1,4 @@
-# GPGest (marca Zela)
+# GPGest (marca IAZELA)
 
 Gestão financeira e operacional de lojas, multi-empresa, em **português de Portugal**.
 Dois modos: **local autónomo** e **integrado** com o ERP Wintouch (ver `docs/MODOS-FUNCIONAMENTO.md`).

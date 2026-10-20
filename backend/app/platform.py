@@ -698,10 +698,10 @@ def select_company(
     if data.nif:
         identity = Company.nif == data.nif
     elif data.slug:
-        # Acesso transit?rio apenas para empresas antigas ainda sem NIF.
+        # Acesso transitório apenas para empresas antigas ainda sem NIF.
         identity = (Company.slug == data.slug.strip().lower()) & Company.nif.is_(None)
     else:
-        raise HTTPException(422, "Introduza o NIF da empresa (9 d?gitos).")
+        raise HTTPException(422, "Introduza o NIF da empresa (9 dígitos).")
     c = db.scalar(select(Company).where(identity, Company.active == 1))
     if not c:
         raise HTTPException(404, "Empresa indisponível ou identificador incorreto.")

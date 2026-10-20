@@ -22,7 +22,7 @@
 .reconciliation-columns thead {
   position: sticky;
   top: 0;
-  background: #f4f8f6;
+  background: var(--surface-primary);
   z-index: 1;
 }
 .reconciliation-columns h2 {
@@ -40,7 +40,8 @@
   width: 110px;
 }
 .reconciliation-selected {
-  background: #eaf5ef;
+  background: var(--context-accent-bg);
+  color: var(--text-primary);
 }
 .reconciliation-confirm {
   margin-top: 20px;
@@ -65,6 +66,7 @@
   gap: 6px;
   margin-bottom: 16px;
 }
+.reconciliation-confirm > label.bank-resolution-check { display:flex; align-items:center; gap:10px; }
 .reconciliation-action {
   position: fixed;
   bottom: 24px;

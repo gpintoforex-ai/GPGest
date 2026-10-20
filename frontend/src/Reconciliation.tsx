@@ -1,13 +1,15 @@
+import DatePresets from "./components/DatePresets";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
 import { api } from "./lib/api";
 import Purchases from "./Purchases";
 import AssistantIdentity from "./components/AssistantIdentity";
 import "./Reconciliation.css";
+import BankResolution from "./BankResolution";
 
 type Row = Record<string, any>;
-const money = (n: number) =>
-  new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(
+const money = (n: number,currency="EUR") =>
+  new Intl.NumberFormat("pt-PT", { style: "currency", currency }).format(
     n / 100,
   );
 const key = (r: Row) => `${r.source}:${r.id}`;
@@ -17,6 +19,7 @@ const labels: Record<string, string> = {
   movement: "Movimento interno",
   wintouch: "Wintouch",
   payment: "Pagamento identificado",
+  book: "Registo bancário da aplicação",
   pendente: "Pendente",
   parcial: "Parcial",
   reconciliado: "Reconciliado",
@@ -35,11 +38,13 @@ export default function Reconciliation({
   store,
   manager,
   admin,
+  accounts = [],
 }: {
   stores: Row[];
   store: string;
   manager: boolean;
   admin: boolean;
+  accounts?: Row[];
 }) {
   const [tab, setTab] = useState("movimentos");
   const [data, setData] = useState<Row>({
@@ -54,6 +59,10 @@ export default function Reconciliation({
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [account,setAccount]=useState(()=>{const saved=sessionStorage.getItem("iazela-bank-reconciliation-account")||"";return accounts.some(a=>a.id===saved&&(!store||a.store_id===store))?saved:"";});
+  const [minimum,setMinimum]=useState(""),[maximum,setMaximum]=useState("");
+  const [postCommission,setPostCommission]=useState(false);
+  const [resolution,setResolution]=useState<Row|null>(null);
   const [kind, setKind] = useState("pagamento");
   const [commission, setCommission] = useState("0");
   const [difference, setDifference] = useState("0");
@@ -68,6 +77,7 @@ export default function Reconciliation({
   const all: Row[] = [...data.banks, ...data.internals];
   async function load() {
     setData(await api("/reconciliation"));
+    window.dispatchEvent(new Event("iazela-bank-changed"));
     setLoaded(true);
   }
   useEffect(() => {
@@ -87,6 +97,8 @@ export default function Reconciliation({
     };
   }, [tab]);
   useEffect(() => {
+    if(store&&account&&accounts.find(a=>a.id===account)?.store_id!==store)setAccount("");
+    setPostCommission(false);
     setSelected({});
     setNotice("");
     setAction(null);
@@ -111,13 +123,14 @@ export default function Reconciliation({
     }
   }
   const chosen = all.filter((r) => selected[key(r)] !== undefined);
+  const selectedCurrencies=new Set<string>(chosen.map((r:Row)=>r.currency||"EUR"));
+  const selectedCurrency=selectedCurrencies.size===1?[...selectedCurrencies][0]:accounts.find(a=>a.id===account)?.currency||"EUR";
   const bankTotal = chosen
     .filter((r) => r.source === "bank")
     .reduce(
       (n, r) =>
         n +
-        (Number(selected[key(r)].replace(",", ".")) || 0) *
-          100 *
+        centsSafe(selected[key(r)]) *
           Math.sign(r.amount_cents),
       0,
     );
@@ -126,15 +139,19 @@ export default function Reconciliation({
     .reduce(
       (n, r) =>
         n +
-        (Number(selected[key(r)].replace(",", ".")) || 0) *
-          100 *
+        centsSafe(selected[key(r)]) *
           Math.sign(r.amount_cents),
       0,
     );
+  const unexplainedDifference=bankTotal-(internalTotal-centsSafe(commission)+centsSafe(difference));
+  const selectionMoney=(value:number)=>selectedCurrencies.size>1?"Moedas diferentes":money(value,selectedCurrency);
   const visible = (rows: Row[]) =>
     rows.filter(
       (r) =>
         (!store || r.store_id === store) &&
+        (!account || r.account_id === account || r.source !== "bank" && !r.account_id && r.store_id === accounts.find(a=>a.id===account)?.store_id) &&
+        (!minimum || Math.abs(r.amount_cents)>=centsSafe(minimum)) &&
+        (!maximum || Math.abs(r.amount_cents)<=centsSafe(maximum)) &&
         (!from || r.date >= from) &&
         (!to || r.date <= to) &&
         (filter === "todos" ||
@@ -148,6 +165,7 @@ export default function Reconciliation({
   const banks = visible(data.banks),
     internals = visible(data.internals);
   function toggle(r: Row) {
+    setPostCommission(false);
     setSelected((previous) => {
       const next = { ...previous };
       if (key(r) in next) delete next[key(r)];
@@ -164,6 +182,7 @@ export default function Reconciliation({
     const amount = (s.amount_cents / 100).toFixed(2);
     setSelected({ [key(bank)]: amount, [key(internal)]: amount });
     setCommission("0");
+    setPostCommission(false);
     setDifference("0");
     setReason("");
     setKind(internal.transfer ? "transferencia" : "pagamento");
@@ -172,6 +191,7 @@ export default function Reconciliation({
     );
   }
   function chooseCard(s: Row) {
+    setPostCommission(false);
     const next: Record<string, string> = {
       [`bank:${s.bank_id}`]: (s.net_cents / 100).toFixed(2),
     };
@@ -209,6 +229,7 @@ export default function Reconciliation({
                 }
               >
                 <td>
+                  {manager&&r.source==="bank"&&r.available_cents>0&&<ActionButton disabled={busy} onClick={()=>setResolution(r)}>Resolver movimento em falta</ActionButton>}
                   <input
                     type="checkbox"
                     aria-label={`Selecionar ${r.description}`}
@@ -236,11 +257,11 @@ export default function Reconciliation({
                   </small>
                 </td>
                 <td className="numeric">
-                  {money(r.amount_cents)}
+                  {money(r.amount_cents,r.currency)}
                   <br />
-                  <small>Associado: {money(r.associated_cents)}</small>
+                  <small>Associado: {money(r.associated_cents,r.currency)}</small>
                   <br />
-                  <strong>Disponível: {money(r.available_cents)}</strong>
+                  <strong>Por reconciliar: {money(r.available_cents,r.currency)}</strong>
                   {selected[key(r)] !== undefined && (
                     <label>
                       Associar (€)
@@ -257,7 +278,7 @@ export default function Reconciliation({
                   )}
                 </td>
                 <td>
-                  <span className="pill neutral">{labels[r.status]}</span>
+                  <span className={`bank-state ${r.status==="reconciliado"?"bank-state-matched":"bank-state-pending"}`}>{r.status==="reconciliado"?"✓":"◷"} {labels[r.status]}</span>
                   {r.ignore_reason && <p>{r.ignore_reason}</p>}
                   {manager && (
                     <div>
@@ -364,6 +385,9 @@ export default function Reconciliation({
         <>
           <section className="panel reconciliation-filters">
             <div className="purchase-filters">
+              <label>Conta bancária<select aria-label="Conta bancária" value={account} onChange={e=>{setAccount(e.target.value);setSelected({});setLimits({bank:50,internal:50});}}><option value="">Todas as contas</option>{accounts.filter(a=>!store||a.store_id===store).map(a=><option value={a.id} key={a.id}>{a.bank} · {a.name} · {a.currency||"EUR"}</option>)}</select></label>
+              <label>Valor absoluto mínimo<input inputMode="decimal" value={minimum} onChange={e=>{setMinimum(e.target.value);setLimits({bank:50,internal:50});}}/></label>
+              <label>Valor absoluto máximo<input inputMode="decimal" value={maximum} onChange={e=>{setMaximum(e.target.value);setLimits({bank:50,internal:50});}}/></label>
               <label>
                 Estado
                 <select
@@ -377,6 +401,7 @@ export default function Reconciliation({
                   <option value="ignorado">Ignorados</option>
                 </select>
               </label>
+              <DatePresets from={from} to={to} onSelect={(start, end) => { setFrom(start); setTo(end); }} />
               <label>
                 Desde
                 <input
@@ -409,7 +434,8 @@ export default function Reconciliation({
               {renderRows(banks, "bank")}
             </section>
             <section className="panel">
-              <h2>Movimentos internos e faturas ({internals.length})</h2>
+              <h2>Movimentos da aplicação e documentos ({internals.length})</h2>
+              <p>Os registos sem conta identificada podem ser associados após conferência; a associação não altera o seu saldo contabilístico nem atribui retroativamente uma conta.</p>
               {renderRows(internals, "internal")}
             </section>
           </div>
@@ -418,15 +444,18 @@ export default function Reconciliation({
               <h2>Confirmar associação</h2>
               <p>
                 {chosen.length} movimentos selecionados · Bruto interno:{" "}
-                <strong>{money(internalTotal)}</strong> · Líquido bancário:{" "}
-                <strong>{money(bankTotal)}</strong>
+                <strong>{selectionMoney(internalTotal)}</strong> · Líquido bancário:{" "}
+                <strong>{selectionMoney(bankTotal)}</strong>
+                {" · Diferença selecionada: "}<strong>{selectionMoney(internalTotal-bankTotal)}</strong>
               </p>
+              {chosen.length>0&&selectedCurrencies.size===1&&<p className={`bank-state ${unexplainedDifference?"bank-state-divergence":"bank-state-matched"}`}>{unexplainedDifference?"✕ Diferença por explicar":"✓ Valores equilibrados após comissão e diferença justificada"}: {selectionMoney(unexplainedDifference)}</p>}
+              {selectedCurrencies.size>1&&<Notice tone="error">Selecione movimentos na mesma moeda. Os totais de moedas diferentes não são comparáveis.</Notice>}
               {chosen.length > 0 && (
                 <p>
                   {chosen
                     .map(
                       (r) =>
-                        `${labels[r.source]}: ${r.description} (${money(centsSafe(selected[key(r)]))})`,
+                        `${labels[r.source]}: ${r.description} (${money(centsSafe(selected[key(r)]),r.currency)})`,
                     )
                     .join(" · ")}
                 </p>
@@ -454,7 +483,7 @@ export default function Reconciliation({
                     inputMode="decimal"
                     disabled={busy}
                     value={commission}
-                    onChange={(e) => setCommission(e.target.value)}
+                    onChange={(e) => {setCommission(e.target.value);setPostCommission(false);}}
                   />
                 </label>
                 <label>
@@ -471,6 +500,8 @@ export default function Reconciliation({
                 Bruto − comissão + diferença = líquido. Para pagamentos
                 parciais, ajuste o valor a associar em cada movimento.
               </p>
+              <label className="bank-resolution-check"><input type="checkbox" checked={postCommission} disabled={busy||centsSafe(commission)<=0} onChange={e=>setPostCommission(e.target.checked)}/>Aprovo criar um movimento próprio de comissão na aplicação, na conta do extrato</label>
+              <p className="footnote">A comissão indicada é uma explicação da diferença. Só cria um movimento com esta aprovação explícita. A reconciliação, por si só, preserva os saldos registados.</p>
               <label>
                 Justificação
                 <input
@@ -484,7 +515,7 @@ export default function Reconciliation({
               <div className="actions">
                 <ActionButton
                   className="primary"
-                  disabled={busy || chosen.length < 2}
+                  disabled={busy || chosen.length < 2 || selectedCurrencies.size > 1}
                   onClick={() =>
                     act(async () => {
                       const lines = chosen.map((r) => ({
@@ -498,9 +529,11 @@ export default function Reconciliation({
                         commission_cents: cents(commission),
                         difference_cents: cents(difference),
                         reason,
+                        post_commission: postCommission,
                       });
                       setSelected({});
                       setCommission("0");
+                      setPostCommission(false);
                       setDifference("0");
                       setReason("");
                       await load();
@@ -651,6 +684,7 @@ export default function Reconciliation({
                     {money(g.difference_cents)}
                   </p>
                   <p>{g.reason}</p>
+                  <p>Confirmado por: {g.created_by?.name || "Utilizador registado na auditoria"}{g.undone_by&&` · Desfeito por: ${g.undone_by.name}`}</p>
                   <p>
                     Bruto interno: {money(g.gross_cents)} · Líquido bancário:{" "}
                     {money(g.net_cents)}
@@ -689,6 +723,12 @@ export default function Reconciliation({
           )}
         </section>
       )}
+      {resolution&&<BankResolution row={resolution} accounts={accounts} onClose={()=>setResolution(null)} onSaved={load} onExisting={candidate=>{
+        const internal=data.internals.find((r:Row)=>(r.source===candidate.source&&r.id===candidate.id)||(r.origin_source===candidate.source&&r.origin_source_id===candidate.id));
+        if(!internal){setError("O registo pertence a um circuito próprio, como os depósitos. Consulte o documento de origem para associar o extrato.");setResolution(null);return;}
+        const amount=(Math.min(internal.available_cents,resolution.available_cents)/100).toFixed(2);
+        setSelected({[key(resolution)]:amount,[key(internal)]:amount});setKind(internal.transfer?"transferencia":"pagamento");setCommission("0");setDifference("0");setPostCommission(false);setReason("");setResolution(null);setNotice("Registo existente selecionado. Confira os valores antes de confirmar a associação.");
+      }}/>}
       {action && (
         <AppDialog autoOpen busy={busy} initialFocus="cancel" onRequestClose={() => setAction(null)}
           className="doc-dialog reconciliation-action"

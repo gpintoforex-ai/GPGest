@@ -165,8 +165,8 @@ export default function PlannedMovements({
                 required
               />
             </Field>
-            <Field label="Categoria">
-              <select name="category_id" defaultValue={editing?.category_id || ""} required>
+            <Field label="Rubrica">
+              <select name="category_id" defaultValue={editing?.category_id || ""} required disabled={editing?.allocations?.length > 1}>
                 {boot.categories.map((r: Row) => (
                   <option key={r.id} value={r.id}>
                     {r.name}
@@ -174,6 +174,7 @@ export default function PlannedMovements({
                 ))}
               </select>
             </Field>
+            {editing?.allocations?.length > 1 && <><input type="hidden" name="category_id" value={editing?.category_id} /><p className="footnote">Compra com várias rubricas ({editing?.allocations.map((a: Row) => a.category_name).join(", ")}): a repartição é definida pelas linhas em Compras.</p></>}
           </Form>
         </section>
       )}
@@ -298,7 +299,7 @@ export default function PlannedMovements({
                       <td>{r.due_date.split("-").reverse().join("/")}</td>
                       <td>{r.document}</td>
                       <td>{r.document_reference || "—"}</td>
-                      <td>{r.entity}</td>
+                      <td>{r.entity}{r.allocations?.length > 1 ? <><br /><small>{r.allocations.map((a: Row) => `${a.category_name} ${money(a.amount_cents)}`).join(" · ")}</small></> : r.external && r.document_group === "compras" && <><br /><small>{r.category_name || "Rubrica por classificar"}</small></>}</td>
                       <td>{r.direction === 1 ? "A receber" : "A pagar"}</td>
                       <td className="numeric">{money(r.amount_cents)}</td>
                       <td className="numeric">

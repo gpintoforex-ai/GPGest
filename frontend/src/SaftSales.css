@@ -1,0 +1,32 @@
+.saft-billing-month { margin: 10px 0; border: 1px solid var(--border-control); border-radius: 8px; background: var(--surface-secondary); }
+.saft-billing-month > summary { display: list-item; padding: 14px 16px; cursor: pointer; color: var(--text-primary); }
+.saft-billing-month > summary > span,.saft-billing-month > summary > strong { display: inline-block; margin-right: 20px; }
+.saft-billing-month .saft-month-name { min-width: 180px; font-weight: 600; text-transform: capitalize; }
+.saft-billing-month > summary:focus-visible { outline: 3px solid var(--border-focus); outline-offset: 2px; border-radius: 8px; }
+.saft-billing-month[open] > summary { border-bottom: 1px solid var(--border-default); }
+.saft-billing-month > .table-wrap { padding: 0 12px; }
+.saft-billing-month tfoot :is(th,td) { color: var(--text-primary); background: var(--surface-elevated); font-weight: 600; }
+.saft-payment-code-label { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.saft-payment-code-label small { color: var(--text-secondary); font-size: 12px; font-weight: 500; }
+@media(max-width:540px) { .saft-billing-month > summary > span,.saft-billing-month > summary > strong { margin-top: 4px; margin-right: 12px; } }
+.saft-mapping-list { margin: 16px 0; }
+.saft-mapping-head, .saft-mapping-row { display: grid; grid-template-columns: .45fr 1.3fr 1.4fr 1.4fr .9fr; gap: 16px; align-items: start; }
+.saft-mapping-head { color: var(--text-secondary); font-size: .8rem; padding: 10px 12px; }
+.saft-mapping-row { padding: 16px 12px; border-top: 1px solid var(--border-color); }
+.saft-mapping-row > * { min-width: 0; overflow-wrap: anywhere; }
+.saft-mapping-row select { width: 100%; }
+.saft-mapping-row small { display: block; margin-top: 6px; color: var(--text-secondary); }
+.saft-mapping-code { color: var(--text-primary); }
+.saft-mapping-explanation { margin: 6px 0 10px; font-size: .85rem; }
+.saft-mapping-explanation summary { cursor: pointer; color: var(--text-secondary); }
+.saft-mapping-explanation p { margin: 8px 0; }
+.saft-mapping .saft-mobile-label { display: none; }
+@media (max-width: 850px) {
+  .saft-mapping-head { display: none; }
+  .saft-mapping-row { grid-template-columns: 1fr 1fr; gap: 14px; }
+  .saft-mapping-code { grid-column: 1 / -1; }
+  .saft-mapping .saft-mobile-label { display: block; margin: 0 0 6px; font-size: .8rem; color: var(--text-secondary); }
+}
+@media (max-width: 480px) {
+  .saft-mapping-row { grid-template-columns: 1fr; padding: 16px 0; }
+}

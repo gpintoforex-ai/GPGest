@@ -10,6 +10,52 @@ class PlatformBase(DeclarativeBase):
     pass
 
 
+class LegalConfiguration(PlatformBase):
+    __tablename__ = "platform_legal_configuration"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default="default")
+    revision: Mapped[int] = mapped_column(default=0)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    publication_id: Mapped[str] = mapped_column(String(36), default="")
+
+
+class LegalPublication(PlatformBase):
+    __tablename__ = "platform_legal_publications"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    version: Mapped[str] = mapped_column(String(80), unique=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    snapshot: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    admin_id: Mapped[str] = mapped_column(String(36))
+
+
+class LegalAcceptance(PlatformBase):
+    __tablename__ = "platform_legal_acceptances"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    company_id: Mapped[str] = mapped_column(String(36), index=True)
+    user_id: Mapped[str] = mapped_column(String(36))
+    publication_id: Mapped[str] = mapped_column(String(36))
+    digest: Mapped[str] = mapped_column(String(64))
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PrivacyRequest(PlatformBase):
+    __tablename__ = "platform_privacy_requests"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    receipt_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    email: Mapped[str] = mapped_column(String(254))
+    kind: Mapped[str] = mapped_column(String(40))
+    message: Mapped[str] = mapped_column(Text, default="")
+    company_reference: Mapped[str] = mapped_column(String(200), default="")
+    company_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    user_id: Mapped[str] = mapped_column(String(36), default="")
+    status: Mapped[str] = mapped_column(String(40), default="received")
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revision: Mapped[int] = mapped_column(default=0)
+    identity_verified: Mapped[int] = mapped_column(default=0)
+    history: Mapped[str] = mapped_column(Text, default="[]")
+
+
 class Company(PlatformBase):
     __tablename__ = "platform_companies"
     __table_args__ = (

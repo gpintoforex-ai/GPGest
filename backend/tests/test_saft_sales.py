@@ -29,9 +29,22 @@ def saft_case(setup, monkeypatch):
 
     app.dependency_overrides[database.db_session] = override
     monkeypatch.setattr("app.saft_sales.policy", lambda db: {"mode": "local"})
-    with factory() as db:
+    with factory.begin() as db:
         store = db.get(Register, ids["registers"][0]).store_id
+        # Estes cenários testam outras regras: códigos por associar apenas avisam (com confirmação).
+        warn_only(db)
     return client, ids, factory, store
+
+
+def warn_only(db, block=False):
+    import json
+
+    from app.models import CompanySetup
+
+    row = db.get(CompanySetup, "default") or CompanySetup(id="default")
+    stored = json.loads(row.settings or "{}")
+    row.settings = json.dumps({**stored, "preferences": {**stored.get("preferences", {}), "saft_block_unmapped": block}})
+    db.add(row)
 
 
 def upload(case, raw=None):
@@ -48,7 +61,7 @@ def upload(case, raw=None):
 def confirm(case, row, conflicts=None):
     response = case[0].post(
         f"/api/saft/imports/{row['id']}/confirm",
-        json={"confirmed": True, "revision": row["revision"], "conflicts": conflicts or {}},
+        json={"confirmed": True, "revision": row["revision"], "conflicts": conflicts or {}, "accept_unmapped_payments": True},
     )
     assert response.status_code == 200, response.text
     return case[0].get("/api/saft/imports/" + row["id"]).json()
@@ -136,6 +149,10 @@ def test_credit_notes_cancellations_and_explicit_payment_dates(saft_case):
     assert sorted(item["amount_cents"] for item in data["payments"]) == [-1230, 1230]
     assert not analysis(saft_case, "2026-01-10", "2026-01-10")["payments"]
     assert all(item["method"] is None for item in data["payments"])
+    suggestions = saft_case[0].get("/api/saft/payment-mapping").json()["suggestions"]
+    assert {k: suggestions["NU"][k] for k in ("id", "name")} == {"id": "numerario", "name": "Numerário"}
+    assert {k: suggestions["TB"][k] for k in ("id", "name")} == {"id": "transferencia", "name": "Transferência"}
+    assert not suggestions.get("MB", {}).get("safe") and not suggestions.get("DE", {}).get("safe")
     result = saft_case[0].post("/api/saft/payment-mapping", json={"mapping": {"NU": "numerario"}})
     assert result.status_code == 200
     assert analysis(saft_case)["receipts"][0]["method"] == "numerario"
@@ -335,3 +352,26 @@ def test_incremental_multiple_upload_and_database_batches(saft_case):
     assert result["status"] == "completed", result
     assert result["summary"]["result"]["imported"] == 1002
     assert analysis(saft_case)["billing_total_cents"] == 1000 * 1230
+
+
+def test_unmapped_payment_codes_block_by_default_or_require_acknowledgement(saft_case):
+    client, _, factory, _ = saft_case
+    with factory.begin() as db:
+        warn_only(db, block=True)  # Predefinição da empresa: impedir.
+    row = upload(saft_case, saft([invoice(payments=payment(code="NU"))]))
+    check = client.get("/api/saft/imports/" + row["id"]).json()["payment_check"]
+    assert check["unmapped"] == {"NU": 1} and check["block"] is True
+    body = {"confirmed": True, "revision": row["revision"], "conflicts": {}, "accept_unmapped_payments": True}
+    blocked = client.post(f"/api/saft/imports/{row['id']}/confirm", json=body)
+    assert blocked.status_code == 409 and "NU" in blocked.json()["detail"]
+    assert client.post("/api/saft/payment-mapping", json={"mapping": {"NU": "numerario"}}).status_code == 200
+    assert client.get("/api/saft/imports/" + row["id"]).json()["payment_check"]["unmapped"] == {}
+    assert client.post(f"/api/saft/imports/{row['id']}/confirm", json=body).status_code == 200
+    # Apenas avisar: exige reconhecimento explícito.
+    with factory.begin() as db:
+        warn_only(db, block=False)
+    other = upload(saft_case, saft([invoice(number=2, payments=payment(code="CC"))]))
+    body = {"confirmed": True, "revision": other["revision"], "conflicts": {}}
+    assert client.post(f"/api/saft/imports/{other['id']}/confirm", json=body).status_code == 409
+    body["accept_unmapped_payments"] = True
+    assert client.post(f"/api/saft/imports/{other['id']}/confirm", json=body).status_code == 200

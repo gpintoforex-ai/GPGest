@@ -1,9 +1,13 @@
+import DatePresets from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
 import { FileUp, Eye, RefreshCw, Check, Save } from "lucide-react";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
 import { ActionButton, AppDialog, ManagedForm, Notice, markDialogSaved } from "./components/InteractionUI";
 import { StatusBadge } from "./components/BusinessUI";
+import DriveImportFiles, { DriveSearchNotice, useDriveFiles } from "./DriveImportFiles";
+import SaftArticleProposals from "./SaftArticleProposals";
+import "./SaftSales.css";
 
 type Row = Record<string, any>;
 const money = (value: number) => new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format((value || 0) / 100);
@@ -25,9 +29,18 @@ export function SaftReference({ sessionId, selectedDay }: { sessionId: string; s
 }
 
 function ReferenceTables({ data }: { data: Row }) {
+  const months = [...new Set<string>(data.billing.map((row: Row) => row.date.slice(0, 7)))].sort().reverse();
+  const monthName = (month: string) => new Intl.DateTimeFormat("pt-PT", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T12:00:00Z`));
   return <><p className="footnote">{data.limitations}</p>{data.warnings.map((message: string) => <Notice key={message} tone="warning">{message}</Notice>)}
     <h3>Faturação emitida · {money(data.billing_total_cents)}</h3>
-    <div className="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Documentos</th><th className="numeric">Líquido</th><th className="numeric">Imposto</th><th className="numeric">Total</th></tr></thead><tbody>{data.billing.map((row: Row) => <tr key={`${row.date}-${row.store_id}-${row.type}`}><td>{day(row.date)}</td><td>{row.type}</td><td>{row.documents}</td><td className="numeric">{money(row.net_cents)}</td><td className="numeric">{money(row.tax_cents)}</td><td className="numeric">{money(row.gross_cents)}</td></tr>)}</tbody></table></div>
+    {months.map(month => {
+      const rows = data.billing.filter((row: Row) => row.date.slice(0, 7) === month);
+      const sum = (field: string) => rows.reduce((total: number, row: Row) => total + Number(row[field] || 0), 0);
+      return <details className="saft-billing-month" key={month}>
+        <summary><span className="saft-month-name">{monthName(month)}</span><span>{sum("documents")} documentos</span><strong>{money(sum("gross_cents"))}</strong></summary>
+        <div className="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Documentos</th><th className="numeric">Líquido</th><th className="numeric">Imposto</th><th className="numeric">Total</th></tr></thead><tbody>{rows.map((row: Row) => <tr key={`${row.date}-${row.store_id}-${row.type}`}><td>{day(row.date)}</td><td>{row.type}</td><td>{row.documents}</td><td className="numeric">{money(row.net_cents)}</td><td className="numeric">{money(row.tax_cents)}</td><td className="numeric">{money(row.gross_cents)}</td></tr>)}</tbody><tfoot><tr><th colSpan={2}>Total do mês</th><td>{sum("documents")}</td><td className="numeric">{money(sum("net_cents"))}</td><td className="numeric">{money(sum("tax_cents"))}</td><td className="numeric">{money(sum("gross_cents"))}</td></tr></tfoot></table></div>
+      </details>;
+    })}
     {!data.billing.length && <p>Sem documentos de faturação importados para este período.</p>}
     <h3>Recebimentos identificados · {money(data.receipts_total_cents)}</h3>
     <div className="table-wrap"><table><thead><tr><th>Data do recebimento</th><th>Código SAF-T</th><th>Meio associado</th><th className="numeric">Montante</th></tr></thead><tbody>{data.receipts.map((row: Row, index: number) => <tr key={index}><td>{day(row.date)}</td><td>{row.code || "Não indicado"}</td><td>{row.name}</td><td className="numeric">{money(row.amount_cents)}</td></tr>)}</tbody></table></div>
@@ -45,12 +58,14 @@ export default function SaftSales({ stores, store, admin, local }: { stores: Row
   const [mapping, setMapping] = useState<Row | null>(null), [start, setStart] = useState(today.slice(0, 8) + "01"), [end, setEnd] = useState(today);
   const [analysis, setAnalysis] = useState<Row | null>(null);
   const running = useRef(false);
+  const drive = useDriveFiles(local && admin ? "/saft/drive-files" : null);
   async function load() { const result = await api("/saft/imports"); setHistory(result); }
   useEffect(() => { if (!local || !admin) return; let active = true; Promise.all([api("/saft/imports"), api("/saft/payment-mapping")]).then(([h, m]) => { if (active) { setHistory(h); setMapping(m); } }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [local, admin]);
   async function run(task: () => Promise<void>) { if (running.current) return; running.current = true; setBusy(true); setError(""); setNotice(""); try { await task(); } catch (e) { setError((e as Error).message); } finally { running.current = false; setBusy(false); } }
   if (!local) return <Notice tone="warning">A importação SAF-T de vendas destina-se ao modo local autónomo.</Notice>;
   if (!admin) return <Notice tone="warning">A importação de ficheiros fiscais está reservada ao administrador. A referência SAF-T continua disponível nas folhas de caixa autorizadas.</Notice>;
   return <><div className="page-intro"><div><h1>Importar SAF-T de vendas</h1><p>Importe a faturação e consulte os recebimentos identificados, sem ligação a um ERP.</p></div></div>
+    <DriveSearchNotice search={drive} what="ficheiros SAF-T" />
     {error && <Notice tone="error">{error}</Notice>}{notice && <Notice tone="success">{notice}</Notice>}
     <section className="panel"><ManagedForm onSubmit={e => { e.preventDefault(); if (!file) return; const element = e.currentTarget; void run(async () => {
       const body = new FormData(); body.append("store_id", target); body.append("file", file);
@@ -61,17 +76,25 @@ export default function SaftSales({ stores, store, admin, local }: { stores: Row
       <Field label="Estabelecimento de destino"><select required value={target} onChange={e => setTarget(e.target.value)}>{stores.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>
       <Field label="Ficheiro XML SAF-T (PT)"><input type="file" accept=".xml,application/xml,text/xml" required onChange={e => setFile(e.target.files?.[0] || null)}/></Field>
     </div><p>Versão suportada: {history?.versions.join(", ") || "1.04_01"}. Limite: {Math.round((history?.max_bytes || 100000000) / 1000000)} MB. Validação XSD oficial no servidor; processamento em segundo plano.</p>
+      <p><strong>Modo: Importar para análise de faturação e conferência.</strong> Importa documentos, clientes e artigos; <strong>não gera entradas em caixa, banco nem movimentos reais</strong>, não substitui o realizado das caixas e não movimenta stock. Os pagamentos indicados no ficheiro ficam como apoio à conferência, em Tesouraria → Faturação e recebimentos.</p>
       <p className="footnote">Confirme o estabelecimento: o ficheiro não identifica necessariamente a loja ou gaveta da IAZELA. Nenhum documento é aplicado antes da confirmação. Transportes e encomendas não são faturação. Os artigos importados não alteram stock.</p>
       <ActionButton className="primary" disabled={busy || !file || (!!history && file.size > history.max_bytes)}><FileUp size={17}/>{busy ? "A carregar…" : "Validar e pré-visualizar"}</ActionButton>
       {!!file && !!history && file.size > history.max_bytes && <Notice tone="error">O ficheiro excede o limite. Exporte um período menor.</Notice>}
-    </fieldset></ManagedForm></section>
+    </fieldset></ManagedForm>
+      <DriveImportFiles search={drive} title="Ficheiros SAF-T no Google Drive" actionLabel="Validar e pré-visualizar" disabled={busy || !target}
+        onPick={async drive => { setOpened(await api("/saft/imports/drive", { store_id: target, drive_id: drive.id }, { timeoutMs: 600000 })); await load(); }} />
+    </section>
     <section className="panel"><h2>Histórico de importações</h2><ActionButton disabled={busy} onClick={() => run(load)}><RefreshCw size={16}/>Atualizar histórico</ActionButton>
       {!history && !error && <p role="status">A carregar histórico…</p>}
       <div className="table-wrap"><table><thead><tr><th>Ficheiro / data</th><th>Empresa / período</th><th>Estado</th><th>Resultado</th><th>Ações</th></tr></thead><tbody>{history?.imports.map((row: Row) => <tr key={row.id}><td>{row.filename}<br/><small>{day(row.created_at)} · {row.user_id}</small></td><td>{row.header.CompanyName || "—"}<br/>{day(row.header.StartDate)} — {day(row.header.EndDate)}</td><td><StatusBadge tone={row.status === "failed" ? "danger" : row.status === "completed" ? "success" : "warning"}>{states[row.status]}</StatusBadge></td><td>{row.status === "failed" ? `0 aplicados / ${row.summary.result?.rejected ? `${row.summary.result.rejected} rejeitados` : "ficheiro rejeitado"}` : row.summary.result ? `${row.summary.result.imported || 0} novos · ${row.summary.result.updated || 0} atualizados · ${row.summary.result.ignored || 0} ignorados` : "Por confirmar"}</td><td><ActionButton onClick={() => setOpened(row)}><Eye size={16}/>Consultar importação</ActionButton></td></tr>)}</tbody></table></div>
       {history && !history.imports.length && <p>Ainda não existem importações SAF-T nesta empresa.</p>}
     </section>
-    {mapping && <section className="panel"><details><summary>Associar códigos SAF-T aos meios de pagamento</summary><ManagedForm onSubmit={e => { e.preventDefault(); void run(async () => { setMapping(await api("/saft/payment-mapping", { mapping: mapping.mapping })); setNotice("Associações guardadas. Apenas a referência SAF-T será recalculada."); }); }}><fieldset disabled={busy} className="ui-form-fields"><p>Não é feita associação automática. MB significa referência Multibanco e DE dinheiro eletrónico; não identificam, por si só, MB WAY ou TPA. Associe de acordo com o sistema de origem.</p><div className="form-grid">{mapping.codes.map((code: string) => <Field key={code} label={`Código SAF-T ${code}`}><select value={mapping.mapping[code] || ""} onChange={e => { const next = { ...mapping.mapping }; if (e.target.value) next[code] = e.target.value; else delete next[code]; setMapping({ ...mapping, mapping: next }); }}><option value="">Por classificar</option>{mapping.methods.map((method: Row) => <option key={method.id} value={method.id}>{method.name}</option>)}</select></Field>)}</div><ActionButton className="primary" disabled={busy}><Save size={16}/>Guardar associações</ActionButton></fieldset></ManagedForm></details></section>}
-    <section className="panel"><h2>Analisar faturação e recebimentos</h2><ManagedForm onSubmit={e => { e.preventDefault(); void run(async () => setAnalysis(await api(`/saft/analysis?store_id=${encodeURIComponent(target)}&start=${start}&end=${end}`))); }}><div className="form-grid"><Field label="Desde"><input type="date" required value={start} onChange={e => setStart(e.target.value)}/></Field><Field label="Até"><input type="date" required min={start} value={end} onChange={e => setEnd(e.target.value)}/></Field></div><p>Estabelecimento: {stores.find(row => row.id === target)?.name}</p><ActionButton disabled={busy}><Eye size={16}/>Consultar período</ActionButton></ManagedForm>{analysis && <ReferenceTables data={analysis}/>}</section>
+    <SaftArticleProposals refresh={history?.imports.filter((row: Row) => row.status === "completed").length || 0} />
+    {mapping && <PaymentMapping value={mapping} busy={busy} onSave={draft => run(async () => {
+      setMapping(await api("/saft/payment-mapping", { mapping: draft }));
+      setNotice("Correspondências guardadas. Não foram criados movimentos nem alterados movimentos históricos.");
+    })}/>}
+    <section className="panel"><h2>Analisar faturação e recebimentos</h2><ManagedForm onSubmit={e => { e.preventDefault(); void run(async () => setAnalysis(await api(`/saft/analysis?store_id=${encodeURIComponent(target)}&start=${start}&end=${end}`))); }}><div className="form-grid"><DatePresets from={start} to={end} onSelect={(from, to) => { setStart(from); setEnd(to); }} /><Field label="Desde"><input type="date" required value={start} onChange={e => setStart(e.target.value)}/></Field><Field label="Até"><input type="date" required min={start} value={end} onChange={e => setEnd(e.target.value)}/></Field></div><p>Estabelecimento: {stores.find(row => row.id === target)?.name}</p><ActionButton disabled={busy}><Eye size={16}/>Consultar período</ActionButton></ManagedForm>{analysis && <ReferenceTables data={analysis}/>}</section>
     {opened && <ImportDialog key={opened.id} initial={opened} onClose={() => { setOpened(null); void load(); }} onUpdated={() => { void load(); }}/>}
   </>;
 }
@@ -79,6 +102,9 @@ export default function SaftSales({ stores, store, admin, local }: { stores: Row
 function ImportDialog({ initial, onClose, onUpdated }: { initial: Row; onClose: () => void; onUpdated: () => void }) {
   const [row, setRow] = useState(initial), [data, setData] = useState<Row | null>(null), [page, setPage] = useState(1), [kind, setKind] = useState(""), [conflictsOnly, setConflictsOnly] = useState(false);
   const [choices, setChoices] = useState<Record<string, string>>({}), [approved, setApproved] = useState(false), [detail, setDetail] = useState<Row | null>(null);
+  const [acceptUnmapped, setAcceptUnmapped] = useState(false);
+  const unmapped = Object.entries(row.payment_check?.unmapped || {}) as [string, number][];
+  const paymentBlocked = unmapped.length > 0 && (row.payment_check?.block || !acceptUnmapped);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const processing = ["validating", "importing"].includes(row.status), running = useRef(false);
   useEffect(() => { let active = true; let timer: ReturnType<typeof setTimeout>;
@@ -109,7 +135,7 @@ function ImportDialog({ initial, onClose, onUpdated }: { initial: Row; onClose: 
       <div className="actions"><ActionButton disabled={page <= 1 || busy} onClick={() => setPage(page - 1)}>Anterior</ActionButton><span>Página {page} · {data?.total || 0} registos</span><ActionButton disabled={!data || page * 30 >= data.total || busy} onClick={() => setPage(page + 1)}>Seguinte</ActionButton></div>
     </>}
     {["ready", "failed"].includes(row.status) && !!Object.keys(counts).length && <ActionButton disabled={busy} onClick={() => run(async () => { setRow(await api(`/saft/imports/${row.id}/review`, {})); setChoices({}); setApproved(false); })}><RefreshCw size={16}/>Atualizar pré-visualização</ActionButton>}
-    {row.status === "ready" && <><p>Decisões de conflitos: {Object.keys(choices).filter(key => choices[key]).length} de {counts.conflict || 0}. Consulte todas as páginas antes de confirmar.</p><label className="doc-check"><input type="checkbox" checked={approved} onChange={e => setApproved(e.target.checked)}/>Confirmo a empresa, estabelecimento, período, registos e decisões de substituição. A importação não cria movimentos de caixa.</label><ActionButton className="primary" disabled={busy || !approved || Object.keys(choices).filter(key => choices[key]).length !== (counts.conflict || 0)} onClick={() => run(async () => { setRow(await api(`/saft/imports/${row.id}/confirm`, { confirmed: true, revision: row.revision, conflicts: choices })); setApproved(false); onUpdated(); })}><Check size={16}/>Confirmar importação</ActionButton></>}
+    {row.status === "ready" && <><p>Decisões de conflitos: {Object.keys(choices).filter(key => choices[key]).length} de {counts.conflict || 0}. Consulte todas as páginas antes de confirmar.</p>{unmapped.length > 0 && <Notice tone={row.payment_check.block ? "error" : "warning"}>{row.payment_check.message} Códigos no ficheiro: {unmapped.map(([code, count]) => `${code} (${count})`).join(", ")}. Associe-os em «Associar códigos SAF-T aos meios de pagamento», nesta página, ou na configuração inicial. <ActionButton disabled={busy} onClick={() => run(async () => setRow(await api(`/saft/imports/${row.id}`)))}>Verificar novamente</ActionButton>{!row.payment_check.block && <label className="doc-check"><input type="checkbox" checked={acceptUnmapped} onChange={e => setAcceptUnmapped(e.target.checked)}/>Confirmo que estes pagamentos ficam por classificar na conferência</label>}</Notice>}<label className="doc-check"><input type="checkbox" checked={approved} onChange={e => setApproved(e.target.checked)}/>Confirmo a empresa, estabelecimento, período, registos e decisões de substituição. A importação não cria movimentos de caixa.</label><ActionButton className="primary" disabled={busy || !approved || paymentBlocked || Object.keys(choices).filter(key => choices[key]).length !== (counts.conflict || 0)} onClick={() => run(async () => { setRow(await api(`/saft/imports/${row.id}/confirm`, { confirmed: true, revision: row.revision, conflicts: choices, accept_unmapped_payments: acceptUnmapped })); setApproved(false); onUpdated(); })}><Check size={16}/>Confirmar importação</ActionButton></>}
     {processing && <ActionButton disabled={busy} onClick={() => run(async () => setRow(await api(`/saft/imports/${row.id}/recover`, { confirmed: true, revision: row.revision, conflicts: {} })))}>Recuperar processamento interrompido há mais de 30 minutos</ActionButton>}
     <ActionButton onClick={onClose}>Fechar</ActionButton>
     {detail && <AppDialog className="doc-dialog" aria-label="Detalhe do registo SAF-T" onRequestClose={() => setDetail(null)}><h2>{detail.data.document || detail.data.code}</h2><p>Origem SAF-T · {kinds[detail.kind]} · SHA-256: {detail.fingerprint}</p>
@@ -127,4 +153,39 @@ function DocumentDetails({ data }: { data: Row }) {
     {!!data.references?.length && <p>Documentos de origem: {data.references.join(", ")}</p>}
     {data.payments && <p>{data.payments.length ? data.payments.map((payment: Row) => `${day(payment.date)} · ${payment.code || "Por classificar"} · ${money(payment.amount_cents)}`).join("; ") : "Informação de recebimento indisponível"}</p>}
   </>;
+}
+
+
+function PaymentMapping({ value, busy, onSave }: { value: Row; busy: boolean; onSave: (draft: Row) => Promise<void> }) {
+  const [draft, setDraft] = useState<Row>({ ...value.mapping });
+  useEffect(() => setDraft({ ...value.mapping }), [value]);
+  function choose(code: string, id: string) {
+    setDraft(previous => { const next = { ...previous }; if (id) next[code] = id; else delete next[code]; return next; });
+  }
+  const safeEmpty = value.codes.filter((code: string) => !draft[code] && value.suggestions?.[code]?.safe);
+  return <section className="panel saft-mapping"><details><summary>Associar códigos SAF-T aos meios de pagamento</summary>
+    <p>Estes códigos identificam o meio usado pelo cliente, não o banco ou TPA de liquidação. MB significa referência Multibanco; DE não identifica MB WAY.</p>
+    <p className="footnote">Descrição oficial: PaymentMechanism, SAF-T (PT) 1.04_01. O ficheiro não fornece uma descrição livre destes códigos. As escolhas s? ficam confirmadas depois de guardar.</p>
+    <ManagedForm onSubmit={event => { event.preventDefault(); void onSave(draft); }}><fieldset disabled={busy} className="ui-form-fields">
+      <ActionButton type="button" disabled={busy || !safeEmpty.length} onClick={() => setDraft(previous => {
+        const next = { ...previous }; for (const code of safeEmpty) if (!next[code]) next[code] = value.suggestions[code].id; return next;
+      })}>Aplicar sugestões seguras</ActionButton>
+      <div className="saft-mapping-list"><div className="saft-mapping-head" aria-hidden="true"><span>Código SAF-T</span><span>Descrição oficial</span><span>Recomendação</span><span>Correspondência selecionada</span><span>Estado</span></div>
+      {value.codes.map((code: string) => {
+        const suggestion = value.suggestions?.[code];
+        const confirmed = !!draft[code] && draft[code] === value.mapping[code];
+        return <div className="saft-mapping-row" key={code}>
+          <strong className="saft-mapping-code">{code}</strong>
+          <span><small className="saft-mobile-label">Descrição oficial</small>{value.descriptions?.[code] || "Descrição não disponível"}</span>
+          <div><small className="saft-mobile-label">Recomendação</small><strong>{suggestion?.name || "Sem sugestão segura"}</strong>
+            <details className="saft-mapping-explanation"><summary aria-label={`Explicar recomendação ${code}`}>Porquê?</summary><p>{suggestion?.reason || "Informação insuficiente para recomendar um meio."} Nenhuma conta bancária ou TPA de destino ? inferida.</p></details>
+            <ActionButton type="button" aria-label={`Aceitar sugestão ${code}`} disabled={busy || !suggestion?.safe || draft[code] === suggestion?.id} onClick={() => choose(code, suggestion.id)}>Aceitar sugestão</ActionButton>
+          </div>
+          <div><label htmlFor={`saft-method-${code}`} className="saft-mobile-label">Correspondência selecionada</label><select id={`saft-method-${code}`} aria-label={`Código SAF-T ${code}`} value={draft[code] || ""} onChange={event => choose(code, event.target.value)}><option value="">Por classificar</option>{value.methods.map((method: Row) => <option key={method.id} value={method.id}>{method.name}</option>)}</select>{draft[code] && !confirmed && <small>Alteração por guardar</small>}</div>
+          <div><StatusBadge tone={confirmed ? "success" : "warning"}>{confirmed ? "Confirmado" : draft[code] ? "Por rever" : suggestion?.safe ? "Sugestão disponível" : "Por rever"}</StatusBadge></div>
+        </div>;
+      })}</div>
+      <ActionButton className="primary" disabled={busy}><Save size={16}/>Guardar correspondências</ActionButton>
+    </fieldset></ManagedForm>
+  </details></section>;
 }

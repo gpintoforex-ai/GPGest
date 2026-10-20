@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from . import db as database
 from .db import db_session
-from .models import Category, CategoryIntegrationLink, Movement, PlannedMovement, BusinessEntity
+from .models import Category, CategoryIntegrationLink, ERPDocumentRubric, Movement, PlannedAllocation, PlannedMovement, BusinessEntity
 from sqlalchemy.exc import IntegrityError
 from .platform import cipher, validate_url
 from .platform_models import Company
@@ -44,6 +44,8 @@ class CategoryEdit(Strict):
     name: str = Field(min_length=2, max_length=100)
     icon: Icons = "tag"
     color: str = Field(default="#245fc5", pattern=r"^#[0-9a-fA-F]{6}$")
+    # Percentagem estimada de IVA dedutível (vazio = 100%); só alterada quando enviada.
+    vat_deduction_percent: int | None = Field(default=None, ge=0, le=100)
 
 
 class ImportItems(Strict):
@@ -238,7 +240,7 @@ def register_routes(app, current, authorize, record, serial):
         category = db.scalar(select(Category).where(Category.id == category_id).with_for_update())
         if not category:
             raise HTTPException(404, "Rubrica inexistente.")
-        for model in (Movement, PlannedMovement, BusinessEntity):
+        for model in (Movement, PlannedMovement, PlannedAllocation, ERPDocumentRubric, BusinessEntity):
             if db.scalar(select(model.id).where(model.category_id == category_id).limit(1)):
                 raise HTTPException(409, "Esta rubrica está a ser utilizada. Altere as associações antes de a remover.")
         links = list(db.scalars(select(CategoryIntegrationLink).where(CategoryIntegrationLink.category_id == category_id).with_for_update()))
@@ -277,6 +279,8 @@ def register_routes(app, current, authorize, record, serial):
         ):
             raise HTTPException(409, "Já existe uma rubrica com esse nome.")
         row.name, row.icon, row.color = name, data.icon, data.color
+        if "vat_deduction_percent" in data.model_fields_set:
+            row.vat_deduction_percent = data.vat_deduction_percent
         set_cash_difference(db, row, data.cash_difference)
         record(db, user, "rubrica_alterada", row.id, data.model_dump())
         db.commit()

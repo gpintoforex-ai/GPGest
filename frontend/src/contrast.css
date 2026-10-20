@@ -83,6 +83,7 @@
 .ui-notice.ui-notice-warning { color: var(--color-warning); background: var(--color-warning-bg); }
 .ui-notice.ui-notice-error { color: var(--color-danger); background: var(--color-danger-bg); }
 .ui-notice :is(p,small,strong) { color: inherit; }
+.workspace .workflow-warning { color: #80510d; }
 [data-theme="dark"] .purchase-table tbody :is(.erp-invoice-safe,.erp-invoice-missing,.erp-invoice-review) { background: var(--surface-primary); color: var(--text-primary); }
 [data-theme="dark"] .doc-overview-card :is(strong,small,span),[data-theme="dark"] .doc-dashboard-section-title span { color: var(--text-secondary); }
 [data-theme="dark"] :is(.stock-card,.stock-summary,.stock-toolbar,.stock-dashboard,.integration-card,.integration-status) { color: var(--text-primary); }

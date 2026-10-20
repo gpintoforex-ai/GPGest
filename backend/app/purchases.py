@@ -6,7 +6,7 @@ import httpx
 from cryptography.fernet import InvalidToken
 from fastapi import Depends, File, HTTPException, Response, UploadFile
 from pydantic import Field, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .db import db_session
@@ -118,7 +118,6 @@ def register_routes(app, current, authorize, scope, record, serial, cents):
 
     @app.post("/api/purchases/import/{store_id}")
     def import_file(store_id: str, confirm: bool = False, file: UploadFile = File(...), user=Depends(current), db: Session = Depends(db_session)):
-        from .purchase_import import parse_purchases
         authorize(user, db, store_id, ["administrador", "gestor"])
         if not db.get(Store, store_id):
             raise HTTPException(404, "Loja inexistente.")
@@ -127,49 +126,7 @@ def register_routes(app, current, authorize, scope, record, serial, cents):
         raw = file.file.read(5_000_001)
         if len(raw) > 5_000_000:
             raise HTTPException(413, "Limite de 5 MB por ficheiro.")
-        try:
-            rows = parse_purchases(raw, file.filename or "")
-        except (ValueError, UnicodeError) as exc:
-            raise HTTPException(422, str(exc)) from None
-        if confirm:
-            # A preview never writes and must not queue behind a saving import.
-            db.scalar(select(Store).order_by(Store.id).limit(1).with_for_update())
-        existing = {identity(r.supplier_nif, r.document_type, r.document): r for r in db.scalars(select(Purchase))}
-        fresh = {}
-        enrich = []
-        conflicts = 0
-        for item in rows:
-            key = identity(item["supplier_nif"], item["document_type"], item["document"])
-            previous = existing.get(key) or fresh.get(key)
-            if previous:
-                old = {name: getattr(previous, name) for name in ("amount_cents", "tax_cents", "base_cents", "document_date", "origin")} if isinstance(previous, Purchase) else previous
-                conflict = old["amount_cents"] != item["amount_cents"] or old["document_date"] != item["document_date"] or (item["tax_provided"] and old["tax_cents"] != item["tax_cents"]) or (old.get("base_cents") is not None and item.get("base_cents") is not None and old["base_cents"] != item["base_cents"]) or old.get("origin") == "efatura_testes"
-                if isinstance(previous, Purchase) and not conflict and previous.store_id == store_id:
-                    enrich.append((previous, item))
-                item["status"] = "conflict" if conflict else "duplicate"
-                conflicts += int(conflict)
-            else:
-                item["status"] = "new"
-                fresh[key] = item
-        if confirm:
-            if conflicts:
-                raise HTTPException(409, "Existem documentos repetidos com valores ou datas diferentes. Corrija o ficheiro antes de importar.")
-            import hashlib
-            from .models import DocumentImport
-            batch = DocumentImport(store_id=store_id, user_id=user.id, filename=(file.filename or "ficheiro").replace("\\", "/").split("/")[-1][:200], fingerprint=hashlib.sha256(raw).hexdigest(), source="ficheiro_efatura")
-            db.add(batch); db.flush()
-            for previous, item in enrich:
-                if previous.base_cents is None:
-                    previous.base_cents = item.get("base_cents")
-                if previous.import_id is None:
-                    previous.import_id = batch.id
-                record(db, user, "documento_importacao_reconferida", previous.id, {"import_id": batch.id, "base_cents": previous.base_cents}, store_id)
-            for item in fresh.values():
-                values = {k: v for k, v in item.items() if k not in {"line", "status", "tax_provided"}}
-                db.add(Purchase(store_id=store_id, origin="ficheiro", import_id=batch.id, **values))
-            record(db, user, "compras_importadas_ficheiro", store_id, {"imported": len(fresh), "duplicates": len(rows) - len(fresh)}, store_id)
-            db.commit()
-        return {"rows": rows, "new_count": len(fresh), "duplicate_count": sum(r["status"] == "duplicate" for r in rows), "conflict_count": conflicts, "imported": confirm}
+        return import_purchase_file(db, user, store_id, raw, file.filename or "", confirm, record)
 
     @app.post("/api/purchases/{purchase_id}/validate")
     def validate(purchase_id: str, data: Validation, user=Depends(current), db: Session = Depends(db_session)):
@@ -329,3 +286,111 @@ def register_routes(app, current, authorize, scope, record, serial, cents):
         record(db, user, "efatura_sincronizada", store_id, {"start": data.start.isoformat(), "end": data.end.isoformat(), "imported": imported, "updated": updated}, store_id)
         db.commit()
         return {"imported": imported, "updated": updated, "total": len(invoices)}
+
+
+def import_purchase_file(db, user, store_id, raw, filename, confirm, record, drive=None, period=None):
+    """Pré-visualiza ou importa um ficheiro e-Fatura (CSV/XLSX) para as compras da loja.
+
+    Partilhado pelo carregamento manual e pela importação a partir do Google Drive.
+    `drive` guarda o ID/versão do ficheiro de origem; `period` (início, fim) só produz avisos:
+    a importação inclui sempre o ficheiro completo.
+    """
+    import hashlib
+
+    from .models import DocumentImport
+    from .purchase_import import parse_purchases
+    info = {}
+    try:
+        rows = parse_purchases(raw, filename, info)
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(422, str(exc)) from None
+    if confirm:
+        # A preview never writes and must not queue behind a saving import.
+        db.scalar(select(Store).order_by(Store.id).limit(1).with_for_update())
+    existing = {identity(r.supplier_nif, r.document_type, r.document): r for r in db.scalars(select(Purchase))}
+    fresh = {}
+    enrich = []
+    conflicts = 0
+    skipped = {"Anulado pelo emitente no e-Fatura": 0, "Total 0,00 €": 0}
+    cancelled_existing = 0
+    for item in rows:
+        key = identity(item["supplier_nif"], item["document_type"], item["document"])
+        if item.get("skip_reason"):
+            item["status"] = "skipped"
+            skipped[item["skip_reason"]] = skipped.get(item["skip_reason"], 0) + 1
+            item["differences"] = []
+            if item["skip_reason"].startswith("Anulado") and key in existing:
+                item["differences"] = ["existe como documento ativo na aplicação; reveja"]
+                cancelled_existing += 1
+            continue
+        previous = existing.get(key) or fresh.get(key)
+        if previous:
+            old = {name: getattr(previous, name) for name in ("amount_cents", "tax_cents", "base_cents", "document_date", "origin")} if isinstance(previous, Purchase) else previous
+            differences = [label for changed, label in (
+                (old["amount_cents"] != item["amount_cents"], "total"),
+                (old["document_date"] != item["document_date"], "data"),
+                (item["tax_provided"] and old["tax_cents"] != item["tax_cents"], "IVA"),
+                (old.get("base_cents") is not None and item.get("base_cents") is not None and old["base_cents"] != item["base_cents"], "base tributável"),
+                (old.get("origin") == "efatura_testes", "documento de testes"),
+            ) if changed]
+            if isinstance(previous, Purchase) and not differences and previous.store_id == store_id:
+                enrich.append((previous, item))
+            item["status"] = "conflict" if differences else "duplicate"
+            item["differences"] = differences
+            if isinstance(previous, Purchase) and previous.store_id != store_id and not differences:
+                item["differences"] = ["já importado noutra loja"]
+            conflicts += int(bool(differences))
+        else:
+            item["status"] = "new"
+            fresh[key] = item
+    fingerprint = hashlib.sha256(raw).hexdigest()
+    warnings = []
+    company_nif = (db.info.get("company") or {}).get("nif") or ""
+    buyers = sorted(info.get("buyer_nifs") or [])
+    if not info.get("buyer_column"):
+        warnings.append("O ficheiro não indica o NIF do adquirente; confirme que é uma exportação desta empresa.")
+    elif company_nif and buyers and buyers != [company_nif]:
+        raise HTTPException(409, f"O ficheiro indica o adquirente {', '.join(buyers)}, diferente do NIF desta empresa ({company_nif}). Nada foi importado.")
+    dates = sorted(item["document_date"] for item in rows)
+    if period:
+        outside = sum(not (str(period[0]) <= day <= str(period[1])) for day in dates)
+        if outside:
+            warnings.append(f"{outside} documento(s) fora do período a conferir ({period[0]} a {period[1]}). A importação inclui todo o ficheiro.")
+    previous_imports = [
+        {"filename": row.filename, "created_at": row.created_at, "same_content": row.fingerprint == fingerprint, "drive_version": row.drive_version}
+        for row in db.scalars(select(DocumentImport).where(
+            DocumentImport.source == "ficheiro_efatura",
+            or_(DocumentImport.fingerprint == fingerprint, DocumentImport.drive_id == drive["id"]) if drive else DocumentImport.fingerprint == fingerprint,
+        ).order_by(DocumentImport.created_at.desc()))
+    ]
+    if any(skipped.values()):
+        detail = ", ".join(f"{count} {'anulado(s) pelo emitente' if reason.startswith('Anulado') else 'com total 0,00 €'}" for reason, count in skipped.items() if count)
+        warnings.append(f"Documentos não importados: {detail}. Constam da pré-visualização com o motivo.")
+    if cancelled_existing:
+        warnings.append(f"{cancelled_existing} documento(s) anulados no e-Fatura já existem como ativos na aplicação. A importação não os altera; reveja-os e corrija por estorno, se necessário.")
+    if any(item["same_content"] for item in previous_imports):
+        warnings.append("Um ficheiro com o mesmo conteúdo já foi importado; os documentos existentes não são duplicados.")
+    elif previous_imports and drive:
+        warnings.append("Este ficheiro do Drive foi alterado desde a última importação. Confira os documentos novos e os conflitos.")
+    if confirm:
+        if conflicts:
+            raise HTTPException(409, "Existem documentos repetidos com valores ou datas diferentes. Corrija o ficheiro antes de importar.")
+        name = (filename or "ficheiro").replace("\\", "/").split("/")[-1][:200]
+        batch = DocumentImport(store_id=store_id, user_id=user.id, filename=name, fingerprint=fingerprint, source="ficheiro_efatura",
+            drive_id=(drive or {}).get("id", ""), drive_version=(drive or {}).get("version", ""))
+        db.add(batch); db.flush()
+        for previous, item in enrich:
+            if previous.base_cents is None:
+                previous.base_cents = item.get("base_cents")
+            if previous.import_id is None:
+                previous.import_id = batch.id
+            record(db, user, "documento_importacao_reconferida", previous.id, {"import_id": batch.id, "base_cents": previous.base_cents}, store_id)
+        for item in fresh.values():
+            values = {k: v for k, v in item.items() if k not in {"line", "status", "tax_provided", "differences", "skip_reason"}}
+            db.add(Purchase(store_id=store_id, origin="ficheiro", import_id=batch.id, **values))
+        record(db, user, "compras_importadas_ficheiro", store_id, {"imported": len(fresh), "duplicates": sum(r["status"] == "duplicate" for r in rows), "skipped": sum(skipped.values()), "filename": name, "fingerprint": fingerprint, "drive_id": batch.drive_id, "drive_version": batch.drive_version}, store_id)
+        db.commit()
+    return {"rows": rows, "new_count": len(fresh), "duplicate_count": sum(r["status"] == "duplicate" for r in rows), "conflict_count": conflicts, "imported": confirm,
+            "skipped_count": sum(skipped.values()), "cancelled_existing_count": cancelled_existing,
+            "format": info.get("format"), "columns": info.get("columns", []), "period": [dates[0], dates[-1]] if dates else None,
+            "warnings": warnings, "previous_imports": previous_imports, "fingerprint": fingerprint}

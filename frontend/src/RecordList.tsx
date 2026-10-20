@@ -1,3 +1,4 @@
+import DatePresets from "./components/DatePresets";
 import { ActionButton, Notice } from "./components/InteractionUI";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ArrowLeftRight, Banknote, CreditCard, FileText, Smartphone, Wallet } from "lucide-react";
@@ -91,6 +92,7 @@ export default function RecordList({
   accumulatedTotal = false,
   totalsTitle = "Totais do período selecionado",
   movementFilters = false,
+  movementAccounts = [],
   plannedFilters = false,
   startAtOldestPending = false,
   defaultToToday = false,
@@ -105,6 +107,7 @@ export default function RecordList({
   accumulatedTotal?: boolean;
   totalsTitle?: string;
   movementFilters?: boolean;
+  movementAccounts?: { id: string; name: string }[];
   plannedFilters?: boolean;
   startAtOldestPending?: boolean;
   defaultToToday?: boolean;
@@ -140,10 +143,10 @@ export default function RecordList({
       .trim();
   const registers = [
     ...new Map(
-      rows.map((r) => [
+      [...movementAccounts.map(account => [account.id, account.name]), ...rows.map((r) => [
         r.filter_register || "unassigned",
         r.filter_register_name || "Sem caixa identificada",
-      ]),
+      ])] as [string, string][],
     ).entries(),
   ].sort((a, b) => a[1].localeCompare(b[1], "pt-PT"));
   const payments = [...new Set(rows.map(paymentGroup))].sort((a, b) =>
@@ -183,20 +186,24 @@ export default function RecordList({
         );
       };
   const filtered = invalid ? [] : rows.filter(r => matching(r));
+  // Linhas só de consulta (ex.: extrato bancário) não entram nos totais: evitam somar
+  // duas vezes o mesmo recebimento já registado na aplicação.
+  const counted = filtered.filter(r => !r.excluded_from_totals);
+  const consultOnly = filtered.length - counted.length;
   const accumulated = totalField && accumulatedTotal && !invalid
-    ? rows.filter(r => matching(r, false)).reduce((sum, row) => sum + (row.direction === 1 ? 1 : row.direction === -1 ? -1 : 0) * Number(row[totalField] || 0), 0)
+    ? rows.filter(r => matching(r, false) && !r.excluded_from_totals).reduce((sum, row) => sum + (row.direction === 1 ? 1 : row.direction === -1 ? -1 : 0) * Number(row[totalField] || 0), 0)
     : 0;
   const pages = Math.max(1, Math.ceil(filtered.length / size));
   const current = Math.min(page, pages);
   const start = (current - 1) * size;
   const credits = totalField
-    ? filtered.reduce(
+    ? counted.reduce(
         (sum, row) => sum + (row.direction === 1 ? row[totalField] : 0),
         0,
       )
     : 0;
   const debits = totalField
-    ? filtered.reduce(
+    ? counted.reduce(
         (sum, row) => sum + (row.direction === -1 ? row[totalField] : 0),
         0,
       )
@@ -211,7 +218,7 @@ export default function RecordList({
     { name: string; count: number; credits: number; debits: number }
   >();
   if (paymentSummary && totalField) {
-    for (const row of filtered) {
+    for (const row of counted) {
       const name = paymentGroup(row);
       const key = name.toLocaleLowerCase("pt-PT");
       const group = groups.get(key) || {
@@ -228,22 +235,6 @@ export default function RecordList({
   }
   return (
     <>
-      <div className="record-period-shortcuts" role="group" aria-label="Períodos rápidos">
-        {([['today', 'Hoje'], ['week', 'Esta semana'], ['month', 'Este mês'], ['year', 'Este ano']] as const).map(([period, label]) => {
-          const today = calendarDay(new Date().toISOString());
-          const [year, month, day] = today.split('-').map(Number);
-          let range = { from: today, to: today };
-          if (period === 'week') {
-            const date = new Date(Date.UTC(year, month - 1, day));
-            date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7);
-            const start = date.toISOString().slice(0, 10);
-            date.setUTCDate(date.getUTCDate() + 6);
-            range = { from: start, to: date.toISOString().slice(0, 10) };
-          } else if (period === 'month') range = currentMonth();
-          else if (period === 'year') range = { from: `${year}-01-01`, to: `${year}-12-31` };
-          return <ActionButton key={period} type="button" aria-pressed={from === range.from && to === range.to} onClick={() => { fromEdited.current = true; setFrom(range.from); setTo(range.to); setPage(1); }}>{label}</ActionButton>;
-        })}
-      </div>
       <div
         className="record-filters"
         role="group"
@@ -355,6 +346,7 @@ export default function RecordList({
             </ActionButton>
           </>
         )}
+        <DatePresets from={from} to={to} onSelect={(start, end) => { setFrom(start); setTo(end); fromEdited.current = true; setPage(1); }} />
         <div className="record-field">
           <label htmlFor={`${id}-from`}>{dateLabel} desde</label>
           <input
@@ -438,6 +430,7 @@ export default function RecordList({
             {totalsTitle === "Totais por liquidar no período"
               ? "Valores ainda por receber e pagar, segundo o vencimento selecionado."
               : "Totais de todos os registos filtrados, incluindo as outras páginas."}
+            {consultOnly > 0 && ` ${consultOnly} linha(s) de extrato bancário apresentadas apenas para consulta, fora dos totais: o mesmo dinheiro já está nos movimentos registados ou deve ser registado em Bancos → Extratos.`}
           </small>
         </section>
       )}

@@ -1,3 +1,4 @@
+import DatePresets from "./components/DatePresets";
 import { ActionLink } from "./components/InteractionUI";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
@@ -46,6 +47,7 @@ export default function GoogleInvoiceInbox() {
       <p>Conta: <b>{status.email}</b>. PDF, JPG e PNG até 5 MB; selecione até 30 anexos por importação. Cada consulta lê até 30 mensagens; use «Consultar mais emails» para continuar.</p>
       <Form submitLabel="Consultar emails" onSubmit={v => scan(v)}>
         <fieldset disabled={busy} className="form-grid">
+          <DatePresets names={["start_date", "end_date"]} />
           <Field label="Emails desde"><input name="start_date" type="date" required /></Field>
           <Field label="Emails até"><input name="end_date" type="date" required /></Field>
         </fieldset>

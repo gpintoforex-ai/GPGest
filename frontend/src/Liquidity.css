@@ -2,7 +2,7 @@
 .liquidity-flow-heading { flex-wrap: wrap; gap: 12px; }
 .liquidity-flow-entity { width: 240px; max-width: 100%; }
 .liquidity-flow-entity input { width: 100%; }
-.liquidity-selected-total { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 32px; padding: 14px 18px; margin-bottom: 16px; background: #f4f8f6; border-radius: 8px; }
+.liquidity-selected-total { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 32px; padding: 14px 18px; margin-bottom: 16px; background: var(--surface-secondary); color: var(--text-primary); border-radius: 8px; }
 .liquidity-selected-total > span:first-child { margin-right: auto; color: var(--color-muted); }
 .liquidity-selected-total strong { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
 .liquidity-selected-total small { display: block; color: var(--color-muted); font-size: 11px; }
@@ -37,11 +37,11 @@
 .liquidity-origin-table td:nth-child(2) {
   font-size: 16px;
   font-weight: 700;
-  background: #f5f8ff;
+  background: var(--surface-secondary);
 }
-.liquidity-origin-table td.liquidity-origin-positive { background: #eef8f2; }
-.liquidity-origin-table td.liquidity-origin-negative { background: #fff1f2; }
-.liquidity-origin-table td.liquidity-origin-missing { background: #f6f7f9; }
+.liquidity-origin-table td.liquidity-origin-positive { background: var(--color-success-bg); }
+.liquidity-origin-table td.liquidity-origin-negative { background: var(--color-danger-bg); }
+.liquidity-origin-table td.liquidity-origin-missing { background: var(--surface-secondary); }
 .liquidity-origin-table th:nth-child(3),
 .liquidity-origin-table td:nth-child(3) {
   text-align: center;

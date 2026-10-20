@@ -30,7 +30,7 @@ export function portugueseVoices(voices: SpeechSynthesisVoice[]) {
     );
   }
   return voices
-    .filter((voice) => /^pt(?:-|_|$)/i.test(voice.lang))
+    .filter((voice) => voice.localService && /^pt(?:-|_|$)/i.test(voice.lang))
     .sort((a, b) => rank(b) - rank(a) || a.name.localeCompare(b.name, "pt-PT"));
 }
 

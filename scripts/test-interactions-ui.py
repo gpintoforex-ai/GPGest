@@ -197,28 +197,28 @@ try:
 
         page.route("**/api/**", proxy)
         page.goto("http://127.0.0.1:5174")
-        expect(page.get_by_role("heading", name="Entrar na Zela", exact=True)).to_be_visible()
-        expect(page).to_have_title("Entrar · Zela")
-        expect(page.get_by_role("img", name="Zela", exact=True)).to_be_visible()
-        page.screenshot(path=str(output / "zela-login-desktop.png"))
+        expect(page.get_by_role("heading", name="Entrar na IAZELA", exact=True)).to_be_visible()
+        expect(page).to_have_title("Entrar · IAZELA")
+        expect(page.get_by_role("img", name="IAZELA", exact=True)).to_be_visible()
+        page.screenshot(path=str(output / "iazela-login-desktop.png"))
         page.set_viewport_size({"width": 390, "height": 844})
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        page.screenshot(path=str(output / "zela-login-mobile.png"))
+        page.screenshot(path=str(output / "iazela-login-mobile.png"))
         page.set_viewport_size({"width": 1440, "height": 1000})
         page.get_by_label("NIF da empresa", exact=True).fill("500000001")
         page.get_by_label("Email", exact=True).fill("setup@ui.test")
         page.get_by_label("Palavra-passe", exact=True).fill(password)
         page.get_by_role("button", name="Entrar", exact=True).click()
         expect(page.get_by_role("button", name="Iniciar configuração", exact=True)).to_be_visible()
-        expect(page).to_have_title("Visão geral · Zela")
+        expect(page).to_have_title("Visão geral · IAZELA")
         assert "GPGest" not in page.locator("body").inner_text()
-        assert page.locator('.sidebar img[alt="Zela.me"]').first.evaluate(
+        assert page.locator('.sidebar img[alt="IAZELA"]').first.evaluate(
             "image => image.complete && image.naturalWidth > 0"
         )
-        page.screenshot(path=str(output / "zela-dashboard-desktop.png"))
+        page.screenshot(path=str(output / "iazela-dashboard-desktop.png"))
         page.get_by_role("button", name="Recolher menu lateral", exact=True).click()
         expect(page.locator(".brand-compact img")).to_be_visible()
-        page.screenshot(path=str(output / "zela-navigation-compact.png"))
+        page.screenshot(path=str(output / "iazela-navigation-compact.png"))
         page.get_by_role("button", name="Expandir menu lateral", exact=True).click()
 
         def navigate(name, group=None):
@@ -306,7 +306,7 @@ try:
         bank.get_by_label("Nome do banco", exact=True).fill("Banco corrigido")
         bank.get_by_role("button", name="Guardar", exact=True).click()
         expect(bank).to_have_count(0)
-        page.screenshot(path=str(output / "zela-banks-desktop.png"))
+        page.screenshot(path=str(output / "iazela-banks-desktop.png"))
         navigate("Operadores / funcionários", "Tabelas")
         page.get_by_role("button", name="Novo funcionário", exact=True).click()
         employee = page.get_by_role("dialog", name="Novo funcionário", exact=True)
@@ -323,7 +323,7 @@ try:
         rubric.get_by_role("button", name="Cancelar", exact=True).click()
         expect(rubric).to_have_count(0)
         navigate("Entrega à contabilidade", "Contabilidade")
-        page.screenshot(path=str(output / "zela-accounting-desktop.png"))
+        page.screenshot(path=str(output / "iazela-accounting-desktop.png"))
         periods = page.get_by_role("button", name="Encerrar período", exact=True)
         expect(periods.first).to_be_visible()
         available = [button for button in periods.all() if button.is_enabled()]
@@ -422,7 +422,7 @@ try:
         sheet.locator(".cash-sheet-details > summary").click()
         for method in ("Numerário", "Multibanco / TPA", "MB WAY", "Transferência", "Outros meios"):
             sheet.get_by_role("button", name="Sem movimento — " + method, exact=True).click()
-        page.screenshot(path=str(output / "zela-cash-desktop.png"))
+        page.screenshot(path=str(output / "iazela-cash-desktop.png"))
         sheet.get_by_role("button", name="Contar numerário", exact=True).click()
         count = page.get_by_role("dialog", name="Contar numerário", exact=True)
         if not count.count():
@@ -531,17 +531,17 @@ try:
         advanced.locator("summary").click()
         expect(advanced.locator("summary")).to_contain_text("(1)")
         expect(page.get_by_role("row").filter(has_text="FT UI/1")).to_be_visible()
-        page.screenshot(path=str(output / "zela-documents-desktop.png"))
+        page.screenshot(path=str(output / "iazela-documents-desktop.png"))
         navigate("Extratos", "Bancos")
         expect(
             page.get_by_text("Crie uma conta bancária para importar o extrato.", exact=True)
         ).to_be_visible()
-        page.screenshot(path=str(output / "zela-statements-empty.png"))
+        page.screenshot(path=str(output / "iazela-statements-empty.png"))
         navigate("Dashboard")
         page.set_viewport_size({"width": 390, "height": 844})
         page.wait_for_function("document.querySelector('.sidebar').getBoundingClientRect().right <= 0")
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        page.screenshot(path=str(output / "zela-dashboard-mobile.png"))
+        page.screenshot(path=str(output / "iazela-dashboard-mobile.png"))
         menu = page.locator(".mobile-toggle")
         if menu.count():
             menu.click()
@@ -557,7 +557,7 @@ try:
         ).click() if page.get_by_role(
             "button", name="Iniciar configuração", exact=True
         ).is_visible() else None
-        wizard = page.get_by_role("dialog", name="Vamos preparar a sua Zela", exact=True)
+        wizard = page.get_by_role("dialog", name="Vamos preparar a sua IAZELA", exact=True)
         if wizard.count():
             expect(wizard.get_by_label("Nome da empresa", exact=True)).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

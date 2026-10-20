@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from .db import db_session
 from .models import (
     BusinessEntity,
+    ProcurementDocument,
     StockArticle,
     StockEntry,
     StockInventory,
@@ -135,6 +136,10 @@ def average(rows):
     quantity, cost, last = ZERO, None, None
     for row in rows:
         if row.kind in ("transfer_in", "transfer_out"):
+            continue
+        if row.kind == "valuation":
+            if quantity > 0 and cost is not None:
+                cost += D(json.loads(row.data).get("inventory_value_delta", "0")) / quantity
             continue
         if row.quantity > 0:
             if row.kind == "purchase":
@@ -530,8 +535,11 @@ def entry_view(row, cost_visible):
         "direct_cost": str(row.direct_cost) if cost_visible else None,
         **{
             k: detail.get(k)
-            for k in ("origin", "document", "reason", "unit", "override_reason", "supplier_id")
+            for k in ("origin", "document", "reason", "unit", "override_reason", "supplier_id", "procurement_id")
         },
+        "value_delta": detail.get("value_delta") if cost_visible else None,
+        "inventory_value_delta": detail.get("inventory_value_delta") if cost_visible else None,
+        "consumed_value_delta": detail.get("consumed_value_delta") if cost_visible else None,
     }
 
 
@@ -566,6 +574,10 @@ def article_view(db, row, allowed_warehouses, cost_visible, history=None, erp=No
 class WarehouseInput(Strict):
     store_id: str
     name: str = Field(min_length=1, max_length=100)
+
+
+class RemoveWarehouse(Strict):
+    confirmed: Literal[True]
 
 
 class PriceInput(Strict):
@@ -727,6 +739,48 @@ def register_routes(app, current, authorize, scope, audit):
         audit(db, user, "stock_warehouse_updated", row.id, {"before": before, "name": name}, row.store_id)
         db.commit()
         return {"id": row.id}
+
+    @app.post("/api/stock/warehouses/{warehouse_id}/delete")
+    def remove_warehouse(
+        warehouse_id: str,
+        data: RemoveWarehouse,
+        user=Depends(current),
+        db: Session = Depends(db_session),
+    ):
+        require(user, settings(db), "adjust_stock")
+        lock(db)
+        row = warehouse(db, user, warehouse_id, authorize)
+        reason = None
+        for model, label in (
+            (StockEntry, "movimentos de stock no histórico"),
+            (StockInventory, "inventários associados"),
+        ):
+            if db.scalar(select(model.id).where(model.warehouse_id == row.id).limit(1)):
+                reason = label
+                break
+        if not reason:
+            for document in db.scalars(
+                select(ProcurementDocument).where(ProcurementDocument.store_id == row.store_id)
+            ):
+                if any(
+                    line.get("warehouse_id") == row.id
+                    for line in json.loads(document.data).get("lines", [])
+                ):
+                    reason = "documentos de compra associados"
+                    break
+        if reason:
+            fail(
+                f"Não é possível remover o armazém «{row.name}»: tem {reason}. "
+                "O histórico foi preservado. Pode editar o nome do armazém.",
+                409,
+            )
+        audit(
+            db, user, "stock_warehouse_deleted", row.id,
+            {"name": row.name, "store_id": row.store_id}, row.store_id,
+        )
+        db.delete(row)
+        db.commit()
+        return {"ok": True, "id": warehouse_id}
 
     @app.post("/api/stock/articles")
     def create_article(
@@ -1041,3 +1095,6 @@ def register_routes(app, current, authorize, scope, audit):
     from .inventory_imports import register_imports
 
     register_imports(app, current, authorize, scope, audit)
+    from .saft_articles import register as register_saft_articles
+
+    register_saft_articles(app, current, authorize, audit)

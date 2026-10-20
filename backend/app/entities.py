@@ -33,6 +33,8 @@ class EntityEdit(Strict):
     is_customer: bool
     is_supplier: bool
     active: bool = True
+    # Prazo de pagamento habitual em dias (informação local, também em entidades do ERP).
+    payment_days: int | None = Field(default=None, ge=0, le=365)
 
     @model_validator(mode="after")
     def validate_entity(self):
@@ -54,6 +56,7 @@ def entity_view(entity, source, key):
         "id": key,
         "source": source,
         "category_id": getattr(entity, "category_id", None),
+        "payment_days": getattr(entity, "payment_days", None),
         **{
             name: getattr(entity, name, "")
             for name in (
@@ -217,6 +220,7 @@ def list_entities(user=Depends(current), db: Session = Depends(db_session)):
         result[-1]["editable"] = not external_primary
         if external_primary and imported.id in overrides:
             result[-1]["category_id"] = overrides[imported.id].category_id
+            result[-1]["payment_days"] = overrides[imported.id].payment_days
     annotate_entity_movement_history(result, db)
     return sorted(result, key=lambda e: e["name"].casefold())
 

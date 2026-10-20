@@ -1,12 +1,12 @@
-# Identidade Zela
+# Identidade IAZELA
 
-A aplicação adota a marca **Zela**. O projeto técnico continua na pasta `GPGest`; a alteração não modifica dados, cálculos, permissões ou contratos de integração.
+A aplicação adota a marca **IAZELA**. O projeto técnico continua na pasta `GPGest`; a identidade visual não modifica dados, cálculos, permissões ou contratos de integração.
 
 ## Logótipo oficial
 
-Foi usado o novo ficheiro fornecido `Logótipo Zela.me em fundo branco.png`. A cópia integral está em `frontend/public/brand/zela-original.png`. O logótipo horizontal Zela.me é recortado da parte superior e o ícone da aplicação da parte inferior. São preservados o fundo branco, as cores turquesa e violeta e as proporções oficiais. A preparação está em `scripts/prepare-zela-assets.py`, sem redesenho nem recoloração.
+O componente `Brand` utiliza os logótipos e ícones oficiais guardados em `frontend/public/brand/iazela/`. Usa variantes para fundos claros e escuros, sem alterar os ficheiros de origem. O favicon e o ícone para dispositivos móveis usam os recursos IAZELA existentes.
 
-O componente `Brand` usa a versão horizontal no acesso, navegação e plataforma, e o ícone quadrado na navegação recolhida. Em fundos escuros, mantém a base branca. O favicon e o ícone para dispositivos móveis usam o ícone oficial fornecido. Esta substituição do logótipo mantém o tema da aplicação e as configurações existentes.
+O componente `Brand` usa a versão horizontal no acesso, navegação e plataforma, e o ícone quadrado na navegação recolhida. Esta identidade mantém o tema da aplicação e as configurações existentes.
 
 ## Sistema visual
 
@@ -40,7 +40,7 @@ Os nomes de páginas continuam em português de Portugal. A chave interna `Dashb
 
 ## Compatibilidade
 
-Mantêm-se cookies, eventos `gpgest-*`, chaves de armazenamento, esquemas PostgreSQL, variáveis `GPGEST_*`, nomes técnicos de ficheiros e valores contratuais de origem da API. Por exemplo, a origem técnica histórica `GPGest` é apresentada como **Zela** na lista de entidades. As credenciais e nomes de empresas definidos pelos utilizadores não são alterados.
+Mantêm-se cookies, eventos `gpgest-*`, chaves de armazenamento, esquemas PostgreSQL, variáveis `GPGEST_*`, nomes técnicos de ficheiros e valores contratuais de origem da API. Por exemplo, a origem técnica histórica `GPGest` é apresentada como **IAZELA** na lista de entidades. As credenciais e nomes de empresas definidos pelos utilizadores não são alterados.
 
 ## Verificação
 

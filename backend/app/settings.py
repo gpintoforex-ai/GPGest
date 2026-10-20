@@ -1,44 +1,84 @@
-"""Definições da empresa: periodicidade do IVA e origem dos anexos."""
+"""Definições da empresa: regime e periodicidade do IVA e origem dos anexos."""
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field, model_validator
 from sqlalchemy.orm import Session
 
 from .access import authorize, current, record, serial
 from .db import db_session
-from .models import AttachmentIntegrationConfig
+from .models import AttachmentIntegrationConfig, CompanyFiscalSettings
 from .schemas import Strict
 
 router = APIRouter()
 
 
+VatRegime = Literal["", "normal", "isento_53", "pequenos_retalhistas"]
+VatPeriod = Literal["", "mensal", "trimestral"]
+VAT_REGIMES = {
+    "normal": "Regime normal",
+    "isento_53": "Isenção do artigo 53.º do CIVA",
+    "pequenos_retalhistas": "Regime especial dos pequenos retalhistas (art. 60.º do CIVA)",
+}
+
+
+def vat_period_for(regime, period):
+    """Periodicidade válida para o regime: os pequenos retalhistas declaram trimestralmente.
+
+    Na isenção do artigo 53.º não há declaração periódica; a periodicidade apenas organiza
+    a entrega dos documentos à contabilidade.
+    """
+    if not regime:
+        if period:
+            raise HTTPException(422, "Escolha o regime de IVA antes da periodicidade.")
+        return ""
+    if regime == "pequenos_retalhistas":
+        return "trimestral"
+    if not period:
+        raise HTTPException(422, "Escolha a periodicidade mensal ou trimestral.")
+    return period
+
+
+def save_vat_regime(db, user, regime, period):
+    """Guarda regime e periodicidade de IVA da empresa, com registo na auditoria."""
+    period = vat_period_for(regime, period)
+    config = db.get(CompanyFiscalSettings, "default")
+    if not config:
+        config = CompanyFiscalSettings(id="default", vat_period="", vat_regime="")
+        db.add(config)
+    before = {"vat_regime": config.vat_regime, "vat_period": config.vat_period}
+    after = {"vat_regime": regime, "vat_period": period}
+    if before != after:
+        config.vat_regime, config.vat_period = regime, period
+        record(db, user, "configuracao_fiscal_alterada", "default", {"antes": before, "depois": after})
+    return after
+
+
+def vat_settings(db):
+    config = db.get(CompanyFiscalSettings, "default")
+    return {"vat_regime": config.vat_regime if config else "", "vat_period": config.vat_period if config else ""}
+
+
 class FiscalSettingsEdit(Strict):
-    vat_period: Literal["", "mensal", "trimestral"]
+    # Sem regime indicado (pedidos anteriores), uma periodicidade corresponde ao regime normal.
+    vat_regime: VatRegime | None = None
+    vat_period: VatPeriod = ""
 
 
 @router.get("/api/settings/fiscal")
 def fiscal_settings(user=Depends(current), db: Session = Depends(db_session)):
-    from .models import CompanyFiscalSettings
     authorize(user, db, roles=["administrador", "gestor"])
-    config = db.get(CompanyFiscalSettings, "default")
-    return {"vat_period": config.vat_period if config else ""}
+    return vat_settings(db)
 
 
 @router.post("/api/settings/fiscal")
 def save_fiscal_settings(data: FiscalSettingsEdit, user=Depends(current), db: Session = Depends(db_session)):
-    from .models import CompanyFiscalSettings
     authorize(user, db, roles=["administrador", "gestor"])
-    config = db.get(CompanyFiscalSettings, "default")
-    if not config:
-        config = CompanyFiscalSettings(id="default")
-        db.add(config)
-    before = config.vat_period
-    config.vat_period = data.vat_period
-    record(db, user, "configuracao_fiscal_alterada", "default", {"antes": before, "depois": data.model_dump()})
+    regime = data.vat_regime if data.vat_regime is not None else "normal" if data.vat_period else ""
+    result = save_vat_regime(db, user, regime, data.vat_period)
     db.commit()
-    return {"vat_period": config.vat_period}
+    return result
 
 
 class AttachmentConfigEdit(Strict):

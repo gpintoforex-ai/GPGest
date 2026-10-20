@@ -643,8 +643,10 @@ export function responseError(detail: unknown, status: number) {
         .join(".");
       if (name) fields[name] = validationMessage(entry);
     }
+  const publicMessage = detail && typeof detail === "object" && "public_message" in detail
+    && typeof detail.public_message === "string" ? detail.public_message : "";
   const message =
-    status >= 500
+    publicMessage ? publicMessage : status >= 500
       ? "Não foi possível concluir a operação no servidor. Os dados preenchidos foram mantidos. Tente novamente dentro de instantes."
       : detail === "Not Found"
         ? "O registo já não está disponível. Atualize a lista e tente novamente."

@@ -1,3 +1,4 @@
+import DatePresets from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
 import { Mail, Eye, Send, RefreshCw, CheckCircle, Download } from "lucide-react";
 import { api } from "./lib/api";
@@ -71,7 +72,7 @@ export function AccountingEmailDialog({ company, stores, store = "", initial, pe
         store_ids: selectedStore ? [selectedStore] : [], categories: selectedCategories })); onChanged();
     }); }}><fieldset disabled={busy} className="ui-form-fields">
       <Field label="Estabelecimento"><select value={selectedStore} onChange={e => setSelectedStore(e.target.value)}><option value="">Todos os estabelecimentos</option>{stores.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-      <div className="form-grid"><Field label="Data início"><input type="date" required value={start} onChange={e => { periodTouched.current = true; setStart(e.target.value); }}/></Field><Field label="Data fim"><input type="date" required min={start} value={end} onChange={e => { periodTouched.current = true; setEnd(e.target.value); }}/></Field></div>
+      <div className="form-grid"><DatePresets from={start} to={end} onSelect={(from, to) => { periodTouched.current = true; setStart(from); setEnd(to); }} /><Field label="Data início"><input type="date" required value={start} onChange={e => { periodTouched.current = true; setStart(e.target.value); }}/></Field><Field label="Data fim"><input type="date" required min={start} value={end} onChange={e => { periodTouched.current = true; setEnd(e.target.value); }}/></Field></div>
       <p>Periodicidade habitual: {config?.periodicity || "mensal"}. Envio manual; não encerra o período.</p>{config?.custom_period_note && <p>{config.custom_period_note}</p>}
       <fieldset><legend>Documentação a preparar</legend>{categories.map(([key, label]) => <label className="doc-check" key={key}><input type="checkbox" checked={selectedCategories.includes(key)} onChange={e => setSelectedCategories(e.target.checked ? [...selectedCategories, key] : selectedCategories.filter(item => item !== key))}/>{label}</label>)}</fieldset>
       <p className="footnote">Os extratos são exportados dos movimentos importados. Os originais bancários só são incluídos quando estão guardados como anexos. Os relatórios identificam a documentação em falta.</p>

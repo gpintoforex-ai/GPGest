@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import secrets
 from pathlib import Path
 from urllib.parse import urlencode
@@ -94,6 +95,7 @@ def register_routes(app, current, authorize, record):
             "gpgest_google_nonce",
             nonce,
             httponly=True,
+            secure=os.getenv("COOKIE_SECURE") == "true",
             samesite="lax",
             max_age=600,
             path="/api/integrations/attachments/google",
@@ -126,7 +128,7 @@ def register_routes(app, current, authorize, record):
             payload = json.loads(cipher().decrypt(state.encode(), ttl=600))
         except (InvalidToken, ValueError, KeyError):
             raise HTTPException(
-                400, "Autorização expirada ou inválida. Volte a ligar a conta na Zela."
+                400, "Autorização expirada ou inválida. Volte a ligar a conta na IAZELA."
             ) from None
         if not secrets.compare_digest(
             request.cookies.get("gpgest_google_nonce", ""), payload.get("nonce", "")
@@ -134,7 +136,7 @@ def register_routes(app, current, authorize, record):
             raise HTTPException(400, "Conclua a ligacao no mesmo navegador onde iniciou.")
         company = core.get(Company, payload.get("company"))
         if not company or company.removed_at or not company.active:
-            raise HTTPException(400, "Empresa indispon?vel.")
+            raise HTTPException(400, "Empresa indisponível.")
         with Session(
             engine.execution_options(schema_translate_map={None: company.schema_name})
         ) as db:
@@ -151,12 +153,12 @@ def register_routes(app, current, authorize, record):
                 or not user.active
                 or user.role not in {"administrador", "gestor"}
             ):
-                raise HTTPException(400, "Autorização inválida ou j? utilizada.")
+                raise HTTPException(400, "Autorização inválida ou já utilizada.")
             connection.state_hash = ""
             db.commit()
             if error or not code:
                 raise HTTPException(
-                    400, "A autorização Google foi cancelada. Pode tentar novamente na Zela."
+                    400, "A autorização Google foi cancelada. Pode tentar novamente na IAZELA."
                 )
             creds = credentials()
             try:
@@ -188,19 +190,19 @@ def register_routes(app, current, authorize, record):
                     if not config or email != config.google_email.lower():
                         raise HTTPException(
                             422,
-                            "A conta autorizada n?o corresponde ? conta Google configurada na empresa.",
+                            "A conta autorizada não corresponde ? conta Google configurada na empresa.",
                         )
             except (httpx.HTTPError, ValueError, KeyError):
                 raise HTTPException(
                     502,
-                    "N?o foi poss?vel concluir a autorização Google. Confirme as permiss?es e tente novamente.",
+                    "Não foi possível concluir a autorização Google. Confirme as permissões e tente novamente.",
                 ) from None
             connection.token_ciphertext = cipher().encrypt(json.dumps(tokens).encode()).decode()
             connection.email = email
             record(db, user, "google_conta_ligada", "default", {"email": email})
             db.commit()
         return HTMLResponse(
-            "<html><meta name='referrer' content='no-referrer'><title>Zela</title><h1>Conta Google ligada</h1><p>Autorização guardada. Volte à Zela para consultar emails e importar anexos.</p><a href='http://127.0.0.1:5174'>Voltar à Zela</a></html>",
+            "<html><meta name='referrer' content='no-referrer'><title>IAZELA</title><h1>Conta Google ligada</h1><p>Autorização guardada. Volte à IAZELA para consultar emails e importar anexos.</p><a href='http://127.0.0.1:5174'>Voltar à IAZELA</a></html>",
             headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
         )
 
@@ -208,10 +210,20 @@ def register_routes(app, current, authorize, record):
     def disconnect(user=Depends(current), db: Session = Depends(db_session)):
         authorize(user, db, roles=["administrador", "gestor"])
         connection = db.get(GoogleConnection, "default")
+        revoked = False
+        if connection and connection.token_ciphertext:
+            try:
+                tokens = json.loads(cipher().decrypt(connection.token_ciphertext.encode()))
+                token = tokens.get("refresh_token") or tokens.get("access_token")
+                if token:
+                    with httpx.Client(timeout=8) as client:
+                        revoked = client.post("https://oauth2.googleapis.com/revoke", data={"token": token}).status_code == 200
+            except (httpx.HTTPError, ValueError, InvalidToken, HTTPException):
+                pass
         if connection:
             connection.token_ciphertext = ""
             connection.state_hash = ""
             connection.email = ""
-        record(db, user, "google_conta_desligada", "default", {})
+        record(db, user, "google_conta_desligada", "default", {"remote_revoked": revoked})
         db.commit()
-        return {"ok": True}
+        return {"ok": True, "remote_revoked": revoked, "message": "Ligação local removida e autorização revogada no Google." if revoked else "Ligação local removida. Não foi possível confirmar a revogação no Google; remova também o acesso nas ligações da sua conta Google."}

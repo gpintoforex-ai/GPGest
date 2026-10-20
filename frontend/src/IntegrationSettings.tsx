@@ -33,7 +33,11 @@ export default function IntegrationSettings({ boot, reload }: { boot: Row; reloa
     <section className="panel"><h3>Modo e ligação</h3><p>O modo local permite gerir os dados na IAZELA. Não implica funcionamento sem Internet. Os documentos locais são documentos de gestão, sem emissão fiscal.</p>
       <ManagedForm className="doc-form" onSubmit={e => { e.preventDefault(); run(async () => { setPreview(await api("/company/integration/preview", payload())); setConfirmed(false); setPendingReviewed(false); setModal("preview"); }); }}>
         <fieldset disabled={!admin || busy} className="integration-config-grid">
-          <Field label="Modo de funcionamento"><select value={draft.mode} onChange={e => setDraft({ ...draft, mode: e.target.value, interval_minutes: 0 })}><option value="local">Modo local autónomo</option><option value="integrated">Modo integrado com ERP</option></select></Field>
+          <fieldset className="integration-mode-options">
+            <legend>Modo de funcionamento</legend>
+            <label><input type="radio" name="integration-mode" value="local" checked={draft.mode === "local"} onChange={() => setDraft({ ...draft, mode: "local", interval_minutes: 0 })} />Modo local autónomo</label>
+            <label><input type="radio" name="integration-mode" value="integrated" checked={draft.mode === "integrated"} onChange={() => setDraft({ ...draft, mode: "integrated", interval_minutes: 0 })} />Modo integrado com ERP</label>
+          </fieldset>
           {draft.mode === "integrated" && <>
             <Field label="Conector ERP"><select value={draft.provider} onChange={e => setDraft({ ...draft, provider: e.target.value })}>{Object.entries(data.connectors).map(([key, connector]) => <option key={key} value={key} disabled={!(connector as Row).operational}>{(connector as Row).name}{!(connector as Row).operational ? " · Não implementado" : ""}</option>)}</select></Field>
             <Field label="URL da API"><input type="url" value={draft.api_url} onChange={e => setDraft({ ...draft, api_url: e.target.value })} required /></Field>

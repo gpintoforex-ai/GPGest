@@ -8,9 +8,11 @@ import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from app.models import (
+    Audit,
     Register,
     StockEntry,
     StockInventory,
+    StockWarehouse,
     WintouchProduct,
     WintouchSaleRecord,
 )
@@ -41,6 +43,59 @@ def test_warehouse_edit_validates_name_and_preserves_store(stock_case):
     assert c.post(f"/api/stock/warehouses/{warehouses[0]}", json={"store_id": store, "name": "Reserva"}).status_code == 422
     assert c.post(f"/api/stock/warehouses/{warehouses[0]}", json={"store_id": store, "name": " "}).status_code == 422
     assert c.post("/api/stock/warehouses/missing", json={"store_id": store, "name": "Nome"}).status_code == 404
+
+
+def test_warehouse_remove_requires_confirmation_and_records_audit(stock_case):
+    c, _, factory, warehouses, store = stock_case
+    url = f"/api/stock/warehouses/{warehouses[0]}/delete"
+    assert c.post(url, json={}).status_code == 422
+    assert c.post(url, json={"confirmed": False}).status_code == 422
+    response = c.post(url, json={"confirmed": True})
+    assert response.status_code == 200, response.text
+    assert warehouses[0] not in [w["id"] for w in c.get("/api/stock/catalog").json()["warehouses"]]
+    with factory() as db:
+        assert db.get(StockWarehouse, warehouses[0]) is None
+        audit = db.scalar(select(Audit).where(Audit.action == "stock_warehouse_deleted"))
+        assert audit is not None
+        assert audit.store_id == store
+    assert c.post(url, json={"confirmed": True}).status_code == 404
+
+
+@pytest.mark.parametrize("linked", ["movements", "inventory"])
+def test_warehouse_remove_preserves_history(stock_case, linked):
+    c, _, factory, warehouses, _ = stock_case
+    pid = product(stock_case)
+    if linked == "movements":
+        move(stock_case, pid)
+        move(stock_case, pid, "sale", "10")  # Zero stock still has protected history.
+    else:
+        result = c.post(
+            "/api/stock/inventories",
+            json={"warehouse_id": warehouses[0], "article_ids": [pid]},
+        )
+        assert result.status_code == 200, result.text
+    response = c.post(
+        f"/api/stock/warehouses/{warehouses[0]}/delete", json={"confirmed": True}
+    )
+    assert response.status_code == 409, response.text
+    with factory() as db:
+        assert db.get(StockWarehouse, warehouses[0]) is not None
+        model = StockEntry if linked == "movements" else StockInventory
+        assert db.scalar(select(model.id).where(model.warehouse_id == warehouses[0]))
+
+
+def test_warehouse_remove_checks_permission_and_store_scope(stock_case):
+    c, ids, _, warehouses, _ = stock_case
+    login(c, "operator")
+    url = f"/api/stock/warehouses/{warehouses[0]}/delete"
+    assert c.post(url, json={"confirmed": True}).status_code == 403
+    login(c, "admin")
+    configure(stock_case, permissions={ids["operator"]: {"adjust_stock": True}})
+    login(c, "operator")
+    assert c.post(
+        f"/api/stock/warehouses/{warehouses[2]}/delete", json={"confirmed": True}
+    ).status_code == 403
+    assert c.post(url, json={"confirmed": True}).status_code == 200
 
 
 def product(case, **extra):

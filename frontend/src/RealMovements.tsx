@@ -56,6 +56,8 @@ export default function RealMovements({
               external: true,
               origin: "bank_statement",
               kind: "extrato_bancario",
+              // O extrato é consulta: um crédito TPA ou depósito repetiria movimentos já registados.
+              excluded_from_totals: true,
               occurred_at: `${transaction.movement_date}T00:00:00`,
               direction: transaction.amount_cents < 0 ? -1 : 1,
               amount_cents: Math.abs(transaction.amount_cents),
@@ -163,6 +165,10 @@ export default function RealMovements({
         paymentSummary={!showDocuments}
         accumulatedTotal={!showDocuments && !error && !loading}
         movementFilters
+        movementAccounts={showDocuments ? [] : [
+          ...registers.filter(register => !store || register.store_id === store).map(register => ({ id: register.id, name: register.name })),
+          ...accounts.filter(account => !store || account.store_id === store).map(account => ({ id: `bank:${account.id}`, name: `Banco · ${account.bank ? `${account.bank} · ` : ""}${account.name}` })),
+        ]}
       >
         {children}
       </RecordList>

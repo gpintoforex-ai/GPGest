@@ -1,0 +1,10 @@
+/* Mapas de gestão: custos e proveitos, mapa de IVA. */
+.maps-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.maps-tabs button { min-height: 38px; padding: 6px 14px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-text); font-weight: 600; cursor: pointer; }
+.maps-tabs button.active, .maps-tabs button.active:hover { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.maps-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.maps-summary { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-bottom: 12px; }
+.maps-table th[scope="row"] { text-align: left; }
+.maps-table .maps-revenue td, .maps-table .maps-revenue th { color: var(--color-success); }
+.maps-table .maps-total td, .maps-table .maps-total th { font-weight: 700; border-top: 2px solid var(--color-border); }
+.maps-table .negative, .maps-summary .negative { color: var(--color-danger); }

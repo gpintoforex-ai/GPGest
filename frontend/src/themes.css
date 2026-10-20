@@ -52,7 +52,7 @@ button.theme-toggle { display: inline-flex; align-items: center; gap: 9px; min-h
 [data-theme="dark"] :is(.erp-invoice-safe,.panel.erp-match-confident,.invoice-erp-card.erp-match-confident,.erp-status-confirmada,.erp-confirmation-notice) { background: var(--color-success-bg); color: var(--color-success); border-color: #326b51; }
 [data-theme="dark"] :is(.erp-invoice-review,.panel.erp-match-review,.invoice-erp-card.erp-match-review,.erp-status-sugerida) { background: var(--color-warning-bg); color: var(--color-warning); border-color: #71603b; }
 [data-theme="dark"] :is(.erp-invoice-missing,.erp-status-sem_correspondencia,.erp-status-divergencias,.erp-review-button,.error,.danger) { background: var(--color-danger-bg); color: var(--color-danger); border-color: #794351; }
-[data-theme="dark"] :is(.erp-confirm-button,.record-period-shortcuts button[aria-pressed="true"]) { background: #14634b; color: #effff6; }
+[data-theme="dark"] .erp-confirm-button { background: #14634b; color: #effff6; }
 [data-theme="dark"] :is(.erp-match-confident h4,.erp-match-review h4,.doc-overview-card > strong) { color: var(--color-text); }
 [data-theme="dark"] :is(.login,.login-page,.login-card,.login-form,.login-story) { background: var(--color-bg); color: var(--color-text); }
 [data-theme="dark"] :is(.login,.login-story,.platform-page) { background-image: radial-gradient(ellipse at 50% 0%, #00425288 0%, transparent 64%); background-attachment: fixed; }

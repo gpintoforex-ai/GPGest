@@ -5,6 +5,16 @@
 .deposit-cheque { padding: 16px; border: 1px solid var(--color-border); border-radius: 8px; }
 .deposit-total { display: grid; gap: 10px; padding: 18px; background: var(--color-subtle); border: 1px solid var(--color-border); border-radius: 8px; margin: 12px 0; }
 .deposit-total strong { font-size: 22px; }
+.deposit-entry-summary { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 16px; margin: 12px 0; border: 1px solid var(--border-control); border-radius: 10px; background: var(--surface-secondary); }
+.deposit-entry-summary > .field { flex: 1 1 220px; margin: 0; }
+.deposit-entry-summary > .deposit-total { flex: 1 1 240px; margin: 0; padding: 0; border: 0; background: transparent; }
+.deposit-entry-summary > button { flex: 0 0 auto; }
+.deposit-source-history { grid-column: 1 / -1; min-width: 0; border: 1px solid var(--border-control); border-radius: 8px; background: var(--surface-secondary); }
+.deposit-source-history > summary { padding: 14px 16px; cursor: pointer; font-weight: 600; color: var(--text-primary); }
+.deposit-source-history > summary:focus-visible { outline: 3px solid var(--border-focus); outline-offset: 2px; border-radius: 8px; }
+.deposit-source-history[open] > summary { border-bottom: 1px solid var(--border-default); }
+.deposit-source-history > .table-wrap { padding: 0 12px; }
+@media(max-width:540px) { .deposit-entry-summary > button { width: 100%; } }
 .deposit-origin-description { display: block; margin-top: 4px; color: var(--color-muted); font-size: .85rem; }
 .deposit-origin-description.is-outgoing { font-weight: 600; }
 .deposit-tabs, .deposit-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }

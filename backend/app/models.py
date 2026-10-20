@@ -178,6 +178,24 @@ class BankAccount(Base):
     settings: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
 
 
+class BankBookEntry(Base):
+    __tablename__ = "bank_book_entries"
+    __table_args__ = (CheckConstraint("amount_cents <> 0"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    account_id: Mapped[str] = mapped_column(ForeignKey("bank_accounts.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    movement_date: Mapped[str] = mapped_column(String(10), index=True)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    kind: Mapped[str] = mapped_column(String(30))
+    description: Mapped[str] = mapped_column(String(1000))
+    reference: Mapped[str] = mapped_column(String(200), default="")
+    request_key: Mapped[str] = mapped_column(String(150), unique=True)
+    source_bank_id: Mapped[str | None] = mapped_column(ForeignKey("bank_transactions.id"), nullable=True, index=True)
+    transfer_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    original_id: Mapped[str | None] = mapped_column(ForeignKey("bank_book_entries.id"), unique=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class BankInstitution(Base):
     __tablename__ = "bank_institutions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -233,6 +251,9 @@ class DocumentImport(Base):
     filename: Mapped[str] = mapped_column(String(200))
     fingerprint: Mapped[str] = mapped_column(String(64))
     source: Mapped[str] = mapped_column(String(30))
+    # Ficheiro de origem no Google Drive (ID e versão), para detetar reimportações e alterações.
+    drive_id: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    drive_version: Mapped[str] = mapped_column(String(200), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -270,6 +291,16 @@ class ERPDocument(Base):
     tax_cents: Mapped[int | None] = mapped_column(BigInteger)
     cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ERPDocumentRubric(Base):
+    """Rubrica atribuída localmente a uma compra do ERP (substitui a do fornecedor; pode repartir)."""
+    __tablename__ = "erp_document_rubrics"
+    __table_args__ = (UniqueConstraint("erp_document_id", "category_id"), CheckConstraint("amount_cents > 0"))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    erp_document_id: Mapped[str] = mapped_column(ForeignKey("erp_documents.id"), index=True)
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
 
 
 class DocumentERPLink(Base):
@@ -389,6 +420,48 @@ class ReconciliationLine(Base):
     amount_cents: Mapped[int] = mapped_column(BigInteger)
 
 
+class BillingConference(Base):
+    """Conferência entre faturação (SAF-T) e recebimentos já existentes.
+
+    Nunca cria movimentos. «individual» justifica valores de documentos com recebimentos
+    concretos (inclui um movimento agregado para vários documentos e valores parciais);
+    «agregada» confirma totais de um dia sem marcar cada documento como recebido.
+    """
+
+    __tablename__ = "billing_conferences"
+    __table_args__ = (CheckConstraint("kind IN ('individual', 'agregada')"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    day: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    register_id: Mapped[str | None] = mapped_column(ForeignKey("registers.id"), nullable=True)
+    payment: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    billed_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    received_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    criteria: Mapped[str] = mapped_column(Text, default="[]")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    undone_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    undo_reason: Mapped[str] = mapped_column(Text, default="")
+
+
+class BillingConferenceLine(Base):
+    __tablename__ = "billing_conference_lines"
+    __table_args__ = (
+        UniqueConstraint("conference_id", "side", "source", "source_id"),
+        CheckConstraint("amount_cents > 0"),
+        CheckConstraint("side IN ('document', 'receipt')"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    conference_id: Mapped[str] = mapped_column(ForeignKey("billing_conferences.id"), index=True)
+    side: Mapped[str] = mapped_column(String(10))
+    source: Mapped[str] = mapped_column(String(20))
+    source_id: Mapped[str] = mapped_column(String(36), index=True)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+
+
 class ReconciliationIgnore(Base):
     __tablename__ = "reconciliation_ignores"
     __table_args__ = (UniqueConstraint("source", "source_id"),)
@@ -415,6 +488,8 @@ class Category(Base):
     __tablename__ = "categories"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     name: Mapped[str] = mapped_column(String(100), unique=True)
+    # Percentagem estimada de IVA dedutível nas compras desta rubrica (vazio = 100%); só para o mapa indicativo.
+    vat_deduction_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class LocalPaymentMethod(Base):
@@ -526,6 +601,7 @@ class PlannedMovement(Base):
     __tablename__ = "planned_movements"
     __table_args__ = (CheckConstraint("amount_cents > 0"), CheckConstraint("direction IN (-1, 1)"))
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    purchase_id: Mapped[str | None] = mapped_column(ForeignKey("purchases.id"), unique=True, nullable=True)
     store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
     category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
     entity: Mapped[str] = mapped_column(String(200))
@@ -534,6 +610,19 @@ class PlannedMovement(Base):
     amount_cents: Mapped[int] = mapped_column(BigInteger)
     direction: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PlannedAllocation(Base):
+    """Repartição por rubrica de um movimento previsto vindo de uma compra com linhas de várias rubricas.
+
+    O pagamento continua a ser um só (o do previsto); a repartição serve a análise por rubrica.
+    """
+    __tablename__ = "planned_allocations"
+    __table_args__ = (UniqueConstraint("planned_id", "category_id"), CheckConstraint("amount_cents > 0"))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    planned_id: Mapped[str] = mapped_column(ForeignKey("planned_movements.id"), index=True)
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
 
 
 class PlannedSettlement(Base):
@@ -867,6 +956,8 @@ class BusinessEntity(Base):
     is_customer: Mapped[bool] = mapped_column(Boolean, default=False)
     is_supplier: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Prazo de pagamento habitual (dias após a data do documento), usado nas propostas de lançamento.
+    payment_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class AttachmentIntegrationConfig(Base):
@@ -1028,6 +1119,8 @@ class CompanyFiscalSettings(Base):
     __tablename__ = "company_fiscal_settings"
     id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
     vat_period: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    # normal, isento_53 ou pequenos_retalhistas; vazio enquanto não for configurado.
+    vat_regime: Mapped[str] = mapped_column(String(30), default="", server_default="")
 
 
 class GoogleConnection(Base):
@@ -1082,6 +1175,11 @@ class InvoiceWorkflowSettings(Base):
     __tablename__ = "invoice_workflow_settings"
     id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
     folders: Mapped[str] = mapped_column(Text, default="[]")
+    # Pastas dos ficheiros exportados do e-Fatura (distintas das pastas de anexos).
+    efatura_folders: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    include_subfolders: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # Etapa e período do assistente por utilizador, para retomar o trabalho.
+    assistant_state: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
     tolerance_cents: Mapped[int] = mapped_column(Integer, default=2)
     ocr_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     interval_minutes: Mapped[int] = mapped_column(Integer, default=0)
@@ -1103,6 +1201,8 @@ class InvoiceWorkflowCheck(Base):
     messages: Mapped[str] = mapped_column(Text, default="[]")
     supplier: Mapped[str] = mapped_column(Text, default="{}")
     proposal: Mapped[str] = mapped_column(Text, default="{}")
+    # Anexos propostos e rejeitados pelo utilizador (não voltam a ser sugeridos).
+    rejected: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     proposal_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     proposal_reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -1207,6 +1307,34 @@ class StockInventory(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revision: Mapped[int] = mapped_column(default=0)
     data: Mapped[str] = mapped_column(Text, default="[]")
+
+
+class ProcurementDocument(Base):
+    __tablename__ = "procurement_documents"
+    __table_args__ = (UniqueConstraint("request_key"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    kind: Mapped[str] = mapped_column(String(20), index=True)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    supplier_id: Mapped[str] = mapped_column(ForeignKey("business_entities.id"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    purchase_id: Mapped[str | None] = mapped_column(ForeignKey("purchases.id"), unique=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="draft")
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    request_key: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class ProcurementLink(Base):
+    __tablename__ = "procurement_links"
+    __table_args__ = (UniqueConstraint("document_id", "line_index"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    document_id: Mapped[str] = mapped_column(ForeignKey("procurement_documents.id"), index=True)
+    line_index: Mapped[int] = mapped_column(Integer)
+    source_id: Mapped[str] = mapped_column(ForeignKey("procurement_documents.id"), index=True)
+    source_line: Mapped[int] = mapped_column(Integer)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6))
 
 
 class StockSettings(Base):

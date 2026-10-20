@@ -1,15 +1,16 @@
 import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Building2, CheckCircle, CircleHelp, CreditCard, Landmark, Plus, Save, Settings, Trash2, Wallet, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, CheckCircle, CircleHelp, CreditCard, FileUp, Landmark, Plus, Save, Settings, Trash2, Wallet, X } from "lucide-react";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
+import { VatRegimeFields, vatLabel } from "./FiscalSettings";
 import "./CompanySetup.css";
 
 type Row = Record<string, any>;
-type Props = { boot: Row; reload: () => Promise<void>; onNavigate: (page: string) => void; onAction: (kind: string) => Promise<void>; hasOpenSession: boolean; standalone?: boolean };
+type Props = { boot: Row; reload: () => Promise<void>; onNavigate: (page: string, action?: string) => void; onAction: (kind: string) => Promise<void>; hasOpenSession: boolean; standalone?: boolean };
 const steps = [
   ["company", "Empresa"], ["mode", "Modo de trabalho"], ["registers", "Caixas"], ["banks", "Contas bancárias"],
-  ["payments", "Meios de pagamento"], ["terminals", "Terminais TPA"], ["preferences", "Preferências"], ["summary", "Resumo"],
+  ["payments", "Meios de pagamento"], ["terminals", "Terminais TPA"], ["preferences", "Preferências"], ["saft", "Faturação SAF-T"], ["summary", "Resumo"],
 ] as const;
 const key = () => crypto.randomUUID();
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Lisbon" });
@@ -22,9 +23,17 @@ function Hint({ children }: { children: React.ReactNode }) {
 export default function CompanySetupPanel(props: Props) {
   const [status, setStatus] = useState<Row | null>(null);
   const [opened, setOpened] = useState(false);
+  // Destino escolhido dentro do assistente: só se navega depois de o assistente sair da página,
+  // para o formulário fechado não bloquear a navegação.
+  const [destination, setDestination] = useState<{ page: string; action?: string } | null>(null);
   const [error, setError] = useState("");
   const admin = props.boot.user.role === "administrador";
   async function loadStatus() { setStatus(await api("/setup/status")); }
+  useEffect(() => {
+    if (opened || !destination) return;
+    setDestination(null);
+    void Promise.resolve(props.onNavigate(destination.page)).then(() => { if (destination.action) void props.onAction(destination.action); });
+  }, [opened, destination]);
   useEffect(() => { let active = true; api("/setup/status").then(result => { if (active) setStatus(result); }).catch(() => { if (active && props.standalone) setError("Não foi possível carregar a configuração. Atualize a página para tentar novamente."); }); return () => { active = false; }; }, [props.boot.company?.id]);
   if (!status && !props.standalone) return null;
   if (status?.completed && !status.pending?.length && !status.unclosed_count && !props.standalone && !opened) return null;
@@ -43,7 +52,7 @@ export default function CompanySetupPanel(props: Props) {
       {admin && <ActionButton className={completed ? "" : "primary"} onClick={() => setOpened(true)}>{completed ? "Rever configuração" : status?.started ? "Continuar configuração" : "Iniciar configuração"}<ArrowRight size={17} aria-hidden="true" /></ActionButton>}
     </section>
     {error && <Notice className="error" role="alert">{error}</Notice>}
-    {opened && <SetupWizard {...props} onClose={() => { setOpened(false); loadStatus().catch(() => {}); }} onChanged={async () => { await props.reload(); await loadStatus(); }} />}
+    {opened && <SetupWizard {...props} onNavigate={(page: string, action?: string) => setDestination({ page, action })} onClose={() => { setOpened(false); loadStatus().catch(() => {}); }} onChanged={async () => { await props.reload(); await loadStatus(); }} />}
   </>;
 }
 
@@ -57,6 +66,8 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [summary, setSummary] = useState<Row | null>(null);
+  // Associação SAF-T por gravar; é guardada com os restantes dados ao avançar, recuar ou sair.
+  const saftSave = useRef<(() => Promise<void>) | null>(null);
   const [importPreview, setImportPreview] = useState<Row | null>(null);
   const [confirmDemo, setConfirmDemo] = useState(false);
   const [includeERPMethods, setIncludeERPMethods] = useState(true);
@@ -97,12 +108,13 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
   async function run(task: () => Promise<void>) { if (busy) return; setBusy(true); setError(""); setNotice(""); try { await task(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   async function persist(next = step, draft = data) {
     if (!state || !draft) throw new Error("Aguarde pelo carregamento da configuração.");
+    if (saftSave.current) await saftSave.current();
     const saved = await api("/setup/draft", { revision: state.revision, step: steps[next][0], data: draft });
     hydrate(saved);
     setSummary(null);
     return saved;
   }
-  async function go(next: number, override?: Row) { await run(async () => { const draft = override || { ...data, skipped: data!.skipped.filter((id: string) => id !== steps[step][0]) }; const saved = await persist(next, draft); setStep(next); if (next === 7) setSummary(await api("/setup/preview", { revision: saved.revision })); }); }
+  async function go(next: number, override?: Row) { await run(async () => { const draft = override || { ...data, skipped: data!.skipped.filter((id: string) => id !== steps[step][0]) }; const saved = await persist(next, draft); setStep(next); if (next === 8) setSummary(await api("/setup/preview", { revision: saved.revision })); }); }
   async function navigate(page: string) { await run(async () => { if (!done) await persist(); onClose(); onNavigate(page); }); }
   const registerOptions = data?.registers || [];
   const accountOptions = data?.accounts || [];
@@ -120,19 +132,21 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
   const currency = data?.company.currency || "EUR";
   return <AppDialog busy={busy} dirty={!!data && !!state && !done && JSON.stringify(data) !== JSON.stringify(state.data)} ref={dialog} className="setup-dialog surface-light" aria-labelledby="setup-title" onRequestClose={() => { if (!busy) onClose(); }}>
     <header className="setup-dialog-header"><div><small>CONFIGURAÇÃO DA EMPRESA</small><h2 id="setup-title">Vamos preparar a sua IAZELA</h2></div></header>
+    <p className="footnote">Introduza apenas os dados necessários à configuração e informe as pessoas cujos acessos cria. <a href="/legal/privacidade">Informação de privacidade</a> · <a href="/legal/direitos">Direitos e contacto</a>. A configuração não subscreve publicidade.</p>
     {!data || !state ? <div className="setup-content">{error ? <Notice className="error" role="alert">{error}</Notice> : <p role="status">A carregar os dados existentes…</p>}</div> : done ? <div className="setup-content setup-completed">
       <CheckCircle size={52} aria-hidden="true" /><h2>A sua IAZELA está pronta</h2><p>A configuração foi guardada para toda a empresa.</p>
       {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
       {!!state.pending?.length && <div className="setup-note"><b>Pode completar mais tarde</b><ul>{state.pending.map((item: string) => <li key={item}>{item}</li>)}</ul></div>}
-      <div className="setup-next-actions"><ActionButton type="button" className="primary" onClick={() => { onClose(); onNavigate("Folha de caixa"); void onAction("open"); }}><Wallet size={19} />Abrir primeira folha de caixa</ActionButton>
-        <ActionButton type="button" disabled={!hasOpenSession} onClick={() => { onClose(); onNavigate("Movimentos reais"); void onAction("movement"); }}>Registar primeiro movimento</ActionButton>
+      <div className="setup-next-actions"><ActionButton type="button" className="primary" onClick={() => { onClose(); onNavigate("Folha de caixa", "open"); }}><Wallet size={19} />Abrir primeira folha de caixa</ActionButton>
+        <ActionButton type="button" disabled={!hasOpenSession} onClick={() => { onClose(); onNavigate("Movimentos reais", "movement"); }}>Registar primeiro movimento</ActionButton>
         <ActionButton type="button" onClick={() => { onClose(); onNavigate("Extratos"); }}><Landmark size={19} />Importar extrato</ActionButton>
+        {data.mode.mode === "local" && <ActionButton type="button" onClick={() => { onClose(); onNavigate("Importar SAF-T de vendas"); }}><FileUp size={19} />Importar SAF-T de vendas</ActionButton>}
         {data.mode.mode === "integrated" && <ActionButton type="button" onClick={() => { onClose(); onNavigate("Integrações"); }}>Configurar ligação ao ERP</ActionButton>}</div>
       {!hasOpenSession && <p>Abra uma folha de caixa para registar o primeiro movimento.</p>}
       <ActionButton type="button" onClick={onClose}>Voltar ao painel</ActionButton>
     </div> : <div className="setup-layout">
       <nav className="setup-step-nav" aria-label="Etapas da configuração">{steps.map(([id, label], index) => <ActionButton type="button" key={id} disabled={busy} className={step === index ? "active" : ""} aria-current={step === index ? "step" : undefined} onClick={() => void go(index)}><span>{index + 1}</span>{label}</ActionButton>)}<p>As respostas são guardadas na empresa ao avançar ou escolher guardar.</p></nav>
-      <ManagedForm className="setup-form" onSubmit={event => { event.preventDefault(); if (!busy) void (step < 7 ? go(step + 1) : run(async () => { const saved = await persist(7); const checked = await api("/setup/preview", { revision: saved.revision }); setSummary(checked); const finished = await api("/setup/finish", { revision: saved.revision, token: checked.token, confirmed: true }); hydrate(finished); setDone(true); try { await onChanged(); } catch { setNotice("Configuração guardada. Atualize a página para carregar os novos registos."); } })); }}>
+      <ManagedForm className="setup-form" onSubmit={event => { event.preventDefault(); if (!busy) void (step < 8 ? go(step + 1) : run(async () => { const saved = await persist(8); const checked = await api("/setup/preview", { revision: saved.revision }); setSummary(checked); const finished = await api("/setup/finish", { revision: saved.revision, token: checked.token, confirmed: true }); hydrate(finished); setDone(true); try { await onChanged(); } catch { setNotice("Configuração guardada. Atualize a página para carregar os novos registos."); } })); }}>
         <div className="setup-content" aria-busy={busy}>
           <div className="setup-step-heading"><span>Etapa {step + 1} de {steps.length}</span><h3 ref={heading} tabIndex={-1}>{steps[step][1]}</h3></div>
           <fieldset disabled={busy} className="setup-fields">
@@ -146,6 +160,15 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
                 <Field label="Fuso horário"><select value={data.company.timezone} onChange={e => change("company", "timezone", e.target.value)}>{Array.from(new Set([data.company.timezone, "Europe/Lisbon", "Atlantic/Azores", "Europe/Madrid", "Europe/London", "Europe/Paris", "America/Sao_Paulo", "Africa/Luanda", "Atlantic/Cape_Verde", "Africa/Maputo", "America/New_York", "UTC"])).map(value => <option key={value}>{value}</option>)}</select></Field>
                 <Field label="Estabelecimento principal">{storeSelect(data.company.store_id, value => { change("company", "store_id", value); const found = state.stores.find((s: Row) => s.id === value); if (found) change("company", "store_name", found.name); })}</Field>
                 <Field label="Nome do estabelecimento"><input value={data.company.store_name} maxLength={100} onChange={e => change("company", "store_name", e.target.value)} /></Field></div>
+              <h4>Stock</h4>
+              {(() => { const existing = (state.warehouses || []).filter((w: Row) => w.store_id === data.company.store_id); return <>
+                {!!existing.length && <p>Armazéns já existentes neste estabelecimento: {existing.map((w: Row) => w.name).join(", ")}.</p>}
+                <label className="setup-check"><input type="checkbox" checked={data.company.create_warehouse !== false} onChange={e => change("company", "create_warehouse", e.target.checked)} />{existing.length ? "Criar outro armazém de stock no estabelecimento principal" : "Criar um armazém de stock no estabelecimento principal (recomendado)"}</label>
+                {data.company.create_warehouse !== false && <div className="setup-grid"><Field label="Nome do armazém"><input value={data.company.warehouse_name ?? "Armazém principal"} maxLength={100} onChange={e => change("company", "warehouse_name", e.target.value)} /></Field></div>}
+                <p className="footnote">O armazém guarda as quantidades de stock das compras e dos inventários. Não é criado em duplicado se já existir com o mesmo nome. Pode acrescentar outros em Compras e Stock.</p>
+              </>; })()}
+              <h4>IVA</h4>
+              <div className="setup-grid setup-vat"><VatRegimeFields regime={data.company.vat_regime || ""} period={data.company.vat_period || ""} onChange={(regime, period) => setData(previous => ({ ...previous, company: { ...previous!.company, vat_regime: regime, vat_period: period } }))} /></div>
               {currency !== "EUR" && <p className="setup-note">A moeda é aplicada às novas caixas e contas. Os saldos existentes conservam a sua moeda. A contagem por notas e moedas de euro deve ser substituída pela introdução do valor total nas restantes moedas.</p>}
             </>}
             {step === 1 && <>
@@ -233,6 +256,7 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
               <ActionButton type="button" onClick={() => add("terminals", { key: key(), name: `TPA ${data.terminals.length + 1}`, identifier: "", store_id: data.company.store_id, register_id: data.registers[0]?.key || null, provider: "", account: "", settlement_days: 1, settlement_mode: "gross", commission_percent: null, commission_fixed: null, statement_reference: "", mbway: false })}><Plus size={17} />Adicionar terminal TPA</ActionButton>
               <Hint><p>Receber do cliente e receber a liquidação no banco são momentos diferentes da mesma operação. O extrato é associado aos recebimentos existentes na reconciliação. As comissões são confirmadas nessa altura e não criam uma segunda receita.</p><p>Com vários terminais, escolha o terminal ao registar um recebimento. Um total agregado de fecho sem terminal não é atribuído automaticamente a um banco quando existem vários destinos possíveis.</p></Hint>
             </>}
+            {step === 7 && <SaftSetupStep local={data.mode.mode === "local"} block={data.preferences.saft_block_unmapped !== false} onBlock={value => change("preferences", "saft_block_unmapped", value)} onNavigate={page => void navigate(page)} saveRef={saftSave} />}
             {step === 6 && <>
               <p>Escolha as preferências que ajudam no trabalho diário. As integrações facultativas podem ficar para mais tarde.</p>
               <div className="setup-check-grid setup-preferences">{[["daily_close", "Conferência e fecho diário de caixa"], ["manual_realized", "Introdução manual do faturado no modo autónomo"], ["require_reason", "Exigir justificação para diferenças"], ["unclosed_warning", "Avisar sobre caixas por fechar"]].map(([id, label]) => <label key={id}><input type="checkbox" checked={data.preferences[id]} onChange={e => change("preferences", id, e.target.checked)} />{label}</label>)}</div>
@@ -241,27 +265,59 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
               {data.preferences.archive === "drive" && <ActionButton type="button" onClick={() => void navigate("Anexos")}>Configurar conta Google e pasta de arquivo</ActionButton>}
               <Hint><p>O arquivo usa as integrações já existentes de anexos e Google Drive. Os utilizadores com acesso à aplicação e os funcionários sem acesso continuam a ser geridos em Tabelas → Operadores / funcionários.</p><ActionButton type="button" onClick={() => void navigate("Operadores / funcionários")}>Gerir responsáveis e utilizadores</ActionButton></Hint>
             </>}
-            {step === 7 && <>
+            {step === 8 && <>
               <p>Confirme os registos a criar ou associar. Os dados existentes e os saldos iniciais já registados são preservados.</p>
-              <section className="setup-summary-section"><h4><Building2 size={18} />{data.company.trade_name || data.company.name}</h4><p>{data.company.name} · NIF {data.company.nif}</p><p>{data.mode.mode === "local" ? "Modo local autónomo" : `Ligação a ${state.connectors.find((c: Row) => c.id === data.mode.provider)?.name || "ERP"} · ${state.connection_tested && !data.mode.defer ? "Testada" : "Pendente"}`}</p><p>{data.company.country} · {currency} · {data.company.timezone}</p></section>
+              <section className="setup-summary-section"><h4><Building2 size={18} />{data.company.trade_name || data.company.name}</h4><p>{data.company.name} · NIF {data.company.nif}</p><p>{data.mode.mode === "local" ? "Modo local autónomo" : `Ligação a ${state.connectors.find((c: Row) => c.id === data.mode.provider)?.name || "ERP"} · ${state.connection_tested && !data.mode.defer ? "Testada" : "Pendente"}`}</p><p>{data.company.country} · {currency} · {data.company.timezone}</p><p>{vatLabel(data.company.vat_regime, data.company.vat_period)}</p>{data.company.create_warehouse !== false && <p>Armazém de stock: {data.company.warehouse_name ?? "Armazém principal"}{(state.warehouses || []).some((w: Row) => w.store_id === data.company.store_id && w.name === (data.company.warehouse_name ?? "Armazém principal").trim()) ? " · Existente" : " · Novo"}</p>}</section>
               <section className="setup-summary-section"><h4>Caixas</h4>{data.registers.map((r: Row) => <p key={r.key}><b>{r.name}</b> · Fundo: {money(r.fund, currency)} · Saldo inicial: {money(r.opening, currency)}{r.erp_id ? " · Associada ao ERP" : r.id ? " · Existente" : " · Nova"}</p>)}</section>
               <section className="setup-summary-section"><h4>Contas bancárias</h4>{data.accounts.length ? data.accounts.map((a: Row) => <p key={a.key}><b>{a.bank} · {a.name}</b> · {a.currency}{a.principal ? " · Principal" : ""} · Saldo inicial: {money(a.opening, a.currency)}</p>) : <p>Pode configurar mais tarde.</p>}</section>
               <section className="setup-summary-section"><h4>Meios de pagamento</h4><p>{data.payments.filter((p: Row) => p.selected).map((p: Row) => p.name).join(" · ")}</p></section>
               <section className="setup-summary-section"><h4>Terminais e contas de liquidação</h4>{data.terminals.length ? data.terminals.map((t: Row) => <p key={t.key}><b>{t.name}</b> → {data.accounts.find((a: Row) => a.key === t.account || a.id === t.account)?.name || "Conta por escolher"} · {t.settlement_days} dia(s) · {t.settlement_mode === "net" ? "Líquido de comissões" : "Bruto"}</p>) : <p>Pode configurar mais tarde.</p>}</section>
               {!!summary?.pending?.length && <section className="setup-note"><h4>Configurações pendentes</h4><ul>{summary.pending.map((item: string) => <li key={item}>{item}</li>)}</ul></section>}
-              {!summary && <ActionButton type="button" onClick={() => void run(async () => { const saved = await persist(7); setSummary(await api("/setup/preview", { revision: saved.revision })); })}>Atualizar e validar resumo</ActionButton>}
+              {!summary && <ActionButton type="button" onClick={() => void run(async () => { const saved = await persist(8); setSummary(await api("/setup/preview", { revision: saved.revision })); })}>Atualizar e validar resumo</ActionButton>}
             </>}
           </fieldset>
           {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
           {error && <Notice className="error" role="alert">{error}</Notice>}
         </div>
         <footer className="setup-footer"><span>{busy ? "A guardar…" : "Progresso partilhado pela empresa"}</span><div className="setup-footer-actions">
-          {step > 0 && <ActionButton type="button" disabled={busy} onClick={() => void go(step - 1)}><ArrowLeft size={16} />Anterior</ActionButton>}
-          {[3, 5, 6].includes(step) && <ActionButton type="button" disabled={busy} onClick={() => void go(step + 1, { ...data, skipped: Array.from(new Set([...data.skipped, steps[step][0]])) })}>Configurar mais tarde</ActionButton>}
+          <ActionButton type="button" disabled={busy || step === 0} onClick={() => void go(step - 1)}><ArrowLeft size={16} />Anterior</ActionButton>
           <ActionButton type="button" disabled={busy} onClick={() => void run(async () => { await persist(); onClose(); })}><Save size={16} />Guardar e continuar mais tarde</ActionButton>
-          <ActionButton className="primary" disabled={busy} type="submit">{step === 7 ? "Guardar e começar" : "Guardar e continuar"}<ArrowRight size={16} /></ActionButton>
+          <ActionButton className="primary" disabled={busy} type="submit">{step === 8 ? "Guardar e começar" : "Guardar e continuar"}<ArrowRight size={16} /></ActionButton>
         </div></footer>
       </ManagedForm>
     </div>}
   </AppDialog>;
+}
+
+/** Etapa SAF-T: associação dos códigos de pagamento, política de importação e primeiro ficheiro. */
+function SaftSetupStep({ local, block, onBlock, onNavigate, saveRef }: { local: boolean; block: boolean; onBlock: (value: boolean) => void; onNavigate: (page: string) => void; saveRef: { current: (() => Promise<void>) | null } }) {
+  const [mapping, setMapping] = useState<Row | null>(null), [unavailable, setUnavailable] = useState(""), [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!local) return;
+    let active = true;
+    api("/saft/payment-mapping").then(result => { if (active) setMapping(result); }).catch(e => { if (active) setUnavailable((e as Error).message); });
+    return () => { active = false; };
+  }, [local]);
+  if (!local) return <><p>A importação SAF-T de vendas destina-se ao modo local autónomo. No modo integrado, a faturação vem do ERP.</p><p>Pode avançar para o resumo.</p></>;
+  const safe = Object.entries(mapping?.suggestions || {}).filter(([, s]: [string, any]) => s?.safe && s.id);
+  // Só grava quando houve alterações; um erro impede o avanço e aparece no assistente.
+  saveRef.current = mapping && dirty ? async () => { const result = await api("/saft/payment-mapping", { mapping: mapping.mapping }); setMapping(result); setDirty(false); } : null;
+  useEffect(() => () => { saveRef.current = null; }, [saveRef]);
+  function edit(next: Record<string, string>) { setMapping({ ...mapping, mapping: next }); setDirty(true); }
+  return <>
+    <p>O SAF-T de vendas acrescenta a faturação para análise e conferência. <strong>Não cria entradas em caixa, banco nem movimentos de stock.</strong></p>
+    <label className="setup-check"><input type="checkbox" checked={block} onChange={e => onBlock(e.target.checked)} /> Impedir a confirmação de importações com códigos de pagamento por associar (recomendado). Sem esta opção, a aplicação apenas avisa e pede confirmação.</label>
+    <h4>Associar códigos de pagamento SAF-T aos meios de pagamento</h4>
+    {!mapping && !unavailable && <p role="status">A carregar códigos SAF-T…</p>}
+    {unavailable && <Notice tone="info">A associação fica disponível depois de guardar o modo local e os meios de pagamento (conclua a configuração e volte a esta etapa, ou use Tesouraria → Importar SAF-T de vendas). {unavailable}</Notice>}
+    {mapping && <>
+      <div className="form-grid">{mapping.codes.map((code: string) => <Field key={code} label={`${code} · ${mapping.descriptions?.[code] || "Código SAF-T"}`}><select value={mapping.mapping[code] || ""} onChange={e => { const next = { ...mapping.mapping }; if (e.target.value) next[code] = e.target.value; else delete next[code]; edit(next); }}><option value="">Por associar</option>{mapping.methods.map((m: Row) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>)}</div>
+      {safe.length > 0 && <div className="setup-inline-actions"><ActionButton type="button" onClick={() => edit({ ...Object.fromEntries(safe.map(([code, s]: [string, any]) => [code, s.id])), ...mapping.mapping })}>Aplicar {safe.length} sugestões seguras</ActionButton></div>}
+      <small>A associação é guardada com «Guardar e continuar».</small>
+      <small>Só associe quando o significado for inequívoco: MB (referência Multibanco) e DE (dinheiro eletrónico) não identificam, por si só, MB WAY ou TPA.</small>
+    </>}
+    <h4>Primeira importação</h4>
+    <p>Depois de concluir, importe o XML SAF-T em Tesouraria → Importar SAF-T de vendas. Com o Google Drive ligado, os ficheiros da pasta configurada aparecem automaticamente. A importação pode propor criar os artigos em falta.</p>
+    <ActionButton type="button" onClick={() => onNavigate("Importar SAF-T de vendas")}>Importar SAF-T agora</ActionButton>
+  </>;
 }

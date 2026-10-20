@@ -4,6 +4,9 @@ Abra **Contabilidade → Conferência documental**. As quatro áreas são Confer
 
 ## Utilização
 
+A forma recomendada é o assistente **Clara · Verificar documentos**, que pesquisa as exportações e-Fatura no Google Drive, importa, procura anexos, confere com as compras (Compras ou ERP) e propõe as ações em falta. Consulte a [conferência em seis etapas](ASSISTENTE-EFATURA.md#conferência-em-seis-etapas-e-fatura--anexos--compras). Os passos seguintes descrevem as operações individuais, que continuam disponíveis.
+
+
 1. Escolha a loja e **Importar e-Fatura**. Selecione o CSV, use **Pré-visualizar**, confira os documentos e confirme a importação. Os filtros de datas passam para o período importado. O modelo CSV também pode ser preenchido manualmente; XLSX com estas colunas é suportado. Reimportar mantém anexos, estados e pagamentos; divergências de valores ou datas bloqueiam a confirmação. Quando os documentos antigos ainda não têm base tributável ou identificação da importação, a reconferência do ficheiro completa esses dados sem duplicar faturas.
 2. Como administrador, use **Consultar compras no ERP**, escolha a loja e o período e confirme a consulta. A aplicação usa a ligação Wintouch já configurada para a empresa. Na demonstração, confirme expressamente que serão consultados dados reais.
 3. Abra **Conferir** em cada fatura. Veja a correspondência proposta, os critérios e as divergências. Selecione o documento ERP, indique um motivo e confirme a associação. Pode desfazê-la com justificação; o histórico conserva a associação anterior. O número interno do ERP e a referência do fornecedor aparecem separadamente.
@@ -80,4 +83,4 @@ No segundo passo, «Procurar correspondências automaticamente» compara os PDFs
 O utilizador confirma as propostas em conjunto (até 20 por confirmação). Os ficheiros permanecem no Drive; a base de dados guarda apenas referências e metadados, com auditoria. A análise pagina 50 PDFs e considera até 200 documentos por período; reduza o período para conferir mais documentos. A conferência individual permanece opcional.
 
 
-O assistente principal inclui agora o terceiro passo ?Correspond?ncia com o ERP?. Permite pesquisar candidatos para todos os documentos do per?odo no cat?logo local, atualizar a consulta ? Wintouch por loja (administrador, com confirma??o), confirmar cada associa??o e abrir documentos sem correspond?ncia para revis?o da proposta de lan?amento. Uma pesquisa no cat?logo local n?o prova aus?ncia de lan?amento no ERP.
+O assistente principal inclui agora o terceiro passo ?Correspond?ncia com o ERP?. Permite pesquisar candidatos para todos os documentos do período no catálogo local, atualizar a consulta ? Wintouch por loja (administrador, com confirmação), confirmar cada associação e abrir documentos sem correspondência para revisão da proposta de lançamento. Uma pesquisa no catálogo local não prova ausência de lançamento no ERP.

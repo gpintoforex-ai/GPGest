@@ -13,15 +13,25 @@ function backendOrigin(value, publicOrigin) {
   }
 }
 
+function protect(response) {
+  const headers = new Headers(response.headers);
+  headers.set("Referrer-Policy", "no-referrer");
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("X-Frame-Options", "DENY");
+  headers.set("Permissions-Policy", "camera=(self), microphone=(), geolocation=()");
+  headers.set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname !== "/api" && !url.pathname.startsWith("/api/")) {
-      return env.ASSETS.fetch(request);
+      return protect(await env.ASSETS.fetch(request));
     }
     const origin = backendOrigin(env.BACKEND_ORIGIN, url.origin);
     if (!origin) {
-      return errorResponse("O serviço de dados ainda não está configurado. Contacte o administrador.", 503, "backend_not_configured");
+      return protect(errorResponse("O serviço de dados ainda não está configurado. Contacte o administrador.", 503, "backend_not_configured"));
     }
     const target = new URL(origin);
     target.pathname = url.pathname;
@@ -37,7 +47,7 @@ export default {
       // Never retry a payment or another write automatically after a network failure.
       upstream = await fetch(forwarded, { cf: { cacheTtl: 0, cacheEverything: false } });
     } catch {
-      return errorResponse("Não foi possível contactar o serviço de dados. Verifique a ligação antes de repetir a operação.", 502, "backend_unavailable");
+      return protect(errorResponse("Não foi possível contactar o serviço de dados. Verifique a ligação antes de repetir a operação.", 502, "backend_unavailable"));
     }
     const resultHeaders = new Headers(upstream.headers);
     resultHeaders.set("Cache-Control", "no-store");
@@ -48,6 +58,6 @@ export default {
         resultHeaders.set("Location", url.origin + redirect.pathname + redirect.search + redirect.hash);
       }
     }
-    return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: resultHeaders });
+    return protect(new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: resultHeaders }));
   },
 };

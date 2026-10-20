@@ -8,6 +8,75 @@ O assistente dividia a conferência em etapas, usava pontuações de nomes/texto
 
 O contrato Wintouch existente é de leitura de compras em EUR. O conector permite outras escritas, como rubricas e liquidações, mas **não implementa criar fornecedores nem faturas de compra**. As novas propostas continuam identificadas como propostas, sem pedidos de escrita fictícios nem simulações apresentadas como operações reais.
 
+## Conferência em seis etapas (e-Fatura ↔ anexos ↔ compras)
+
+A conferência cruza três fontes independentes: **e-Fatura** (documentos comunicados pelos fornecedores), **anexos** (PDF, fotografia ou digitalização) e **compras** (registadas em Compras no modo autónomo, ou no ERP no modo integrado). Um registo do e-Fatura não substitui o documento original; ter um anexo não significa que a compra esteja lançada ou paga.
+
+Em **Contabilidade → Conferência documental → Clara · Verificar documentos**:
+
+1. **Pesquisar ficheiros** — escolher o período e a loja. O assistente procura ficheiros CSV e XLSX nas pastas e-Fatura configuradas ou, sem elas, nas pastas de Anexos e respetivas subpastas. Cada ficheiro é identificado **pelo conteúdo**, com as colunas que o importador reconhece. Só as exportações e-Fatura são listadas, com nome, data, formato, número de documentos, período e estado: *Novo*, *Já importado* (incluindo o mesmo conteúdo carregado antes do computador) ou *Alterado desde a importação*. Extratos bancários e outras listas aparecem em *ficheiros ignorados*, com o motivo; as exportações de outra empresa (quando o ficheiro indica o adquirente) também. SAF-T de vendas (XML) não entra na pesquisa. A identificação de cada versão de ficheiro fica em memória, para não voltar a descarregá-lo. Também é possível carregar o ficheiro do computador.
+2. **Importar e-Fatura** — pré-visualização com as colunas reconhecidas, o período do ficheiro, documentos novos, já existentes, conflitos (com o campo divergente) e documentos **não importados**: os que a coluna *Situação* indica como *Documento Anulado pelo Emitente* e os de total 0,00 €. Estes ficam visíveis com o motivo, sem bloquear o resto do ficheiro. Se um documento anulado já existir como ativo na aplicação, a pré-visualização avisa; a importação não o altera (a correção faz-se por estorno). Avisa quando há documentos fora do período a conferir, quando o ficheiro não indica o NIF do adquirente e quando o mesmo conteúdo já foi importado. Um NIF de adquirente diferente do da empresa impede a importação; conflitos impedem a confirmação. Guarda o ID e a versão do ficheiro no Drive e a impressão digital SHA-256 do conteúdo. O ficheiro no Drive nunca é movido, renomeado ou apagado.
+3. **Procurar anexos** — pesquisa as pastas de anexos (QR fiscal, texto do PDF ou OCR local; o nome do ficheiro é só um indício). Só associa automaticamente um candidato único, cujo conteúdo confirme NIF, tipo, número, data e total, com a pesquisa completa.
+4. **Conferir compras** — no modo autónomo, procura a compra em **Compras** (ligada ao documento ou com a mesma identidade NIF + tipo + número) e compara data, total, base, IVA e estado. No modo integrado, consulta o ERP. Diferenças de arredondamento dentro da tolerância configurada ficam visíveis como nota; acima dela são divergências. Uma falha do ERP aparece como *Consulta ao ERP indisponível*, nunca como compra em falta.
+5. **Rever propostas**:
+   - **Anexos propostos**, com pré-visualização, campos coincidentes, divergentes e não identificados, o motivo e a força: *forte* (o conteúdo confirma tudo e é o único candidato), *possível* (o conteúdo identifica o documento, mas há divergências) ou *ambígua* (só pelo nome, ou vários candidatos). Ações: **Associar**, **Escolher outro** (abre a ficha para anexar outro ficheiro) e **Rejeitar** (deixa de ser sugerido; é possível voltar a considerar). As propostas fortes podem ser confirmadas em lote depois de pré-visualizadas; o servidor volta a confirmar que continuam fortes e únicas.
+   - **Lançamentos em falta** — quando há anexo validado e não há compra: **Preparar lançamento** (ver abaixo).
+   - **Documentos em falta** — **Pedir ao fornecedor** por email (SMTP configurado em Configurações → Email), com pré-visualização e confirmação. A lista dos documentos segue em anexo (CSV) e, depois do envio aceite, ficam como *Solicitado ao fornecedor*.
+6. **Concluir** — resumo dos documentos conferidos e das pendências, agrupadas pela próxima ação.
+
+O assistente guarda no servidor a etapa, o período e a loja de cada utilizador e retoma-os quando volta a ser aberto. Importações e associações são gravadas no momento em que são confirmadas.
+
+### Estados e próxima ação
+
+Cada documento tem estados separados para **e-Fatura** (*Comunicado* ou *Sem correspondência*), **anexo** (*validado*, *por confirmar*, *em falta*, *por procurar*) e **compra** (*consistente*, *com divergências*, *rascunho por confirmar*, *não encontrada*, *ERP indisponível*, *por conferir*). O resultado (*Conferido*, *Pendente*, *Divergência*, *Para rever*) e a próxima ação são calculados a partir destas dimensões e explicados em linguagem simples. Por exemplo:
+
+| Situação | Próxima ação |
+|---|---|
+| e-Fatura + compra, sem anexo | Pedir documento ao fornecedor |
+| e-Fatura + anexo, sem compra | Preparar lançamento |
+| Anexo + compra, sem e-Fatura | Confirmar no e-Fatura (assinalado para revisão, não é erro) |
+| Três fontes, valores diferentes | Rever divergências da compra |
+| Três fontes coincidentes | Nenhuma — documento conferido |
+
+As compras confirmadas em Compras também criam um registo de documento; só conta como e-Fatura o que veio de uma importação e-Fatura. Compras e documentos ERP do período sem correspondência no e-Fatura aparecem na lista para revisão. Os filtros permitem procurar por fornecedor ou documento, estado e ação pendente.
+
+### Preparar lançamento
+
+No **modo autónomo**, cria um **rascunho** em Compras ligado ao documento, com o anexo de origem. Os campos vêm do e-Fatura; as linhas vêm do QR fiscal do anexo (base e IVA por taxa), quando existe. A taxa só é deduzida no continente e quando o IVA declarado lhe corresponde; caso contrário, fica por indicar. Sem QR, é possível propor uma linha a partir da base e do IVA do e-Fatura. Cada linha tem rubrica própria, que por omissão é a do fornecedor (uma fatura com mercadorias e serviços pode ter rubricas diferentes). O vencimento, a descrição das linhas e as rubricas são indicados ou confirmados pelo utilizador: não se inventam linhas, taxas, vencimentos nem condições de pagamento. O total das linhas tem de coincidir com o do documento.
+
+Se não existir entidade com o NIF, propõe criar o fornecedor (sujeito a confirmação). Uma entidade inativa ou não classificada como fornecedor tem de ser revista antes. Antes de criar, verifica de novo os duplicados: outro rascunho ou compra para o mesmo documento, a mesma identidade de fornecedor em Compras ou uma associação ERP. O rascunho não fica pago e não movimenta caixa, banco nem stock. A confirmação faz-se em Compras, com as validações próprias.
+
+### Propostas automáticas de lançamento (modo autónomo)
+
+Em **Rever propostas → Lançamentos em falta**, cada fatura e-Fatura com anexo validado e sem lançamento tem uma proposta preparada automaticamente:
+
+- **Linhas:** base e IVA por taxa do QR fiscal do anexo; sem QR, uma linha a partir da base e do IVA do e-Fatura, apenas quando a taxa resulta exatamente dos valores (0, 6, 13 ou 23%).
+- **Rubrica:** a do fornecedor; pode ser escolhida na proposta.
+- **Vencimento:** lido no anexo (texto do PDF ou OCR: «Data de vencimento», «Vencimento», «Data limite de pagamento», «Pagar até»); senão, o **prazo de pagamento habitual** do fornecedor (Tabelas → Fornecedores, em dias); nas faturas-recibo e simplificadas, a data do documento; senão, fica por indicar.
+- **Pronta** quando há fornecedor ativo, rubrica, vencimento e linhas cujo total coincide exatamente com o documento. As restantes mostram o que falta e abrem **Rever e preparar**.
+
+As propostas prontas lançam-se em lote, com confirmação: é criada a compra confirmada em Compras (com o anexo de origem) e o movimento previsto. Não se registam pagamentos nem movimentos de stock. A opção «Criar os fornecedores em falta» cria-os com o nome e o NIF do e-Fatura, com registo no histórico. Os duplicados são verificados de novo antes de cada lançamento; uma compra confirmada corrige-se com nota de crédito. Não existe lançamento sem confirmação.
+
+### OCR local
+
+O OCR usa o Tesseract instalado no servidor, sem enviar documentos para serviços externos. Configuração no `.env`: `GPGEST_OCR_COMMAND` (executável), `GPGEST_OCR_LANG=por+eng` e, opcionalmente, `GPGEST_OCR_TESSDATA` com uma pasta de idiomas própria (por exemplo, `.local/tessdata` com `por.traineddata` de [tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast)). Ative-o em Configurações → Verificação automática e-Fatura. Ficheiros já analisados só são relidos com OCR quando a versão muda ou a configuração do OCR é alterada.
+
+No **modo integrado**, o conector Wintouch não permite criar compras nem fornecedores. Mantém-se a proposta revista e exportável descrita abaixo, sem simular um lançamento.
+
+### Configuração
+
+Em **Configurações → Verificação automática e-Fatura**:
+- **Pastas dos ficheiros exportados do e-Fatura** — distintas das pastas de anexos.
+- **Pastas dos anexos de compras e despesas** — sem pastas indicadas, usa a pasta definida em Anexos.
+- **Pesquisar também nas subpastas** — aplica-se às duas pesquisas.
+- **Tolerância de arredondamento** — 0 a 5 cêntimos.
+
+A migração **0050_efatura_drive** acrescenta a origem Drive das importações, as pastas e-Fatura, a opção de subpastas, as rejeições de anexos e o estado do assistente.
+
+### Formatos suportados
+
+O importador reconhece as colunas efetivamente presentes no ficheiro: NIF e nome do emitente (ou a coluna *Emitente* com «NIF - Nome»), número (incluindo *Nº Fatura / ATCUD*), tipo, data, total, IVA, base tributável e situação. Foi verificado com exportações reais do portal (colunas *Setor*, *Emitente*, *Nº Fatura / ATCUD*, *Tipo*, *Data Emissão*, *Total*, *IVA*, *Base Tributável*, *Situação*, *Comunicação Emitente* e *Comunicação Adquirente*; tipos *Fatura*, *Fatura-recibo*, *Fatura simplificada* e *Nota de crédito*; situações *Registado* e *Documento Anulado pelo Emitente*). O NIF do adquirente só é validado quando o ficheiro tem essa coluna; a exportação habitual do portal não a inclui, e nesse caso a pré-visualização avisa. Ficheiros sem as colunas obrigatórias são recusados, sem assumir outras colunas.
+
 ## Como utilizar
 
 1. Em **Contabilidade > Conferência documental > Clara · Verificar documentos**, escolher o período e importar o CSV/XLSX e-Fatura ou continuar com os documentos existentes.

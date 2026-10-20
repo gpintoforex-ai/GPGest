@@ -1,6 +1,6 @@
-# Zela
+# IAZELA
 
-Aplicação de gestão empresarial. [Identidade visual Zela e validação](docs/IDENTIDADE-ZELA.md).
+Aplicação de gestão empresarial. [Identidade visual IAZELA e validação](docs/IDENTIDADE-IAZELA.md).
 O nome técnico do projeto, os caminhos e os identificadores de integração existentes são mantidos.
 
 Preparar uma empresa: [assistente de configuração inicial](docs/CONFIGURACAO-INICIAL.md), disponível no painel e em Configurações → Parâmetros.
@@ -9,7 +9,10 @@ Janelas, confirmações e acessibilidade: [revisão da interface](docs/REVISAO-I
 
 Digitalizar fotografias e PDFs para anexos e dossiês: [guia de digitalização](docs/DIGITALIZACAO-DOCUMENTOS.md).
 Conferir e-Fatura, anexos e ERP: [assistente e-Fatura](docs/ASSISTENTE-EFATURA.md).
+Custos, proveitos e mapa de IVA indicativos: [mapas de gestão](docs/MAPAS-DE-GESTAO.md).
+Painel inicial com indicadores, gráficos e alertas: [dashboard de gestão](docs/DASHBOARD.md).
 Enviar documentação por SMTP: [email e dossiê contabilístico](docs/EMAIL-CONTABILIDADE.md), com pré-visualização, histórico e confirmação manual de receção.
+Separar faturação, recebimentos e conferência: [faturação e recebimentos](docs/FATURACAO-RECEBIMENTOS.md), sem duplicar o dinheiro já registado nas caixas e bancos.
 Importar faturação no modo local: [SAF-T (PT) de vendas](docs/IMPORTACAO-SAFT-VENDAS.md), com validação oficial, revisão de conflitos e referência nas folhas de caixa.
 
 Consulte o [guia dos modos local e integrado](docs/MODOS-FUNCIONAMENTO.md) e a
@@ -202,6 +205,12 @@ Para testar a recuperação no ambiente de demonstração, execute `.\.venv\Scri
 Para recuperar, crie uma **nova base vazia** com `createdb.exe` e use `.local\pgsql\bin\pg_restore.exe -h 127.0.0.1 -p 55432 -U gpgest -d NOME_DA_NOVA_BASE --clean --if-exists caminho\backup.dump`. Use este comando apenas na nova base vazia: prepara o esquema antes de restaurar. A ferramenta pede a palavra-passe da base (presente no `.env`). Altere `DATABASE_URL` para a base recuperada, inicie e verifique utilizadores, sessões e movimentos antes de substituir a base original. Nunca apague a base original para testar a recuperação. O backup inclui `public` e os esquemas das empresas e exclui esquemas temporários de teste. Preserve também o `.env`, em particular `PLATFORM_ENCRYPTION_KEY`, e os ficheiros privados das integrações.
 
 ## Fases seguintes e dependências
+
+### Informação legal e privacidade
+
+A [matriz de enquadramento legal](docs/ENQUADRAMENTO-LEGAL.md) regista as fontes oficiais consultadas em 19/10/2026, alterações, testes e pendências. Os [procedimentos de privacidade](docs/PROCEDIMENTOS-PRIVACIDADE.md) e a [minuta para consumidores](docs/MINUTA-CONSUMIDORES.md) são documentos internos para completar e aprovar.
+
+A migração `0053` cria apenas os registos centrais de configuração/publicação legal, aceitações e pedidos de direitos. Na administração da plataforma, a área “Informação legal e proteção de dados” permite preparar rascunhos e acompanhar pedidos. Os dados do prestador, contratos, conservação e localizações têm de ser confirmados antes de publicar; a interface bloqueia formalmente informação em falta. Não foram inventados dados da entidade, planos comerciais ou garantias. A oferta prevista inclui empresas e consumidores, mas ainda não há contratação ou subscrições disponíveis.
 
 - **Fase 2**: talões sequenciais de depósito, dinheiro em trânsito, receitas/despesas reconhecidas, pagamentos e indicadores. Uma retirada de caixa atual não cria automaticamente um talão ou confirmação bancária.
 - **Fase 3**: artigos, lotes locais, validades, FEFO e alertas.

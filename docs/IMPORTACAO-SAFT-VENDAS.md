@@ -6,6 +6,18 @@ rever os dados e escolher **Confirmar importação**. O NIF é sempre comparado 
 o da empresa selecionada no servidor. O ficheiro não determina automaticamente
 a loja ou a gaveta; confirme o estabelecimento de destino.
 
+Com o Google Drive configurado, a página lista também os XML encontrados na pasta
+configurada e subpastas, para importar sem descarregar o ficheiro; consulte
+[SAF-T e extratos bancários no Drive](GMAIL-DRIVE-ANEXOS.md#saf-t-e-extratos-bancários-no-drive).
+
+## Códigos de pagamento por associar
+
+Na pré-visualização, a aplicação compara os códigos de pagamento do ficheiro (NU, CC, MB, TB…) com a associação em **Associar códigos SAF-T aos meios de pagamento**. Por predefinição, a confirmação é **impedida** enquanto existirem códigos por associar. Se a empresa escolher apenas avisar (configuração inicial → Faturação SAF-T), é preciso confirmar explicitamente que esses pagamentos ficam por classificar na conferência. Pagamentos sem código não bloqueiam. **Verificar novamente** atualiza o aviso depois de guardar a associação.
+
+## Artigos do SAF-T
+
+Depois de importar, **Artigos do SAF-T por criar ou associar** propõe uma ficha para cada código de artigo do ficheiro ainda sem correspondência: associa a um artigo existente com o mesmo código ou código de barras, ou cria um novo com nome, unidade, taxa de IVA e último preço sem IVA lidos das linhas das faturas. Serviços, outros e impostos aparecem desmarcados. Nada é criado sem seleção e confirmação; nunca se cria um segundo artigo com o mesmo código. Criar ou associar artigos não movimenta stock: as saídas por vendas SAF-T continuam a exigir a política de stock. O preço só é guardado por quem tem permissão para alterar preços.
+
 ## Compatibilidade efetiva
 
 Suporta o perfil atual **1.04_01**, namespace
@@ -23,7 +35,7 @@ Fontes oficiais consultadas:
 - [FAQ técnicas da AT](https://info.portaldasfinancas.gov.pt/pt/apoio_contribuinte/questoes_frequentes/pages/faqs-00276.aspx): estados, notas de crédito e sentidos de débito/crédito dos recibos.
 
 A origem e a impressão digital do esquema encontram-se em
-`backend/app/saft_schemas/README.md`. A Zela não certifica assinaturas fiscais,
+`backend/app/saft_schemas/README.md`. A IAZELA não certifica assinaturas fiscais,
 nem submete o ficheiro à AT.
 
 ## Secções e dados
@@ -59,9 +71,11 @@ montante e data explícitos; não copia `InvoiceDate` para uma data de recebimen
 em falta e não inventa numerário, TPA ou transferência. Ausência de informação
 é apresentada como **Informação de recebimento indisponível**.
 
-As associações dos códigos SAF-T aos meios ativos da Zela são manuais. Sem
-associação, ou se o meio for inativado, o valor fica **Por classificar**. MB não
-significa automaticamente TPA, nem DE significa automaticamente MB WAY.
+As associações dos códigos SAF-T aos meios ativos da IAZELA são manuais. A
+interface apresenta sugestões apenas para correspondências conhecidas; estas
+nunca são aplicadas automaticamente. Sem associação, ou se o meio for
+inativado, o valor fica **Por classificar**. MB não significa automaticamente
+TPA, nem DE significa automaticamente MB WAY.
 Compensações e permutas também não provam entrada física de dinheiro.
 
 Pagamentos de faturas que estejam representados de forma inequívoca em recibos

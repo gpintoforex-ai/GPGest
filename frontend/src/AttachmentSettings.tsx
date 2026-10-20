@@ -15,6 +15,7 @@ export default function AttachmentSettings({ nif }: { nif?: string }) {
   const defaults = nif === "510774318" ? { outlook_email: "desafiosalutar@hotmail.com", google_email: "desafiosalutar@gmail.com", drive_folder: "1OV1fH8lEFrvlTa7P7-OzgkVxgFmMZ5pJ" } : {};
   return <section className="panel">
     <h3>Anexos de faturas · Gmail e Google Drive</h3>
+    <p>A ligação consulta mensagens Gmail e ficheiros no Drive e pode criar pastas e guardar digitalizações. A autorização Drive atual abrange a conta; as pastas configuradas limitam a pesquisa da aplicação, mas não reduzem o âmbito concedido pelo Google. Utilize uma conta dedicada com apenas os documentos necessários. Pode desligar e revogar a ligação abaixo; os documentos já guardados não são apagados. <a href="/legal/privacidade">Tratamento de dados e prestadores</a>.</p>
     <p>Defina as contas e a pasta de destino para esta empresa.</p>
     <p className="pill neutral">{google?.connected ? "Conta ligada: " + google.email : "Conta Google ainda não ligada"}</p>
     <p>Consulte os emails, guarde os anexos selecionados no Drive e confirme a associação às faturas abaixo ou na Conferência documental.</p>
@@ -25,9 +26,9 @@ export default function AttachmentSettings({ nif }: { nif?: string }) {
         setBusy(true); setError("");
         try {
           if (google.connected) {
-            await api("/integrations/attachments/google/disconnect", {}, { timeoutMs: 15000 });
+            const result = await api("/integrations/attachments/google/disconnect", {}, { timeoutMs: 15000 });
             setGoogle({ ...google, connected: false, email: "" });
-            setNotice("Conta Google desligada da IAZELA. Pode voltar a ligar para autorizar as novas permissões.");
+            setNotice(result.message);
           }
           else { const result = await api("/integrations/attachments/google/connect", {}, { timeoutMs: 15000 }); window.location.assign(result.url); }
         } catch(e) { setError((e as Error).name === "TimeoutError" ? "O servidor demorou a responder. Atualize a página para confirmar o estado da ligação e tente novamente." : (e as Error).message); }

@@ -106,3 +106,13 @@ def test_xlsx_numeric_dates_and_shared_strings():
     result = parse_purchases(data.getvalue(), "list.xlsx")
     assert result[0]["amount_cents"] == 12300
     assert result[0]["document_date"] == "2026-10-11"
+
+
+def test_cancelled_and_zero_total_documents_are_kept_visible_but_not_importable():
+    data = ("Setor;Emitente;Nº Fatura / ATCUD;Tipo;Data Emissão;Total;IVA;Base Tributável;Situação\n"
+            "Geral;500000000 - Beta;FT B/1 / X-1;Fatura;2026-07-01;10,00 €;1,87 €;8,13 €;Registado\n"
+            "Geral;500000000 - Beta;FT B/2 / X-2;Fatura;2026-07-02;0,00 €;0,00 €;0,00 €;Registado\n"
+            "Geral;500000000 - Beta;FT B/3 / X-3;Fatura;2026-07-03;5,00 €;0,00 €;5,00 €;Documento Anulado pelo Emitente\n")
+    rows = parse_purchases(data.encode("utf-8"), "e-fatura.csv")
+    assert [(row["document"], row["skip_reason"]) for row in rows] == [
+        ("FT B/1", ""), ("FT B/2", "Total 0,00 €"), ("FT B/3", "Anulado pelo emitente no e-Fatura")]

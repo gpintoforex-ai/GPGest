@@ -3,6 +3,7 @@
 import hashlib
 import mimetypes
 import smtplib
+import socket
 import ssl
 from email import policy
 from email.message import EmailMessage
@@ -12,6 +13,7 @@ from fastapi import HTTPException
 
 from .accounting_delivery import csv_file
 from .dossier_package import zip_bytes
+from .email_settings import smtp_security_error
 
 
 class DeliveryFailure(Exception):
@@ -21,13 +23,25 @@ class DeliveryFailure(Exception):
 
 
 def connect(config, password):
+    if error := smtp_security_error(config["port"], config["security"]):
+        raise DeliveryFailure(error)
     client = None
     try:
         context = ssl.create_default_context()
+        # SMTP commands are ASCII, including EHLO on computers with accented hostnames.
+        try:
+            local_hostname = socket.getfqdn().encode("idna").decode("ascii")
+        except UnicodeError:
+            local_hostname = "[127.0.0.1]"
         if config["security"] == "ssl":
-            client = smtplib.SMTP_SSL(config["host"], config["port"], timeout=15, context=context)
+            client = smtplib.SMTP_SSL(
+                config["host"], config["port"], timeout=15,
+                context=context, local_hostname=local_hostname,
+            )
         else:
-            client = smtplib.SMTP(config["host"], config["port"], timeout=15)
+            client = smtplib.SMTP(
+                config["host"], config["port"], timeout=15, local_hostname=local_hostname
+            )
             client.ehlo()
             client.starttls(context=context)
         client.ehlo()
@@ -36,15 +50,23 @@ def connect(config, password):
         advertised = str(client.esmtp_features.get("size", "")).split()
         limit = int(advertised[0]) if advertised and advertised[0].isdigit() else None
         return client, limit
-    except Exception:
+    except Exception as exc:
         if client:
             try:
                 client.close()
             except Exception:
                 pass
-        raise DeliveryFailure(
-            "Não foi possível ligar ou autenticar no servidor SMTP. Reveja o servidor, TLS e as credenciais."
-        ) from None
+        if isinstance(exc, smtplib.SMTPAuthenticationError):
+            message = "O servidor SMTP recusou a autenticação. Reveja o utilizador e a palavra-passe."
+            if config["host"].lower() == "smtp.gmail.com":
+                message += " No Gmail, utilize uma palavra-passe de aplicação da conta Google."
+        elif isinstance(exc, TimeoutError):
+            message = "O servidor SMTP não respondeu a tempo. Reveja a porta, a segurança e a ligação de rede."
+        elif isinstance(exc, ssl.SSLError):
+            message = "Não foi possível estabelecer uma ligação TLS segura. Utilize STARTTLS na porta 587 ou SSL / TLS na porta 465 e verifique o certificado do servidor."
+        else:
+            message = "Não foi possível ligar ou autenticar no servidor SMTP. Reveja o servidor, TLS e as credenciais."
+        raise DeliveryFailure(message) from None
 
 
 def disconnect(client):

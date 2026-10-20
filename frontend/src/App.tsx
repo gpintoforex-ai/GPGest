@@ -1,5 +1,6 @@
 import Brand from "./components/Brand";
 import EmailSettings from "./EmailSettings";
+import { PrivacyNotice } from "./Legal";
 import SaftSales from "./SaftSales";
 import { ActionButton, AppDialog, Notice, confirmAction } from "./components/InteractionUI";
 import Deposits from "./Deposits";
@@ -57,6 +58,7 @@ import ReadAloud from "./ReadAloud";
 import { CashPreferencesProvider } from "./CashPreferences";
 import OpenCashForm from "./OpenCashForm";
 import BankStatements from "./BankStatements";
+import BankOverview from "./BankOverview";
 import BanksCatalog from "./BanksCatalog";
 import Reconciliation from "./Reconciliation";
 import DocumentControl from "./DocumentControl";
@@ -72,12 +74,18 @@ import { api } from "./lib/api";
 import { Empty, Field, Form, Select } from "./components/Form";
 import AttachmentPanel from "./AttachmentPanel";
 import MovementTable from "./MovementTable";
+import DrivePendingNotice from "./DrivePendingNotice";
+import BillingConference from "./BillingConference";
 import AccountingDelivery from "./AccountingDelivery";
+import RubricExpenses from "./RubricExpenses";
+import ManagementDashboard from "./ManagementDashboard";
+import ManagementMaps from "./ManagementMaps";
 import DocumentScanner, { ScanSettings } from "./DocumentScanner";
 import { InvoiceWorkflowSettings } from "./InvoiceWorkflow";
 import Rubrics from "./Rubrics";
 import { CloseButton, confirmFormExit, dismissDisclosure, useOverlayFocus } from "./components/InteractionUI";
 const Inventory = lazy(() => import("./Inventory"));
+const Procurement = lazy(() => import("./Procurement"));
 const HomePage = lazy(() => import("./HomePage"));
 const Warehouses = lazy(() => import("./Warehouses"));
 type Bootstrap = {
@@ -123,6 +131,7 @@ export default function App() {
     [sidebarCollapsed, setSidebarCollapsed] = useState(false),
     [financeOpen, setFinanceOpen] = useState(false),
     [accountingOpen, setAccountingOpen] = useState(false),
+    [procurementOpen, setProcurementOpen] = useState(false),
     [configurationOpen, setConfigurationOpen] = useState(false),
     [parametersOpen, setParametersOpen] = useState(false),
     [scanMenuOpen, setScanMenuOpen] = useState(false),
@@ -132,7 +141,7 @@ export default function App() {
     [store, setStore] = useState(""),
     [requestKey, setRequestKey] = useState(crypto.randomUUID());
   useOverlayFocus(mobile, ".sidebar", () => setMobile(false));
-  const pageTitle = page === "Dashboard" ? "Visão geral" : page;
+  const pageTitle = page === "Dashboard" ? "Visão geral" : page === "Compras e Stock — Visão geral" ? "Compras e Stock" : page;
   useEffect(() => {
     document.title = boot ? `${pageTitle} · IAZELA` : "Entrar · IAZELA";
   }, [pageTitle, !!boot]);
@@ -146,7 +155,7 @@ export default function App() {
       "Configuração inicial",
       "Integrações",
       "Regime de IVA",
-      "Apar?ncia",
+      "Aparência",
       "Anexos",
       "Digitalização",
       "Verificação automática e-Fatura",
@@ -340,6 +349,7 @@ export default function App() {
                 required
               />
             </Field>
+            <PrivacyNotice />
           </Form>
           <ActionButton type="button" onClick={async () => {
             await api("/company/clear", {});
@@ -374,6 +384,7 @@ export default function App() {
 
     ["Bancos", Landmark],
     ["Contabilidade", FileBarChart],
+    ["Compras e Stock", Package],
     ["Tabelas", Package],
     ["Receitas e despesas", Receipt],
     ["Relatórios", FileBarChart],
@@ -399,7 +410,7 @@ export default function App() {
     ["Movimentos previstos", Clock],
     ["Depósitos", Landmark],
     ["Previsão de liquidez", Clock],
-    ...(boot.integration?.mode === "local" ? [["Importar SAF-T de vendas", FileUp] as const] : []),
+    ...(boot.integration?.mode === "local" ? [["Importar SAF-T de vendas", FileUp] as const, ["Faturação e recebimentos", Receipt] as const] : []),
   ] as const;
 
   const banksMenu = [
@@ -407,7 +418,8 @@ export default function App() {
     ["Extratos", Receipt],
     ["Reconciliação automática", CheckCircle],
   ] as const;
-  const accountingMenu = [["Conferência documental", Receipt], ["Digitalizar documento", Camera], ["Entrega à contabilidade", FileBarChart]] as const;
+  const accountingMenu = [["Conferência documental", Receipt], ["Digitalizar documento", Camera], ["Despesas por rubrica", FileBarChart], ["Mapas de gestão", FileBarChart], ["Entrega à contabilidade", FileBarChart]] as const;
+  const procurementMenu = [["Compras e Stock — Visão geral", LayoutDashboard], ["Encomendas a fornecedores", Receipt], ["Receções de mercadoria", Package], ["Compras", Receipt], ["Devoluções a fornecedores", ArrowLeftRight], ["Movimentos de stock", ArrowLeftRight]] as const;
   const tablesMenu = [
     ["Clientes", Receipt],
     ["Fornecedores", Landmark],
@@ -452,7 +464,6 @@ export default function App() {
     } catch (e) { setError((e as Error).message); }
     finally { setRegisterBusy(""); removingRegister.current = false; }
   }
-  const filteredCash = open.reduce((sum, s) => sum + s.balance_cents, 0);
   const integratedMode = boot.integration?.mode === "integrated";
   const operatingMode = integratedMode
     ? "Modo integrado com ERP"
@@ -481,11 +492,13 @@ export default function App() {
                 ? { items: banksMenu, expanded: banksOpen, toggle: () => setBanksOpen(!banksOpen), id: "banks-submenu" }
               : label === "Contabilidade"
                 ? { items: accountingMenu, expanded: accountingOpen, toggle: () => setAccountingOpen(!accountingOpen), id: "accounting-submenu" }
+              : label === "Compras e Stock"
+                ? { items: procurementMenu, expanded: procurementOpen, toggle: () => setProcurementOpen(!procurementOpen), id: "procurement-submenu" }
                 : { items: financeMenu, expanded: financeOpen, toggle: () => setFinanceOpen(!financeOpen), id: "finance-submenu" };
             const groupedMenu = group.items;
             const expanded = group.expanded;
             const submenuId = group.id;
-            return label === "Tesouraria" || label === "Bancos" || label === "Contabilidade" || label === "Tabelas" || label === "Configurações" ? (
+            return label === "Tesouraria" || label === "Bancos" || label === "Contabilidade" || label === "Compras e Stock" || label === "Tabelas" || label === "Configurações" ? (
               <div className="finance-menu" key={label}>
                 <ActionButton
                   className={
@@ -559,7 +572,7 @@ export default function App() {
                           setError("");
                         }}
                       >
-                        <FinanceIcon size={17} /> <span className="nav-label">{name}</span>
+                        <FinanceIcon size={17} /> <span className="nav-label">{name === "Compras e Stock — Visão geral" ? "Visão geral" : name}</span>
                         {page === name && <ChevronRight size={15} />}
                       </ActionButton>
                     ) : null
@@ -690,6 +703,7 @@ export default function App() {
               </span>
             </div>
           )}
+          {manager && <DrivePendingNotice key={boot.user.id} onOpen={navigatePage} />}
           {notice && (
             <Notice onDismiss={() => setNotice("")} className="success" role="status">
               {notice}
@@ -718,36 +732,8 @@ export default function App() {
                   </ActionButton>
                 )}
               </div>
-              <div className="stats">
-                <article className="stat green">
-                  <span>
-                    Saldo de numerário <Wallet size={20} />
-                  </span>
-                  <strong>{money(filteredCash)}</strong>
-                  <small>{open.length} caixa(s) aberta(s)</small>
-                </article>
-                <article className="stat">
-                  <span>
-                    Contas bancárias <Landmark size={20} />
-                  </span>
-                  <strong>{boot.accounts.filter(account => !store || account.store_id === store).length}</strong>
-                  <small>Contas do contexto selecionado</small>
-                </article>
-                <article className="stat">
-                  <span>
-                    Caixas abertas <Wallet size={20} />
-                  </span>
-                  <strong>{open.length}</strong>
-                  <small>Disponíveis para conferência</small>
-                </article>
-                <article className="stat">
-                  <span>
-                    Movimentos na consulta <ArrowLeftRight size={20} />
-                  </span>
-                  <strong>{visibleMovements.length}</strong>
-                  <small>Registos carregados nesta consulta</small>
-                </article>
-              </div>
+              <ManagementDashboard store={store} scopeKey={`${boot.company?.id || boot.company?.nif || ""}:${boot.user.id}`} companyName={boot.company?.name || "Empresa"}
+                mode={boot.integration?.mode || "local"} role={boot.user.role} navigate={navigatePage} onAction={kind => void openModal(kind)} />
               <div className="dashboard-grid">
                 <section className="panel">
                   <div className="panel-title">
@@ -779,35 +765,6 @@ export default function App() {
                   >
                     Gerir caixas <ChevronRight size={16} />
                   </ActionButton>
-                </section>
-                <section className="panel">
-                  <div className="panel-title">
-                    <h3>Prioridades</h3>
-                    <Clock size={20} />
-                  </div>
-                  <div className="priority">
-                    <b>{open.length}</b>
-                    <div>
-                      <strong>Caixas por fechar</strong>
-                      <small>Consulte o saldo e conte o numerário.</small>
-                    </div>
-                  </div>
-                  <div className="priority">
-                    <b>—</b>
-                    <div>
-                      <strong>Reconciliação bancária</strong>
-                      <small>Sugestões automáticas com confirmação das associações.</small>
-                      <ActionButton className="text-button" onClick={() => navigatePage("Reconciliação automática")}>Consultar reconciliação</ActionButton>
-                    </div>
-                  </div>
-                  <div className="priority">
-                    <b>—</b>
-                    <div>
-                      <strong>Conferência documental</strong>
-                      <small>Reveja as faturas e os anexos da empresa.</small>
-                      <ActionButton className="text-button" onClick={() => navigatePage("Conferência documental")}>Consultar documentos</ActionButton>
-                    </div>
-                  </div>
                 </section>
               </div>
               <section className="panel">
@@ -978,25 +935,7 @@ export default function App() {
                   </ActionButton>
                 )}
               </div>
-              <div className="cash-grid">
-                {boot.accounts
-                  .filter((a) => !store || a.store_id === store)
-                  .map((a) => (
-                    <section className="panel" key={a.id}>
-                      <Landmark className="bank-icon" />
-                      <h3>{a.name}</h3>
-                      <p>{a.bank}</p>
-                      <p className="iban">IBAN ···· {a.iban_last4}</p>
-                      <span className="pill neutral">Importação de extratos</span>
-                      <p>
-                        <small>
-                          Consulte os movimentos e o saldo na área de extratos.
-                        </small>
-                      </p>
-                      {manager && <ActionButton onClick={() => openModal("edit-account", a)} aria-label={`Editar conta ${a.name}`}><Pencil size={16} />Editar conta</ActionButton>}
-                    </section>
-                  ))}
-              </div>
+              <BankOverview accounts={boot.accounts} store={store} onEdit={manager ? a => openModal("edit-account", a) : undefined} onReconcile={id => { sessionStorage.setItem("iazela-bank-reconciliation-account", id); navigatePage("Reconciliação automática"); }} />
               {!boot.accounts.some(a => !store || a.store_id === store) && <Empty text="Ainda não existem contas bancárias nesta seleção" />}
               <ActionButton onClick={() => navigatePage("Extratos")}>Consultar extratos</ActionButton>
             </>
@@ -1009,9 +948,11 @@ export default function App() {
             </>
           )}
           {page === "Reconciliação automática" && (
-            <Reconciliation stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} />
+            <Reconciliation accounts={boot.accounts} stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} />
           )}
           {page === "Conferência documental" && <DocumentControl stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} integration={boot.integration} />}
+          {page === "Despesas por rubrica" && manager && <RubricExpenses stores={boot.stores} store={store} categories={boot.categories} admin={boot.user.role === "administrador"} integrated={integratedMode} />}
+          {page === "Mapas de gestão" && manager && <ManagementMaps store={store} />}
           {page === "Entrega à contabilidade" && <AccountingDelivery admin={boot.user.role === "administrador"} company={boot.company || {}} stores={boot.stores} store={store} onEmailSettings={() => navigatePage("Email")} onSettings={() => navigatePage(manager ? "Regime de IVA" : "Organização")} />}
           {page === "Email" && <EmailSettings admin={boot.user.role === "administrador"} company={boot.company || {}} stores={boot.stores}/>}
           {page === "Importar SAF-T de vendas" && <SaftSales stores={boot.stores} store={store} admin={boot.user.role === "administrador"} local={boot.integration?.mode === "local"}/>}
@@ -1276,8 +1217,10 @@ export default function App() {
           )}
           {page === "Depósitos" && <Deposits boot={boot} store={store} reload={reload} />}
           {page === "Previsão de liquidez" && <Liquidity boot={boot} store={store} />}
+          {page === "Faturação e recebimentos" && <BillingConference stores={boot.stores} store={store} manager={manager} />}
           {page === "Armazéns" && <Suspense fallback={<p role="status">A carregar armazéns…</p>}><Warehouses stores={boot.stores} /></Suspense>}
           {page === "Artigos e validades" && <Suspense fallback={<p role="status">A carregar artigos e stock…</p>}><Inventory stores={boot.stores} admin={boot.user.role === "administrador"} /></Suspense>}
+          {procurementMenu.some(([name]) => name === page) && <Suspense fallback={<p role="status">A carregar compras e stock…</p>}><Procurement key={page} section={page} store={store} stores={boot.stores} categories={boot.categories} navigate={navigatePage} /></Suspense>}
           {[
             "Receitas e despesas",
           ].includes(page) && (

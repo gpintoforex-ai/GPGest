@@ -190,5 +190,3 @@
   flex-shrink: 0;
   color: var(--color-nav, #14263f);
 }
-.record-period-shortcuts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-.record-period-shortcuts button[aria-pressed="true"] { background: #173f3a; color: white; border-color: #173f3a; }

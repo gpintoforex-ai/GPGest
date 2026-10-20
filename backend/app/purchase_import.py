@@ -24,6 +24,10 @@ ALIASES = {
     "amount_cents": ["Total", "Valor total", "Total documento", "Total com IVA", "Valor total da fatura", "Montante", "Valor da fatura"],
     "tax_cents": ["IVA", "Valor IVA", "Total IVA", "Imposto", "Valor do IVA"],
     "base_cents": ["Base Tributável", "Base tributaria", "Valor base", "Total sem IVA"],
+    # Só existe em algumas exportações; quando falta, o NIF da empresa não é validado pelo ficheiro.
+    "buyer_nif": ["NIF adquirente", "NIF do adquirente", "Adquirente", "NIF cliente"],
+    # Exportação do portal: «Registado» ou «Documento Anulado pelo Emitente».
+    "status": ["Situação", "Estado", "Estado do documento"],
 }
 
 
@@ -74,7 +78,8 @@ def money(value):
     return int(amount)
 
 
-def parse_purchases(data, filename):
+def parse_purchases(data, filename, info=None):
+    """Linhas de compras validadas. `info`, se indicado, recebe formato, colunas e NIF adquirente."""
     if filename.lower().endswith(".xlsx"):
         rows, epoch = worksheet(data)
     elif filename.lower().endswith(".csv"):
@@ -106,6 +111,14 @@ def parse_purchases(data, filename):
             break
     if header < 0:
         raise ValueError("Não foi possível reconhecer as colunas. Use o modelo CSV: NIF fornecedor;Fornecedor;Documento;Tipo;Data;Total;IVA.")
+    buyers = set()
+    if info is not None:
+        info.update(
+            format="XLSX" if filename.lower().endswith(".xlsx") else "CSV",
+            columns=[rows[header][index] for key, index in columns.items() if index >= 0 and index < len(rows[header])],
+            buyer_column=columns.get("buyer_nif", -1) >= 0,
+            buyer_nifs=buyers,
+        )
     result = []
     for line, row in enumerate(rows[header + 1:], header + 2):
         if not any(value.strip() for value in row):
@@ -149,8 +162,13 @@ def parse_purchases(data, filename):
             if parsed is None:
                 raise ValueError("Data inválida")
             amount = money(value("amount_cents"))
-            if not amount:
-                raise ValueError("O total deve ser diferente de zero")
+            # Documentos anulados e de total zero são válidos no e-Fatura, mas não geram compras:
+            # ficam na pré-visualização como não importados, com o motivo.
+            skip = ""
+            if columns.get("status", -1) >= 0 and "anulad" in normal(value("status")):
+                skip = "Anulado pelo emitente no e-Fatura"
+            elif not amount:
+                skip = "Total 0,00 €"
             if kind in {"NC", "RE"}:
                 amount = -abs(amount)
             elif amount < 0:
@@ -159,10 +177,12 @@ def parse_purchases(data, filename):
             base = money(value("base_cents")) if value("base_cents") else None
             if base is not None and kind in {"NC", "RE"}:
                 base = -abs(base)
+            if columns.get("buyer_nif", -1) >= 0 and value("buyer_nif"):
+                buyers.add(re.sub(r"\D", "", value("buyer_nif").removeprefix("PT"))[:9])
             name = issuer_name or value("supplier_name") or nif
             if len(name) > 300:
                 raise ValueError("Nome do fornecedor demasiado longo")
-            result.append({"supplier_nif": nif, "supplier_name": name, "document": document, "document_type": kind, "document_date": parsed.isoformat(), "amount_cents": amount, "base_cents": base, "tax_cents": abs(tax), "tax_provided": bool(value("tax_cents")), "line": line})
+            result.append({"supplier_nif": nif, "supplier_name": name, "document": document, "document_type": kind, "document_date": parsed.isoformat(), "amount_cents": amount, "base_cents": base, "tax_cents": abs(tax), "tax_provided": bool(value("tax_cents")), "line": line, "skip_reason": skip})
         except (ValueError, InvalidOperation, OverflowError) as exc:
             raise ValueError(f"Linha {line}: {exc}. Nenhuma compra foi importada.") from exc
     if not result:

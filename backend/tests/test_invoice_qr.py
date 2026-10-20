@@ -22,7 +22,7 @@ def document(*payloads):
 def test_rendered_qr_later_page_and_repeated_same_document():
     result=extract_pdf_qr(document(None,PAYLOAD,PAYLOAD),LIMITS)
     assert result["status"]=="found" and len(result["documents"])==1
-    assert result["documents"][0]=={"nif":"500000000","document_type":"FT","document_date":"2026-10-14","document":"FT DEMO/12","amount_cents":12345,"atcud":"DEMO1234-12","page":2,"status":"N"}
+    assert result["documents"][0]=={"nif":"500000000","document_type":"FT","document_date":"2026-10-14","document":"FT DEMO/12","amount_cents":12345,"atcud":"DEMO1234-12","page":2,"status":"N","tax_breakdown":[]}
 
 def test_different_documents_require_selection_and_non_fiscal_is_ignored():
     other=PAYLOAD.replace("DEMO/12","DEMO/13")

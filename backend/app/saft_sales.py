@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .db import db_session
+from .drive_imports import download, drive_configured, list_files, mark_imported
 from .models import (
     BusinessEntity,
     CompanySetup,
@@ -42,6 +43,26 @@ from .schemas import Strict
 
 MAX_BYTES = min(500_000_000, max(64_000, int(os.getenv("SAFT_MAX_FILE_BYTES", "100000000"))))
 WORKERS = threading.BoundedSemaphore(2)
+
+
+# Único modo de importação: faturação para análise e conferência. Nunca cria entradas em
+# caixa ou banco, não substitui o realizado das caixas e não movimenta stock (o stock SAF-T
+# tem um fluxo próprio, com aplicação explícita).
+PURPOSE = {
+    "id": "analise_faturacao_conferencia",
+    "label": "Importar para análise de faturação e conferência",
+    "effects": [
+        "Importa documentos de venda, clientes e artigos para análise.",
+        "Não gera entradas em caixa, banco nem movimentos reais.",
+        "Não substitui o realizado das caixas nem movimenta stock.",
+        "Pagamentos indicados no ficheiro ficam como apoio à conferência.",
+    ],
+}
+
+
+class DriveImport(Strict):
+    store_id: str = Field(min_length=1, max_length=36)
+    drive_id: str = Field(min_length=1, max_length=200)
 
 
 class SaftBodyLimit:
@@ -184,6 +205,7 @@ def project(row):
         "created_at": row.created_at,
         "processing_started_at": row.processing_started_at,
         "finished_at": row.finished_at,
+        "purpose": PURPOSE,
     }
 
 
@@ -233,7 +255,7 @@ def review_items(db, row):
                 "Faturação não equivale a recebimentos. Informação de recebimento indisponível quando não constam pagamentos com data e meio identificados.",
                 "Transportes, encomendas e movimentos contabilísticos não são importados como faturação.",
                 "Estados A/F/R/S e tipos especiais fora de FT/FS/FR/ND/NC ficam disponíveis para consulta, excluídos da faturação normal.",
-                "As assinaturas fiscais não são certificadas pela Zela; a validação estrutural usa o XSD oficial da AT.",
+                "As assinaturas fiscais não são certificadas pela IAZELA; a validação estrutural usa o XSD oficial da AT.",
             ],
         }
     )
@@ -455,7 +477,7 @@ def confirm_worker(bind, info, identifier, choices, audit):
                 db.get(User, json.loads(row.summary).get("confirmed_by", row.user_id)),
                 "saft_importacao_concluida",
                 row.id,
-                {"fingerprint": row.fingerprint, "result": dict(counts), "ledger_changed": False},
+                {"fingerprint": row.fingerprint, "result": dict(counts), "ledger_changed": False, "purpose": PURPOSE["id"]},
                 row.store_id,
             )
             db.commit()
@@ -473,6 +495,30 @@ class ConfirmInput(Strict):
     confirmed: Literal[True]
     revision: int = Field(ge=1)
     conflicts: dict[str, Literal["keep", "replace"]] = Field(default_factory=dict)
+    accept_unmapped_payments: bool = False
+
+
+def payment_check(db, row):
+    """Códigos de pagamento do ficheiro ainda sem meio associado e política da empresa."""
+    settings = db.get(CompanySetup, "default")
+    stored = json.loads(settings.settings or "{}") if settings else {}
+    mapping = stored.get("saft_payment_mapping", {})
+    codes = json.loads(row.summary or "{}").get("payment_codes", {})
+    unmapped = {code: count for code, count in codes.items() if code != "(sem código)" and code not in mapping}
+    block = stored.get("preferences", {}).get("saft_block_unmapped", True)
+    return {
+        "unmapped": unmapped,
+        "without_code": codes.get("(sem código)", 0),
+        "block": bool(block),
+        "message": (
+            "Associe os códigos de pagamento "
+            + ", ".join(sorted(unmapped))
+            + " a meios de pagamento antes de confirmar."
+            if block
+            else "Os pagamentos com os códigos " + ", ".join(sorted(unmapped))
+            + " ficam por classificar na conferência. Confirme explicitamente ou associe-os primeiro."
+        ) if unmapped else "",
+    }
 
 
 class MappingInput(Strict):
@@ -535,40 +581,7 @@ def register_routes(app, current, authorize, scope, audit):
                         )
                     sha.update(chunk)
                     output.write(chunk)
-            if not size:
-                raise HTTPException(422, "O ficheiro XML está vazio.")
-            previous = db.scalar(
-                select(SaftImport)
-                .where(
-                    SaftImport.fingerprint == sha.hexdigest(),
-                    SaftImport.store_id == store_id,
-                    SaftImport.status.in_(["ready", "validating", "importing", "completed"]),
-                )
-                .order_by(SaftImport.created_at.desc())
-            )
-            if previous:
-                Path(path).unlink(missing_ok=True)
-                return project(previous)
-            row = SaftImport(
-                store_id=store_id,
-                user_id=user.id,
-                filename=Path(file.filename.replace("\\", "/")).name[:200],
-                fingerprint=sha.hexdigest(),
-                size_bytes=size,
-            )
-            db.add(row)
-            db.flush()
-            audit(
-                db,
-                user,
-                "saft_ficheiro_recebido",
-                row.id,
-                {"size_bytes": size, "fingerprint": row.fingerprint},
-                store_id,
-            )
-            db.commit()
-            background.add_task(prepare_worker, db.get_bind(), dict(db.info), row.id, path)
-            return project(row)
+            return accept(db, user, store_id, file.filename, path, size, sha.hexdigest(), background)
         except Exception:
             if path:
                 Path(path).unlink(missing_ok=True)
@@ -576,10 +589,83 @@ def register_routes(app, current, authorize, scope, audit):
         finally:
             await file.close()
 
+    def accept(db, user, store_id, filename, path, size, fingerprint, background, origin=None):
+        if not size:
+            raise HTTPException(422, "O ficheiro XML está vazio.")
+        previous = db.scalar(
+            select(SaftImport)
+            .where(
+                SaftImport.fingerprint == fingerprint,
+                SaftImport.store_id == store_id,
+                SaftImport.status.in_(["ready", "validating", "importing", "completed"]),
+            )
+            .order_by(SaftImport.created_at.desc())
+        )
+        if previous:
+            Path(path).unlink(missing_ok=True)
+            return project(previous)
+        row = SaftImport(
+            store_id=store_id,
+            user_id=user.id,
+            filename=Path(filename.replace("\\", "/")).name[:200],
+            fingerprint=fingerprint,
+            size_bytes=size,
+        )
+        db.add(row)
+        db.flush()
+        detail = {"size_bytes": size, "fingerprint": row.fingerprint}
+        if origin:
+            detail["origem"] = origin
+        audit(db, user, "saft_ficheiro_recebido", row.id, detail, store_id)
+        db.commit()
+        background.add_task(prepare_worker, db.get_bind(), dict(db.info), row.id, path)
+        return project(row)
+
+    @app.get("/api/saft/drive-files")
+    def drive_files(user=Depends(current), db: Session = Depends(db_session)):
+        admin(user, db)
+        if not drive_configured(db):
+            return {"configured": False, "files": []}
+        return {"configured": True, "files": mark_imported(db, "saft", list_files(db, "saft"))}
+
+    @app.post("/api/saft/imports/drive")
+    def upload_from_drive(
+        data: DriveImport,
+        background: BackgroundTasks,
+        user=Depends(current),
+        db: Session = Depends(db_session),
+    ):
+        admin(user, db)
+        enterprise(db)
+        if not db.get(Store, data.store_id):
+            raise HTTPException(404, "Estabelecimento não encontrado nesta empresa.")
+        path = None
+        try:
+            sha = hashlib.sha256()
+            with tempfile.NamedTemporaryFile(
+                prefix="zela-saft-", suffix=".xml", delete=False
+            ) as output:
+                path = output.name
+
+                def write(chunk):
+                    sha.update(chunk)
+                    output.write(chunk)
+
+                name, size = download(db, "saft", data.drive_id, MAX_BYTES, write)
+            return accept(
+                db, user, data.store_id, name, path, size, sha.hexdigest(), background,
+                origin={"google_drive": data.drive_id},
+            )
+        except Exception:
+            if path:
+                Path(path).unlink(missing_ok=True)
+            raise
+
     @app.get("/api/saft/imports/{identifier}")
     def detail(identifier: str, user=Depends(current), db: Session = Depends(db_session)):
         admin(user, db)
-        return project(get_row(db, identifier))
+        row = get_row(db, identifier)
+        return {**project(row), "payment_check": payment_check(db, row)}
 
     @app.get("/api/saft/imports/{identifier}/items")
     def items(
@@ -688,6 +774,9 @@ def register_routes(app, current, authorize, scope, audit):
                 422,
                 "Decida manter ou substituir cada registo em conflito, incluindo os das outras páginas.",
             )
+        check = payment_check(db, row)
+        if check["unmapped"] and (check["block"] or not data.accept_unmapped_payments):
+            raise HTTPException(409, check["message"])
         row.status, row.error, row.finished_at = "importing", "", None
         row.processing_started_at = now()
         row.summary = canonical({**json.loads(row.summary), "confirmed_by": user.id})
@@ -733,15 +822,20 @@ def register_routes(app, current, authorize, scope, audit):
     @app.get("/api/saft/payment-mapping")
     def mapping(user=Depends(current), db: Session = Depends(db_session)):
         admin(user, db)
+        from .saft_mapping import DESCRIPTIONS, recommendations
         from .cash_local import method_catalog
 
         settings = db.get(CompanySetup, "default")
+        methods = [item for item in method_catalog(db) if item["active"]]
+        saved = json.loads(settings.settings or "{}").get("saft_payment_mapping", {}) if settings else {}
         return {
             "mapping": json.loads(settings.settings or "{}").get("saft_payment_mapping", {})
             if settings
             else {},
             "codes": sorted(PAYMENT_CODES),
-            "methods": [item for item in method_catalog(db) if item["active"]],
+            "methods": methods,
+            "descriptions": DESCRIPTIONS,
+            "suggestions": recommendations(methods, saved),
         }
 
     @app.post("/api/saft/payment-mapping")

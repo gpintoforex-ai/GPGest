@@ -29,6 +29,13 @@ LABELS = {
     "outro": "Outro",
 }
 
+PAYMENT_CODE_METHODS = {
+    "NU": "numerario",
+    "CD": "cartao",
+    "CC": "cartao",
+    "TB": "transferencia",
+}
+
 
 def is_real_cash_movement(data):
     """Opening funds and shift totals carry balances rather than new money."""
@@ -57,15 +64,10 @@ def payment_key(row):
     if row.get("_local_payment_key"):
         return row["_local_payment_key"], row["_local_payment_name"]
     code = row.get("payment_code")
-    codes = {
-        "NU": "numerario",
-        "MO": "numerario",
-        "CD": "cartao",
-        "CC": "cartao",
-        "TB": "transferencia",
-    }
-    if code in codes:
-        key = codes[code]
+    if code == "MO":
+        return "numerario", LABELS["numerario"]
+    if code in PAYMENT_CODE_METHODS:
+        key = PAYMENT_CODE_METHODS[code]
         return key, LABELS[key]
     name = str(row.get("payment") or "Não indicado").strip()
     plain = "".join(

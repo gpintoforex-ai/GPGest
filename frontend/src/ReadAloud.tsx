@@ -152,6 +152,10 @@ export default function ReadAloud({
       const voice =
         choices.find((item) => voiceKey(item) === preferences.voice) ||
         choices[0];
+      if (!voice) {
+        setError("Não está disponível uma voz portuguesa local. Instale uma voz no dispositivo; a leitura não enviará o texto a uma voz remota.");
+        return;
+      }
       const parts = speechParts(text);
       if (!parts.length) return;
       const queue: SpeechSynthesisUtterance[] = parts.map((part, index) => {

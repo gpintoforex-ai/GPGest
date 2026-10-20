@@ -4,15 +4,22 @@ import hashlib
 import json
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pydantic import Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .access import authorize, current, record, serial
 from .db import db_session
-from .models import BankAccount, BankInstitution, BankTransaction, Store
-from .schemas import BankAccountDetailsEdit, BankCreate, BankInstitutionEdit, Name
+from .drive_imports import download, drive_configured, list_files, mark_imported
+from .models import BankAccount, BankInstitution, BankTransaction, DocumentImport, Store
+from .schemas import BankAccountDetailsEdit, BankCreate, BankInstitutionEdit, Name, Strict
 
 router = APIRouter()
+STATEMENT_MAX_BYTES = 5_000_000
+
+
+class DriveStatement(Strict):
+    drive_id: str = Field(min_length=1, max_length=200)
 
 
 @router.get("/api/banks")
@@ -86,7 +93,9 @@ def edit_account(account_id: str, data: BankAccountDetailsEdit, user=Depends(cur
     if not account:
         raise HTTPException(404, "Conta bancária não encontrada.")
     authorize(user, db, account.store_id, ["administrador", "gestor"])
-    from .company_setup import iban as validate_iban, amount as setup_amount, unpack
+    from .company_setup import amount as setup_amount
+    from .company_setup import iban as validate_iban
+    from .company_setup import unpack
     from .models import AccountBalanceReference
     from .platform import cipher
     if data.store_id and data.store_id != account.store_id:
@@ -165,16 +174,50 @@ def import_bpi(
     user=Depends(current),
     db: Session = Depends(db_session),
 ):
-    from .bpi_import import parse_bpi
-    from .viva_import import parse_viva
+    account = statement_account(db, user, account_id)
+    data = file.file.read(STATEMENT_MAX_BYTES + 1)
+    if len(data) > STATEMENT_MAX_BYTES:
+        raise HTTPException(413, "O limite do ficheiro é 5 MB.")
+    return import_statement(db, user, account, data, file.filename, confirm)
 
+
+@router.get("/api/accounts/{account_id}/drive-statements")
+def drive_statements(account_id: str, user=Depends(current), db: Session = Depends(db_session)):
+    statement_account(db, user, account_id)
+    if not drive_configured(db):
+        return {"configured": False, "files": []}
+    return {"configured": True, "files": mark_imported(db, "statement", list_files(db, "statement"))}
+
+
+@router.post("/api/accounts/{account_id}/import-statement/drive")
+def import_drive_statement(
+    account_id: str,
+    data: DriveStatement,
+    confirm: bool = False,
+    user=Depends(current),
+    db: Session = Depends(db_session),
+):
+    statement_account(db, user, account_id)
+    chunks = []
+    name, _ = download(db, "statement", data.drive_id, STATEMENT_MAX_BYTES, chunks.append)
+    # authorized_client pode ter confirmado a sessão ao renovar o token: voltar a bloquear a conta.
+    account = statement_account(db, user, account_id)
+    return import_statement(db, user, account, b"".join(chunks), name, confirm)
+
+
+def statement_account(db, user, account_id):
     account = db.scalar(select(BankAccount).where(BankAccount.id == account_id).with_for_update())
     if not account:
         raise HTTPException(404, "Conta não encontrada.")
     authorize(user, db, account.store_id, ["administrador", "gestor"])
-    data = file.file.read(5_000_001)
-    if len(data) > 5_000_000:
-        raise HTTPException(413, "O limite do ficheiro é 5 MB.")
+    return account
+
+
+def import_statement(db, user, account, data, filename, confirm):
+    from .bpi_import import parse_bpi
+    from .viva_import import parse_viva
+
+    account_id = account.id
     try:
         is_viva = not data.startswith(b"PK")
         source, rows = parse_viva(data) if is_viva else parse_bpi(data)
@@ -198,12 +241,10 @@ def import_bpi(
             new.append(row)
             seen.add(row["fingerprint"])
     if confirm:
-        from .models import DocumentImport
-
         batch = DocumentImport(
             store_id=account.store_id,
             user_id=user.id,
-            filename=(file.filename or ("extrato.xls" if is_viva else "extrato.xlsx")).replace("\\", "/").split("/")[-1][:200],
+            filename=(filename or ("extrato.xls" if is_viva else "extrato.xlsx")).replace("\\", "/").split("/")[-1][:200],
             fingerprint=hashlib.sha256(data).hexdigest(),
             source="viva_wallet_xls" if is_viva else "bpi_xlsx",
         )

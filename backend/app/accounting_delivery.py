@@ -84,7 +84,7 @@ def dossier_reports(db, rows, erp, state, period):
                 "exported_at": getattr(period, "exported_at", now().isoformat()),
                 "documents": len(rows),
                 "erp_documents": len(erp),
-                "scope": "Documentos e anexos atualmente disponíveis na Zela para este período. O fecho de entrega não bloqueia alterações aos documentos nem confirma obrigações fiscais.",
+                "scope": "Documentos e anexos atualmente disponíveis na IAZELA para este período. O fecho de entrega não bloqueia alterações aos documentos nem confirma obrigações fiscais.",
             },
             ensure_ascii=False,
             indent=2,
@@ -209,8 +209,9 @@ def register_routes(app, current, authorize, record, projection, build_package):
         authorize(user, db, roles=["administrador"])
         config = db.get(CompanyFiscalSettings, "default")
         mode = config.vat_period if config else ""
+        regime = config.vat_regime if config else ""
         if not mode:
-            return {"vat_period": "", "periods": []}
+            return {"vat_period": "", "vat_regime": regime, "periods": []}
         entries = [summary(db, mode, year, n) for n in range(1, 13 if mode == "mensal" else 5)]
         # Preserve access to previously closed periods after a change of VAT regime.
         for old in db.scalars(
@@ -221,7 +222,7 @@ def register_routes(app, current, authorize, record, projection, build_package):
             )
         ):
             entries.append(summary(db, old.vat_period, year, old.number))
-        return {"vat_period": mode, "periods": entries}
+        return {"vat_period": mode, "vat_regime": regime, "periods": entries}
 
     @app.post("/api/accounting/delivery-periods/close")
     def close(data: CloseRequest, user=Depends(current), db: Session = Depends(db_session)):

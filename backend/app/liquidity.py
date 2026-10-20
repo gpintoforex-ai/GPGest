@@ -292,13 +292,13 @@ def register_routes(app, current, authorize, scope, audit, serial, planned_summa
             if store_id and obj.store_id != store_id:
                 continue
             if key.startswith("bank:"):
-                transactions = list(db.scalars(select(BankTransaction).where(BankTransaction.account_id == obj.id, BankTransaction.movement_date <= stamp).order_by(BankTransaction.exported_at.desc(), BankTransaction.source_position.asc(), BankTransaction.created_at.desc())))
+                transactions = list(db.scalars(select(BankTransaction).where(BankTransaction.account_id == obj.id, BankTransaction.movement_date <= stamp).order_by(BankTransaction.movement_date.desc(), BankTransaction.exported_at.desc(), BankTransaction.source_position.asc(), BankTransaction.created_at.desc())))
                 last = transactions[0] if transactions else None
                 reference = db.get(AccountBalanceReference, key)
                 value = last.balance_cents if last else None
                 source = "Último saldo do extrato importado"
                 updated, balance_date = last.created_at.isoformat() if last else None, last.movement_date if last else None
-                kind = "contabilistico"
+                kind = "bancario"
                 uses_reference = bool(reference and (not last or last.movement_date < reference.reference_date))
                 if uses_reference:
                     value, source, updated, balance_date, kind = reference.amount_cents, "Saldo inicial local com data de referência", reference.updated_at.isoformat(), reference.reference_date, "estimado"
@@ -356,7 +356,7 @@ def register_routes(app, current, authorize, scope, audit, serial, planned_summa
             if row["kind"] == "previsto" and row["store_id"] in ids:
                 event("wintouch:" + row["id"], row["store_id"], (row.get("entity") or "Entidade não indicada") + " · " + row["document"], row["amount_cents"], row["direction"], row.get("due_date"), currency=row.get("currency") or "EUR", source_url="?page=Movimentos%20previstos", updated_at=str(row["synced_at"]), entity=row.get("entity") or "", document=row["document"], document_id=row.get("source_document_id"), document_date=row.get("document_date") or day(row["occurred_at"]))
                 events[-1]["paid_cents"] = erp_paid.get(row["id"])
-                events[-1]["paid_source"] = "Liquidações no ERP confirmadas através da Zela; pode não incluir pagamentos anteriores ou feitos diretamente no ERP"
+                events[-1]["paid_source"] = "Liquidações no ERP confirmadas através da IAZELA; pode não incluir pagamentos anteriores ou feitos diretamente no ERP"
         for row in db.scalars(select(LiquidityManual).where(LiquidityManual.store_id.in_(ids), LiquidityManual.active.is_(True))):
             data = json.loads(row.data)
             for index, occurrence in enumerate(occurrences(data, end)):
@@ -481,6 +481,9 @@ def register_routes(app, current, authorize, scope, audit, serial, planned_summa
     @app.post("/api/liquidity/forecast")
     def get_forecast(data: ForecastInput, user=Depends(current), db: Session = Depends(db_session)):
         return forecast(data, user, db)
+
+    # Reutilizado pelo dashboard (mesmos saldos, eventos e premissas da previsão de liquidez).
+    app.state.liquidity = {"forecast": forecast, "source_data": source_data, "input": ForecastInput}
 
     @app.post("/api/liquidity/settlement-proposal")
     def settlement_proposal(data: SettlementProposalInput, user=Depends(current), db: Session = Depends(db_session)):
@@ -681,6 +684,11 @@ def register_routes(app, current, authorize, scope, audit, serial, planned_summa
             db.add(move); db.flush()
         payment = DocumentPayment(store_id=item["store_id"], payment_date=data.payment_date.isoformat(), amount_cents=data.amount_cents, direction=item["direction"], reference=item["title"][:200], entity=str(entity or "")[:300], method="numerario" if move else "transferencia", source="movement" if move else "manual", source_id=move.id if move else None, request_key=data.request_key)
         db.add(payment); db.flush()
+        if key.startswith("planned:"):
+            planned = db.get(PlannedMovement, key.partition(":")[2])
+            if planned and planned.purchase_id:
+                from .models import PaymentDocumentLine
+                db.add(PaymentDocumentLine(payment_id=payment.id, purchase_id=planned.purchase_id, amount_cents=payment.amount_cents))
         link = LiquiditySettlement(source_key=key, target=data.target, payment_id=payment.id, movement_id=move.id if move else None, user_id=user.id, origin_data=json.dumps({"fingerprint": item["origin_fingerprint"]}), request_key=data.request_key)
         db.add(link); db.flush()
         adjustment = db.get(LiquidityAdjustment, key)

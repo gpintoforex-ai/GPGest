@@ -38,7 +38,9 @@ export default function MovementTable({
           {rows.map((m) => (
             <tr key={m.id}>
               <td>
-                {m.external && !/(Z|[+-]\d{2}:?\d{2})$/.test(m.occurred_at)
+                {m.origin === "deposito_modulo"
+                  ? <time dateTime={m.occurred_at} title="Hora não registada">{m.occurred_at.slice(0, 10).split("-").reverse().join("/")}</time>
+                  : m.external && !/(Z|[+-]\d{2}:?\d{2})$/.test(m.occurred_at)
                   ? m.occurred_at
                       .slice(0, 10)
                       .split("-")

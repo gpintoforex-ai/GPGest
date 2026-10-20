@@ -4,6 +4,7 @@ import json
 import re
 from contextlib import closing
 from datetime import date, timedelta
+from typing import Literal
 from time import monotonic
 from types import SimpleNamespace
 from uuid import uuid4
@@ -38,8 +39,19 @@ def configured_folders(db, settings):
     fallback=db.get(AttachmentIntegrationConfig,"default")
     return list(dict.fromkeys(folders or ([fallback.drive_folder] if fallback and fallback.drive_folder else [])))
 
+def drive_folder_ids(values):
+    normalized=[]
+    for value in values:
+        value=value.strip()
+        if value.startswith("https://drive.google.com/drive/folders/"): value=value.split("/folders/",1)[1].split("?",1)[0].strip("/")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{10,200}",value): raise ValueError("Indique links ou identificadores de pastas Drive válidos.")
+        normalized.append(value)
+    return list(dict.fromkeys(normalized))
+
 class SettingsInput(Strict):
     folders: list[str] = Field(default_factory=list,max_length=20)
+    efatura_folders: list[str] = Field(default_factory=list,max_length=20)
+    include_subfolders: bool = True
     tolerance_cents: int = Field(default=2,ge=0,le=5)
     ocr_enabled: bool = False
     interval_minutes: int = Field(default=0,ge=0,le=1440)
@@ -47,13 +59,8 @@ class SettingsInput(Strict):
     demo_confirmed: bool = False
     @model_validator(mode="after")
     def validate(self):
-        normalized=[]
-        for value in self.folders:
-            value=value.strip()
-            if value.startswith("https://drive.google.com/drive/folders/"): value=value.split("/folders/",1)[1].split("?",1)[0].strip("/")
-            if not re.fullmatch(r"[A-Za-z0-9_-]{10,200}",value): raise ValueError("Indique links ou identificadores de pastas Drive válidos.")
-            normalized.append(value)
-        self.folders=list(dict.fromkeys(normalized))
+        self.folders=drive_folder_ids(self.folders)
+        self.efatura_folders=drive_folder_ids(self.efatura_folders)
         if self.interval_minutes and self.interval_minutes<15: raise ValueError("O intervalo mínimo é 15 minutos.")
         return self
 
@@ -63,6 +70,8 @@ class VerifyInput(Strict):
     store_ids: list[str] = Field(default_factory=list,max_length=100)
     confirm_demo: bool = False
     force: bool = False
+    # O assistente separa a procura de anexos da conferência de compras; por omissão faz ambas.
+    parts: list[Literal["attachments","purchases"]] = Field(default_factory=lambda:["attachments","purchases"],min_length=1,max_length=2)
     @model_validator(mode="after")
     def period(self):
         if self.start>self.end or (self.end-self.start).days>366: raise ValueError("Selecione um período de até um ano.")
@@ -132,9 +141,9 @@ def live_erp(db, purchases, user, confirm_demo=False):
         db.rollback()
         return {"state":"error","message":"Não foi possível verificar o ERP. Tente novamente; a ausência no catálogo não confirma que falta um lançamento.","documents":[],"suppliers":[],"supplier_state":"error"}
 
-def remote_listing(client, roots):
+def remote_listing(client, roots, subfolders=True):
     files={}; folders=set()
-    for root in roots: folders.update(folder_tree(client,root))
+    for root in roots: folders.update(folder_tree(client,root) if subfolders else [root])
     for folder in sorted(folders):
         token=""
         while True:
@@ -168,7 +177,7 @@ def drive_checks(db, settings, force=False):
     try:
         with Session(bind=db.get_bind(),expire_on_commit=False) as auth_db: client,config=authorized_client(auth_db)
         with closing(client):
-            items=remote_listing(client,roots)
+            items=remote_listing(client,roots,settings.include_subfolders)
             for item in items:
                 if int(item.get("size",0))>MAX_BYTES:
                     complete=False; failures.append("Há anexos acima de 5 MB; reveja-os individualmente."); continue
@@ -233,24 +242,54 @@ def same_erp(purchase, erp, tolerance):
     if erp.cancelled: differences.append("Documento anulado")
     return differences
 
+def evidence_fields(evidence, purchase, tolerance):
+    """Campos do anexo que coincidem, divergem ou não foram identificados, face à fatura."""
+    target=invoice_key(purchase.supplier_nif,purchase.document_type,purchase.document)
+    documents=evidence.get("documents",[])
+    if documents:
+        nifs={nif_key(item["nif"]) for item in documents}; numbers={invoice_key(item["nif"],item["document_type"],item["document"])[1:] for item in documents}
+        dates={item["document_date"] for item in documents}; totals={abs(item["amount_cents"]) for item in documents}
+    else:
+        nifs=set(evidence.get("nifs",[])); numbers={invoice_key(purchase.supplier_nif,item["kind"],item["number"])[1:] for item in evidence.get("numbers",[])}
+        dates=set(evidence.get("dates",[])); totals=set(evidence.get("totals",[]))
+    result={"matching":[],"divergent":[],"missing":[]}
+    def place(label, values, ok):
+        result["missing" if not values else "matching" if ok else "divergent"].append(label)
+    place("NIF do fornecedor",nifs,nifs=={target[0]})
+    place("Tipo e número",numbers,numbers=={target[1:]})
+    place("Data",dates,dates=={purchase.document_date})
+    place("Total",totals,len(totals)==1 and abs(next(iter(totals))-abs(purchase.amount_cents))<=tolerance)
+    currencies=set(evidence.get("currencies",[]))
+    if currencies: place("Moeda",currencies,currencies=={"EUR"})
+    return result
+
 def supplier_status(result,nif):
     matches=[item for item in result.get("suppliers",[]) if item["nif"]==nif_key(nif)]
     ready=len(matches)==1 and matches[0].get("is_supplier") and matches[0].get("active",True)
     return {"state":"exists" if ready else "review" if matches else "not_found" if result.get("supplier_state")=="checked" else "unknown","candidates":matches}
 
-def verify_documents(db,user,purchases,settings,audit,confirm_demo=False,force=False):
-    try: erp=live_erp(db,purchases,user,confirm_demo)
-    except Exception:
-        db.rollback()
-        erp={"state":"error","message":"Não foi possível abrir ou consultar a ligação ERP. A verificação dos anexos continua independente.","documents":[],"suppliers":[],"supplier_state":"error"}
-    drive=drive_checks(db,settings,force)
+def verify_documents(db,user,purchases,settings,audit,confirm_demo=False,force=False,parts=("attachments","purchases")):
+    check_erp="purchases" in parts; check_drive="attachments" in parts
+    skipped={"state":"skipped","message":"","documents":[],"suppliers":[],"supplier_state":"skipped","files":[],"complete":False}
+    if check_erp:
+        try: erp=live_erp(db,purchases,user,confirm_demo)
+        except Exception:
+            db.rollback()
+            erp={"state":"error","message":"Não foi possível abrir ou consultar a ligação ERP. A verificação dos anexos continua independente.","documents":[],"suppliers":[],"supplier_state":"error"}
+    else: erp=skipped
+    drive=drive_checks(db,settings,force) if check_drive else skipped
     current_ids=set(erp["documents"])
     erp_rows=list(db.scalars(select(ERPDocument).where(ERPDocument.id.in_(current_ids)))) if current_ids else []
     for purchase in purchases:
         purchase=db.scalar(select(Purchase).where(Purchase.id==purchase.id).with_for_update().execution_options(populate_existing=True))
         check=db.get(InvoiceWorkflowCheck,purchase.id) or InvoiceWorkflowCheck(purchase_id=purchase.id)
         db.add(check); messages=[text for text in (erp.get("message"),drive.get("message")) if text]
-        check.checked_at=now(); check.drive_state=drive["state"]; check.erp_state=erp["state"]
+        if not check_erp or not check_drive:
+            # As mensagens da parte não verificada agora mantêm-se até à próxima verificação dessa parte.
+            messages=list(dict.fromkeys([*messages,*json.loads(check.messages or "[]")]))
+        check.checked_at=now()
+        if check_drive: check.drive_state=drive["state"]
+        if check_erp: check.erp_state=erp["state"]
         candidates=[]; link=current_erp_link(db,purchase)
         for item in erp_rows:
             if invoice_key(item.supplier_nif,item.document_type,item.document)!=invoice_key(purchase.supplier_nif,purchase.document_type,purchase.document): continue
@@ -270,17 +309,28 @@ def verify_documents(db,user,purchases,settings,audit,confirm_demo=False,force=F
                     audit(db,user,"efatura_erp_associado_automaticamente",purchase.id,{"erp_id":target.external_id,"tolerance_cents":settings.tolerance_cents},purchase.store_id)
                     check.erp_state="linked"
             else: check.erp_state="divergence" if candidates else "not_found"
-        check.erp_candidates=json.dumps(candidates)
+        if check_erp: check.erp_candidates=json.dumps(candidates)
+        if not check_drive:
+            if check_erp: check.supplier=json.dumps(supplier_status(erp,purchase.supplier_nif))
+            check.messages=json.dumps(messages)
+            audit(db,user,"efatura_verificada",purchase.id,{"erp":check.erp_state,"drive":"nao_verificado","messages":messages},purchase.store_id)
+            db.commit(); continue
         available=[]
+        rejected=set(json.loads(check.rejected or "[]"))
         for cache in drive["files"]:
+            if cache.drive_id in rejected: continue
             evidence=json.loads(cache.evidence); match=compare_evidence(evidence,purchase,settings.tolerance_cents)
             name_key=invoice_key(purchase.supplier_nif,purchase.document_type,purchase.document)[2]
             named=bool(name_key and name_key.replace("/","_") in cache.name.upper()) or bool(purchase.supplier_nif and purchase.supplier_nif in cache.name)
             if match["candidate"] or named:
-                available.append({"drive_id":cache.drive_id,"cache_id":cache.id,"name":cache.name,"safe":match["safe"],"reasons":match["reasons"],"source":evidence.get("source"),"url":"https://drive.google.com/file/d/"+cache.drive_id+"/view"})
+                available.append({"drive_id":cache.drive_id,"cache_id":cache.id,"name":cache.name,"safe":match["safe"],"content_match":bool(match["candidate"]),"reasons":match["reasons"],"fields":evidence_fields(evidence,purchase,settings.tolerance_cents),"source":evidence.get("source"),"url":"https://drive.google.com/file/d/"+cache.drive_id+"/view"})
             for warning in evidence.get("warnings",[]):
                 if warning not in messages: messages.append(warning)
         attached=list(db.scalars(select(DriveDocumentAttachment).where(DriveDocumentAttachment.purchase_id==purchase.id)))
+        for item in available:
+            # Forte: o conteúdo confirma todos os campos e é o único candidato; possível: o conteúdo
+            # identifica o documento, mas há divergências; ambígua: só pelo nome ou vários candidatos.
+            item["strength"]="forte" if item["safe"] and len(available)==1 else "possivel" if item["content_match"] and len(available)==1 else "ambigua"
         safe=[item for item in available if item["safe"]]
         # A unique safe file is automatic only after every file in the configured tree was checked.
         if len(safe)==1 and len(available)==1 and drive["complete"] and not attached:
@@ -315,12 +365,13 @@ def verify_documents(db,user,purchases,settings,audit,confirm_demo=False,force=F
                 if compare_evidence(json.loads(cache.evidence),purchase,settings.tolerance_cents)["safe"]: validate_evidence(db,user,purchase,native.id,cache.digest,"automatic",audit)
             except Exception: messages.append("Não foi possível extrair os dados de um anexo local. Reveja manualmente.")
         check.drive_candidates=json.dumps(available[:30]); check.messages=json.dumps(messages)
-        check.supplier=json.dumps(supplier_status(erp,purchase.supplier_nif))
-        audit(db,user,"efatura_verificada",purchase.id,{"erp":check.erp_state,"drive":check.drive_state,"attachment_validated":existing_evidence(db,purchase),"messages":messages},purchase.store_id)
+        if check_erp: check.supplier=json.dumps(supplier_status(erp,purchase.supplier_nif))
+        audit(db,user,"efatura_verificada",purchase.id,{"erp":check.erp_state if check_erp else "nao_verificado","drive":check.drive_state,"attachment_validated":existing_evidence(db,purchase),"messages":messages},purchase.store_id)
         db.commit()
     return {"erp":erp["state"],"drive":drive["state"],"files_read":drive.get("read_count",0)}
 
 def run_checks(db,user,data,stores,audit,source="manual"):
+    parts=tuple(getattr(data,"parts",None) or ("attachments","purchases"))
     settings=settings_for(db,True)
     if settings.lease_until and settings.lease_until>now(): raise HTTPException(409,"Já existe uma verificação em curso nesta empresa. Aguarde antes de repetir.")
     run=InvoiceWorkflowRun(user_id=user.id,stores=json.dumps(stores),start_date=str(data.start),end_date=str(data.end),source=source)
@@ -328,7 +379,7 @@ def run_checks(db,user,data,stores,audit,source="manual"):
     settings.run_id,settings.lease_until=identifier,now()+timedelta(minutes=20); db.commit()
     try:
         purchases=list(db.scalars(select(Purchase).outerjoin(InvoiceWorkflowCheck,InvoiceWorkflowCheck.purchase_id==Purchase.id).where(Purchase.store_id.in_(stores),Purchase.document_date>=str(data.start),Purchase.document_date<=str(data.end)).order_by(InvoiceWorkflowCheck.checked_at.asc().nullsfirst(),Purchase.document_date).limit(200)))
-        detail=verify_documents(db,user,purchases,settings,audit,data.confirm_demo,data.force) if purchases else {"message":"Não existem faturas neste período."}
+        detail=verify_documents(db,user,purchases,settings,audit,data.confirm_demo,data.force,parts) if purchases else {"message":"Não existem faturas neste período."}
         run=db.get(InvoiceWorkflowRun,identifier); run.status="concluida_com_pendencias" if detail.get("erp") in ("error","unavailable") or detail.get("drive") in ("error","partial","unavailable") else "concluida"
         run.detail=json.dumps({**detail,"checked":len(purchases)}); run.finished_at=now()
         audit(db,user,"efatura_verificacao_concluida",identifier,{"source":source,"status":run.status,**detail})
@@ -342,6 +393,21 @@ def run_checks(db,user,data,stores,audit,source="manual"):
         if settings.run_id==identifier: settings.run_id,settings.lease_until=None,None
         db.commit()
 
+def attach_from_drive(db,user,purchase,drive_id,reason,audit,source="manual"):
+    """Associa um ficheiro das pastas de pesquisa a uma fatura, depois de o ler e validar."""
+    settings=settings_for(db)
+    with Session(bind=db.get_bind(),expire_on_commit=False) as auth_db: client,config=authorized_client(auth_db)
+    with closing(client):
+        info=metadata(client,drive_id)
+        if not any(belongs_to_tree(client,root,info) for root in configured_folders(db,settings)): raise HTTPException(422,"O ficheiro não pertence às pastas de pesquisa desta empresa.")
+        raw,mime=content(client,drive_id)
+    digest=hashlib.sha256(raw).hexdigest()
+    link=attach_reference(db,purchase,config.google_email.lower(),drive_id,(info.get("parents") or [""])[0],info["name"],mime,digest,user,audit)
+    link.digest,link.name,link.mime=digest,filename(info["name"]),mime
+    validate_evidence(db,user,purchase,"drive:"+link.id,digest,source,audit)
+    audit(db,user,"efatura_anexo_associado_manualmente",purchase.id,{"drive_id":drive_id,"reason":reason,"source":source},purchase.store_id)
+    return link
+
 def register_routes(app,current,authorize,scope,audit):
     def get_purchase(db,user,identifier,write=False):
         row=db.scalar(select(Purchase).where(Purchase.id==identifier).with_for_update() if write else select(Purchase).where(Purchase.id==identifier))
@@ -353,7 +419,7 @@ def register_routes(app,current,authorize,scope,audit):
     def get_settings(user=Depends(current),db:Session=Depends(db_session)):
         authorize(user,db,roles=["administrador","gestor"])
         settings=settings_for(db); db.commit()
-        return {"folders":json.loads(settings.folders),"effective_folders":configured_folders(db,settings),"tolerance_cents":settings.tolerance_cents,"ocr_enabled":settings.ocr_enabled,"ocr_available":bool(ocr_command()),"interval_minutes":settings.interval_minutes,"window_days":settings.window_days,"demo_confirmed":settings.demo_confirmed,"last_scheduled_at":settings.last_scheduled_at,"erp_capabilities":policy(db)["capabilities"],"creation_available":False,"creation_message":"O conector atual não implementa a criação de fornecedores nem faturas de compra. Pode preparar e exportar uma proposta, sem criar um lançamento no ERP."}
+        return {"folders":json.loads(settings.folders),"efatura_folders":json.loads(settings.efatura_folders or "[]"),"include_subfolders":settings.include_subfolders,"effective_folders":configured_folders(db,settings),"tolerance_cents":settings.tolerance_cents,"ocr_enabled":settings.ocr_enabled,"ocr_available":bool(ocr_command()),"interval_minutes":settings.interval_minutes,"window_days":settings.window_days,"demo_confirmed":settings.demo_confirmed,"last_scheduled_at":settings.last_scheduled_at,"erp_capabilities":policy(db)["capabilities"],"creation_available":False,"creation_message":"O conector atual não implementa a criação de fornecedores nem faturas de compra. Pode preparar e exportar uma proposta, sem criar um lançamento no ERP."}
 
     @app.post("/api/invoice-workflow/settings")
     def save_settings(data:SettingsInput,user=Depends(current),db:Session=Depends(db_session)):
@@ -361,7 +427,7 @@ def register_routes(app,current,authorize,scope,audit):
         if data.interval_minutes and db.info.get("company",{}).get("mode")=="demonstracao" and not data.demo_confirmed: raise HTTPException(422,"Confirme as consultas reais agendadas nesta empresa de demonstração.")
         settings=settings_for(db,True)
         if settings.lease_until and settings.lease_until>now(): raise HTTPException(409,"Aguarde o fim da verificação antes de alterar as pastas.")
-        settings.folders=json.dumps(data.folders); settings.actor_id=user.id
+        settings.folders=json.dumps(data.folders); settings.efatura_folders=json.dumps(data.efatura_folders); settings.include_subfolders=data.include_subfolders; settings.actor_id=user.id
         for name in ("tolerance_cents","ocr_enabled","interval_minutes","window_days","demo_confirmed"): setattr(settings,name,getattr(data,name))
         audit(db,user,"efatura_configuracao_guardada","default",data.model_dump()); db.commit()
         return {"ok":True}
@@ -376,7 +442,14 @@ def register_routes(app,current,authorize,scope,audit):
         from .document_projection import WorkflowContext
         context=WorkflowContext(db,purchases)
         rows=[summarize(db,item,context) for item in purchases]
-        return {"rows":rows,"summary":{"total":len(rows),"completed":sum(row["complete"] for row in rows),"pending":sum(not row["complete"] for row in rows)},"creation_available":False}
+        for row in rows:
+            check=context.checks.get(row["id"])
+            row["rejected_raw"]=check.rejected if check else "[]"
+        from .invoice_conference import enrich
+        settings=settings_for(db); rows,mode=enrich(db,rows,purchases,settings,stores,start,end); db.commit()
+        counts={}
+        for row in rows: counts[row["action"]]=counts.get(row["action"],0)+1
+        return {"rows":rows,"mode":mode,"summary":{"total":len(rows),"completed":sum(row["complete"] for row in rows),"pending":sum(not row["complete"] for row in rows),"without_efatura":sum(row["efatura_state"]=="absent" for row in rows),"actions":counts},"creation_available":False}
 
     @app.post("/api/invoice-workflow/verify")
     def verify(data:VerifyInput,user=Depends(current),db:Session=Depends(db_session)):
@@ -417,17 +490,7 @@ def register_routes(app,current,authorize,scope,audit):
     def attach_candidate(identifier:str,data:ReviewInput,user=Depends(current),db:Session=Depends(db_session)):
         if not data.confirmed: raise HTTPException(422,"Confirme a revisão do ficheiro e da correspondência.")
         purchase=get_purchase(db,user,identifier,True)
-        settings=settings_for(db)
-        with Session(bind=db.get_bind(),expire_on_commit=False) as auth_db: client,config=authorized_client(auth_db)
-        with closing(client):
-            info=metadata(client,data.attachment_key)
-            if not any(belongs_to_tree(client,root,info) for root in configured_folders(db,settings)): raise HTTPException(422,"O ficheiro não pertence às pastas de pesquisa desta empresa.")
-            raw,mime=content(client,data.attachment_key)
-        digest=hashlib.sha256(raw).hexdigest()
-        link=attach_reference(db,purchase,config.google_email.lower(),data.attachment_key,(info.get("parents") or [""])[0],info["name"],mime,digest,user,audit)
-        link.digest,link.name,link.mime=digest,filename(info["name"]),mime
-        validate_evidence(db,user,purchase,"drive:"+link.id,digest,"manual",audit)
-        audit(db,user,"efatura_anexo_associado_manualmente",purchase.id,{"drive_id":data.attachment_key,"reason":data.reason},purchase.store_id)
+        attach_from_drive(db,user,purchase,data.attachment_key,data.reason,audit)
         db.commit(); return summarize(db,purchase)
 
     @app.get("/api/invoice-workflow/{identifier}/proposal")
@@ -488,6 +551,11 @@ def register_routes(app,current,authorize,scope,audit):
     def history(identifier:str,user=Depends(current),db:Session=Depends(db_session)):
         purchase=get_purchase(db,user,identifier)
         return [{"id":item.id,"action":item.action,"detail":json.loads(item.detail),"created_at":item.created_at,"user_name":name or "Sistema"} for item,name in db.execute(select(Audit,User.name).outerjoin(User,User.id==Audit.user_id).where(Audit.target_id==purchase.id).order_by(Audit.created_at.desc()).limit(100))]
+
+def register_conference(app,current,authorize,scope,audit):
+    import sys
+    from .invoice_conference import register_routes as register
+    register(app,current,authorize,scope,audit,sys.modules[__name__])
 
 def scheduled_tick():
     from .main import scope, record

@@ -7,7 +7,7 @@ from pydantic import Field, field_validator
 
 from .schemas import Strict
 
-STEPS = ("company", "mode", "registers", "banks", "payments", "terminals", "preferences", "summary")
+STEPS = ("company", "mode", "registers", "banks", "payments", "terminals", "preferences", "saft", "summary")
 
 
 class CompanyData(Strict):
@@ -19,6 +19,11 @@ class CompanyData(Strict):
     timezone: str = Field(default="Europe/Lisbon", max_length=100)
     store_id: str = Field(default="primary", max_length=64)
     store_name: str = Field(default="Loja principal", max_length=100)
+    vat_regime: Literal["", "normal", "isento_53", "pequenos_retalhistas"] = ""
+    vat_period: Literal["", "mensal", "trimestral"] = ""
+    # Proposta de armazém de stock no estabelecimento principal (não duplica um existente).
+    create_warehouse: bool = True
+    warehouse_name: str = Field(default="Armazém principal", max_length=100)
 
     @field_validator("timezone")
     @classmethod
@@ -106,6 +111,8 @@ class Preferences(Strict):
     unclosed_warning: bool = True
     categories: list[str] = Field(default_factory=lambda: ["Vendas", "Clientes", "Fornecedores", "Despesas correntes"], max_length=50)
     archive: Literal["later", "existing", "drive"] = "later"
+    # Impedir (predefinição) ou apenas avisar ao confirmar SAF-T com códigos de pagamento por associar.
+    saft_block_unmapped: bool = True
 
 
 class SetupData(Strict):
@@ -116,12 +123,12 @@ class SetupData(Strict):
     payments: list[PaymentData] = Field(default_factory=list, max_length=50)
     terminals: list[TerminalData] = Field(default_factory=list, max_length=100)
     preferences: Preferences = Field(default_factory=Preferences)
-    skipped: list[Literal["banks", "terminals", "preferences"]] = Field(default_factory=list, max_length=3)
+    skipped: list[Literal["banks", "terminals", "saft", "preferences"]] = Field(default_factory=list, max_length=4)
 
 
 class DraftSave(Strict):
     revision: int = Field(ge=0)
-    step: Literal["company", "mode", "registers", "banks", "payments", "terminals", "preferences", "summary"]
+    step: Literal["company", "mode", "registers", "banks", "payments", "terminals", "preferences", "saft", "summary"]
     data: SetupData
 
 

@@ -1,0 +1,31 @@
+.bank-overview { display:grid; gap:18px; }
+.bank-filter-grid { display:flex; flex-wrap:wrap; gap:14px; align-items:end; }
+.bank-filter-grid label { flex:1 1 200px; display:grid; gap:6px; min-width:0; }
+.bank-filter-grid :is(input,select) { width:100%; min-width:0; }
+.bank-balance-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:14px; }
+.bank-balance-grid>.bank-balance-card { grid-column:span 2; }
+.bank-balance-grid>.bank-balance-card:nth-child(n+4) { grid-column:span 3; }
+.bank-balance-card { padding:16px; border:1px solid var(--border-control); border-radius:10px; background:var(--surface-secondary); display:grid; align-content:start; gap:8px; min-width:0; }
+.bank-balance-card :is(h4,p) { margin:0; }
+.bank-balance-card>strong { font-size:23px; overflow-wrap:anywhere; }
+.bank-balance-card small { font-size:13px; }
+.bank-state { display:inline-flex; gap:6px; align-items:center; padding:5px 8px; border-radius:6px; font-size:13px; }
+.bank-state-pending { color:var(--color-warning); background:var(--color-warning-bg); }
+.bank-state-matched { color:var(--color-success); background:var(--color-success-bg); }
+.bank-state-neutral { color:var(--text-secondary); background:var(--surface-primary); }
+.bank-state-divergence { color:var(--color-danger); background:var(--color-danger-bg); }
+.bank-balance-card.bank-match { border-color:var(--color-success); }
+.bank-balance-card.bank-divergence { border-color:var(--color-danger); }
+.bank-balance-card.bank-divergence>strong { color:var(--color-danger); }
+.bank-reconciled { margin:18px 0; padding:16px; border-radius:10px; background:var(--color-success-bg); color:var(--color-success); }
+.bank-reconciled :is(h4,p,strong) { color:inherit; }
+.bank-reconciled-values { display:flex; flex-wrap:wrap; gap:24px; }
+.bank-reconciled-values strong { display:block; font-size:21px; margin-top:6px; }
+.bank-value-detail>summary { cursor:pointer; padding:12px 0; font-weight:600; }
+.bank-value-detail>summary:focus-visible { outline:3px solid var(--border-focus); }
+.bank-resolution-dialog.ui-dialog { width:760px; max-width:calc(100vw - 24px); }
+.bank-resolution-dialog label { display:grid; gap:6px; margin:14px 0; }
+.bank-resolution-dialog .bank-resolution-check { display:flex; align-items:center; gap:8px; }
+.bank-resolution-candidate { border:1px solid var(--border-control); padding:12px; margin:10px 0; border-radius:8px; }
+@media(max-width:900px) { .bank-balance-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .bank-balance-grid>.bank-balance-card:nth-child(n) { grid-column:auto; } }
+@media(max-width:540px) { .bank-balance-grid { grid-template-columns:minmax(0,1fr); } }

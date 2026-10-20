@@ -292,7 +292,7 @@ def deposit_pdf(db, deposit):
 
     info = projection(db, deposit)
     company = db.info.get("company", {})
-    line(company.get("name", "Zela"), True)
+    line(company.get("name", "IAZELA"), True)
     line("NIF: " + str(company.get("nif") or "Não indicado"))
     line("Talão interno de depósito", True)
     line("Documento interno. Não é um comprovativo emitido pelo banco.")

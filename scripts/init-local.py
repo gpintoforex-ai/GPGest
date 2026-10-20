@@ -83,6 +83,8 @@ if (
             str(data),
             "-l",
             str(local / "postgres.log"),
+            "-t",
+            "600",
             "start",
         ],
         check=True,

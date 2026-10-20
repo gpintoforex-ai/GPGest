@@ -114,7 +114,7 @@ with sync_playwright() as playwright:
     expect(page.get_by_role("alert")).to_contain_text("não é necessário repetir a importação")
     page.get_by_role("button", name="Clara · Verificar documentos", exact=True).click()
     dialog = page.get_by_role("dialog", name="Clara · Conferência e-Fatura", exact=True)
-    dialog.get_by_role("button", name="Continuar com documentos existentes", exact=True).click()
+    dialog.get_by_text("Ferramentas anteriores de conferência", exact=True).click()
     expect(dialog.get_by_role("alert")).to_contain_text("Não foi possível carregar as faturas")
     expect(dialog.get_by_text("0 faturas no período", exact=True)).to_have_count(0)
     expect(dialog.get_by_role("button", name="Verificar faturas", exact=True)).to_be_disabled()

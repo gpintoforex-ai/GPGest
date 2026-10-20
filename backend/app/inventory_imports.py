@@ -4,7 +4,7 @@ import csv
 import hashlib
 import io
 import json
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal as D
 
 from fastapi import Depends
@@ -32,6 +32,7 @@ from .models import (
     StockEntry,
     StockImport,
     StockLot,
+    StockWarehouse,
     WintouchProduct,
     WintouchSaleRecord,
 )
@@ -46,6 +47,19 @@ class CSVPreview(Strict):
 
 class Confirm(Strict):
     confirmed: bool
+
+
+OPENING_FIELDS = {"code", "quantity", "unit_cost", "warehouse", "lot_number", "expiry"}
+
+
+class OpeningPreview(Strict):
+    """Inventário inicial valorizado: código, quantidade e custo unitário sem IVA (por linha)."""
+    content: str = Field(max_length=4_000_000)
+    mapping: dict[str, str]
+    delimiter: str = ";"
+    warehouse_id: str = Field(default="", max_length=36)
+    occurred_on: date
+    reason: str = Field(min_length=3, max_length=2000)
 
 
 class SourceApply(Confirm):
@@ -252,6 +266,130 @@ def register_imports(app, current, authorize, scope, audit):
             "errors": errors,
             "can_confirm": bool(rows) and not errors,
         }
+
+    @app.post("/api/stock/opening/preview")
+    def opening_preview(data: OpeningPreview, user=Depends(current), db: Session = Depends(db_session)):
+        """Valida o inventário inicial sem gravar: artigos, armazéns, lotes, custos e duplicados."""
+        config = settings(db)
+        require(user, config, "adjust_stock")
+        require(user, config, "view_cost")
+        if data.delimiter not in (";", ",", "\t"):
+            fail("Separador CSV inválido.")
+        if data.occurred_on > date.today():
+            fail("A data do inventário não pode ser futura.")
+        if any(key not in OPENING_FIELDS for key in data.mapping) or not {"code", "quantity", "unit_cost"}.issubset(data.mapping):
+            fail("Associe as colunas de código, quantidade e custo unitário.")
+        reader = csv.DictReader(io.StringIO(data.content.lstrip("\ufeff")), delimiter=data.delimiter)
+        if not reader.fieldnames or any(column not in reader.fieldnames for column in data.mapping.values()):
+            fail("As colunas indicadas não existem no ficheiro.")
+        articles = {a.code.casefold(): a for a in db.scalars(select(StockArticle))}
+        allowed = {w.id: w for w in db.scalars(select(StockWarehouse).where(StockWarehouse.store_id.in_(scope(user, db))))}
+        by_name = {w.name.casefold(): w for w in allowed.values()}
+        if data.warehouse_id and data.warehouse_id not in allowed:
+            fail("Armazém indisponível.", 404)
+        openings = {(e.article_id, e.warehouse_id) for e in db.scalars(select(StockEntry).where(StockEntry.kind == "opening"))}
+        rows, errors, warnings, seen = [], [], [], set()
+        for index, raw in enumerate(reader, 2):
+            if index > 5001:
+                fail("Limite de 5000 linhas por importação. Divida o ficheiro.")
+            values = {key: (raw.get(column) or "").strip() for key, column in data.mapping.items()}
+            if not any(values.values()):
+                continue
+            try:
+                article_row = articles.get(values["code"].casefold())
+                if not article_row:
+                    raise ValueError(f"Artigo «{values['code']}» sem ficha. Importe ou crie o artigo primeiro.")
+                if article_row.erp_id:
+                    raise ValueError("Artigo controlado pelo ERP: o stock é gerido na origem.")
+                if not article_row.active:
+                    raise ValueError("Artigo inativo.")
+                warehouse_row = by_name.get(values.get("warehouse", "").casefold()) if values.get("warehouse") else allowed.get(data.warehouse_id)
+                if not warehouse_row:
+                    raise ValueError("Armazém em falta ou fora do seu âmbito.")
+                meta = json.loads(article_row.data)
+                quantity = D(values["quantity"].replace(" ", "").replace(",", "."))
+                if quantity <= 0:
+                    raise ValueError("A quantidade tem de ser positiva.")
+                if quantity != quantity.quantize(D(1).scaleb(-meta.get("precision", 0))):
+                    raise ValueError("A quantidade não respeita a precisão do artigo.")
+                if not values["unit_cost"]:
+                    raise ValueError("Custo unitário em falta.")
+                cost = D(values["unit_cost"].replace(" ", "").replace("€", "").replace(",", "."))
+                if cost < 0:
+                    raise ValueError("O custo não pode ser negativo.")
+                lot_number = values.get("lot_number", "")
+                expiry = values.get("expiry", "")
+                if meta.get("lots") and not lot_number:
+                    raise ValueError("Artigo com lotes: indique o lote.")
+                if not meta.get("lots") and lot_number:
+                    raise ValueError("Este artigo não utiliza lotes.")
+                if expiry:
+                    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                        try:
+                            expiry = datetime.strptime(expiry, fmt).date().isoformat()
+                            break
+                        except ValueError:
+                            continue
+                    else:
+                        raise ValueError("Validade inválida.")
+                key = (article_row.id, warehouse_row.id, lot_number.casefold())
+                if key in seen:
+                    raise ValueError("Artigo, armazém e lote repetidos no ficheiro.")
+                seen.add(key)
+                if (article_row.id, warehouse_row.id) in openings:
+                    raise ValueError("Este artigo já tem stock inicial neste armazém; corrija com um ajuste justificado.")
+                if cost == 0:
+                    warnings.append({"line": index, "message": f"{article_row.code}: custo zero (será usado como custo conhecido)."})
+                rows.append({"line": index, "article_id": article_row.id, "code": article_row.code, "name": article_row.name, "warehouse_id": warehouse_row.id,
+                             "warehouse": warehouse_row.name, "quantity": str(quantity), "unit_cost": str(cost), "lot_number": lot_number,
+                             "expiry": expiry or None, "value": str((quantity * cost).quantize(D("0.01")))})
+            except (ValueError, ArithmeticError) as error:
+                errors.append({"line": index, "message": str(error)[:500]})
+        if not rows and not errors:
+            fail("O ficheiro não tem linhas.")
+        record = StockImport(user_id=user.id, data=dump({"kind": "opening", "rows": rows, "errors": errors, "warnings": warnings,
+                                                          "occurred_on": data.occurred_on.isoformat(), "reason": data.reason.strip()}))
+        db.add(record)
+        db.commit()
+        return {"id": record.id, "rows": rows, "errors": errors, "warnings": warnings, "can_confirm": bool(rows) and not errors,
+                "total_value": str(sum((D(r["value"]) for r in rows), D(0))), "articles": len({r["article_id"] for r in rows})}
+
+    @app.post("/api/stock/opening/{identifier}/confirm")
+    def opening_confirm(identifier: str, data: Confirm, user=Depends(current), db: Session = Depends(db_session)):
+        """Regista o inventário inicial (movimentos «stock inicial» com custo), tudo ou nada."""
+        config = settings(db)
+        require(user, config, "adjust_stock")
+        require(user, config, "view_cost")
+        lock(db)
+        record = db.get(StockImport, identifier)
+        if not record or record.user_id != user.id:
+            fail("Pré-visualização não encontrada para este utilizador e empresa.", 404)
+        content = json.loads(record.data)
+        if content.get("kind") != "opening":
+            fail("Esta pré-visualização não é de inventário inicial.")
+        if not data.confirmed:
+            fail("Confirme a importação.")
+        if record.status == "completed":
+            return {"imported": len(content["rows"]), "already_applied": True}
+        if content["errors"] or not content["rows"]:
+            fail("Corrija o ficheiro antes de importar.")
+        occurred = date.fromisoformat(content["occurred_on"])
+        for row in content["rows"]:
+            if db.scalar(select(StockEntry.id).where(StockEntry.kind == "opening", StockEntry.article_id == row["article_id"], StockEntry.warehouse_id == row["warehouse_id"])):
+                fail(f"Linha {row['line']}: {row['code']} já tem stock inicial neste armazém. Nada foi importado.", 409)
+            try:
+                post(db, user, MovementInput(
+                    article_id=row["article_id"], warehouse_id=row["warehouse_id"], kind="opening", quantity=D(row["quantity"]),
+                    unit_cost=D(row["unit_cost"]), occurred_on=occurred, document=f"Inventário inicial {occurred.isoformat()}",
+                    reason=content["reason"], request_key=f"opening:{record.id}:{row['line']}", lot_number=row["lot_number"],
+                    expiry=date.fromisoformat(row["expiry"]) if row["expiry"] else None), authorize, source="import")
+            except ValidationError as error:
+                fail(f"Linha {row['line']}: {error.errors()[0]['msg']}. Nada foi importado.")
+        record.status = "completed"
+        audit(db, user, "stock_inventario_inicial", record.id, {"lines": len(content["rows"]), "occurred_on": content["occurred_on"],
+                                                                 "total_value": str(sum((D(r["value"]) for r in content["rows"]), D(0)))})
+        db.commit()
+        return {"imported": len(content["rows"])}
 
     @app.post("/api/stock/csv/{identifier}/confirm")
     def confirm_csv(

@@ -8,9 +8,13 @@ fixture = Path(__file__).with_name('test-visual-template-ui.py')
 ns = {'__file__': str(fixture)}
 exec(fixture.read_text(encoding='utf-8').split('with sync_playwright() as playwright:')[0], ns)
 ns['boot']['accounts'] = [{'id': 'bank-test', 'store_id': 'demo', 'name': 'Conta teste', 'bank': 'Banco teste'}]
+ns['boot']['accounts'].append({'id': 'bank-empty', 'store_id': 'demo', 'name': 'Conta sem movimentos', 'bank': 'Banco vazio'})
 
 def intercept(route):
     path = urlsplit(route.request.url).path
+    if path == '/api/accounts/bank-empty/transactions':
+        route.fulfill(content_type='application/json', body='[]')
+        return
     if path == '/api/accounts/bank-test/transactions':
         route.fulfill(content_type='application/json', body=json.dumps([
             {'id': 'credit', 'movement_date': '2026-10-18', 'amount_cents': 12345, 'description': 'Credito bancario teste'},
@@ -33,5 +37,10 @@ with sync_playwright() as p:
     expect(page.locator('tbody tr').filter(has_text='Debito bancario teste')).to_have_count(1)
     expect(page.locator('tbody tr').filter(has_text='Credito bancario teste').get_by_role('button', name='Estornar')).to_have_count(0)
     expect(page.get_by_text('Extrato bancário', exact=True)).to_have_count(2)
+    account_filter = page.get_by_label('Caixas / bancos', exact=True)
+    expect(account_filter.locator('option[value="bank:bank-empty"]')).to_have_count(1)
+    account_filter.select_option('bank:bank-empty')
+    expect(page.get_by_text('Credito bancario teste', exact=True)).to_have_count(0)
+    expect(page.get_by_text('Debito bancario teste', exact=True)).to_have_count(0)
     browser.close()
 print('Bank statement credits, debits and account filter: OK')

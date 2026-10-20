@@ -52,6 +52,7 @@ from .models import (
     LoginSession,
     Movement,
     LocalPaymentMethod,
+    PlannedAllocation,
     PlannedMovement,
     PlannedSettlement,
     Register,
@@ -98,13 +99,15 @@ async def integration_lifespan(app):
 
 
 app = FastAPI(
-    title="Zela",
+    title="IAZELA",
     version="0.1.0",
     description="Gestão interna. Não emite documentos fiscais.",
     lifespan=integration_lifespan,
 )
 app.include_router(platform_router)
 app.include_router(selection_router)
+from .legal import router as legal_router
+app.include_router(legal_router)
 
 
 hasher = PasswordHash.recommended()
@@ -145,6 +148,8 @@ async def protection(request: Request, call_next):
     result.headers["Cache-Control"] = "no-store"
     result.headers["X-Content-Type-Options"] = "nosniff"
     result.headers["X-Frame-Options"] = "DENY"
+    result.headers["Referrer-Policy"] = "no-referrer"
+    result.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=()"
     return result
 
 
@@ -186,7 +191,7 @@ async def validation_error(request: Request, exc: RequestValidationError):
         elif kind == "string_too_long":
             reason = f"introduza no máximo {ctx['max_length']} caracteres"
         elif kind == "string_pattern_mismatch" and field == "nif":
-            reason = "introduza exatamente 9 d?gitos"
+            reason = "introduza exatamente 9 dígitos"
         elif kind == "string_pattern_mismatch" and field == "slug":
             reason = "use entre 3 e 80 caracteres: letras sem acentos, números e hífen; comece com uma letra ou número"
         elif kind == "extra_forbidden":
@@ -434,7 +439,7 @@ def create_category(data: CategoryEdit, user=Depends(current), db: Session = Dep
     authorize(user, db, roles=["administrador", "gestor"])
     if len(data.name.strip()) < 2:
         raise HTTPException(422, "Indique o nome da rubrica.")
-    obj = Category(name=data.name.strip(), icon=data.icon, color=data.color)
+    obj = Category(name=data.name.strip(), icon=data.icon, color=data.color, vat_deduction_percent=data.vat_deduction_percent)
     db.add(obj)
     db.flush()
     record(db, user, "categoria_criada", obj.id, {"name": obj.name})
@@ -1175,8 +1180,21 @@ def planned_summary(db, planned):
     paid = sum(m.amount_cents for m in movements if not m.reversed_by)
     from .liquidity import active_local_settlements
     paid += sum(payment.amount_cents for link, payment in active_local_settlements(db) if link.source_key == "planned:" + planned.id)
+    if planned.purchase_id:
+        from .procurement import paid_total
+        paid = paid_total(db, planned.purchase_id)
     result = serial(planned)
+    split = [
+        {"category_id": item.category_id, "category_name": name, "amount_cents": item.amount_cents}
+        for item, name in db.execute(
+            select(PlannedAllocation, Category.name)
+            .join(Category, Category.id == PlannedAllocation.category_id)
+            .where(PlannedAllocation.planned_id == planned.id)
+            .order_by(PlannedAllocation.amount_cents.desc())
+        )
+    ]
     result.update(
+        allocations=split,
         paid_cents=paid,
         remaining_cents=planned.amount_cents - paid,
         status="Liquidado" if paid == planned.amount_cents else "Parcial" if paid else "Pendente",
@@ -1222,6 +1240,16 @@ def planned_edit(planned_id: str, data: PlannedCreate, user=Depends(current), db
         raise HTTPException(422, "Mantenha a loja original e escolha uma rubrica válida.")
     paid = planned_summary(db, row)["paid_cents"]
     amount = cents(data.amount)
+    split = list(db.scalars(select(PlannedAllocation).where(PlannedAllocation.planned_id == row.id)))
+    if row.purchase_id:
+        from .models import Purchase
+        purchase = db.get(Purchase, row.purchase_id)
+        if amount != abs(purchase.amount_cents) or data.direction != row.direction or data.document != row.document or data.entity != row.entity:
+            raise HTTPException(409, "O valor e a identidade deste previsto são definidos pela compra de origem. Pode ajustar o vencimento e a rubrica.")
+    if len(split) > 1 and data.category_id != row.category_id:
+        raise HTTPException(409, "Esta compra tem linhas de várias rubricas; a repartição é definida pelas linhas em Compras. Pode ajustar o vencimento.")
+    for item in split:
+        item.category_id = data.category_id
     if amount < paid or paid and data.direction != row.direction:
         raise HTTPException(409, "A alteração não pode invalidar liquidações já registadas.")
     before = {key: value for key, value in serial(row).items() if key != "created_at"}
@@ -1276,6 +1304,13 @@ def planned_settle(
     )
     movement.origin = "previsto"
     db.add(PlannedSettlement(planned_id=row.id, movement_id=movement.id))
+    if row.purchase_id:
+        from .models import DocumentPayment, PaymentDocumentLine
+        payment = DocumentPayment(store_id=row.store_id, payment_date=movement.occurred_at.date().isoformat(), amount_cents=movement.amount_cents,
+            direction=row.direction, entity=row.entity, reference=row.document, kind="pagamento", method=data.payment,
+            source="movement", source_id=movement.id, request_key="procurement:"+movement.id)
+        db.add(payment); db.flush()
+        db.add(PaymentDocumentLine(payment_id=payment.id, purchase_id=row.purchase_id, amount_cents=movement.amount_cents))
     record(db, user, "liquidacao_previsto", row.id, {"movement_id": movement.id}, row.store_id)
     db.commit()
     return planned_summary(db, row)
@@ -1312,6 +1347,10 @@ def reverse(
             409,
             "Desfaça a distribuição do pagamento pelos documentos antes de estornar este movimento.",
         )
+    from .billing_conference import linked
+
+    if linked(db, "movement", original.id):
+        raise HTTPException(409, "Desfaça a conferência de faturação deste recebimento antes de o estornar.")
     if original.origin == "fecho_caixa":
         raise HTTPException(409, "Reabra a folha de caixa para rever a diferença do fecho.")
     if original.origin == cash_posting.ORIGIN:
@@ -1544,7 +1583,7 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
     def euro(v):
         return f"{Decimal(v) / 100:,.2f}".replace(",", " ").replace(".", ",") + " EUR"
 
-    line("Zela - Folha de caixa / relatório interno de fecho")
+    line("IAZELA - Folha de caixa / relatório interno de fecho")
     line("NÃO É UM DOCUMENTO FISCAL")
     if os.getenv("APP_MODE") == "demonstracao":
         line("DEMONSTRAÇÃO - dados de teste")
@@ -1591,7 +1630,7 @@ def close_report(session_id: str, user=Depends(current), db: Session = Depends(d
     for row in sheet_summary(db, s):
         line(
             row["name"]
-            + " - Zela: "
+            + " - IAZELA: "
             + euro(row["local_cents"])
             + " / Wintouch: "
             + euro(row["wintouch_cents"])
@@ -1679,12 +1718,14 @@ def company_sales_list(user=Depends(current), db: Session = Depends(db_session))
         WintouchSaleRecord.store_id.in_(scope(user, db)), WintouchSaleRecord.active.is_(True)
     )
     company_id = db.info.get("company", {}).get("id")
+    enterprise = ""
     if company_id:
         with database.next_platform_session() as core:
             company = core.get(Company, company_id)
             if not company:
                 raise HTTPException(404, "Empresa indisponível.")
-            query = query.where(WintouchSaleRecord.enterprise_id == company.api_enterprise)
+            enterprise = company.api_enterprise
+            query = query.where(WintouchSaleRecord.enterprise_id == enterprise)
     result = []
     from .models import IntegrationBinding
     local_owned = set(db.scalars(select(IntegrationBinding.external_id).where(IntegrationBinding.connector == "wintouch", IntegrationBinding.external_kind == "pending", IntegrationBinding.status == "local_owned")))
@@ -1708,6 +1749,11 @@ def company_sales_list(user=Depends(current), db: Session = Depends(db_session))
                 "account_name": account.name if account else None,
             }
         )
+    # Compras por pagar do ERP: rubrica do documento ou do fornecedor (definida localmente).
+    from .rubric_expenses import erp_rubric_labels
+    payables = [row for row in result if row["kind"] == "previsto" and row.get("document_group") == "compras" and not row.get("category_name")]
+    for row, label in zip(payables, erp_rubric_labels(db, enterprise, [(row.get("source_document_id"), row.get("entity_nif")) for row in payables])):
+        row["category_name"] = label
     return result
 
 
@@ -2044,6 +2090,14 @@ from .settings import router as settings_router
 
 app.include_router(settings_router)
 
+from .drive_imports import router as drive_imports_router
+
+app.include_router(drive_imports_router)
+
+from .billing_conference import router as billing_conference_router
+
+app.include_router(billing_conference_router)
+
 
 from .google_integration import register_routes as register_google_routes
 register_google_routes(app, current, authorize, record)
@@ -2074,6 +2128,8 @@ app.add_middleware(ScanBodyLimit)
 
 from .invoice_workflow import register_routes as register_invoice_workflow_routes
 register_invoice_workflow_routes(app, current, authorize, scope, record)
+from .invoice_workflow import register_conference as register_invoice_conference_routes
+register_invoice_conference_routes(app, current, authorize, scope, record)
 
 from .employees import register_routes as register_employee_routes
 register_employee_routes(app, current, authorize, scope, record, serial)
@@ -2094,3 +2150,18 @@ app.add_middleware(SaftBodyLimit)
 
 from .inventory import register_routes as register_inventory_routes
 register_inventory_routes(app, current, authorize, scope, record)
+
+from .procurement import register_routes as register_procurement_routes
+register_procurement_routes(app, current, authorize, scope, record)
+
+from .bank_balances import router as bank_balances_router
+app.include_router(bank_balances_router)
+
+from .rubric_expenses import router as rubric_expenses_router
+app.include_router(rubric_expenses_router)
+
+from .management_maps import router as management_maps_router
+app.include_router(management_maps_router)
+
+from .dashboard import router as dashboard_router
+app.include_router(dashboard_router)

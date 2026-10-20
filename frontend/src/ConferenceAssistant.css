@@ -1,0 +1,46 @@
+/* Assistente de conferência e-Fatura ↔ anexos ↔ compras. */
+.efc-assistant { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.efc-steps { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+.efc-steps button { display: flex; align-items: center; gap: 8px; flex: none; min-height: 40px; padding: 6px 12px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-text); font-size: 13px; font-weight: 600; cursor: pointer; }
+.efc-steps button span { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--color-subtle); font-size: 12px; }
+.efc-steps button.active, .efc-steps button.active:hover { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.efc-steps button:hover:not(.active):not(:disabled) { border-color: var(--color-accent-ink); color: var(--color-accent-ink); }
+.efc-steps button.active span { background: rgb(255 255 255 / 20%); }
+.efc-steps button.done span { background: var(--color-success-bg); color: var(--color-success); }
+.efc-steps button:disabled { opacity: .55; cursor: default; }
+.efc-step { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.efc-step h3, .efc-step h4 { margin: 0; }
+.efc-step > button, .efc-step > .ui-action { align-self: flex-start; }
+.efc-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.efc-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.efc-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.efc-table td { vertical-align: top; }
+.efc-link { min-height: 32px; padding: 4px 8px; font-size: 13px; }
+.efc-pagination { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.efc-upload summary { cursor: pointer; font-weight: 600; }
+.efc-candidate { border: 1px solid var(--color-border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.efc-candidate-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.efc-fields { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+.efc-fields .match { color: var(--color-success); }
+.efc-fields .diverge, .efc-purchase .diverge { color: var(--color-danger); }
+.efc-fields .missing { color: var(--color-muted); }
+.efc-preview { width: 100%; height: 480px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-subtle); }
+.efc-proposal { border-top: 1px solid var(--color-border); padding: 10px 0; }
+.efc-proposal > summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.efc-proposal > :not(summary) { margin-top: 10px; }
+.efc-batch { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.efc-pending { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--color-border); }
+.efc-pending-group { padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; }
+.efc-prepare, .efc-request, .efc-detail { display: flex; flex-direction: column; gap: 12px; }
+.efc-prepare fieldset { border: 1px solid var(--color-border); border-radius: 8px; padding: 12px; }
+.efc-line { align-items: end; border-top: 1px dashed var(--color-border); padding-top: 10px; }
+.efc-explanation { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--color-info-bg); color: var(--color-text); }
+.efc-dimensions { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.efc-purchase ul { margin: 4px 0 0; }
+@media (max-width: 760px) {
+  .efc-filters { grid-template-columns: 1fr; }
+  .efc-preview { height: 360px; }
+}
+.efc-launch { display: flex; flex-direction: column; gap: 10px; }
+.efc-launch td select, .efc-launch td input[type=date] { min-width: 150px; }
+.efc-missing { margin: 6px 0; padding-left: 16px; font-size: 12.5px; color: var(--color-muted); }

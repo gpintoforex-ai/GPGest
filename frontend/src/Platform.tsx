@@ -1,6 +1,8 @@
 import { ActionLink } from "./components/InteractionUI";
 import Brand from "./components/Brand";
 import ThemeSettings from "./ThemeSettings";
+import LegalAdmin from "./LegalAdmin";
+import { PrivacyNotice } from "./Legal";
 import { ActionButton, AppDialog, Notice, confirmFormExit } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
 import { ShieldCheck, Building2, Plus, LogOut, KeyRound } from "lucide-react";
@@ -101,6 +103,7 @@ export default function Platform() {
           <span className="eyebrow">ACESSO RESERVADO</span>
           <h2>Entrar na plataforma</h2>
           <p>As credenciais de uma loja não dão acesso a esta área.</p>
+          <PrivacyNotice />
           <Form
             submitLabel="Entrar"
             onSubmit={async (v) => {
@@ -193,6 +196,7 @@ export default function Platform() {
               <h3>Nova empresa</h3>
               <ActionButton onClick={() => setCreating(false)}>Cancelar</ActionButton>
             </div>
+            <PrivacyNotice />
             <Notice tone="info" role="note">
               <strong>Modo da nova empresa: {admin.mode === "demonstracao" ? "Demonstração" : "Real"}</strong>
               <p>{admin.mode === "demonstracao"
@@ -591,6 +595,7 @@ export default function Platform() {
             </table>
           </div>
         </section>
+        <LegalAdmin />
         <footer>
           Administração da plataforma · {admin.email}
           <span>Sessão reservada de 2 horas</span>

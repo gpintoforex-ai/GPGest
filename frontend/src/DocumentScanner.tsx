@@ -149,6 +149,7 @@ export default function DocumentScanner({ initialDocument, movement, deposit, st
   }
   return <AppDialog busy={busy} dirty={phase === "cloud_saved" ? false : dirty || undefined} ref={dialog} className="doc-dialog scanner-dialog" aria-label="Digitalizar documento" onRequestClose={() => {  close(); }}>
     <div className="panel-title"><h2>Digitalizar documento</h2></div>
+    <p className="footnote">Selecione apenas as páginas e os dados necessários. Ao gerar o PDF, os ficheiros são enviados ao servidor para preparação; o PDF temporário tem expiração de 24 horas. Guardar no Google Drive exige confirmação e não é eliminado ao terminar essa expiração. <a href="/legal/privacidade">Tratamento de documentos e prestadores</a>.</p>
     <StatusBadge tone={phase === "cloud_saved" ? "success" : phase === "upload_error" ? "danger" : "neutral"}>{states[phase]}</StatusBadge>
     {error && <Notice className="error" role="alert">{error}</Notice>}{!setup && <p>A carregar a configuração…</p>}
     {setup && <>

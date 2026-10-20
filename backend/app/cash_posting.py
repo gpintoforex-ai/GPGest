@@ -180,9 +180,13 @@ def reverse_close(db, session, register, user, reason, record):
     )) if moves else []
     if any((other.sheet_day or day(other.opened_at)) == (session.sheet_day or day(session.opened_at)) for other in later):
         raise HTTPException(409, "Existe um fecho posterior da mesma caixa e dia. Reabra esse fecho para rever os valores.")
+    from .billing_conference import linked
+
     for move in moves:
         if used(db, "movement", move.id) or identified(db, "movement", move.id):
             raise HTTPException(409, "Desfaça a reconciliação bancária e a associação aos documentos dos movimentos deste fecho antes de reabrir a caixa.")
+        if linked(db, "movement", move.id):
+            raise HTTPException(409, "Desfaça a conferência de faturação dos recebimentos deste fecho antes de reabrir a caixa.")
     for move in moves:
         reversal = Movement(
             session_id=session.id, user_id=user.id, category_id=move.category_id,

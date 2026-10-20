@@ -17,11 +17,18 @@ export default function EmailSettings({ admin, company, stores }: { admin: boole
     if (active) { setData(result); setAdditional(result.additional_to.join("; ")); setCc(result.cc.join("; ")); }
   }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [admin]);
   async function run(task: () => Promise<void>) { if (running.current) return; running.current = true; setBusy(true); setError(""); setNotice(""); try { await task(); } catch(e) { setError((e as Error).message); } finally { setBusy(false); running.current = false; } }
+  const securityError = data?.port === 587 && data.security === "ssl"
+    ? "A porta 587 exige STARTTLS. Selecione STARTTLS e guarde a configuração."
+    : data?.port === 465 && data.security === "starttls"
+      ? "A porta 465 exige SSL / TLS. Selecione SSL / TLS e guarde a configuração."
+      : "";
   if (!admin) return <section className="panel"><p>A configuração de email e o histórico de envios estão reservados ao administrador desta empresa.</p></section>;
   return <><div className="page-intro"><div><h1>Email</h1><p>SMTP, destinatários da contabilidade e histórico da empresa {company.name}.</p></div></div>
     {error && <Notice tone="error">{error}</Notice>}{notice && <Notice tone="success" onDismiss={() => setNotice("")}>{notice}</Notice>}
     {!data && !error && <p role="status">A carregar configuração de email…</p>}
+    {securityError && <Notice tone="warning">{securityError}</Notice>}
     {data && <section className="panel"><ManagedForm onSubmit={e => { e.preventDefault(); void run(async () => {
+      if (securityError) throw new Error(securityError);
       const { has_password, manual_only, ...saved } = data;
       const result = await api("/settings/email", { ...saved, password, clear_password: clearPassword, additional_to: addresses(additional), cc: addresses(cc) });
       setData(result); setPassword(""); setClearPassword(false); setAdditional(result.additional_to.join("; ")); setCc(result.cc.join("; "));
@@ -30,13 +37,14 @@ export default function EmailSettings({ admin, company, stores }: { admin: boole
       <h2>Servidor SMTP</h2><label className="doc-check"><input type="checkbox" checked={data.enabled} onChange={e => setData({ ...data, enabled: e.target.checked })}/>Ativar o envio manual por SMTP</label>
       <div className="form-grid"><Field label="Servidor SMTP"><input name="host" maxLength={250} required={data.enabled} value={data.host} onChange={e => setData({ ...data, host: e.target.value })}/></Field>
         <Field label="Porta"><input name="port" type="number" min={1} max={65535} required value={data.port} onChange={e => setData({ ...data, port: Number(e.target.value) })}/></Field>
-        <Field label="Segurança"><select name="security" value={data.security} onChange={e => setData({ ...data, security: e.target.value })}><option value="starttls">STARTTLS</option><option value="ssl">SSL / TLS</option></select></Field>
+        <Field label="Segurança"><select name="security" value={data.security} onChange={e => setData({ ...data, security: e.target.value, port: [465, 587].includes(data.port) ? (e.target.value === "ssl" ? 465 : 587) : data.port })}><option value="starttls">STARTTLS (porta 587)</option><option value="ssl">SSL / TLS (porta 465)</option></select></Field>
         <Field label="Utilizador SMTP"><input name="username" autoComplete="off" value={data.username} maxLength={250} onChange={e => setData({ ...data, username: e.target.value })}/></Field>
         <Field label="Palavra-passe SMTP"><input name="password" type="password" autoComplete="new-password" value={password} maxLength={500} placeholder={data.has_password ? "Guardada; deixe vazio para manter" : "Sem palavra-passe guardada"} onChange={e => setPassword(e.target.value)}/></Field>
         <Field label="Limite máximo da mensagem (MB)"><input type="number" min={0.064} max={100} step={0.001} value={data.max_message_bytes / 1_000_000} onChange={e => setData({ ...data, max_message_bytes: Math.round(Number(e.target.value) * 1_000_000) })}/></Field>
         <Field label="Nome do remetente"><input name="sender_name" maxLength={200} value={data.sender_name} onChange={e => setData({ ...data, sender_name: e.target.value })}/></Field>
         <Field label="Email do remetente"><input name="sender_email" type="email" required={data.enabled} value={data.sender_email} onChange={e => setData({ ...data, sender_email: e.target.value })}/></Field>
       </div>
+      <p className="footnote">Utilize STARTTLS com a porta 587 ou SSL / TLS com a porta 465. No Gmail, utilize uma palavra-passe de aplicação da conta Google. Guarde as alterações antes de testar a ligação.</p>
       {data.has_password && <label className="doc-check"><input type="checkbox" checked={clearPassword} onChange={e => setClearPassword(e.target.checked)}/>Remover a palavra-passe guardada ao gravar</label>}
       <p className="footnote">O limite inclui cabeçalhos e codificação dos anexos. Antes do envio, é respeitado o menor limite entre este valor e o anunciado pelo servidor SMTP. O teste da ligação usa a configuração já guardada e não envia emails.</p>
       <h2>Contabilidade</h2><div className="form-grid">

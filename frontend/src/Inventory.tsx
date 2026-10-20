@@ -1,3 +1,5 @@
+import OpeningStockImport from "./OpeningStockImport";
+import DatePresets from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeftRight,
@@ -426,6 +428,7 @@ export default function Inventory({
               </Field>
               {["Painel", "Movimentos", "Importações"].includes(tab) && (
                 <>
+                  <DatePresets from={filters.start} to={filters.end} onSelect={(start, end) => { setFilters({ ...filters, start, end }); setPage(1); }} />
                   <Field label="Desde">
                     <input
                       type="date"
@@ -2183,6 +2186,7 @@ function StockImports({
           </Form>
         </AppDialog>
       )}
+      <OpeningStockImport warehouses={catalog.warehouses} rights={rights} run={run} saved={saved} />
       <section className="panel">
         <h2>
           <FileUp size={19} /> Importar artigos por CSV

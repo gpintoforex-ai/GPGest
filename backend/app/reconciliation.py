@@ -17,6 +17,7 @@ from .db import db_session
 from .models import (
     Audit,
     BankAccount,
+    BankBookEntry,
     BankTransaction,
     DepositCredit,
     CashSession,
@@ -30,13 +31,15 @@ from .models import (
     ReconciliationLine,
     Register,
     WintouchSaleRecord,
+    User,
     now,
 )
 from .schemas import Strict
 
-Source = Literal["bank", "purchase", "movement", "wintouch", "payment"]
+Source = Literal["bank", "purchase", "movement", "wintouch", "payment", "book"]
 MODELS = {
     "bank": BankTransaction,
+    "book": BankBookEntry,
     "purchase": Purchase,
     "movement": Movement,
     "wintouch": WintouchSaleRecord,
@@ -56,6 +59,7 @@ class Confirmation(Strict):
     commission_cents: int = Field(strict=True, ge=0, le=10**15, default=0)
     difference_cents: int = Field(strict=True, ge=-(10**15), le=10**15, default=0)
     reason: str = Field(max_length=2000, default="")
+    post_commission: bool = False
 
 
 class Justification(Strict):
@@ -65,7 +69,7 @@ class Justification(Strict):
 def used(db, source, source_id):
     if source == "payment":
         payment = db.get(DocumentPayment, source_id)
-        if payment and payment.source in {"movement", "wintouch"}:
+        if payment and payment.source in {"movement", "wintouch", "book"}:
             return used(db, payment.source, payment.source_id)
     total = int(
         db.scalar(
@@ -100,7 +104,7 @@ def used(db, source, source_id):
             )
             or 0
         )
-    if source in {"movement", "wintouch"}:
+    if source in {"movement", "wintouch", "book"}:
         total += int(
             db.scalar(
                 select(func.sum(ReconciliationLine.amount_cents))
@@ -136,6 +140,10 @@ def valid_payment_origin(db, payment):
     row = db.get(MODELS[payment.source], payment.source_id)
     if not row:
         return False
+    if payment.source == "book":
+        account=db.get(BankAccount,row.account_id)
+        return bool(account and (account.store_id,abs(row.amount_cents),1 if row.amount_cents>0 else -1,row.movement_date)==
+            (payment.store_id,payment.amount_cents,payment.direction,payment.payment_date))
     if payment.source == "movement":
         if (
             row.reversed_by
@@ -144,8 +152,10 @@ def valid_payment_origin(db, payment):
             or row.kind in {"deposito", "reforco", "transferencia_caixa"}
         ):
             return False
-        session = db.get(CashSession, row.session_id)
-        store = db.get(Register, session.register_id).store_id
+        session = db.get(CashSession, row.session_id) if row.session_id else None
+        account=db.get(BankAccount,row.bank_account_id) if row.bank_account_id else None
+        if not session and not account:return False
+        store = account.store_id if account else db.get(Register, session.register_id).store_id
         amount, direction, method, day = (
             row.amount_cents,
             row.direction,
@@ -185,6 +195,8 @@ def suggestion(bank, internal):
     if (
         bank["store_id"] != internal["store_id"]
         or bank["amount_cents"] * internal["amount_cents"] <= 0
+        or bank.get("currency") and internal.get("currency") and bank["currency"]!=internal["currency"]
+        or internal.get("account_id") and bank.get("account_id") and bank["account_id"]!=internal["account_id"]
     ):
         return None
     reasons, score = [], 0
@@ -243,6 +255,7 @@ def card_suggestions(banks, internals):
         if bank["amount_cents"] <= 0 or not bank["available_cents"] or bank["status"] == "ignorado":
             continue
         for (store, day), batch in batches.items():
+            batch=[i for i in batch if (not i.get('account_id') or i.get('account_id')==bank.get('account_id')) and (not i.get('currency') or not bank.get('currency') or i['currency']==bank['currency'])]
             days = (date.fromisoformat(bank["date"]) - date.fromisoformat(day)).days
             if store != bank["store_id"] or not 0 <= days <= 10 or not 2 <= len(batch) <= 199:
                 continue
@@ -281,6 +294,8 @@ def card_suggestions(banks, internals):
 
 def register_routes(app, current, authorize, scope, record, serial):
     def source_row(db, source, row, context=None):
+        account = None
+        projected = None
         if source == "bank":
             account = (
                 context["accounts"][row.account_id]
@@ -289,6 +304,12 @@ def register_routes(app, current, authorize, scope, record, serial):
             )
             store, amount, day = account.store_id, row.amount_cents, row.movement_date
             description, entity, reference, payment = row.description, "", "", ""
+        elif source == "book":
+            if row.original_id or db.scalar(select(BankBookEntry.id).where(BankBookEntry.original_id==row.id)):
+                return None
+            account = db.get(BankAccount, row.account_id)
+            store, amount, day = account.store_id, row.amount_cents, row.movement_date
+            description, entity, reference, payment = row.description, "", row.reference, "transferencia"
         elif source == "purchase":
             if row.origin == "efatura_testes":
                 return None
@@ -304,7 +325,7 @@ def register_routes(app, current, authorize, scope, record, serial):
                 return None
             if not valid_payment_origin(db, row):
                 return None
-            if row.source in {"movement", "wintouch"}:
+            if row.source in {"movement", "wintouch", "book"}:
                 original = db.get(MODELS[row.source], row.source_id)
                 projected = source_row(db, row.source, original, context) if original else None
                 if (
@@ -326,21 +347,20 @@ def register_routes(app, current, authorize, scope, record, serial):
             if (
                 row.reversed_by
                 or row.reversal_of
-                or row.transfer_id
+                or (row.transfer_id and not row.bank_account_id)
                 or (row.payment == "numerario" and row.kind not in {"deposito", "reforco"})
             ):
                 return None
             session = (
-                context["sessions"][row.session_id]
+                context["sessions"].get(row.session_id)
                 if context
-                else db.get(CashSession, row.session_id)
+                else db.get(CashSession, row.session_id) if row.session_id else None
             )
-            register = (
-                context["registers"][session.register_id]
-                if context
-                else db.get(Register, session.register_id)
-            )
-            store = register.store_id
+            register = (context["registers"].get(session.register_id) if context else db.get(Register, session.register_id)) if session else None
+            account = db.get(BankAccount, row.bank_account_id) if row.bank_account_id else None
+            if not account and not register:
+                return None
+            store = account.store_id if account else register.store_id
             amount, day = row.amount_cents * row.direction, local_day(row.occurred_at)
             if row.origin == "deposito_modulo":
                 return None
@@ -379,15 +399,19 @@ def register_routes(app, current, authorize, scope, record, serial):
             "entity": entity,
             "reference": reference,
             "payment": payment,
-            "transfer": source == "movement"
-            and (bool(row.transfer_id) or row.kind in {"deposito", "retirada_deposito", "reforco"}),
-            "account": account.name if source == "bank" else "",
+            "transfer": (source == "movement" and (bool(row.transfer_id) or row.kind in {"deposito", "retirada_deposito", "reforco"})) or (source == "book" and bool(row.transfer_id)),
+            "account": account.name if account else projected.get("account", "") if projected else "",
+            "account_id": account.id if account else projected.get("account_id") if projected else None,
+            "currency": account.currency if account else projected.get("currency") if projected else "EUR",
+            "origin_source": row.source if source=="payment" else source,
+            "origin_source_id": row.source_id if source=="payment" else row.id,
+
         }
 
     def get_source(db, user, source, source_id):
         if source == "payment":
             alias = db.get(DocumentPayment, source_id)
-            if alias and alias.source in {"movement", "wintouch"}:
+            if alias and alias.source in {"movement", "wintouch", "book"}:
                 get_source(db, user, alias.source, alias.source_id)
         row = db.scalar(
             select(MODELS[source])
@@ -409,9 +433,9 @@ def register_routes(app, current, authorize, scope, record, serial):
         )
         if not result and source == "payment":
             alias = db.get(DocumentPayment, source_id)
-            if alias and alias.source in {"movement", "wintouch"}:
+            if alias and alias.source in {"movement", "wintouch", "book"}:
                 return ignored(db, alias.source, alias.source_id)
-        if not result and source in {"movement", "wintouch"}:
+        if not result and source in {"movement", "wintouch", "book"}:
             alias = db.scalar(
                 select(DocumentPayment).where(
                     DocumentPayment.source == source, DocumentPayment.source_id == source_id
@@ -453,6 +477,8 @@ def register_routes(app, current, authorize, scope, record, serial):
         ):
             for key in (("purchase", p), ("bank", b)):
                 totals[key] = totals.get(key, 0) + n
+        for bank_id,amount in db.execute(select(DepositCredit.transaction_id,func.sum(DepositCredit.amount)).where(DepositCredit.undone_at.is_(None)).group_by(DepositCredit.transaction_id)):
+            totals['bank',bank_id]=totals.get(('bank',bank_id),0)+int(amount*100)
         ignores = {
             (r.source, r.source_id): r.reason for r in db.scalars(select(ReconciliationIgnore))
         }
@@ -475,11 +501,12 @@ def register_routes(app, current, authorize, scope, record, serial):
             "bank": select(BankTransaction)
             .join(BankAccount)
             .where(BankAccount.store_id.in_(stores)),
+            "book": select(BankBookEntry).join(BankAccount).where(BankAccount.store_id.in_(stores)),
             "purchase": select(Purchase).where(Purchase.store_id.in_(stores)),
             "movement": select(Movement)
-            .join(CashSession)
-            .join(Register)
-            .where(Register.store_id.in_(stores)),
+            .outerjoin(CashSession)
+            .outerjoin(Register)
+            .where(Register.store_id.in_(stores) | Movement.bank_account_id.in_(select(BankAccount.id).where(BankAccount.store_id.in_(stores)))),
             "wintouch": select(WintouchSaleRecord).where(
                 WintouchSaleRecord.store_id.in_(stores),
                 WintouchSaleRecord.active.is_(True),
@@ -490,7 +517,7 @@ def register_routes(app, current, authorize, scope, record, serial):
         wrapped = {
             (r.source, r.source_id): r
             for r in db.scalars(
-                select(DocumentPayment).where(DocumentPayment.source.in_(["movement", "wintouch"]))
+                select(DocumentPayment).where(DocumentPayment.source.in_(["movement", "wintouch", "book"]))
             )
         }
         document_claims = {}
@@ -513,7 +540,7 @@ def register_routes(app, current, authorize, scope, record, serial):
                     continue
                 n = totals.get((source, row.id), 0)
                 reason = ignores.get((source, row.id), "")
-                if source == "payment" and row.source in {"movement", "wintouch"}:
+                if source == "payment" and row.source in {"movement", "wintouch", "book"}:
                     reason = reason or ignores.get((row.source, row.source_id), "")
                 item.update(
                     associated_cents=n,
@@ -540,6 +567,8 @@ def register_routes(app, current, authorize, scope, record, serial):
                 suggestions.extend(sorted(matches, key=lambda s: -s["score"])[:5])
         details = {}
         undo_reasons = {}
+        actors = {}
+        undo_actors = {}
         for audit in db.scalars(
             select(Audit).where(
                 Audit.store_id.in_(stores),
@@ -548,8 +577,12 @@ def register_routes(app, current, authorize, scope, record, serial):
         ):
             if audit.action == "reconciliacao_confirmada":
                 details[audit.target_id] = json.loads(audit.detail)
+                actor=db.get(User,audit.user_id)
+                actors[audit.target_id]={'id':audit.user_id,'name':actor.name if actor else 'Utilizador registado'}
             else:
                 undo_reasons[audit.target_id] = json.loads(audit.detail).get("reason", "")
+                actor=db.get(User,audit.user_id)
+                undo_actors[audit.target_id]={'id':audit.user_id,'name':actor.name if actor else 'Utilizador registado'}
         groups = []
         for r in db.scalars(
             select(Reconciliation)
@@ -562,6 +595,8 @@ def register_routes(app, current, authorize, scope, record, serial):
                     "gross_cents": details.get(r.id, {}).get("gross_cents", 0),
                     "net_cents": details.get(r.id, {}).get("net_cents", 0),
                     "undo_reason": undo_reasons.get(r.id, ""),
+                    "created_by": actors.get(r.id),
+                    "undone_by": undo_actors.get(r.id),
                     "lines": [
                         serial(link)
                         for link in db.scalars(
@@ -599,7 +634,7 @@ def register_routes(app, current, authorize, scope, record, serial):
             row = db.get(DocumentPayment, link.source_id) if link.source == "payment" else None
             economic_keys.append(
                 (row.source, row.source_id)
-                if row and row.source in {"movement", "wintouch"}
+                if row and row.source in {"movement", "wintouch", "book"}
                 else (link.source, link.source_id)
             )
         if len(set(economic_keys)) != len(economic_keys):
@@ -619,6 +654,17 @@ def register_routes(app, current, authorize, scope, record, serial):
                 )
         bank_lines = [link for link in ordered if link.source == "bank"]
         internal_lines = [link for link in ordered if link.source != "bank"]
+        if len({i.get("currency") for i in items.values() if i.get("currency")})>1:
+            raise HTTPException(422,"Não pode reconciliar movimentos em moedas diferentes.")
+        bank_accounts={items[link.source,link.source_id].get("account_id") for link in bank_lines}
+        if any(items[link.source,link.source_id].get("account_id") and items[link.source,link.source_id]["account_id"] not in bank_accounts for link in internal_lines):
+            raise HTTPException(422,"O registo da aplicação pertence a outra conta bancária.")
+        if len(bank_accounts)>1 and not data.commission_cents and not data.difference_cents:
+            for account_id in bank_accounts:
+                bank_amount=sum(link.amount_cents for link in bank_lines if items[link.source,link.source_id].get('account_id')==account_id)
+                app_amount=sum(link.amount_cents for link in internal_lines if items[link.source,link.source_id].get('account_id')==account_id)
+                if app_amount>bank_amount:
+                    raise HTTPException(422,'O valor atribuído à conta da aplicação excede o selecionado no seu extrato. Separe a associação por conta.')
         signature = sorted((link.source, link.source_id, link.amount_cents) for link in ordered)
         existing = db.scalars(
             select(Reconciliation.id)
@@ -707,6 +753,8 @@ def register_routes(app, current, authorize, scope, record, serial):
             raise HTTPException(
                 422, "Indique a justificação da comissão, diferença ou transferência."
             )
+        if data.post_commission and (not data.commission_cents or len(bank_accounts)!=1):
+            raise HTTPException(422,"O lançamento da comissão exige uma comissão positiva e uma única conta bancária.")
         group = Reconciliation(
             store_id=next(iter(stores)),
             kind=data.kind,
@@ -718,6 +766,16 @@ def register_routes(app, current, authorize, scope, record, serial):
         db.flush()
         for link in ordered:
             db.add(ReconciliationLine(reconciliation_id=group.id, **link.model_dump()))
+        if data.post_commission:
+            account_id=next(iter(bank_accounts))
+            stamp=max(db.get(BankTransaction,link.source_id).movement_date for link in bank_lines)
+            fee=BankBookEntry(account_id=account_id,user_id=user.id,movement_date=stamp,amount_cents=-data.commission_cents,
+                kind="fee",description="Comissão aprovada: "+data.reason[:970],reference=group.id,request_key="reconciliation-fee:"+group.id)
+            db.add(fee);db.flush()
+            db.add(DocumentPayment(store_id=group.store_id,payment_date=stamp,amount_cents=data.commission_cents,direction=-1,
+                kind='comissao',method='transferencia',entity=fee.description[:300],reference=group.id,source='book',source_id=fee.id,request_key='fee-payment:'+fee.id))
+            db.add(ReconciliationLine(reconciliation_id=group.id,source="book",source_id=fee.id,amount_cents=data.commission_cents))
+            record(db,user,"banco_comissao_registada",fee.id,{"reconciliation_id":group.id,"amount_cents":fee.amount_cents},group.store_id)
         record(
             db,
             user,

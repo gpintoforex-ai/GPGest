@@ -119,6 +119,25 @@ def amount(value):
         raise SyncError("A API devolveu um montante monetário inválido.") from None
 
 
+def document_base(row, total):
+    """Base tributável e IVA do documento (cêntimos, sem sinal), só quando batem com o total.
+
+    Devolve (None, None) se o ERP não indicar as bases ou se base + IVA (+ encargos − retenção)
+    diferir do total em mais de 2 cêntimos: nesse caso usa-se apenas o total com IVA.
+    """
+    if not any(f"BaseValue{i}" in row for i in range(1, 5)):
+        return None, None
+    try:
+        base = sum(amount(row.get(f"BaseValue{i}") or 0) for i in range(1, 5))
+        tax = sum(amount(row.get(f"VATValue{i}") or 0) for i in range(1, 5))
+        other = sum(amount(row.get(f"RechargeValue{i}") or 0) for i in range(1, 5)) - amount(row.get("WithHoldedValue") or 0)
+    except SyncError:
+        return None, None
+    if abs(abs(base + tax + other) - abs(total)) > 2:
+        return None, None
+    return abs(base), abs(tax)
+
+
 def document_total(row):
     if row.get("NetValueTotal") is not None:
         return amount(row["NetValueTotal"])
@@ -235,6 +254,7 @@ def sales_snapshot(reader, start, end):
             "document_group": "compras" if types.get(row.get("DocumentTypeID"), {}).get("Class") in (32, 33, 34, 35) else "vendas",
             "category_name": "Vendas" if types.get(row.get("DocumentTypeID"), {}).get("Class") not in (32, 33, 34, 35) else None,
             "entity": string(entity, 300, True),
+            "entity_nif": str(row.get("VATNumber") or (row.get("CEntity") or {}).get("VATNumber") or "").removeprefix("PT").strip()[:30],
             "occurred_at": row["Date"],
             "currency": "EUR",
             "direction": direction,
@@ -263,8 +283,13 @@ def sales_snapshot(reader, start, end):
         direction = -1 if typ.get("Class") == 6 else 1
         values = common(row, direction)
         cancelled = bool(row.get("DeletedDate"))
+        total = document_total(row)
+        net, tax = document_base(row, total)
         values.update(
-            amount_cents=abs(document_total(row)),
+            amount_cents=abs(total),
+            # Base sem IVA e IVA do documento, quando o ERP os indica de forma coerente com o total.
+            net_cents=net,
+            tax_cents=tax,
             cancelled=cancelled,
             type=string(typ.get("Code"), 40, True),
         )

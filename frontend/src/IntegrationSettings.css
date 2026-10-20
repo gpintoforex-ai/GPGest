@@ -1,5 +1,9 @@
 .integration-settings > .panel { margin-bottom: 20px; }
 .integration-config-grid { border: 0; padding: 0; margin: 0; display: grid; gap: 14px; }
+.integration-mode-options { display: flex; flex-wrap: wrap; gap: 12px 24px; border: 0; padding: 0; margin: 0; }
+.integration-mode-options legend { margin-bottom: 8px; font-weight: 600; }
+.integration-mode-options label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.integration-mode-options input[type="radio"] { width: 18px; height: 18px; margin: 0; accent-color: var(--color-primary); }
 .integration-resource { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .integration-capabilities { display: grid; gap: 12px; }
 .integration-capabilities > div { display: flex; justify-content: space-between; gap: 16px; }

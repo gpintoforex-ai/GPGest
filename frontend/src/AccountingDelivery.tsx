@@ -2,6 +2,7 @@ import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/Inter
 import { ScanButton } from "./DocumentScanner";
 import { useEffect, useRef, useState } from "react";
 import { api } from "./lib/api";
+import { vatLabel } from "./FiscalSettings";
 import { StatusBadge } from "./components/BusinessUI";
 import AssistantIdentity from "./components/AssistantIdentity";
 import AccountingEmail from "./AccountingEmail";
@@ -13,7 +14,7 @@ const label = (period: Period) => period.vat_period === "trimestral" ? `${period
 export default function AccountingDelivery({ admin, onSettings, onEmailSettings, company = {}, stores = [], store = "" }: { admin: boolean; onSettings: () => void; onEmailSettings?: () => void; company?: Record<string, any>; stores?: Record<string, any>[]; store?: string }) {
   const [year, setYear] = useState(Number(new Intl.DateTimeFormat("en", { year: "numeric", timeZone: "Europe/Lisbon" }).format(new Date())));
   const [periods, setPeriods] = useState<Period[]>([]);
-  const [mode, setMode] = useState("");
+  const [mode, setMode] = useState(""), [regime, setRegime] = useState("");
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false);
   const [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [action, setAction] = useState<{ period: Period; reopen: boolean } | null>(null);
@@ -21,13 +22,13 @@ export default function AccountingDelivery({ admin, onSettings, onEmailSettings,
   const dialog = useRef<HTMLDialogElement>(null);
   async function load() {
     const result = await api(`/accounting/delivery-periods?year=${year}`);
-    setMode(result.vat_period); setPeriods(result.periods);
+    setMode(result.vat_period); setRegime(result.vat_regime || ""); setPeriods(result.periods);
   }
   useEffect(() => {
     if (!admin) { setLoading(false); return; }
     let active = true;
     setLoading(true); setError(""); setPeriods([]);
-    api(`/accounting/delivery-periods?year=${year}`).then(result => { if (active) { setMode(result.vat_period); setPeriods(result.periods); } }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); });
+    api(`/accounting/delivery-periods?year=${year}`).then(result => { if (active) { setMode(result.vat_period); setRegime(result.vat_regime || ""); setPeriods(result.periods); } }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [year, admin]);
   useEffect(() => { if (action && !dialog.current?.open) dialog.current?.showModal(); }, [action]);
@@ -47,12 +48,12 @@ export default function AccountingDelivery({ admin, onSettings, onEmailSettings,
     <AssistantIdentity assistant="clara" />
     {admin && <><AccountingEmail company={company} stores={stores} store={store} admin={admin}/>{onEmailSettings && <ActionButton onClick={onEmailSettings}>Configurar email da contabilidade</ActionButton>}</>}
     {!admin ? <section className="panel"><p>O fecho dos períodos e a exportação do dossiê completo da empresa estão reservados ao administrador.</p></section> : <section className="panel">
-      <div className="actions"><label>Ano <input type="number" min="2000" max="2100" value={year} disabled={busy} onChange={e => { const value = Number(e.target.value); if (value >= 2000 && value <= 2100) setYear(value); }} /></label><StatusBadge>{mode === "mensal" ? "IVA mensal" : mode === "trimestral" ? "IVA trimestral" : "IVA por configurar"}</StatusBadge><span>Dossiê da empresa · Todas as lojas</span></div>
+      <div className="actions"><label>Ano <input type="number" min="2000" max="2100" value={year} disabled={busy} onChange={e => { const value = Number(e.target.value); if (value >= 2000 && value <= 2100) setYear(value); }} /></label><StatusBadge>{mode ? vatLabel(regime, mode) : "IVA por configurar"}</StatusBadge><span>Dossiê da empresa · Todas as lojas</span></div>
       {loading && <p role="status">A carregar períodos…</p>}
       {error && <Notice className="error" role="alert">{error}</Notice>}
       {error && !action && <ActionButton disabled={busy} onClick={() => load().then(() => setError("")).catch(e => setError(e.message))}>Tentar novamente</ActionButton>}
       {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
-      {!loading && !mode && !error && <div className="empty"><h3>Configure o regime de IVA da empresa</h3><p>Escolha mensal ou trimestral em Configurações &gt; Parâmetros para organizar os períodos.</p><ActionButton onClick={onSettings}>Configurar regime de IVA</ActionButton></div>}
+      {!loading && !mode && !error && <div className="empty"><h3>Configure o regime de IVA da empresa</h3><p>Escolha o regime e a periodicidade em Configurações &gt; Parâmetros para organizar os períodos.</p><ActionButton onClick={onSettings}>Configurar regime de IVA</ActionButton></div>}
       {!!mode && <><p>Confirme o fecho depois de conferir o período. O ZIP reúne os documentos e anexos disponíveis, a listagem ERP e as pendências. O fecho desta entrega não bloqueia alterações documentais.</p>
         <div className="purchase-table"><table><thead><tr><th>Período</th><th>Datas</th><th>Documentos</th><th>Sem anexo</th><th>Estado</th><th>Ações</th></tr></thead><tbody>{periods.map(period => <tr key={`${period.vat_period}-${period.number}`}>
           <td><strong>{label(period)} {period.year}</strong>{period.vat_period !== mode && <small> · Regime anterior</small>}</td><td>{day(period.start)} — {day(period.end)}</td><td>{period.documents}</td><td>{period.without_attachment}</td>

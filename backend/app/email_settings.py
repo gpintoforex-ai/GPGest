@@ -31,6 +31,14 @@ Com os melhores cumprimentos,
 {assinatura_empresa}"""
 
 
+def smtp_security_error(port, security):
+    if port == 587 and security == "ssl":
+        return "A porta 587 exige STARTTLS. Selecione STARTTLS ou utilize a porta 465 com SSL / TLS."
+    if port == 465 and security == "starttls":
+        return "A porta 465 exige SSL / TLS. Selecione SSL / TLS ou utilize a porta 587 com STARTTLS."
+    return None
+
+
 def email_address(value):
     value = value.strip()
     if len(value) > 254 or not re.fullmatch(
@@ -50,7 +58,7 @@ class EmailConfigInput(Strict):
     username: str = Field(default="", max_length=250)
     password: str = Field(default="", max_length=500)
     clear_password: bool = False
-    sender_name: str = Field(default="Zela", max_length=200)
+    sender_name: str = Field(default="IAZELA", max_length=200)
     sender_email: str = Field(default="", max_length=254)
     max_message_bytes: int = Field(default=20_000_000, ge=64_000, le=100_000_000)
     accountant_name: str = Field(default="", max_length=200)
@@ -90,6 +98,8 @@ class EmailConfigInput(Strict):
 
     @model_validator(mode="after")
     def ready(self):
+        if error := smtp_security_error(self.port, self.security):
+            raise ValueError(error)
         if self.host and (
             any(char.isspace() for char in self.host) or any(char in self.host for char in "/@?#")
         ):
@@ -170,6 +180,8 @@ def register_routes(app, current, authorize, audit):
         row, config = configuration(db)
         if not row or not config["host"] or not config["sender_email"]:
             raise HTTPException(422, "Guarde primeiro o servidor e o remetente SMTP.")
+        if error := smtp_security_error(config["port"], config["security"]):
+            raise HTTPException(422, error + " Guarde a configuração antes de testar novamente.")
         try:
             password = (
                 cipher().decrypt(row.password_ciphertext.encode()).decode()
@@ -179,11 +191,11 @@ def register_routes(app, current, authorize, audit):
             client, limit = connect(config, password)
             disconnect(client)
         except DeliveryFailure as exc:
-            raise HTTPException(502, str(exc)) from None
+            raise HTTPException(502, {"public_message": str(exc)}) from None
         except Exception:
             raise HTTPException(
                 503,
-                "Não foi possível abrir a credencial SMTP guardada. Volte a gravar a palavra-passe em Email.",
+                {"public_message": "Não foi possível abrir a credencial SMTP guardada. Volte a gravar a palavra-passe em Email."},
             ) from None
         audit(db, user, "email_ligacao_testada", "default", {"server_limit_bytes": limit})
         db.commit()
