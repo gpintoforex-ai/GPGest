@@ -103,6 +103,12 @@ try:
         phone.get_by_role("button", name="Preto e branco").click()
         phone.get_by_role("button", name="Confirmar e fotografar outra").click()
         phone.locator("input[type=file][multiple]").set_input_files(str(photo))
+        # Margens detetadas: a página aparece logo recortada e melhorada; os cantos ficam em «Ajustar cantos».
+        expect(phone.get_by_role("heading", name="Página 2 pronta")).to_be_visible()
+        expect(phone.get_by_role("img", name="Página 2 recortada")).to_be_visible()
+        phone.get_by_role("button", name="Cinzentos").click()
+        expect(phone.get_by_role("button", name="Cinzentos")).to_have_attribute("aria-pressed", "true")
+        phone.get_by_role("button", name="Ajustar cantos").click()
         expect(phone.get_by_text("Margens detetadas automaticamente", exact=False)).to_be_visible()
         corners = [phone.get_by_role("slider").nth(i).get_attribute("aria-valuetext") for i in range(4)]
         # Papel desenhado com cantos (420,140) (1180,190) (1240,1080) (360,1040) numa imagem 1600×1200.
@@ -149,8 +155,8 @@ try:
         admin.locator("table").first.locator("tbody tr").last.get_by_role("button", name="Revogar").click()
         admin.get_by_role("alertdialog").get_by_role("button", name="Revogar").click()
         expect(admin.locator("table").first.locator("tbody tr").last).to_contain_text("Revogado")
+        # A pré-visualização automática (margens detetadas) já usa a sessão revogada: volta ao PIN.
         denied.locator("input[type=file][multiple]").set_input_files(str(photo))
-        denied.get_by_role("button", name="Confirmar e rever").click()
         expect(denied.get_by_role("heading", name="Introduza o PIN")).to_be_visible()
         denied.get_by_label("PIN (6 a 12 algarismos)").fill(PIN)
         denied.get_by_role("button", name="Continuar").click()

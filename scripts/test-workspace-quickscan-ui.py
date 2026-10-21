@@ -36,6 +36,10 @@ def main():
                 route.fulfill(json={"today": "2026-10-20", "idle_seconds": 600, "limits": {"pages": 20}})
             elif path == "/api/quick-scan/session/end":
                 route.fulfill(json={"ok": True})
+            elif path == "/api/quick-scan/preview":
+                # Folha detetada: a página é mostrada já recortada (pré-visualização do servidor, aqui fictícia).
+                assert route.request.headers.get("authorization") == "Bearer isolated-session-token"
+                route.fulfill(body=buffer.getvalue(), content_type="image/png")
             elif path == "/api/legal/public":
                 route.fulfill(json={"published": False, "cookies": [], "optional_categories": []})
             elif path in ["/api/bootstrap", "/api/sessions", "/api/movements", "/api/dashboard"]:
@@ -54,13 +58,13 @@ def main():
         page.get_by_role("button", name="Continuar", exact=True).click()
         expect(page.get_by_role("button", name="Galeria", exact=True)).to_be_visible()
         page.locator('input[type="file"][multiple]').set_input_files({"name": "teste.png", "mimeType": "image/png", "buffer": buffer.getvalue()})
-        expect(page.get_by_role("heading", name="Rever o recorte", exact=False)).to_be_visible()
+        expect(page.get_by_role("heading", name="Página 1 pronta")).to_be_visible()
         page.get_by_role("button", name="Terminar", exact=True).click()
         confirmation = page.get_by_role("alertdialog")
         expect(confirmation).to_be_visible()
         confirmation.get_by_role("button", name="Cancelar", exact=True).click()
         expect(confirmation).not_to_be_visible()
-        expect(page.get_by_role("heading", name="Rever o recorte", exact=False)).to_be_visible()
+        expect(page.get_by_role("heading", name="Página 1 pronta")).to_be_visible()
         assert "/api/quick-scan/session/end" not in calls
         page.get_by_role("button", name="Terminar", exact=True).click()
         confirmation.get_by_role("button", name="Terminar sem guardar", exact=True).click()

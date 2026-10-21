@@ -150,6 +150,41 @@ def dossier_scan_files(db, start, end, store_ids=None):
         files["digitalizacoes/pendencias.json"] = json.dumps(pending, ensure_ascii=False).encode()
     return files
 
+def _percentile(image, fraction):
+    histogram, seen = image.histogram(), 0
+    target = sum(histogram) * fraction
+    for value, count in enumerate(histogram):
+        seen += count
+        if seen >= target:
+            return value
+    return 255
+
+
+def flatten_light(image):
+    """Tira sombras, luz desigual e dominantes de cor: divide cada canal pelo fundo (o papel sem tinta).
+
+    O fundo estima-se na imagem reduzida 1/8 com um máximo local (apaga a tinta) e desfocagem. O ganho
+    fica limitado a ×2, para não clarear logótipos e blocos escuros grandes, e aplica-se em 8 bits
+    (imagem + imagem × (ganho − 1)), sem cálculo em vírgula flutuante sobre a imagem inteira.
+    """
+    small = image.reduce(8) if min(image.size) >= 160 else image
+    background = small.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.GaussianBlur(2))
+    gains = []
+    for band in background.split():
+        floor = max(1, 0.5 * _percentile(band, 0.9))
+        gains.append(band.point([min(255, round(255 * (255 / max(v, floor) - 1))) for v in range(256)]))
+    gain = Image.merge(background.mode, gains).resize(image.size, Image.Resampling.BILINEAR)
+    return ImageChops.add(image, ImageChops.multiply(image, gain))
+
+
+def ink_curve(image):
+    """Papel branco puro e tinta mais escura: preto no percentil 0,5 % (no máximo 110), branco a partir de 235."""
+    sample = image.reduce(4) if min(image.size) >= 80 else image
+    black = min(110, _percentile(ImageOps.grayscale(sample) if sample.mode != "L" else sample, 0.005))
+    lut = [0 if v <= black else 255 if v >= 235 else round(255 * ((v - black) / (235 - black)) ** 1.25) for v in range(256)]
+    return image.point(lut * len(image.getbands()))
+
+
 def process_image(raw, edit):
     if not raw or len(raw) > MAX_IMAGE:
         raise HTTPException(422, "Cada fotografia pode ter até 15 MB.")
@@ -170,8 +205,12 @@ def process_image(raw, edit):
             raise ValueError()
         if edit.rotation:
             image = image.rotate(-edit.rotation, expand=True)
+        sharpen = ImageFilter.UnsharpMask(radius=1.5, percent=60, threshold=2)
         if edit.colour == "enhanced":
-            image = ImageEnhance.Sharpness(ImageEnhance.Color(ImageOps.autocontrast(image, cutoff=1)).enhance(1.15)).enhance(1.3)
+            # «Cor» como num digitalizador: sem sombras nem dominantes, papel branco, cores vivas, texto nítido.
+            image = ImageEnhance.Color(ink_curve(flatten_light(image))).enhance(1.15).filter(sharpen)
+        elif edit.colour == "grey":
+            image = ink_curve(ImageOps.grayscale(flatten_light(image))).filter(sharpen)
         elif edit.colour != "colour":
             image = ImageOps.grayscale(image)
         if edit.colour == "contrast":

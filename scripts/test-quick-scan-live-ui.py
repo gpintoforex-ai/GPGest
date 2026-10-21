@@ -131,7 +131,15 @@ try:
         page.screenshot(path=str(work / "direto.png"))
         report = page.evaluate((ROOT / "scripts" / "contrast-audit.js").read_text(encoding="utf-8"))
         assert not report.get("failures"), report.get("failures")
-        expect(page.get_by_role("heading", name=re.compile("Rever o recorte"))).to_be_visible(timeout=15000)
+        # Como num digitalizador: a página aparece logo recortada e melhorada.
+        expect(page.get_by_role("heading", name="Página 1 pronta")).to_be_visible(timeout=15000)
+        result = page.get_by_role("img", name="Página 1 recortada")
+        expect(result).to_be_visible()
+        page.wait_for_function("img => img.complete && img.naturalWidth > 0", arg=result.element_handle())
+        size = result.evaluate("img => [img.naturalWidth, img.naturalHeight]")
+        assert size[1] > size[0], f"O recorte deve ter a forma da folha (vertical), não a da imagem: {size}"
+        page.screenshot(path=str(work / "resultado.png"))
+        page.get_by_role("button", name="Ajustar cantos").click()
         expect(page.get_by_text("Margens detetadas automaticamente", exact=False)).to_be_visible()
         automatic = assert_corners(corners_of(page), truth)
         # Repetir com a captura automática desligada: nada é fotografado sozinho; o botão usa a deteção.
@@ -140,9 +148,10 @@ try:
         expect(page.get_by_role("button", name=re.compile("Captura automática desligada"))).to_have_attribute("aria-pressed", "false")
         expect(page.locator(".qs-live-hint")).to_contain_text("Toque no botão para fotografar")
         page.wait_for_timeout(2500)
-        expect(page.get_by_role("heading", name=re.compile("Rever o recorte"))).to_have_count(0)
+        expect(page.get_by_role("heading", name=re.compile("Rever o recorte|pronta"))).to_have_count(0)
         page.get_by_role("button", name="Capturar página").click()
-        expect(page.get_by_role("heading", name=re.compile("Rever o recorte"))).to_be_visible()
+        expect(page.get_by_role("heading", name="Página 1 pronta")).to_be_visible()
+        page.get_by_role("button", name="Ajustar cantos").click()
         manual = assert_corners(corners_of(page), truth)
         page.screenshot(path=str(work / "recorte.png"))
         assert page.evaluate("localStorage.getItem('iazela_digitalizacao_auto')") == "0"
@@ -158,7 +167,7 @@ try:
         expect(page.locator(".qs-live-hint")).to_contain_text("A procurar o documento")
         page.wait_for_timeout(3000)
         expect(page.locator(".qs-live-quad")).to_have_count(0)
-        expect(page.get_by_role("heading", name=re.compile("Rever o recorte"))).to_have_count(0)
+        expect(page.get_by_role("heading", name=re.compile("Rever o recorte|pronta"))).to_have_count(0)
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert not errors, errors
         browser.close()

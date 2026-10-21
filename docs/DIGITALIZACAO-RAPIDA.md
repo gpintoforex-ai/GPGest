@@ -57,20 +57,24 @@ A câmara em direto exige HTTPS (ver `ALLOWED_ORIGINS` e publicação em [Digita
 - **Captura automática.** Ligada por omissão. Fotografa quando o documento está inteiro na imagem e imóvel cerca de 1 segundo. O botão «Captura automática ligada/desligada» guarda a preferência neste dispositivo. O botão de fotografar funciona sempre. A fotografia usa os cantos que estavam no ecrã.
 - **Como funciona a deteção.** É local, no navegador, sem bibliotecas nem serviços externos. As imagens analisadas não são guardadas nem enviadas.
   - Analisa cerca de 8 imagens por segundo, numa versão reduzida do vídeo (256 px), e analisa menos vezes em telemóveis lentos.
-  - Procura o papel pela «brancura» (claro e pouco saturado, o que distingue mesas de madeira e fundos coloridos), com desfocagem e limiar de Otsu.
-  - Calcula os cantos pelo contorno da maior região clara (envolvente convexa reduzida a 4 vértices), afinados com uma reta ajustada a cada lado. Funciona com o papel rodado ou em perspetiva.
-  - Rejeita formas que não parecem um documento (ângulos ou preenchimento implausíveis).
+  - Combina dois métodos e fica com o melhor quadrilátero:
+    - **Região clara**: o papel pela «brancura» (claro e pouco saturado, o que distingue mesas de madeira e fundos coloridos), limiar de Otsu e contorno da maior região clara. Rápido e exato quando há contraste.
+    - **Arestas retas**, para **papel branco sobre mesa branca**: os lados da folha deixam arestas ténues mas compridas (sombra fina de contacto, pequena diferença de brilho ou de tom). O mapa de arestas usa um limiar relativo ao ruído da imagem e desconta a luz de fundo; as retas (transformada de Hough) são afinadas por mínimos quadrados e combinadas em quadriláteros.
+  - Cada lado proposto tem de coincidir com arestas reais ao longo do comprimento **e junto dos dois cantos**, e não pode continuar para lá deles. Assim, linhas de texto, blocos de texto, tabelas e bordas de outros objetos (teclado, telemóvel, fim da mesa) não passam por lados da folha.
+  - Na dúvida não deteta nada: a captura automática nunca usa um contorno que não seja fiável.
+  - Funciona com o papel rodado ou em perspetiva e rejeita formas que não parecem um documento.
 
-  A mesma deteção é usada nas fotografias da galeria. O utilizador revê sempre o recorte. Se a deteção falhar, propõe-se a página inteira para ajuste manual dos quatro cantos, por arrasto ou com as setas do teclado.
-- **Limites.** A deteção precisa de contraste entre o papel e o fundo: papel branco sobre uma mesa branca não é detetado (aparece «Pouco contraste»), e nesse caso fotografa-se e ajustam-se os cantos à mão. Não usa modelos de aprendizagem automática.
+  A mesma deteção é usada nas fotografias da galeria. Se a deteção falhar, propõe-se a página inteira para ajuste manual dos quatro cantos, por arrasto ou com as setas do teclado.
+- **Página pronta.** Com as margens detetadas, a fotografia aparece logo recortada, endireitada e melhorada («Página N pronta»), como numa aplicação de digitalização. A partir daí pode **Ajustar cantos**, mudar o modo de cor, rodar, repetir a fotografia, eliminar, **Fotografar outra** ou **Concluir**.
+- **Limites.** Uma folha branca sobre uma mesa branca é detetada quando algum lado se distingue (sombra, brilho ou tom); se um lado for de todo invisível (mesmo branco, sem sombra e com luz difusa), a folha não é detetada e ajustam-se os cantos à mão. Ajuda incliná-la um pouco em relação à luz ou usar uma superfície mais escura. Não usa modelos de aprendizagem automática.
 - **Correção de perspetiva.** É feita no servidor da própria aplicação (Pillow), tal como os modos:
   - **Original**;
-  - **Cor** (realce de contraste);
-  - **Cinzentos**;
+  - **Cor** (por omissão): retira sombras, luz desigual e dominantes de cor (cada canal é dividido pelo fundo do papel, estimado sem a tinta), deixa o papel branco, escurece o texto e aviva as cores; logótipos e blocos escuros grandes são preservados;
+  - **Cinzentos**: o mesmo tratamento, sem cor;
   - **Preto e branco** (limiar local, tolera sombras).
 
   Não há reconstrução generativa nem OCR externo.
-- **Páginas.** Miniaturas para reordenar, editar o recorte, rodar, repetir a fotografia e eliminar.
+- **Páginas.** Miniaturas para reordenar, ajustar os cantos, rodar, repetir a fotografia e eliminar.
 - **PDF.** Respeita a orientação e não força A4: talões compridos ficam com 80 mm de largura. Antes de enviar, mostra o tamanho final, a pré-visualização e o descarregamento.
 
 ## Classificação e envio
@@ -127,7 +131,7 @@ Não há analítica nem registo de imagens ou PINs. O único dado guardado no di
   - pasta indisponível e autorização expirada;
   - isolamento entre empresas por identificador;
   - QR legível.
-- `scripts/test-edge-detection.mjs` (Node, sem navegador): deteção em cenas sintéticas, incluindo fatura rodada sobre madeira, papel a 45°, perspetiva, texto, ruído, iluminação desigual, papel longe, cortado ou a ocupar a imagem, fundo branco, forma irregular, e tempo por análise.
+- `scripts/test-edge-detection.mjs` (Node, sem navegador): deteção em cenas sintéticas, incluindo fatura rodada sobre madeira, papel a 45°, perspetiva, texto, ruído, iluminação desigual, papel longe, cortado ou a ocupar a imagem, branco sobre branco (com sombra, quase igual, luz desigual, teclado ao lado, talão estreito), mesa vazia, forma irregular e tempo por análise. Inclui um banco de cenas realistas geradas por `scripts/document-scenes.mjs` (texto com margens, perspetiva, sombras finas, luz desigual, desfocagem, ruído, objetos, folha cortada e mesa vazia): exige pelo menos 80 % de folhas detetadas e **nenhum** contorno errado.
 - `scripts/test-quick-scan-live-ui.py` (Chromium com vídeo sintético como câmara) cobre contorno em direto, indicação coerente, captura automática com os cantos certos, captura manual com a automática desligada e preferência guardada, e ausência de captura sem documento.
 - `scripts/test-quick-scan-ui.py` (Chromium com câmara simulada e ecrã móvel) cobre:
   - criação do acesso e QR;

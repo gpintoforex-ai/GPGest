@@ -12,7 +12,8 @@ import "./QuickScan.css";
 type Mode = "colour" | "enhanced" | "grey" | "bw";
 type Edit = { corners: Corners; rotation: 0 | 90 | 180 | 270; colour: Mode };
 type Page = { id: string; full: Blob; small: Blob; source: string; preview: string; edit: Edit; detected: boolean };
-type Step = "loading" | "pair" | "pin" | "capture" | "edit" | "review" | "pdf" | "done";
+// result: página já recortada e melhorada (margens detetadas), como num digitalizador; edit: ajustar cantos.
+type Step = "loading" | "pair" | "pin" | "capture" | "result" | "edit" | "review" | "pdf" | "done";
 type Row = Record<string, any>;
 
 const MODES: [Mode, string][] = [["colour", "Original"], ["enhanced", "Cor"], ["grey", "Cinzentos"], ["bw", "Preto e branco"]];
@@ -135,18 +136,34 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
     });
   }
 
-  function addPage(result: { full: Blob; small: Blob; corners: Corners | null }) {
+  /**
+   * Junta a página. Com as margens detetadas mostra logo o resultado recortado e melhorado (como um
+   * digitalizador); sem deteção, ou se a pré-visualização falhar, abre o ajuste dos cantos.
+   */
+  async function addPage(result: { full: Blob; small: Blob; corners: Corners | null }) {
     const edit: Edit = { corners: result.corners || FULL_FRAME, rotation: 0, colour: "enhanced" };
     const source = remember(result.small);
     const target = replacing.current;
     const id = target || crypto.randomUUID();
+    const item: Page = { id, full: result.full, small: result.small, source, preview: "", edit, detected: !!result.corners };
     setPages(list => {
-      if (target) return list.map(p => { if (p.id !== target) return p; forget(p.source); forget(p.preview); return { ...p, full: result.full, small: result.small, source, preview: "", edit, detected: !!result.corners }; });
-      return [...list, { id, full: result.full, small: result.small, source, preview: "", edit, detected: !!result.corners }];
+      if (target) return list.map(p => { if (p.id !== target) return p; forget(p.source); forget(p.preview); return item; });
+      return [...list, item];
     });
     replacing.current = null;
     invalidate();
-    setCurrent(id); setDraft(edit); setStep("edit");
+    setCurrent(id);
+    if (result.corners) {
+      try {
+        const url = await preview(item, edit);
+        setPages(list => list.map(p => p.id === id ? { ...p, preview: url } : p));
+        setDraft(null); setStep("result");
+        return;
+      } catch (problem) {
+        if (problem instanceof QuickError && problem.status === 401) throw problem;
+      }
+    }
+    setDraft(edit); setStep("edit");
   }
 
   function invalidate() {
@@ -158,7 +175,7 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
   async function capture(seen?: Corners) {
     if (!camera.ready || busy) return;
     flash(cameraBox.current);
-    await run("A preparar a fotografia…", async () => addPage(await captureFrame(camera, live, seen)));
+    await run("A recortar a página…", async () => addPage(await captureFrame(camera, live, seen)));
   }
 
   async function chooseFiles(files: FileList | null) {
@@ -168,7 +185,7 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
     await run("A preparar as fotografias…", async () => {
       for (const [index, file] of list.entries()) {
         const result = await fromFile(file);
-        if (index === list.length - 1) addPage(result);
+        if (index === list.length - 1) await addPage(result);
         else {
           const source = remember(result.small);
           setPages(items => [...items, { id: crypto.randomUUID(), full: result.full, small: result.small, source, preview: "", edit: { corners: result.corners || FULL_FRAME, rotation: 0, colour: "enhanced" }, detected: !!result.corners }]);
@@ -204,6 +221,16 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
   function move(id: string, delta: number) {
     setPages(list => { const index = list.findIndex(p => p.id === id), target = index + delta; if (target < 0 || target >= list.length) return list; const copy = [...list]; [copy[index], copy[target]] = [copy[target], copy[index]]; return copy; });
     invalidate();
+  }
+
+  async function recolour(item: Page, colour: Mode) {
+    if (item.edit.colour === colour) return;
+    const edit = { ...item.edit, colour };
+    await run("A aplicar…", async () => {
+      const url = await preview(item, edit);
+      setPages(list => list.map(p => { if (p.id !== item.id) return p; forget(p.preview); return { ...p, edit, preview: url }; }));
+      invalidate();
+    });
   }
 
   async function rotate(item: Page) {
@@ -320,6 +347,29 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
     </ManagedForm>
     <p className="qs-small">O acesso rápido só permite digitalizar e guardar documentos. Não mostra dados da empresa nem documentos anteriores.</p>
   </main></div>;
+
+  if (step === "result" && page) {
+    const number = pages.findIndex(p => p.id === page.id) + 1;
+    return <div className="qs">{header}<main className="qs-main">
+      <h1><CheckCircle2 aria-hidden="true" /> Página {number} pronta</h1>
+      {messages}
+      <p className="qs-small">Recortada e melhorada automaticamente. Se o recorte não estiver certo, ajuste os cantos.</p>
+      <figure className="qs-result"><img src={page.preview || page.source} alt={`Página ${number} recortada`} /></figure>
+      <div className="qs-toolbar" role="group" aria-label="Modo de cor">
+        {MODES.map(([value, label]) => <ActionButton key={value} type="button" className={`qs-chip ${page.edit.colour === value ? "active" : ""}`} aria-pressed={page.edit.colour === value} disabled={!!busy} onClick={() => void recolour(page, value)}>{label}</ActionButton>)}
+      </div>
+      <div className="qs-toolbar">
+        <ActionButton type="button" onClick={() => { setDraft(page.edit); setStep("edit"); }}><Crop size={18} aria-hidden="true" />Ajustar cantos</ActionButton>
+        <ActionButton type="button" disabled={!!busy} onClick={() => void rotate(page)}><RotateCw size={18} aria-hidden="true" />Rodar</ActionButton>
+        <ActionButton type="button" onClick={() => { replacing.current = page.id; setCurrent(null); setStep("capture"); }}><Camera size={18} aria-hidden="true" />Repetir fotografia</ActionButton>
+        <ActionButton type="button" className="ui-action-danger" onClick={() => { removePage(page.id); setCurrent(null); setStep(pages.length > 1 ? "review" : "capture"); }}><Trash2 size={18} aria-hidden="true" />Eliminar</ActionButton>
+      </div>
+      <footer className="qs-actions">
+        {pages.length < maxPages && <ActionButton type="button" disabled={!!busy} onClick={() => { setCurrent(null); setStep("capture"); }}><Plus size={18} aria-hidden="true" />Fotografar outra</ActionButton>}
+        <ActionButton type="button" className="primary" disabled={!!busy} onClick={() => { setCurrent(null); setStep("review"); }}>Concluir ({pages.length} {pages.length === 1 ? "página" : "páginas"})</ActionButton>
+      </footer>
+    </main></div>;
+  }
 
   if (step === "edit" && page && draft) {
     const points = draft.corners.map(([x, y]) => `${x * 1000},${y * 1000}`).join(" ");

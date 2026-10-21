@@ -198,6 +198,21 @@
   max-height: 58dvh;
   -webkit-touch-callout: none;
 }
+/* Página já recortada e melhorada (resultado da deteção automática). */
+.qs-result {
+  margin: 0 auto;
+  width: fit-content;
+  max-width: 100%;
+}
+.qs-result img {
+  display: block;
+  max-width: 100%;
+  max-height: 58dvh;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  background: #fff;
+}
 .qs-editor svg {
   position: absolute;
   inset: 0;

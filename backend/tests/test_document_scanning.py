@@ -6,7 +6,7 @@ from datetime import timedelta
 from contextlib import contextmanager
 import httpx
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops
 from pypdf import PdfReader
 from sqlalchemy import select, func
 from app import db as database
@@ -101,6 +101,25 @@ def test_exif_rotation_crop_colour_order_and_long_receipt():
     assert count==2 and float(pages[1].mediabox.height)/float(pages[1].mediabox.width)>4
     pixel=pages[0].images[0].image.getpixel((100,100)); assert pixel[2]>pixel[0]+100
     assert float(pages[0].mediabox.width)>float(pages[1].mediabox.width)
+
+def test_enhanced_colour_removes_shadow_and_colour_cast_but_keeps_ink():
+    # Página amarelada (luz quente) com sombra até -35 % à direita, texto preto e logótipo vermelho.
+    from PIL import ImageDraw
+    page = Image.new("RGB", (900, 1200), (236, 228, 205))
+    draw = ImageDraw.Draw(page)
+    draw.rectangle((80, 80, 300, 200), fill=(190, 25, 25))
+    for row in range(25):
+        draw.rectangle((80, 280 + row * 34, 700, 292 + row * 34), fill=(30, 30, 32))
+    shade = Image.linear_gradient("L").rotate(90).resize(page.size).point(lambda v: round(255 * (0.65 + 0.35 * v / 255)))
+    darkened = ImageChops.multiply(page, Image.merge("RGB", [shade] * 3))
+    buffer = io.BytesIO(); darkened.save(buffer, "PNG")
+    raw, _, _ = process_image(buffer.getvalue(), PageEdit(colour="enhanced"))
+    result = Image.open(io.BytesIO(raw)).convert("RGB")
+    left, right = result.getpixel((40, 600)), result.getpixel((860, 600))
+    assert min(left) >= 240 and min(right) >= 240, (left, right)          # papel branco dos dois lados
+    assert max(result.getpixel((400, 286))) <= 70                          # texto continua escuro
+    red = result.getpixel((190, 140)); assert red[0] >= 180 and red[1] <= 90  # logótipo continua vermelho
+
 
 def test_prepare_upload_retry_same_file_existing_doc_and_validation(scans):
     client,_,factory,_,purchase,drive=scans
