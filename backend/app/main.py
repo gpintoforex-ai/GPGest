@@ -2173,3 +2173,6 @@ from .archive_api import router as archive_router
 app.include_router(archive_router)
 from .archive_assistant import router as archive_assistant_router
 app.include_router(archive_assistant_router)
+
+from .customer_orders import router as customer_orders_router
+app.include_router(customer_orders_router)

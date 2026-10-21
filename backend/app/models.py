@@ -1362,6 +1362,89 @@ class ProcurementDocument(Base):
     data: Mapped[str] = mapped_column(Text, default="{}")
 
 
+class CustomerOrder(Base):
+    __tablename__ = "customer_orders"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    customer_id: Mapped[str | None] = mapped_column(ForeignKey("business_entities.id"), nullable=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    revision: Mapped[int] = mapped_column(default=0)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class CustomerOrderLine(Base):
+    __tablename__ = "customer_order_lines"
+    __table_args__ = (CheckConstraint("quantity > 0 AND cancelled >= 0 AND delivered >= 0 AND cancelled + delivered <= quantity"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    order_id: Mapped[str] = mapped_column(ForeignKey("customer_orders.id"), index=True)
+    article_id: Mapped[str | None] = mapped_column(ForeignKey("stock_articles.id"), nullable=True)
+    supplier_id: Mapped[str | None] = mapped_column(ForeignKey("business_entities.id"), nullable=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6))
+    cancelled: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)
+    delivered: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class CustomerOrderReservation(Base):
+    __tablename__ = "customer_order_reservations"
+    __table_args__ = (CheckConstraint("quantity >= 0"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    line_id: Mapped[str] = mapped_column(ForeignKey("customer_order_lines.id"), index=True)
+    warehouse_id: Mapped[str] = mapped_column(ForeignKey("stock_warehouses.id"), index=True)
+    lot_id: Mapped[str | None] = mapped_column(ForeignKey("stock_lots.id"), nullable=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6))
+
+
+class SupplierOrderTerms(Base):
+    __tablename__ = "supplier_order_terms"
+    supplier_id: Mapped[str] = mapped_column(ForeignKey("business_entities.id"), primary_key=True)
+    revision: Mapped[int] = mapped_column(default=0)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class CustomerPurchaseSimulation(Base):
+    __tablename__ = "customer_purchase_simulations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    supplier_id: Mapped[str] = mapped_column(ForeignKey("business_entities.id"))
+    procurement_id: Mapped[str | None] = mapped_column(ForeignKey("procurement_documents.id"), unique=True, nullable=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    revision: Mapped[int] = mapped_column(default=0)
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class CustomerSupplyLink(Base):
+    __tablename__ = "customer_supply_links"
+    __table_args__ = (UniqueConstraint("simulation_id", "line_id"), CheckConstraint("quantity > 0 AND released >= 0 AND received >= 0 AND confirmed >= 0 AND received + released <= quantity AND confirmed <= quantity"))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    simulation_id: Mapped[str] = mapped_column(ForeignKey("customer_purchase_simulations.id"), index=True)
+    simulation_line: Mapped[int] = mapped_column(Integer)
+    line_id: Mapped[str] = mapped_column(ForeignKey("customer_order_lines.id"), index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6))
+    released: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)
+    confirmed: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)
+    received: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)
+
+
+class CustomerOrderEvent(Base):
+    __tablename__ = "customer_order_events"
+    __table_args__ = (UniqueConstraint("request_key"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    order_id: Mapped[str | None] = mapped_column(ForeignKey("customer_orders.id"), nullable=True, index=True)
+    target_id: Mapped[str] = mapped_column(String(36), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    action: Mapped[str] = mapped_column(String(50))
+    request_key: Mapped[str] = mapped_column(String(100))
+    digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    dispatch_id: Mapped[str | None] = mapped_column(ForeignKey("email_dispatches.id"), nullable=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
 class ProcurementLink(Base):
     __tablename__ = "procurement_links"
     __table_args__ = (UniqueConstraint("document_id", "line_index"),)

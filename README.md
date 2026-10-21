@@ -231,3 +231,7 @@ Referências técnicas: [segurança FastAPI](https://fastapi.tiangolo.com/tutori
 ## Artigos, stock e validades
 
 O módulo integrado está em **Tabelas → Artigos e validades**, com catálogo local/ERP, lotes, FEFO, movimentos, inventários e margem bruta. Consulte [regras, configuração e limitações](docs/ARTIGOS-STOCK-VALIDADES.md). Requer a migração 0044.
+
+## Encomendas de clientes
+
+Disponível em **Compras e Stock → Encomendas de clientes**, com pedidos, reservas, simulação por fornecedor, compras, receções parciais, contactos e entregas. Consulte [utilização, arquitetura e limitações](docs/ENCOMENDAS-CLIENTES.md). Requer a migração 0057 antes de reiniciar o backend.

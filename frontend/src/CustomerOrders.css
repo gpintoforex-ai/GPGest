@@ -1,0 +1,123 @@
+.customer-orders,
+.customer-orders > * {
+  min-width: 0;
+}
+.co-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.co-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 10px 14px;
+  align-items: end;
+}
+.co-grid .field {
+  min-width: 0;
+  margin: 8px 0;
+}
+.co-grid :is(input, select, textarea),
+.co-dialog .field > input {
+  width: 100%;
+  min-width: 0;
+}
+.co-dialog.ui-dialog {
+  width: min(940px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+}
+.co-dialog details {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.co-dialog summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.co-product {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 14px;
+  margin: 16px 0;
+  min-width: 0;
+}
+.co-product h3 {
+  margin-top: 0;
+}
+.co-product small,
+.co-warning {
+  display: block;
+}
+.co-warning {
+  color: var(--text-warning, var(--color-text));
+}
+.co-inline,
+.co-alert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+.co-alert {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.co-alert p {
+  margin: 4px 0;
+}
+.co-quantities,
+.co-totals dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+.co-quantities dt,
+.co-totals dt {
+  font-size: 13px;
+  color: var(--color-muted);
+}
+.co-quantities dd,
+.co-totals dd {
+  font-weight: 700;
+  margin: 4px 0;
+}
+.co-totals {
+  padding: 16px;
+  margin: 14px 0;
+  background: var(--color-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+.co-totals progress {
+  display: block;
+  width: 100%;
+  height: 16px;
+  accent-color: var(--color-primary);
+  margin: 8px 0;
+}
+.co-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+@media (max-width: 600px) {
+  .co-dialog.ui-dialog {
+    width: calc(100vw - 12px);
+    max-width: calc(100vw - 12px);
+    padding: 14px;
+  }
+  .co-product {
+    padding: 10px;
+  }
+  .co-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .co-quantities {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .co-alert {
+    align-items: flex-start;
+  }
+}

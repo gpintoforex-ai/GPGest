@@ -13,7 +13,17 @@ from sqlalchemy.orm import Session
 from . import db as database
 from .access import authorize, current, record
 from .db import db_session
-from .models import BusinessEntity, CashSession, Category, Movement, WintouchEntity
+from .models import (
+    BusinessEntity,
+    CashSession,
+    Category,
+    CustomerOrder,
+    CustomerOrderLine,
+    CustomerPurchaseSimulation,
+    Movement,
+    SupplierOrderTerms,
+    WintouchEntity,
+)
 from .operating_modes import policy as integration_policy
 from .platform_models import Company
 from .schemas import Strict
@@ -92,10 +102,22 @@ def annotate_entity_movement_history(entities, db):
             if name
         }
     referenced_ids = set()
-    for raw_data in db.scalars(
-        select(CashSession.count_data).where(
-            CashSession.count_data.contains('"debit_supplier"')
+    order_entities = set(
+        db.scalars(select(CustomerOrder.customer_id).where(CustomerOrder.customer_id.is_not(None)))
+    )
+    order_entities.update(
+        db.scalars(
+            select(CustomerOrderLine.supplier_id).where(CustomerOrderLine.supplier_id.is_not(None))
         )
+    )
+    order_entities.update(db.scalars(select(CustomerPurchaseSimulation.supplier_id)))
+    order_entities.update(db.scalars(select(SupplierOrderTerms.supplier_id)))
+    for entity in db.scalars(select(BusinessEntity).where(BusinessEntity.id.in_(order_entities))):
+        referenced_ids.update([entity.id, "local:" + entity.id])
+        if entity.wintouch_id:
+            referenced_ids.add("wt:" + entity.wintouch_id)
+    for raw_data in db.scalars(
+        select(CashSession.count_data).where(CashSession.count_data.contains('"debit_supplier"'))
     ):
         counting = json.loads(raw_data or "{}")
         supplier = counting.get("debit_supplier")
@@ -108,14 +130,11 @@ def annotate_entity_movement_history(entities, db):
         allocations = supplier.get("allocations", [])
         if isinstance(allocations, list):
             referenced_ids.update(
-                item["id"]
-                for item in allocations
-                if isinstance(item, dict) and item.get("id")
+                item["id"] for item in allocations if isinstance(item, dict) and item.get("id")
             )
     for entity in entities:
         entity["has_movements"] = (
-            entity["id"] in referenced_ids
-            or entity["name"].strip().casefold() in movement_names
+            entity["id"] in referenced_ids or entity["name"].strip().casefold() in movement_names
         )
 
 
@@ -146,9 +165,7 @@ def vies_address_parts(value):
 
 
 @router.get("/api/entities/lookup")
-def lookup_entity_by_nif(
-    tax_number: str, user=Depends(current), db: Session = Depends(db_session)
-):
+def lookup_entity_by_nif(tax_number: str, user=Depends(current), db: Session = Depends(db_session)):
     authorize(user, db, roles=["administrador", "gestor"])
     normalized = re.sub(r"[\s.-]", "", tax_number.strip().upper())
     if normalized.startswith("PT"):
@@ -191,7 +208,11 @@ def list_entities(user=Depends(current), db: Session = Depends(db_session)):
     local = list(db.scalars(select(BusinessEntity).order_by(BusinessEntity.name)))
     overrides = {e.wintouch_id: e for e in local if e.wintouch_id}
     config = integration_policy(db)
-    external_primary = config["mode"] == "integrated" and config.get("authority", {}).get("entities", "erp") == "erp" and bool(db.info.get("company", {}).get("id"))
+    external_primary = (
+        config["mode"] == "integrated"
+        and config.get("authority", {}).get("entities", "erp") == "erp"
+        and bool(db.info.get("company", {}).get("id"))
+    )
     result = [
         entity_view(e, "GPGest", "local:" + e.id)
         for e in local
@@ -258,9 +279,26 @@ def edit_entity(
         if not imported or imported.enterprise_id != enterprise:
             raise HTTPException(404, "Entidade não encontrada.")
         config = integration_policy(db)
-        if config["mode"] == "integrated" and config.get("authority", {}).get("entities", "erp") == "erp":
-            if any((getattr(data, field) or "") != (getattr(imported, field) or "") for field in ("name", "tax_number", "email", "phone", "is_customer", "is_supplier", "active")):
-                raise HTTPException(409, "Os dados principais desta entidade são geridos pelo ERP. Pode manter as informações locais associadas.")
+        if (
+            config["mode"] == "integrated"
+            and config.get("authority", {}).get("entities", "erp") == "erp"
+        ):
+            if any(
+                (getattr(data, field) or "") != (getattr(imported, field) or "")
+                for field in (
+                    "name",
+                    "tax_number",
+                    "email",
+                    "phone",
+                    "is_customer",
+                    "is_supplier",
+                    "active",
+                )
+            ):
+                raise HTTPException(
+                    409,
+                    "Os dados principais desta entidade são geridos pelo ERP. Pode manter as informações locais associadas.",
+                )
         entity = db.scalar(select(BusinessEntity).where(BusinessEntity.wintouch_id == key))
         if not entity:
             entity = BusinessEntity(wintouch_id=key, **data.model_dump())
@@ -292,8 +330,14 @@ def remove_entity(entity_key: str, user=Depends(current), db: Session = Depends(
         if not imported or imported.enterprise_id != enterprise:
             raise HTTPException(404, "Entidade não encontrada.")
         config = integration_policy(db)
-        if config["mode"] == "integrated" and config.get("authority", {}).get("entities", "erp") == "erp":
-            raise HTTPException(409, "A entidade pertence ao ERP. Altere o estado na origem ou escolha explicitamente a gest\u00e3o local.")
+        if (
+            config["mode"] == "integrated"
+            and config.get("authority", {}).get("entities", "erp") == "erp"
+        ):
+            raise HTTPException(
+                409,
+                "A entidade pertence ao ERP. Altere o estado na origem ou escolha explicitamente a gest\u00e3o local.",
+            )
         entity = db.scalar(select(BusinessEntity).where(BusinessEntity.wintouch_id == key))
         if not entity:
             entity = BusinessEntity(

@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from .db import db_session
 from .models import (
     BusinessEntity,
+    CustomerOrderLine,
+    CustomerPurchaseSimulation,
     ProcurementDocument,
     StockArticle,
     StockEntry,
@@ -418,6 +420,30 @@ def post(db, user, data, authorize, *, source="manual", bypass=False):
     allocations = [(lot.id if lot else None, data.quantity)]
     available = balances(history)
     if not inbound:
+        # Customer reservations do not create stock, but protect physical units
+        # against every other outgoing path (including manual purchases/returns).
+        from .models import CustomerOrderLine, CustomerOrderReservation
+
+        holds = list(
+            db.scalars(
+                select(CustomerOrderReservation)
+                .join(CustomerOrderLine, CustomerOrderLine.id == CustomerOrderReservation.line_id)
+                .where(
+                    CustomerOrderLine.article_id == product.id,
+                    CustomerOrderReservation.warehouse_id == origin.id,
+                    CustomerOrderReservation.quantity > 0,
+                )
+            )
+        )
+        for hold in holds:
+            available[(origin.id, hold.lot_id)] -= hold.quantity
+        if holds and data.quantity > sum(
+            (max(ZERO, q) for (wh, _), q in available.items() if wh == origin.id), ZERO
+        ):
+            fail(
+                "Existem unidades reservadas para pedidos de clientes. Liberte as reservas antes desta saída.",
+                409,
+            )
         candidates = []
         for (wh, lot_id), quantity in available.items():
             if wh != origin.id or quantity <= 0:
@@ -535,7 +561,15 @@ def entry_view(row, cost_visible):
         "direct_cost": str(row.direct_cost) if cost_visible else None,
         **{
             k: detail.get(k)
-            for k in ("origin", "document", "reason", "unit", "override_reason", "supplier_id", "procurement_id")
+            for k in (
+                "origin",
+                "document",
+                "reason",
+                "unit",
+                "override_reason",
+                "supplier_id",
+                "procurement_id",
+            )
         },
         "value_delta": detail.get("value_delta") if cost_visible else None,
         "inventory_value_delta": detail.get("inventory_value_delta") if cost_visible else None,
@@ -724,19 +758,39 @@ def register_routes(app, current, authorize, scope, audit):
         return {"id": row.id}
 
     @app.post("/api/stock/warehouses/{warehouse_id}")
-    def edit_warehouse(warehouse_id: str, data: WarehouseInput, user=Depends(current), db: Session = Depends(db_session)):
+    def edit_warehouse(
+        warehouse_id: str,
+        data: WarehouseInput,
+        user=Depends(current),
+        db: Session = Depends(db_session),
+    ):
         require(user, settings(db), "adjust_stock")
         lock(db)
         row = warehouse(db, user, warehouse_id, authorize)
         authorize(user, db, data.store_id)
         if row.store_id != data.store_id:
-            fail("O estabelecimento de um armazém existente não pode ser alterado. Crie um armazém no destino e transfira o stock.")
+            fail(
+                "O estabelecimento de um armazém existente não pode ser alterado. Crie um armazém no destino e transfira o stock."
+            )
         name = data.name.strip()
-        if not name or db.scalar(select(StockWarehouse.id).where(StockWarehouse.store_id == row.store_id, StockWarehouse.name == name, StockWarehouse.id != row.id)):
+        if not name or db.scalar(
+            select(StockWarehouse.id).where(
+                StockWarehouse.store_id == row.store_id,
+                StockWarehouse.name == name,
+                StockWarehouse.id != row.id,
+            )
+        ):
             fail("Preencha um nome de armazém ainda não utilizado.")
         before = row.name
         row.name = name
-        audit(db, user, "stock_warehouse_updated", row.id, {"before": before, "name": name}, row.store_id)
+        audit(
+            db,
+            user,
+            "stock_warehouse_updated",
+            row.id,
+            {"before": before, "name": name},
+            row.store_id,
+        )
         db.commit()
         return {"id": row.id}
 
@@ -775,8 +829,12 @@ def register_routes(app, current, authorize, scope, audit):
                 409,
             )
         audit(
-            db, user, "stock_warehouse_deleted", row.id,
-            {"name": row.name, "store_id": row.store_id}, row.store_id,
+            db,
+            user,
+            "stock_warehouse_deleted",
+            row.id,
+            {"name": row.name, "store_id": row.store_id},
+            row.store_id,
         )
         db.delete(row)
         db.commit()
@@ -815,6 +873,15 @@ def register_routes(app, current, authorize, scope, audit):
             or db.scalar(select(StockLot).where(StockLot.article_id == row.id))
             or any(identifier in inv.data for inv in db.scalars(select(StockInventory)))
             or identifier in dump(settings(db)["saft_mapping"])
+            or db.scalar(
+                select(CustomerOrderLine.id)
+                .where(CustomerOrderLine.article_id == identifier)
+                .limit(1)
+            )
+            or any(
+                identifier in simulation.data
+                for simulation in db.scalars(select(CustomerPurchaseSimulation))
+            )
         ):
             fail(
                 "O artigo tem histórico ou associações. Desative-o para preservar a rastreabilidade.",

@@ -1,6 +1,6 @@
 import { beginOperation, reportFormError, responseError } from "../components/InteractionUI";
 
-export async function api(path: string, body?: unknown, options?: { timeoutMs?: number; method?: "POST" | "PUT" | "DELETE" }) {
+export async function api(path: string, body?: unknown, options?: { timeoutMs?: number; method?: "POST" | "PUT" | "DELETE"; preserveDraft?: boolean }) {
   const operation = beginOperation(path, body !== undefined);
   try {
   const r = await fetch("/api" + path, {
@@ -27,7 +27,7 @@ export async function api(path: string, body?: unknown, options?: { timeoutMs?: 
     reportFormError(operation.form, error);
     throw error;
   }
-  operation.saved();
+  if (!options?.preserveDraft) operation.saved();
   return data;
   } catch (error) {
     if (error instanceof TypeError) throw new Error("Não foi possível contactar o servidor. Verifique a ligação e volte a tentar; os dados preenchidos foram mantidos.");
