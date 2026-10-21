@@ -178,10 +178,10 @@ def flatten_light(image):
 
 
 def ink_curve(image):
-    """Papel branco puro e tinta mais escura: preto no percentil 0,5 % (no máximo 110), branco a partir de 235."""
+    """Papel branco puro e tinta escura sem engrossar: escala linear entre o percentil 0,5 % (no máximo 110) e 235."""
     sample = image.reduce(4) if min(image.size) >= 80 else image
     black = min(110, _percentile(ImageOps.grayscale(sample) if sample.mode != "L" else sample, 0.005))
-    lut = [0 if v <= black else 255 if v >= 235 else round(255 * ((v - black) / (235 - black)) ** 1.25) for v in range(256)]
+    lut = [0 if v <= black else 255 if v >= 235 else round(255 * (v - black) / (235 - black)) for v in range(256)]
     return image.point(lut * len(image.getbands()))
 
 
@@ -199,13 +199,18 @@ def process_image(raw, edit):
             width = round(max(math.dist(a, b), math.dist(d, c)))
             height = round(max(math.dist(a, d), math.dist(b, c)))
             image = image.transform((width, height), Image.Transform.QUAD, (*a, *d, *c, *b), Image.Resampling.BICUBIC)
+            # A sombra fina do bordo da folha ficaria como uma linha escura à volta: retira-se 1 % (as margens
+            # de um documento têm 3 % ou mais, nada do conteúdo se perde).
+            trim = max(1, round(0.01 * min(width, height)))
+            if width > 6 * trim and height > 6 * trim:
+                image = image.crop((trim, trim, width - trim, height - trim))
         left, top = round(edit.left * image.width), round(edit.top * image.height)
         image = image.crop((left, top, min(image.width, left + round(edit.width * image.width)), min(image.height, top + round(edit.height * image.height))))
         if image.width < 30 or image.height < 30:
             raise ValueError()
         if edit.rotation:
             image = image.rotate(-edit.rotation, expand=True)
-        sharpen = ImageFilter.UnsharpMask(radius=1.5, percent=60, threshold=2)
+        sharpen = ImageFilter.UnsharpMask(radius=1.5, percent=40, threshold=2)
         if edit.colour == "enhanced":
             # «Cor» como num digitalizador: sem sombras nem dominantes, papel branco, cores vivas, texto nítido.
             image = ImageEnhance.Color(ink_curve(flatten_light(image))).enhance(1.15).filter(sharpen)
