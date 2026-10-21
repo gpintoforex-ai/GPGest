@@ -23,6 +23,7 @@ with sync_playwright() as playwright:
     page.goto("http://127.0.0.1:5174")
     page.get_by_role("button", name="Tesouraria", exact=True).click()
     page.get_by_role("button", name="Previsão de liquidez", exact=True).click()
+    page.get_by_role("tab", name="Recebimentos e pagamentos", exact=True).click()
     flows = page.get_by_role("region", name="Recebimentos e pagamentos previstos", exact=True)
     expect(flows.locator("tbody tr")).to_have_count(10)
     expect(flows.get_by_text("A mostrar 1–10 de 23 registos", exact=True)).to_be_visible()

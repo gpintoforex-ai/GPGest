@@ -2,14 +2,17 @@ import { ActionLink } from "./components/InteractionUI";
 import { confirmAction } from "./components/InteractionUI";
 import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
-import { Camera, RotateCw, Scissors, Trash2, ArrowUp, ArrowDown, FileText } from "lucide-react";
+import { Camera, RotateCw, Scissors, Trash2, ArrowUp, ArrowDown, FileText, ScanLine, CheckCircle2 } from "lucide-react";
+import { CameraView, captureFrame, flash, liveCameraAvailable, useAutoCapture, useCamera } from "./quickscan/camera";
+import { findDocument, type Corners } from "./quickscan/edges";
+import type { LiveDetection } from "./quickscan/LiveEdges";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
 import { calendarDay } from "./RecordList";
 import { StatusBadge } from "./components/BusinessUI";
 import "./DocumentScanner.css";
 type Row = Record<string, any>;
-type Page = { id: string; file: File; source: string; preview: string; edit: Row };
+type Page = { id: string; file: File; source: string; preview: string; edit: Row; detected?: boolean };
 const defaults = () => ({ rotation: 0, left: 0, top: 0, width: 1, height: 1, colour: "colour", quality: 85, corners: null });
 const states: Row = { preparation: "Em preparação", pdf_generated: "PDF gerado", uploading: "A enviar", cloud_confirmed: "Envio confirmado · Associação pendente", cloud_saved: "Guardado na cloud", upload_error: "Erro no envio" };
 const bytes = (value: number) => `${(value / 1024 / 1024).toFixed(2)} MB`;
@@ -24,7 +27,7 @@ export function ScanButton({ initialDocument, movement, deposit, store, onSaved 
 }
 
 export default function DocumentScanner({ initialDocument, movement, deposit, store, onClose, onSaved }: { initialDocument?: Row; movement?: Row; deposit?: Row; store?: string; onClose: () => void; onSaved?: () => Promise<void> }) {
-  const dialog = useRef<HTMLDialogElement>(null), camera = useRef<HTMLInputElement>(null), gallery = useRef<HTMLInputElement>(null), pdfInput = useRef<HTMLInputElement>(null);
+  const dialog = useRef<HTMLDialogElement>(null), nativeCamera = useRef<HTMLInputElement>(null), gallery = useRef<HTMLInputElement>(null), pdfInput = useRef<HTMLInputElement>(null);
   const urls = useRef(new Set<string>()), replacing = useRef<string | null>(null), cropStart = useRef<number[] | null>(null);
   const [setup, setSetup] = useState<Row | null>(null), [entities, setEntities] = useState<Row[]>([]);
   const [pages, setPages] = useState<Page[]>([]), [existingPDF, setExistingPDF] = useState<File | null>(null);
@@ -34,6 +37,12 @@ export default function DocumentScanner({ initialDocument, movement, deposit, st
   const [busy, setBusy] = useState(false), [phase, setPhase] = useState("preparation"), [progress, setProgress] = useState<number | null>(null), [error, setError] = useState("");
   const [confirmed, setConfirmed] = useState(false), [warnings, setWarnings] = useState<string[]>([]), [recoverId, setRecoverId] = useState("");
   const [qrNotice, setQrNotice] = useState(""), [qrCandidates, setQrCandidates] = useState<Row[]>([]);
+  // Câmara com deteção das margens em direto (modo contínuo: várias páginas sem sair da câmara).
+  const [cameraOpen, setCameraOpen] = useState(false), [captured, setCaptured] = useState(0);
+  const camera = useCamera(cameraOpen), [autoCapture, toggleAuto] = useAutoCapture();
+  const live = useRef<LiveDetection>(null), cameraBox = useRef<HTMLDivElement>(null), capturing = useRef(false), cameraSection = useRef<HTMLElement>(null);
+  // Ao abrir, a câmara fica à vista (no telemóvel aparece abaixo dos botões da janela).
+  useEffect(() => { if (cameraOpen) cameraSection.current?.scrollIntoView({ block: "start", behavior: "smooth" }); }, [cameraOpen]);
   const dirty = !!(pages.length || existingPDF || job) && phase !== "cloud_saved";
   const locked = !!(initialDocument || movement || deposit || meta.purchase_id);
   const source = pages.find(p => p.id === editing);
@@ -48,7 +57,16 @@ export default function DocumentScanner({ initialDocument, movement, deposit, st
   useEffect(() => { const listener = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ""; } }; window.addEventListener("beforeunload", listener); return () => window.removeEventListener("beforeunload", listener); }, [dirty]);
   function invalidate() { setJob(null); setPhase("preparation"); setConfirmed(false); setWarnings([]); setKey(crypto.randomUUID()); if (pdfURL) { revoke(pdfURL); setPdfURL(""); } }
   function updateMeta(field: string, value: any) { invalidate(); setMeta(current => ({ ...current, [field]: value })); }
-  async function addPhotos(files: File[]) {
+  /** Pré-visualização já recortada (servidor) para as páginas com cantos detetados; a original fica para edição. */
+  async function refreshPreview(page: Page) {
+    try {
+      const form = new FormData(); form.append("file", page.file); form.append("edit", JSON.stringify(page.edit));
+      const response = await responseData(await fetch("/api/scans/image-preview", { method: "POST", credentials: "same-origin", body: form }));
+      const url = objectURL(await response.blob());
+      setPages(current => current.map(p => p.id === page.id && p.preview === page.preview ? { ...p, preview: url } : p));
+    } catch { /* a miniatura fica com a fotografia original; o recorte pode ser revisto no editor */ }
+  }
+  async function addPhotos(files: File[], known?: (Corners | null)[]) {
     if (!files.length) { replacing.current = null; return; }
     setBusy(true);
     setError("");
@@ -60,8 +78,11 @@ export default function DocumentScanner({ initialDocument, movement, deposit, st
       for (const file of files) {
         if (file.size > 15*1024*1024 || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("Use fotografias JPG, PNG ou WebP até 15 MB. Para HEIC exporte a fotografia como JPEG.");
         const url = objectURL(file);
-        await new Promise<void>((resolve, reject) => { const image = new Image(); image.onload = () => resolve(); image.onerror = () => reject(new Error("Não foi possível abrir esta fotografia.")); image.src = url; });
-        added.push({ id: crypto.randomUUID(), file, source: url, preview: url, edit: defaults() });
+        const image = new Image();
+        await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error("Não foi possível abrir esta fotografia.")); image.src = url; });
+        // Cantos vistos na câmara em direto ou, nas fotografias, detetados localmente; o utilizador revê sempre.
+        const corners = known ? known[added.length] : await findDocument(image);
+        added.push({ id: crypto.randomUUID(), file, source: url, preview: url, edit: corners ? { ...defaults(), corners } : defaults(), detected: !!corners });
       }
       invalidate(); setExistingPDF(null); setQrNotice(""); setQrCandidates([]);
       if (replacing.current && added[0]) {
@@ -71,7 +92,27 @@ export default function DocumentScanner({ initialDocument, movement, deposit, st
         setPages(current => current.map(p => p.id === replaceId ? added[0] : p));
       } else setPages(current => [...current, ...added]);
       replacing.current = null;
+      added.filter(page => page.detected).forEach(page => void refreshPreview(page));
     } catch (e) { setError((e as Error).message); replacing.current = null; } finally { setBusy(false); }
+  }
+  function openCamera(replace?: string) {
+    replacing.current = replace || null;
+    setError(""); setCameraOpen(true);
+  }
+  /** Fotografa a imagem da câmara com os cantos vistos em direto e acrescenta (ou substitui) a página. */
+  async function captureLive(seen?: Corners) {
+    if (capturing.current || !camera.ready) return;
+    const replace = replacing.current;
+    if (!replace && pages.length >= (setup?.settings.max_pages || 20)) { setError("Número de páginas acima do limite configurado."); return; }
+    capturing.current = true;
+    flash(cameraBox.current);
+    try {
+      const frame = await captureFrame(camera, live, seen);
+      const file = new File([frame.full], `pagina-${pages.length + 1}.jpg`, { type: "image/jpeg" });
+      await addPhotos([file], [frame.corners]);
+      setCaptured(value => value + 1);
+      if (replace) setCameraOpen(false); // «Repetir fotografia» substitui só essa página
+    } catch (e) { setError((e as Error).message); } finally { capturing.current = false; }
   }
   async function previewEdit(page = source, options = edit) {
     if (!page) return;
@@ -158,15 +199,29 @@ export default function DocumentScanner({ initialDocument, movement, deposit, st
       <ActionButton disabled={busy} onClick={() => api("/scans/setup").then(setSetup).catch(e => setError(e.message))}>Atualizar estado da ligação</ActionButton>
       <ActionButton disabled={busy} dismiss onClick={() => { onClose(); window.dispatchEvent(new Event("gpgest-attachment-settings")); }}>Configurar conta e pasta cloud</ActionButton>
       <p>As fotografias ficam nesta janela. Fechar ou recarregar pode perder as páginas capturadas. Depois de gerar, descarregue o PDF para conservar o trabalho.</p>
-      <div className="scanner-actions"><ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => { replacing.current = null; camera.current?.click(); }}><Camera size={22} />Fotografar / adicionar página</ActionButton><ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => gallery.current?.click()}>Selecionar da galeria</ActionButton><ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => pdfInput.current?.click()}><FileText size={20} />Carregar PDF existente</ActionButton></div>
-      <input className="scanner-file" ref={camera} disabled={busy || phase === "cloud_saved"} type="file" accept="image/*" capture="environment" aria-label="Fotografar página" onChange={e => { const files = Array.from(e.target.files || []); e.target.value = ""; addPhotos(files); }} />
+      <div className="scanner-actions">{liveCameraAvailable() && <ActionButton className="primary" disabled={busy || phase === "cloud_saved" || cameraOpen} onClick={() => openCamera()}><ScanLine size={20} aria-hidden="true" />Câmara com deteção de margens</ActionButton>}<ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => { replacing.current = null; nativeCamera.current?.click(); }}><Camera size={22} />Fotografar / adicionar página</ActionButton><ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => gallery.current?.click()}>Selecionar da galeria</ActionButton><ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => pdfInput.current?.click()}><FileText size={20} />Carregar PDF existente</ActionButton></div>
+      <input className="scanner-file" ref={nativeCamera} disabled={busy || phase === "cloud_saved"} type="file" accept="image/*" capture="environment" aria-label="Fotografar página" onChange={e => { const files = Array.from(e.target.files || []); e.target.value = ""; addPhotos(files); }} />
       <input className="scanner-file" ref={gallery} disabled={busy || phase === "cloud_saved"} type="file" accept="image/*" multiple aria-label="Selecionar fotografias da galeria" onChange={e => { const files = Array.from(e.target.files || []); e.target.value = ""; replacing.current = null; addPhotos(files); }} />
       <input className="scanner-file" ref={pdfInput} disabled={busy || phase === "cloud_saved"} type="file" accept="application/pdf,.pdf" aria-label="Carregar PDF existente" onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; if (file) loadPDF(file); }} />
+      {cameraOpen && <section className="live-camera" ref={cameraSection} aria-label="Câmara com deteção de margens">
+        {camera.error ? <Notice tone="warning">{camera.error}</Notice>
+          : <CameraView camera={camera} live={live} box={cameraBox} autoCapture={autoCapture} captured={captured}
+            active={!!replacing.current || pages.length < (setup.settings.max_pages || 20)} onCapture={corners => void captureLive(corners)} />}
+        <div className="live-camera-controls">
+          {!camera.error && <ActionButton type="button" className={`live-auto ${autoCapture ? "active" : ""}`} aria-pressed={autoCapture} onClick={toggleAuto}>
+            {autoCapture ? <CheckCircle2 size={16} aria-hidden="true" /> : <ScanLine size={16} aria-hidden="true" />}Captura automática {autoCapture ? "ligada" : "desligada"}
+          </ActionButton>}
+          {!camera.error && <ActionButton type="button" className="qs-shutter" aria-label="Capturar página" disabled={busy || !camera.ready} onClick={() => void captureLive()}><span /></ActionButton>}
+          {/recusada/.test(camera.error) && <ActionButton type="button" onClick={camera.retry}>Tentar novamente</ActionButton>}
+          <p aria-live="polite">{replacing.current ? "A repetir uma página" : `${pages.length} página(s) nesta digitalização`}</p>
+          <ActionButton type="button" onClick={() => { replacing.current = null; setCameraOpen(false); }}>Concluir câmara</ActionButton>
+        </div>
+      </section>}
       {qrNotice && <p role="status">{qrNotice}</p>}{qrCandidates.map((data,index) => <ActionButton key={index} disabled={busy} onClick={() => applyQR(data)}>{data.document} · {data.nif} · {(data.amount_cents/100).toFixed(2)} €</ActionButton>)}
       <p>{existingPDF ? `PDF existente: ${existingPDF.name} · ${bytes(existingPDF.size)}; páginas verificadas ao gerar.` : `${pages.length} página(s) · fotografias: ${bytes(pages.reduce((sum, p) => sum + p.file.size, 0))}. O tamanho final depende da compressão.`}</p>
-      <div className="scanner-pages">{pages.map((page, index) => <article key={page.id}><img src={page.preview} alt={`Página ${index+1}`} /><strong>Página {index+1}</strong><div className="scanner-actions"><ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => { setEditing(page.id); setEdit({ ...page.edit }); }}><Scissors size={16} />Recortar / melhorar</ActionButton><ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => previewEdit(page, { ...page.edit, rotation: (page.edit.rotation + 90) % 360 })}><RotateCw size={16} />Rodar</ActionButton><ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => { replacing.current = page.id; camera.current?.click(); }}>Repetir fotografia</ActionButton><ActionButton aria-label={`Eliminar página ${index+1}`} disabled={busy || phase === "cloud_saved"} confirmation={{ title: "Eliminar página?", message: `A página ${index + 1} será retirada desta digitalização. O ficheiro original não será eliminado.`, confirmLabel: "Eliminar página", tone: "danger" }} onClick={() => remove(page)}><Trash2 size={16} />Eliminar</ActionButton><ActionButton aria-label={`Subir página ${index+1}`} disabled={busy || index === 0 || phase === "cloud_saved"} onClick={() => reorder(index, -1)}><ArrowUp size={16} /></ActionButton><ActionButton aria-label={`Descer página ${index+1}`} disabled={busy || index === pages.length-1 || phase === "cloud_saved"} onClick={() => reorder(index, 1)}><ArrowDown size={16} /></ActionButton></div></article>)}</div>
+      <div className="scanner-pages">{pages.map((page, index) => <article key={page.id}><img src={page.preview} alt={`Página ${index+1}`} /><strong>Página {index+1}</strong>{page.detected && <small className="scanner-detected">Margens detetadas · reveja o recorte</small>}<div className="scanner-actions"><ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => { setEditing(page.id); setEdit({ ...page.edit }); }}><Scissors size={16} />Recortar / melhorar</ActionButton><ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => previewEdit(page, { ...page.edit, rotation: (page.edit.rotation + 90) % 360 })}><RotateCw size={16} />Rodar</ActionButton><ActionButton disabled={busy || phase === "cloud_saved"} onClick={() => { if (liveCameraAvailable()) openCamera(page.id); else { replacing.current = page.id; nativeCamera.current?.click(); } }}>Repetir fotografia</ActionButton><ActionButton aria-label={`Eliminar página ${index+1}`} disabled={busy || phase === "cloud_saved"} confirmation={{ title: "Eliminar página?", message: `A página ${index + 1} será retirada desta digitalização. O ficheiro original não será eliminado.`, confirmLabel: "Eliminar página", tone: "danger" }} onClick={() => remove(page)}><Trash2 size={16} />Eliminar</ActionButton><ActionButton aria-label={`Subir página ${index+1}`} disabled={busy || index === 0 || phase === "cloud_saved"} onClick={() => reorder(index, -1)}><ArrowUp size={16} /></ActionButton><ActionButton aria-label={`Descer página ${index+1}`} disabled={busy || index === pages.length-1 || phase === "cloud_saved"} onClick={() => reorder(index, 1)}><ArrowDown size={16} /></ActionButton></div></article>)}</div>
       {source && <section className="panel scanner-editor" aria-label="Rever página"><h3>Recorte e orientação · revisão manual</h3><div className="scanner-crop" onPointerDown={e => { if (edit.corners || busy) return; const rect = e.currentTarget.getBoundingClientRect(); cropStart.current = [(e.clientX-rect.left)/rect.width, (e.clientY-rect.top)/rect.height]; e.currentTarget.setPointerCapture(e.pointerId); }} onPointerUp={e => { if (!cropStart.current) return; const rect = e.currentTarget.getBoundingClientRect(); const [x,y] = cropStart.current; const right = Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width)), bottom = Math.max(0, Math.min(1, (e.clientY-rect.top)/rect.height)); const width = Math.abs(right-x), height = Math.abs(bottom-y); if (width > .03 && height > .03) setEdit({ ...edit, left: Math.min(x,right), top: Math.min(y,bottom), width, height }); cropStart.current = null; }}><img draggable={false} src={source.source} alt="Imagem original para recortar" /><div style={{ left: `${edit.left*100}%`, top: `${edit.top*100}%`, width: `${edit.width*100}%`, height: `${edit.height*100}%` }} />{edit.corners?.map((point: number[], index: number) => <span className="scanner-corner" key={index} style={{ left: `${point[0]*100}%`, top: `${point[1]*100}%` }} onPointerDown={e => { e.preventDefault(); e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId); }} onPointerMove={e => { if (!e.currentTarget.hasPointerCapture(e.pointerId) || busy) return; const rect = e.currentTarget.parentElement!.getBoundingClientRect(); const corners = edit.corners.map((p: number[]) => [...p]); corners[index] = [Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width)), Math.max(0, Math.min(1, (e.clientY-rect.top)/rect.height))]; setEdit({ ...edit, corners }); }}>{index+1}</span>)}</div><p>Arraste na imagem para marcar o recorte; em perspetiva, arraste os quatro cantos numerados.</p><div className="form-grid">{[["left", "Esquerda"], ["top", "Topo"], ["width", "Largura"], ["height", "Altura"]].map(([field, label]) => <Field key={field} label={`${label} do recorte (%)`}><input type="number" min="0" max="100" value={Math.round(edit[field]*100)} onChange={e => setEdit({ ...edit, [field]: Number(e.target.value)/100 })} /></Field>)}<Field label="Rotação"><select value={edit.rotation} onChange={e => setEdit({ ...edit, rotation: Number(e.target.value) })}>{[0, 90, 180, 270].map(value => <option key={value} value={value}>{value}°</option>)}</select></Field><Field label="Cor"><select value={edit.colour} onChange={e => setEdit({ ...edit, colour: e.target.value })}><option value="colour">Cor</option><option value="grey">Escala de cinzentos</option><option value="contrast">Contraste</option></select></Field><Field label="Compressão"><select value={edit.quality} onChange={e => setEdit({ ...edit, quality: Number(e.target.value) })}><option value="85">Legível</option><option value="70">Compacta</option></select></Field></div>
-        <label className="doc-check"><input type="checkbox" checked={!!edit.corners} onChange={e => setEdit({ ...edit, corners: e.target.checked ? [[0,0],[1,0],[1,1],[0,1]] : null })} />Corrigir perspetiva por quatro cantos</label>{edit.corners && <><p>Indique os cantos na imagem original. A perspetiva aplica-se antes do recorte. Não há deteção automática dos limites.</p><div className="form-grid">{["Superior esquerdo", "Superior direito", "Inferior direito", "Inferior esquerdo"].map((label, index) => <div key={label}>{["X", "Y"].map((axis, coordinate) => <Field key={axis} label={`${label} · ${axis} (%)`}><input type="number" min="0" max="100" value={Math.round(edit.corners[index][coordinate]*100)} onChange={e => { const corners = edit.corners.map((p: number[]) => [...p]); corners[index][coordinate] = Number(e.target.value)/100; setEdit({ ...edit, corners }); }} /></Field>)}</div>)}</div></>}
+        <label className="doc-check"><input type="checkbox" checked={!!edit.corners} onChange={e => setEdit({ ...edit, corners: e.target.checked ? [[0,0],[1,0],[1,1],[0,1]] : null })} />Corrigir perspetiva por quatro cantos</label>{edit.corners && <><p>Os cantos são detetados automaticamente quando possível (câmara com deteção e fotografias); confirme-os ou arraste-os na imagem. A perspetiva aplica-se antes do recorte.</p><div className="form-grid">{["Superior esquerdo", "Superior direito", "Inferior direito", "Inferior esquerdo"].map((label, index) => <div key={label}>{["X", "Y"].map((axis, coordinate) => <Field key={axis} label={`${label} · ${axis} (%)`}><input type="number" min="0" max="100" value={Math.round(edit.corners[index][coordinate]*100)} onChange={e => { const corners = edit.corners.map((p: number[]) => [...p]); corners[index][coordinate] = Number(e.target.value)/100; setEdit({ ...edit, corners }); }} /></Field>)}</div>)}</div></>}
         <div className="scanner-actions"><ActionButton disabled={busy} onClick={() => previewEdit()}>Aplicar e rever página</ActionButton><ActionButton disabled={busy} onClick={() => setEdit(defaults())}>Repor original</ActionButton><ActionButton disabled={busy} onClick={() => setEditing(null)}>Cancelar edição</ActionButton></div></section>}
       <ManagedForm className="doc-form" onSubmit={e => { e.preventDefault(); generate(); }}><fieldset disabled={busy || phase === "cloud_saved"}>
         <Field label="Empresa"><input readOnly value={setup.company.name || "Empresa ativa"} /></Field><Field label="Loja"><select required disabled={locked} value={meta.store_id} onChange={e => updateMeta("store_id", e.target.value)}>{setup.stores.map((s: Row) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>

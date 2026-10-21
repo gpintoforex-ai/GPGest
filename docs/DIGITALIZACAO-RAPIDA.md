@@ -46,15 +46,23 @@ A câmara em direto exige HTTPS (ver `ALLOWED_ORIGINS` e publicação em [Digita
 
 ## Captura e edição
 
-- **Câmara.** Pede autorização e prefere a câmara traseira. Mostra uma moldura de enquadramento e permite várias páginas. A galeria é sempre uma alternativa.
+- **Câmara.** Pede autorização e prefere a câmara traseira. Mostra a imagem inteira, sem cortes (o que se vê é o que é fotografado), e permite várias páginas. A galeria é sempre uma alternativa.
 - **Câmara recusada ou indisponível.** Aparecem instruções para iPhone/Safari e Android/Chrome, o botão **Fotografar** (aplicação da câmara do sistema) e **Tentar novamente**.
-- **Deteção de margens.** É local, no navegador, sem bibliotecas nem serviços externos:
-  - luminância e desfocagem;
-  - limiar de Otsu;
-  - maior região clara;
-  - quatro cantos.
+- **Deteção das margens em direto.** Enquanto se aponta a câmara, o contorno do documento é desenhado sobre a imagem, como nas aplicações de digitalização:
+  - azul: documento detetado;
+  - tracejado amarelo: demasiado longe ou a cortar a margem;
+  - verde, com barra de progresso: imóvel e pronto a fotografar.
 
-  O utilizador revê sempre o recorte. Se a deteção falhar, propõe-se a página inteira para ajuste manual dos quatro cantos, por arrasto ou com as setas do teclado.
+  Uma indicação em texto acompanha sempre a cor (não depende só da cor): «A procurar o documento…», «Aproxime o telemóvel», «Afaste um pouco», «Pouco contraste», «Mantenha o telemóvel imóvel…», «A fotografar…».
+- **Captura automática.** Ligada por omissão. Fotografa quando o documento está inteiro na imagem e imóvel cerca de 1 segundo. O botão «Captura automática ligada/desligada» guarda a preferência neste dispositivo. O botão de fotografar funciona sempre. A fotografia usa os cantos que estavam no ecrã.
+- **Como funciona a deteção.** É local, no navegador, sem bibliotecas nem serviços externos. As imagens analisadas não são guardadas nem enviadas.
+  - Analisa cerca de 8 imagens por segundo, numa versão reduzida do vídeo (256 px), e analisa menos vezes em telemóveis lentos.
+  - Procura o papel pela «brancura» (claro e pouco saturado, o que distingue mesas de madeira e fundos coloridos), com desfocagem e limiar de Otsu.
+  - Calcula os cantos pelo contorno da maior região clara (envolvente convexa reduzida a 4 vértices), afinados com uma reta ajustada a cada lado. Funciona com o papel rodado ou em perspetiva.
+  - Rejeita formas que não parecem um documento (ângulos ou preenchimento implausíveis).
+
+  A mesma deteção é usada nas fotografias da galeria. O utilizador revê sempre o recorte. Se a deteção falhar, propõe-se a página inteira para ajuste manual dos quatro cantos, por arrasto ou com as setas do teclado.
+- **Limites.** A deteção precisa de contraste entre o papel e o fundo: papel branco sobre uma mesa branca não é detetado (aparece «Pouco contraste»), e nesse caso fotografa-se e ajustam-se os cantos à mão. Não usa modelos de aprendizagem automática.
 - **Correção de perspetiva.** É feita no servidor da própria aplicação (Pillow), tal como os modos:
   - **Original**;
   - **Cor** (realce de contraste);
@@ -103,7 +111,7 @@ Não há analítica nem registo de imagens ou PINs. O único dado guardado no di
   - migração `0055_quick_scan`;
   - reutiliza `process_image`, `make_pdf` e `GoogleDriveStorage`.
 - Frontend:
-  - `src/quickscan/QuickScan.tsx`, `edges.ts`, `quickApi.ts` e CSS;
+  - `src/quickscan/QuickScan.tsx`, `LiveEdges.tsx` (deteção em direto), `edges.ts` (algoritmo), `quickApi.ts` e CSS;
   - `src/QuickScanAccesses.tsx` (administração);
   - botão em `App.tsx`.
 - Bibliotecas: nenhuma nova. O QR de emparelhamento usa o `zxing-cpp` já instalado (Apache-2.0). Foi removida a dependência `@techstark/opencv-js`, que não era usada.
@@ -119,6 +127,8 @@ Não há analítica nem registo de imagens ou PINs. O único dado guardado no di
   - pasta indisponível e autorização expirada;
   - isolamento entre empresas por identificador;
   - QR legível.
+- `scripts/test-edge-detection.mjs` (Node, sem navegador): deteção em cenas sintéticas, incluindo fatura rodada sobre madeira, papel a 45°, perspetiva, texto, ruído, iluminação desigual, papel longe, cortado ou a ocupar a imagem, fundo branco, forma irregular, e tempo por análise.
+- `scripts/test-quick-scan-live-ui.py` (Chromium com vídeo sintético como câmara) cobre contorno em direto, indicação coerente, captura automática com os cantos certos, captura manual com a automática desligada e preferência guardada, e ausência de captura sem documento.
 - `scripts/test-quick-scan-ui.py` (Chromium com câmara simulada e ecrã móvel) cobre:
   - criação do acesso e QR;
   - emparelhamento por link e PIN errado/certo;

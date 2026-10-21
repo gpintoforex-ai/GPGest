@@ -1,3 +1,4 @@
+import { PageHeader, TaskWorkspace } from "./components/WorkspaceUI";
 import { useEffect, useRef, useState } from "react";
 import { Mail, Save, Plug } from "lucide-react";
 import { api } from "./lib/api";
@@ -23,7 +24,7 @@ export default function EmailSettings({ admin, company, stores }: { admin: boole
       ? "A porta 465 exige SSL / TLS. Selecione SSL / TLS e guarde a configuração."
       : "";
   if (!admin) return <section className="panel"><p>A configuração de email e o histórico de envios estão reservados ao administrador desta empresa.</p></section>;
-  return <><div className="page-intro"><div><h1>Email</h1><p>SMTP, destinatários da contabilidade e histórico da empresa {company.name}.</p></div></div>
+  return <><PageHeader title="Email" description={`SMTP, destinatários da contabilidade e histórico da empresa ${company.name}.`} />
     {error && <Notice tone="error">{error}</Notice>}{notice && <Notice tone="success" onDismiss={() => setNotice("")}>{notice}</Notice>}
     {!data && !error && <p role="status">A carregar configuração de email…</p>}
     {securityError && <Notice tone="warning">{securityError}</Notice>}
@@ -34,7 +35,8 @@ export default function EmailSettings({ admin, company, stores }: { admin: boole
       setData(result); setPassword(""); setClearPassword(false); setAdditional(result.additional_to.join("; ")); setCc(result.cc.join("; "));
       setNotice("Configuração de email guardada nesta empresa. O envio continua manual.");
     }); }}><fieldset disabled={busy} className="ui-form-fields">
-      <h2>Servidor SMTP</h2><label className="doc-check"><input type="checkbox" checked={data.enabled} onChange={e => setData({ ...data, enabled: e.target.checked })}/>Ativar o envio manual por SMTP</label>
+      <TaskWorkspace name="email" label="Áreas do email" eager items={[
+        { id: "smtp", label: "Ligação SMTP", content: <>      <h2>Servidor SMTP</h2><label className="doc-check"><input type="checkbox" checked={data.enabled} onChange={e => setData({ ...data, enabled: e.target.checked })}/>Ativar o envio manual por SMTP</label>
       <div className="form-grid"><Field label="Servidor SMTP"><input name="host" maxLength={250} required={data.enabled} value={data.host} onChange={e => setData({ ...data, host: e.target.value })}/></Field>
         <Field label="Porta"><input name="port" type="number" min={1} max={65535} required value={data.port} onChange={e => setData({ ...data, port: Number(e.target.value) })}/></Field>
         <Field label="Segurança"><select name="security" value={data.security} onChange={e => setData({ ...data, security: e.target.value, port: [465, 587].includes(data.port) ? (e.target.value === "ssl" ? 465 : 587) : data.port })}><option value="starttls">STARTTLS (porta 587)</option><option value="ssl">SSL / TLS (porta 465)</option></select></Field>
@@ -47,7 +49,8 @@ export default function EmailSettings({ admin, company, stores }: { admin: boole
       <p className="footnote">Utilize STARTTLS com a porta 587 ou SSL / TLS com a porta 465. No Gmail, utilize uma palavra-passe de aplicação da conta Google. Guarde as alterações antes de testar a ligação.</p>
       {data.has_password && <label className="doc-check"><input type="checkbox" checked={clearPassword} onChange={e => setClearPassword(e.target.checked)}/>Remover a palavra-passe guardada ao gravar</label>}
       <p className="footnote">O limite inclui cabeçalhos e codificação dos anexos. Antes do envio, é respeitado o menor limite entre este valor e o anunciado pelo servidor SMTP. O teste da ligação usa a configuração já guardada e não envia emails.</p>
-      <h2>Contabilidade</h2><div className="form-grid">
+</> },
+        { id: "destinatarios", label: "Destinatários", content: <>      <h2>Contabilidade</h2><div className="form-grid">
         <Field label="Nome do contabilista ou gabinete"><input name="accountant_name" maxLength={200} value={data.accountant_name} onChange={e => setData({ ...data, accountant_name: e.target.value })}/></Field>
         <Field label="Email do contabilista ou gabinete"><input name="accountant_email" type="email" value={data.accountant_email} onChange={e => setData({ ...data, accountant_email: e.target.value })}/></Field>
         <Field label="Destinatários adicionais (opcional)"><input value={additional} onChange={e => setAdditional(e.target.value)} placeholder="Separar por ponto e vírgula"/></Field>
@@ -55,13 +58,18 @@ export default function EmailSettings({ admin, company, stores }: { admin: boole
         <Field label="Periodicidade habitual"><select value={data.periodicity} onChange={e => setData({ ...data, periodicity: e.target.value })}><option value="mensal">Mensal</option><option value="trimestral">Trimestral</option><option value="personalizada">Personalizada</option></select></Field>
         {data.periodicity === "personalizada" && <Field label="Organização e lembretes do período personalizado"><input maxLength={1000} value={data.custom_period_note} onChange={e => setData({ ...data, custom_period_note: e.target.value })}/></Field>}
       </div>
+      </> },
+        { id: "mensagem", label: "Mensagem e assinatura", content: <>
       <Field label="Assunto predefinido"><input required maxLength={500} value={data.subject_template} onChange={e => setData({ ...data, subject_template: e.target.value })}/></Field>
-      <Field label="Mensagem predefinida"><textarea required rows={12} maxLength={20000} value={data.message_template} onChange={e => setData({ ...data, message_template: e.target.value })}/></Field>
+      <Field label="Mensagem predefinida"><textarea required rows={7} maxLength={20000} value={data.message_template} onChange={e => setData({ ...data, message_template: e.target.value })}/></Field>
       <Field label="Assinatura da empresa"><textarea maxLength={5000} value={data.signature} onChange={e => setData({ ...data, signature: e.target.value })}/></Field>
       <p className="footnote">Campos disponíveis: {"{empresa}, {periodo}, {resumo_documentacao}, {resumo_pendencias_ou_sem_pendencias}, {assinatura_empresa}"}. A periodicidade organiza o trabalho; não ativa envios automáticos.</p>
-      <div className="ui-dialog-actions"><ActionButton type="button" disabled={busy || !data.revision} onClick={() => run(async () => { const result = await api("/settings/email/test", {}); setNotice(result.message + (result.server_limit_bytes ? ` Limite anunciado: ${result.server_limit_bytes} bytes.` : " O servidor não anunciou um limite; será usado o limite configurado.")); })}><Plug size={16}/>Testar ligação guardada</ActionButton><ActionButton className="primary" disabled={busy}><Save size={16}/>{busy ? "A guardar…" : "Guardar configuração de email"}</ActionButton></div>
+</> },
+        { id: "historico", label: "Histórico de envios", defer: true, content: <EmailHistory refreshKey={historyTick} onOpen={setOpened}/> },
+      ]} />
+      <div className="workspace-savebar"><ActionButton type="button" disabled={busy || !data.revision} onClick={() => run(async () => { const result = await api("/settings/email/test", {}); setNotice(result.message + (result.server_limit_bytes ? ` Limite anunciado: ${result.server_limit_bytes} bytes.` : " O servidor não anunciou um limite; será usado o limite configurado.")); })}><Plug size={16}/>Testar ligação guardada</ActionButton><ActionButton className="primary" disabled={busy}><Save size={16}/>{busy ? "A guardar…" : "Guardar configuração de email"}</ActionButton></div>
     </fieldset></ManagedForm></section>}
-    <EmailHistory refreshKey={historyTick} onOpen={setOpened}/>
+    {!data && error && <EmailHistory refreshKey={historyTick} onOpen={setOpened}/>}
     {opened && <AccountingEmailDialog company={company} stores={stores} initial={opened} onClose={() => { setOpened(null); setHistoryTick(value => value + 1); }} onChanged={() => setHistoryTick(value => value + 1)}/>}
     <p className="footnote"><Mail size={15}/> A aceitação SMTP e a confirmação de receção são estados diferentes. A receção pode ser registada manualmente no histórico.</p>
   </>;

@@ -1,3 +1,4 @@
+import { ActionButton } from "./components/InteractionUI";
 import { useId, useState, type ReactNode } from "react";
 import { formatEuro } from "./utils/format";
 
@@ -27,7 +28,7 @@ export function Legend({ series }: { series: Series[] }) {
 export function ChartFrame({ title, legend, children, table, footnote }: { title: string; legend?: ReactNode; children: ReactNode; table: { columns: string[]; rows: (string | number)[][] }; footnote?: ReactNode }) {
   const [showTable, setShowTable] = useState(false);
   return <figure className="dash-chart">
-    <figcaption><span>{title}</span><button type="button" className="dash-table-toggle" aria-pressed={showTable} onClick={() => setShowTable(!showTable)}>{showTable ? "Ver gráfico" : "Ver tabela"}</button></figcaption>
+    <figcaption><span>{title}</span><ActionButton type="button" className="dash-table-toggle" aria-pressed={showTable} onClick={() => setShowTable(!showTable)}>{showTable ? "Ver gráfico" : "Ver tabela"}</ActionButton></figcaption>
     {legend}
     {showTable ? <div className="table-wrap"><table><thead><tr>{table.columns.map(c => <th key={c}>{c}</th>)}</tr></thead><tbody>{table.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j} className={j ? "numeric" : ""}>{cell}</td>)}</tr>)}</tbody></table></div> : children}
     {footnote && <small className="dash-chart-note">{footnote}</small>}

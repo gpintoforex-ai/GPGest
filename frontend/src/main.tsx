@@ -9,6 +9,7 @@ import { FeedbackHost } from "./components/InteractionUI";
 import "./components/InteractionUI.css";
 import "./themes.css";
 import "./contrast.css";
+import "./filters.css";
 import { initializeTheme } from "./ThemeSettings";
 import { ensureBrowserUUID } from "./lib/browserCrypto";
 ensureBrowserUUID();

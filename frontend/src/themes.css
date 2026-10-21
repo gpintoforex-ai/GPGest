@@ -25,6 +25,23 @@
 [data-theme="dark"] body { background: radial-gradient(ellipse at 48% 0%, #00425288 0%, #00242e44 32%, transparent 66%), #001118; background-attachment: fixed; }
 [data-theme="dark"] .workspace { background: radial-gradient(ellipse at 45% 0%, #00425266 0%, transparent 65%), #001118; }
 [data-theme="dark"] .sidebar { background: radial-gradient(ellipse 130% 48% at 60% 0%, #00435699 0%, transparent 85%), #001118; border-right: 1px solid #22414b; }
+:root:not([data-theme="dark"]) .sidebar { background: #f0f0f0; color: #172b36; border-right: 1px solid #d8dcdf; box-shadow: 3px 0 12px rgb(16 44 57 / 12%); }
+:root:not([data-theme="dark"]) button.primary { color: var(--action-primary-light-ink); background: var(--action-primary-light); border-color: var(--action-primary-light); box-shadow: 0 3px 8px rgb(50 203 176 / 24%); }
+:root:not([data-theme="dark"]) button.primary:hover:not(:disabled) { color: var(--action-primary-light-ink); background: var(--action-primary-light-hover); border-color: var(--action-primary-light-hover); box-shadow: 0 4px 10px rgb(50 203 176 / 32%); }
+:root:not([data-theme="dark"]) .sidebar .zela-brand { background: transparent; }
+:root:not([data-theme="dark"]) .sidebar .brand .brand-full { color: #172b36; }
+:root:not([data-theme="dark"]) .sidebar .brand small { color: #526572; }
+:root:not([data-theme="dark"]) .sidebar nav button { color: #304653; background: transparent; border-color: transparent; }
+:root:not([data-theme="dark"]) .sidebar nav button:hover:not(:disabled) { color: #172b36; background: #e7e7e7; }
+:root:not([data-theme="dark"]) .sidebar nav button.active,
+:root:not([data-theme="dark"]) .sidebar nav button[aria-current="page"] { color: #172b36; background: #e1e7e6; box-shadow: inset 3px 0 #0f6b5e; }
+:root:not([data-theme="dark"]) .sidebar .finance-submenu { border-color: #d1d5d8; }
+:root:not([data-theme="dark"]) .sidebar button.sidebar-collapse { color: #304653; background: transparent; border-color: #aeb7bb; }
+:root:not([data-theme="dark"]) .sidebar button.sidebar-collapse:hover { color: #172b36; background: #e7e7e7; border-color: #0f6b5e; }
+:root:not([data-theme="dark"]) .sidebar .sidebar-bottom { border-color: #d1d5d8; }
+:root:not([data-theme="dark"]) .sidebar .sidebar-bottom small { color: #526572; }
+:root:not([data-theme="dark"]) .sidebar .sidebar-bottom button { color: #304653; background: transparent; border-color: transparent; }
+:root:not([data-theme="dark"]) .sidebar .sidebar-bottom button:hover:not(:disabled) { color: #172b36; background: #e7e7e7; }
 [data-theme="dark"] :is(.login,.login-story,.platform-page) { background-image: radial-gradient(ellipse at 50% 0%, #00425288 0%, transparent 64%); background-attachment: fixed; }
 [data-theme="dark"] .topbar { background: #041b23e8; }
 button.theme-toggle { display: inline-flex; align-items: center; gap: 9px; min-height: 44px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 24px; background: var(--color-surface); color: var(--color-text); box-shadow: 0 2px 8px rgb(16 44 57 / 5%); font-size: 13px; font-weight: 600; transition: background .18s, border-color .18s; white-space: nowrap; }

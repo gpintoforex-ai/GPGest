@@ -123,7 +123,13 @@ type FieldSnapshot = Map<
 >;
 const formDrafts = new WeakMap<HTMLFormElement, FieldSnapshot>();
 const editedForms = new WeakSet<HTMLFormElement>();
-export async function confirmFormExit(scope: Element | null) {
+export function hasUnsavedForms(scope: Element | null) {
+  return !!scope && Array.from(scope.querySelectorAll("form")).some(form => {
+    const baseline = formDrafts.get(form);
+    return baseline && editedForms.has(form) && changed(form, baseline);
+  });
+}
+export async function confirmFormExit(scope: Element | null, preserve = false) {
   if (!scope) return true;
   const forms =
     scope instanceof HTMLFormElement
@@ -131,6 +137,9 @@ export async function confirmFormExit(scope: Element | null) {
       : Array.from(scope.querySelectorAll("form"));
   if (forms.some((form) => form.getAttribute("aria-busy") === "true"))
     return false;
+  // Internal navigation retains mounted forms. Closing their owner still uses
+  // the original discard confirmation; an in-flight save always blocks exit.
+  if (preserve) return true;
   const unsaved = forms.some((form) => {
     const baseline = formDrafts.get(form);
     return baseline && editedForms.has(form) && changed(form, baseline);
@@ -326,11 +335,18 @@ export const AppDialog = forwardRef<HTMLDialogElement, DialogProps>(
       document.body.style.overflow = "hidden";
       const saved = (event: Event) =>
         control.current!.saved((event as CustomEvent).detail?.scope);
+      // Lazily mounted panels introduce untouched controls. Add their baseline
+      // without replacing values for fields the user has already edited.
+      const mounted = () => {
+        for (const [field, data] of snapshot(dialog))
+          if (!baseline.current.has(field)) baseline.current.set(field, data);
+      };
       const activity = () =>
         setPending(
           working.current > 0 || Number(dialog.dataset.uiPending || 0) > 0,
         );
       dialog.addEventListener("gpgest-saved", saved);
+      dialog.addEventListener("gpgest-fields-mounted", mounted);
       dialog.addEventListener("gpgest-operation", activity);
       if (autoOpen && !dialog.open) dialog.showModal();
       const frame = requestAnimationFrame(() => {
@@ -353,6 +369,7 @@ export const AppDialog = forwardRef<HTMLDialogElement, DialogProps>(
       return () => {
         cancelAnimationFrame(frame);
         dialog.removeEventListener("gpgest-saved", saved);
+        dialog.removeEventListener("gpgest-fields-mounted", mounted);
         dialog.removeEventListener("gpgest-operation", activity);
         if (dialog.open) dialog.close();
         if (--openDialogs === 0)
@@ -645,8 +662,11 @@ export function responseError(detail: unknown, status: number) {
     }
   const publicMessage = detail && typeof detail === "object" && "public_message" in detail
     && typeof detail.public_message === "string" ? detail.public_message : "";
+  // 502–504 com texto: explicação dada pela API ou pelo Worker (cloud indisponível, credenciais
+  // em falta no servidor, serviço sem resposta). Mostrá-la permite agir; o 500 continua genérico.
+  const explained = status >= 502 && status <= 504 && typeof detail === "string" && detail.trim().length > 0 && detail.length <= 500;
   const message =
-    publicMessage ? publicMessage : status >= 500
+    publicMessage ? publicMessage : explained ? `${detail} Os dados preenchidos foram mantidos.` : status >= 500
       ? "Não foi possível concluir a operação no servidor. Os dados preenchidos foram mantidos. Tente novamente dentro de instantes."
       : detail === "Not Found"
         ? "O registo já não está disponível. Atualize a lista e tente novamente."
@@ -951,6 +971,16 @@ export function FeedbackHost() {
   const queue = useSyncExternalStore(subscribe, () => confirmations);
   const item = queue[0];
   const id = useId();
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (hasUnsavedForms(document.body) || document.querySelector('form[aria-busy="true"]')) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
   return (
     <>
       <aside

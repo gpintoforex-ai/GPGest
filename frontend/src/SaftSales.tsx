@@ -1,3 +1,4 @@
+import { TaskWorkspace } from "./components/WorkspaceUI";
 import DatePresets from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
 import { FileUp, Eye, RefreshCw, Check, Save } from "lucide-react";
@@ -67,7 +68,8 @@ export default function SaftSales({ stores, store, admin, local }: { stores: Row
   return <><div className="page-intro"><div><h1>Importar SAF-T de vendas</h1><p>Importe a faturação e consulte os recebimentos identificados, sem ligação a um ERP.</p></div></div>
     <DriveSearchNotice search={drive} what="ficheiros SAF-T" />
     {error && <Notice tone="error">{error}</Notice>}{notice && <Notice tone="success">{notice}</Notice>}
-    <section className="panel"><ManagedForm onSubmit={e => { e.preventDefault(); if (!file) return; const element = e.currentTarget; void run(async () => {
+    <TaskWorkspace name="saft" label="Áreas do SAF-T" items={[
+{ id: "importar", label: "Importar", content: <><section className="panel"><ManagedForm onSubmit={e => { e.preventDefault(); if (!file) return; const element = e.currentTarget; void run(async () => {
       const body = new FormData(); body.append("store_id", target); body.append("file", file);
       const response = await fetch("/api/saft/imports", { method: "POST", credentials: "same-origin", body });
       if (!response.ok) { const result = await response.json(); throw new Error(typeof result.detail === "string" ? result.detail : "Não foi possível carregar o SAF-T. Reveja o ficheiro e o estabelecimento."); }
@@ -83,18 +85,19 @@ export default function SaftSales({ stores, store, admin, local }: { stores: Row
     </fieldset></ManagedForm>
       <DriveImportFiles search={drive} title="Ficheiros SAF-T no Google Drive" actionLabel="Validar e pré-visualizar" disabled={busy || !target}
         onPick={async drive => { setOpened(await api("/saft/imports/drive", { store_id: target, drive_id: drive.id }, { timeoutMs: 600000 })); await load(); }} />
-    </section>
-    <section className="panel"><h2>Histórico de importações</h2><ActionButton disabled={busy} onClick={() => run(load)}><RefreshCw size={16}/>Atualizar histórico</ActionButton>
+    </section></> },
+{ id: "historico", label: "Histórico", content: <><section className="panel"><h2>Histórico de importações</h2><ActionButton disabled={busy} onClick={() => run(load)}><RefreshCw size={16}/>Atualizar histórico</ActionButton>
       {!history && !error && <p role="status">A carregar histórico…</p>}
       <div className="table-wrap"><table><thead><tr><th>Ficheiro / data</th><th>Empresa / período</th><th>Estado</th><th>Resultado</th><th>Ações</th></tr></thead><tbody>{history?.imports.map((row: Row) => <tr key={row.id}><td>{row.filename}<br/><small>{day(row.created_at)} · {row.user_id}</small></td><td>{row.header.CompanyName || "—"}<br/>{day(row.header.StartDate)} — {day(row.header.EndDate)}</td><td><StatusBadge tone={row.status === "failed" ? "danger" : row.status === "completed" ? "success" : "warning"}>{states[row.status]}</StatusBadge></td><td>{row.status === "failed" ? `0 aplicados / ${row.summary.result?.rejected ? `${row.summary.result.rejected} rejeitados` : "ficheiro rejeitado"}` : row.summary.result ? `${row.summary.result.imported || 0} novos · ${row.summary.result.updated || 0} atualizados · ${row.summary.result.ignored || 0} ignorados` : "Por confirmar"}</td><td><ActionButton onClick={() => setOpened(row)}><Eye size={16}/>Consultar importação</ActionButton></td></tr>)}</tbody></table></div>
       {history && !history.imports.length && <p>Ainda não existem importações SAF-T nesta empresa.</p>}
-    </section>
-    <SaftArticleProposals refresh={history?.imports.filter((row: Row) => row.status === "completed").length || 0} />
-    {mapping && <PaymentMapping value={mapping} busy={busy} onSave={draft => run(async () => {
+    </section></> },
+{ id: "artigos", label: "Artigos", content: <><SaftArticleProposals refresh={history?.imports.filter((row: Row) => row.status === "completed").length || 0} /></> },
+{ id: "meios", label: "Meios de pagamento", content: <>{mapping && <PaymentMapping value={mapping} busy={busy} onSave={draft => run(async () => {
       setMapping(await api("/saft/payment-mapping", { mapping: draft }));
       setNotice("Correspondências guardadas. Não foram criados movimentos nem alterados movimentos históricos.");
-    })}/>}
-    <section className="panel"><h2>Analisar faturação e recebimentos</h2><ManagedForm onSubmit={e => { e.preventDefault(); void run(async () => setAnalysis(await api(`/saft/analysis?store_id=${encodeURIComponent(target)}&start=${start}&end=${end}`))); }}><div className="form-grid"><DatePresets from={start} to={end} onSelect={(from, to) => { setStart(from); setEnd(to); }} /><Field label="Desde"><input type="date" required value={start} onChange={e => setStart(e.target.value)}/></Field><Field label="Até"><input type="date" required min={start} value={end} onChange={e => setEnd(e.target.value)}/></Field></div><p>Estabelecimento: {stores.find(row => row.id === target)?.name}</p><ActionButton disabled={busy}><Eye size={16}/>Consultar período</ActionButton></ManagedForm>{analysis && <ReferenceTables data={analysis}/>}</section>
+    })}/>}</> },
+{ id: "analise", label: "Análise", content: <><section className="panel"><h2>Analisar faturação e recebimentos</h2><ManagedForm onSubmit={e => { e.preventDefault(); void run(async () => setAnalysis(await api(`/saft/analysis?store_id=${encodeURIComponent(target)}&start=${start}&end=${end}`))); }}><div className="form-grid"><DatePresets from={start} to={end} onSelect={(from, to) => { setStart(from); setEnd(to); }} /><Field label="Desde"><input type="date" required value={start} onChange={e => setStart(e.target.value)}/></Field><Field label="Até"><input type="date" required min={start} value={end} onChange={e => setEnd(e.target.value)}/></Field></div><p>Estabelecimento: {stores.find(row => row.id === target)?.name}</p><ActionButton disabled={busy}><Eye size={16}/>Consultar período</ActionButton></ManagedForm>{analysis && <ReferenceTables data={analysis}/>}</section></> }
+]} />
     {opened && <ImportDialog key={opened.id} initial={opened} onClose={() => { setOpened(null); void load(); }} onUpdated={() => { void load(); }}/>}
   </>;
 }

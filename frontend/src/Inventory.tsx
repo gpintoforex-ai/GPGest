@@ -1,3 +1,4 @@
+import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import OpeningStockImport from "./OpeningStockImport";
 import DatePresets from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
@@ -164,7 +165,7 @@ export default function Inventory({
   admin: boolean;
 }) {
   const [catalog, setCatalog] = useState<Row | null>(null),
-    [tab, setTab] = useState("Painel"),
+    [tab, setTab] = useWorkspaceTab("stock", "Painel", ["Painel", "Artigos", "Movimentos", "Lotes e validades", "Inventários", "Importações", "Parâmetros"]),
     [error, setError] = useState(""),
     [success, setSuccess] = useState("");
   const [query, setQuery] = useState(""),
@@ -357,26 +358,7 @@ export default function Inventory({
           separado.
         </Notice>
       )}
-      <nav className="stock-tabs" aria-label="Artigos e stock">
-        {[
-          "Painel",
-          "Artigos",
-          "Movimentos",
-          "Lotes e validades",
-          "Inventários",
-          "Importações",
-          ...(admin ? ["Parâmetros"] : []),
-        ].map((name) => (
-          <ActionButton
-            key={name}
-            aria-current={tab === name ? "page" : undefined}
-            className={tab === name ? "primary" : ""}
-            onClick={() => setTab(name)}
-          >
-            {name}
-          </ActionButton>
-        ))}
-      </nav>
+      <ModuleTabs label="Artigos e stock" value={tab} tabs={([{"id": "Painel", "label": "Painel"}, {"id": "Artigos", "label": "Artigos"}, {"id": "Movimentos", "label": "Movimentos"}, {"id": "Lotes e validades", "label": "Lotes e validades"}, {"id": "Inventários", "label": "Inventários"}, {"id": "Importações", "label": "Importações"}, {"id": "Parâmetros", "label": "Parâmetros"}]).filter(item => admin || item.id !== "Parâmetros")} onChange={value => { setTab(value);  }} />
       {!warehouses.length && (
         <Notice tone="warning">
           Crie um armazém para começar a registar stock.
@@ -389,7 +371,7 @@ export default function Inventory({
         </Notice>
       )}
       <section className="panel">
-        <div className="form-grid stock-filters">
+        <div className="form-grid stock-filters filter-bar">
           {tab === "Artigos" ? (
             <Field label="Pesquisar nome, código, barras, marca ou fornecedor">
               <input

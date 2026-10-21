@@ -90,6 +90,7 @@ def main():
             page.get_by_role("button", name="Exportar dados da minha conta").click()
         assert info.value.suggested_filename == "iazela-minha-conta.json"
         page.goto(ORIGIN + "/plataforma")
+        page.get_by_role("tab", name="Informação legal e privacidade").click()
         expect(page.get_by_role("heading", name="Informação legal e proteção de dados")).to_be_visible()
         page.get_by_text("Configurar e rever textos legais", exact=True).click()
         expect(page.get_by_role("button", name="Publicar versão revista")).to_be_disabled()

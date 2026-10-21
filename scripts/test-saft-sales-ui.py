@@ -46,6 +46,8 @@ def mock_api(route):
         result = boot
     elif path == "/api/dashboard":
         result = {}
+    elif path == "/api/dashboard/overview":
+        result = {"period": {"in_progress": False}, "comparison": {"method": "Teste isolado"}, "generated_at": "2026-10-20T12:00:00Z", "attention": [], "permissions": {"finance": False, "costs": False}}
     elif path == "/api/saft/imports":
         result = {"versions": ["1.04_01"], "max_bytes": 100000000, "imports": history}
     elif path.endswith("/items"):
@@ -106,10 +108,12 @@ with sync_playwright() as playwright:
     page.keyboard.press("Escape")
     expect(dialog).not_to_be_visible()
     page.set_viewport_size({"width": 1440, "height": 1000})
+    page.get_by_role("tab", name="Meios de pagamento", exact=True).click()
     page.get_by_text("Associar códigos SAF-T aos meios de pagamento", exact=True).click()
     page.get_by_label("Código SAF-T NU", exact=True).select_option("numerario")
     page.get_by_role("button", name="Guardar correspondências", exact=True).click()
     expect(page.get_by_text("Correspondências guardadas.", exact=False)).to_be_visible()
+    page.get_by_role("tab", name="Análise", exact=True).click()
     page.get_by_role("button", name="Consultar período", exact=True).click()
     expect(page.get_by_role("heading", name="Recebimentos identificados", exact=False)).to_be_visible()
     expect(page.get_by_text("Informação de recebimento indisponível, ou sem pagamentos identificáveis neste período.", exact=True)).to_be_visible()

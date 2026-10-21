@@ -1,0 +1,203 @@
+/* Câmara com deteção das margens em direto: digitalização rápida e área autenticada. */
+.qs-camera {
+  position: relative;
+  width: 100%;
+  max-height: 68dvh;
+  aspect-ratio: 3 / 4;
+  margin: 0 auto;
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+  background: #000;
+}
+.qs-camera video {
+  width: 100%;
+  height: 100%;
+  /* Imagem inteira (sem corte): o que se vê é o que é fotografado e analisado. */
+  object-fit: contain;
+  display: block;
+}
+
+/* Deteção das margens em direto (LiveEdges): contorno sobre o vídeo, indicação e progresso. */
+.qs-live {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.qs-live-quad {
+  fill: rgba(42, 120, 214, 0.2);
+  stroke: #4c9bff;
+  stroke-width: 3;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.qs-live-quad.qs-live-small,
+.qs-live-quad.qs-live-touching {
+  fill: rgba(224, 161, 6, 0.14);
+  stroke: #f0b429;
+  stroke-dasharray: 10 6;
+}
+.qs-live-quad.steady {
+  fill: rgba(31, 157, 85, 0.24);
+  stroke: #3ddc84;
+}
+.qs-live-corner {
+  fill: #fff;
+  stroke: #4c9bff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.qs-live-corner.qs-live-small,
+.qs-live-corner.qs-live-touching {
+  stroke: #f0b429;
+}
+/* Texto claro sobre fundo escuro também dentro de janelas (a regra global dos parágrafos é 0,2,0). */
+.qs-camera > p.qs-live-hint {
+  color: #fff;
+}
+.qs-live-hint {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  text-align: center;
+  pointer-events: none;
+}
+.qs-live-hint-ok,
+.qs-live-hint-manual,
+.qs-live-hint-steady {
+  background: rgba(16, 94, 52, 0.9);
+}
+.qs-live-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.2);
+}
+.qs-live-progress span {
+  display: block;
+  height: 100%;
+  background: #3ddc84;
+  transition: width 0.12s linear;
+}
+.qs-camera.qs-flash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  animation: qs-flash 0.35s ease-out;
+  pointer-events: none;
+}
+@keyframes qs-flash {
+  from { opacity: 0.85; }
+  to { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qs-camera.qs-flash::after { animation: none; }
+  .qs-live-progress span { transition: none; }
+}
+/* Captura automática ligada/desligada (preferência deste dispositivo). */
+.live-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid #555;
+  background: #1b1b1b;
+  color: #f2f2f2;
+  font: inherit;
+  cursor: pointer;
+}
+.live-auto.active {
+  background: #10663a;
+  border-color: #3ddc84;
+  color: #fff;
+}
+.live-auto:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Botão de disparo (redondo, sobre fundo escuro). */
+.qs-shutter {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 4px solid #fff;
+  background: transparent;
+  padding: 4px;
+  cursor: pointer;
+}
+.qs-shutter span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: #fff;
+}
+.qs-shutter:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.qs-shutter:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
+}
+/* O disparo é um ActionButton: fica sempre redondo, sem herdar o «esticar» dos botões do rodapé. */
+.qs-actions .ui-action.qs-shutter {
+  flex: 0 0 72px;
+  width: 72px;
+  min-width: 72px;
+  height: 72px;
+  padding: 4px;
+}
+
+.live-camera-controls .ui-action.qs-shutter {
+  flex: 0 0 72px;
+  width: 72px;
+  min-width: 72px;
+  height: 72px;
+  padding: 4px;
+}
+
+/* Câmara dentro de outra janela (área autenticada): painel escuro com controlos. */
+.live-camera {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-panel);
+  background: #111;
+  color: #f2f2f2;
+}
+.live-camera .qs-camera {
+  max-height: min(68dvh, 620px);
+}
+.live-camera-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+/* 0,2,1: vence a regra global dos parágrafos em janelas (:is(.workspace, dialog) :is(p, small)), 0,2,0. */
+.live-camera .live-camera-controls > p {
+  margin: 0;
+  color: #e6e6e6;
+}
+.live-camera .ui-notice {
+  margin: 0;
+}

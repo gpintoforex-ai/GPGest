@@ -26,6 +26,7 @@
 }
 .assistant-identity h2 { margin: 0; font-size: 16px; color: var(--assistant-color); }
 .assistant-identity h2 span { color: var(--color-muted); font-size: 13px; font-weight: 500; }
+[data-theme="dark"] .assistant-identity h2 { color: var(--color-text); }
 .assistant-identity p { margin: 4px 0 0; font-size: 13px; line-height: 1.5; }
 @media (max-width: 600px) {
   .assistant-identity { align-items: flex-start; padding: 12px; }

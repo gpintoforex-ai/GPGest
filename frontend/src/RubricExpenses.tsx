@@ -58,7 +58,7 @@ export default function RubricExpenses({ stores, store, categories, admin, integ
     <div className="page-intro"><div><h1>Despesas por rubrica</h1><p>Faturas de compra pela data do documento: compras do ERP e compras confirmadas na IAZELA. As notas de crédito subtraem. Cada documento conta uma vez.</p></div></div>
     {error && <Notice className="error" role="alert">{error}</Notice>}
     {notice && <Notice tone="success" onDismiss={() => setNotice("")}>{notice}</Notice>}
-    <section className="panel rubric-expenses-filters">
+    <section className="panel rubric-expenses-filters filter-bar">
       <DatePresets from={start} to={end} onSelect={(from, to) => { setStart(from); setEnd(to); }} />
       <Field label="Desde"><input type="date" value={start} onChange={e => setStart(e.target.value)} /></Field>
       <Field label="Até"><input type="date" value={end} min={start} onChange={e => setEnd(e.target.value)} /></Field>

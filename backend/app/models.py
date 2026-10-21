@@ -1387,3 +1387,117 @@ class StockImport(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     status: Mapped[str] = mapped_column(String(20), default="preview")
     data: Mapped[str] = mapped_column(Text)
+
+
+class ArchiveDocument(Base):
+    """Índice central do arquivo digital: um registo por ficheiro, sem substituir o original.
+
+    O original fica onde já estava (Drive, anexos de compras, movimentos, depósitos, Gmail) ou,
+    nos carregamentos diretos, cifrado em ``archive_blobs``. Os valores são sempre em cêntimos.
+    """
+    __tablename__ = "archive_documents"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str | None] = mapped_column(ForeignKey("stores.id"), nullable=True, index=True)
+    source_key: Mapped[str] = mapped_column(String(300), unique=True)
+    origin: Mapped[str] = mapped_column(String(40), index=True)
+    doc_type: Mapped[str] = mapped_column(String(40), default="por_classificar", index=True)
+    category_id: Mapped[str | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    original_name: Mapped[str] = mapped_column(String(300), default="")
+    mime: Mapped[str] = mapped_column(String(100), default="")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    storage: Mapped[str] = mapped_column(String(30))
+    storage_ref: Mapped[str] = mapped_column(String(300))
+    storage_account: Mapped[str] = mapped_column(String(200), default="")
+    storage_folder: Mapped[str] = mapped_column(String(300), default="")
+    sha256: Mapped[str] = mapped_column(String(64), default="", index=True)
+    duplicate_of: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    issue_date: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    entity_nif: Mapped[str] = mapped_column(String(30), default="", index=True)
+    entity_name: Mapped[str] = mapped_column(String(300), default="")
+    entity_id: Mapped[str | None] = mapped_column(ForeignKey("business_entities.id"), nullable=True)
+    document_code: Mapped[str] = mapped_column(String(10), default="")
+    document_number: Mapped[str] = mapped_column(String(120), default="")
+    currency: Mapped[str] = mapped_column(String(3), default="EUR")
+    base_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    tax_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    total_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    payment_reference: Mapped[str] = mapped_column(String(200), default="")
+    description: Mapped[str] = mapped_column(String(500), default="")
+    # pendente → processado | erro | duplicado; revisão humana separada do processamento.
+    processing_status: Mapped[str] = mapped_column(String(20), default="pendente", index=True)
+    review_status: Mapped[str] = mapped_column(String(20), default="por_rever", index=True)
+    extraction: Mapped[str] = mapped_column(Text, default="{}")
+    corrections: Mapped[str] = mapped_column(Text, default="[]")
+    retention_until: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    legal_hold: Mapped[bool] = mapped_column(Boolean, default=False)
+    integrity_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    integrity_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ArchiveBlob(Base):
+    """Original carregado diretamente no arquivo, cifrado em repouso."""
+    __tablename__ = "archive_blobs"
+    document_id: Mapped[str] = mapped_column(ForeignKey("archive_documents.id"), primary_key=True)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class ArchiveLink(Base):
+    """Relação documento ↔ registo (compra/e-Fatura, ERP, banco, pagamento, caixa, depósito)."""
+    __tablename__ = "archive_links"
+    __table_args__ = (UniqueConstraint("document_id", "target_kind", "target_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    document_id: Mapped[str] = mapped_column(ForeignKey("archive_documents.id"), index=True)
+    target_kind: Mapped[str] = mapped_column(String(30), index=True)
+    target_id: Mapped[str] = mapped_column(String(36), index=True)
+    # Valor imputado: pagamentos parciais ou agrupados; vazio quando é o documento inteiro.
+    amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    strength: Mapped[str] = mapped_column(String(20), default="possivel")
+    status: Mapped[str] = mapped_column(String(20), default="proposta", index=True)
+    method: Mapped[str] = mapped_column(String(60), default="")
+    reasons: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    decided_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ArchiveEvent(Base):
+    """Histórico de alterações e acessos a cada documento do arquivo."""
+    __tablename__ = "archive_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    document_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(60))
+    detail: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+
+
+class ArchiveJob(Base):
+    """Fila de processamento assíncrono (extração e relações), com tentativas e recuperação."""
+    __tablename__ = "archive_jobs"
+    __table_args__ = (UniqueConstraint("document_id", "kind"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    document_id: Mapped[str] = mapped_column(ForeignKey("archive_documents.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="pendente", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ArchiveSettings(Base):
+    __tablename__ = "archive_settings"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
+    retention_years: Mapped[int] = mapped_column(Integer, default=10)
+    ocr_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    auto_process: Mapped[bool] = mapped_column(Boolean, default=True)
+    include_drive: Mapped[bool] = mapped_column(Boolean, default=True)
+    auto_confirm_strong: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

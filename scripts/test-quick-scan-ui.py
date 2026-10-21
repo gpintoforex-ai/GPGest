@@ -66,6 +66,8 @@ try:
         admin.get_by_role("button", name=re.compile("^Configurações")).first.click()
         admin.get_by_role("button", name=re.compile("^Parâmetros")).first.click()
         admin.get_by_role("button", name=re.compile("^Digitalização$")).first.click()
+        # A página está organizada em separadores: os acessos rápidos ficam em «Acessos por PIN».
+        admin.locator(".module-tabs button", has_text="Acessos por PIN").first.click()
         admin.get_by_role("button", name="Novo acesso rápido").click()
         admin.get_by_label("Nome / dispositivo").fill("Telemóvel de teste")
         admin.get_by_label("PIN (6 a 12 algarismos)").fill(PIN)
@@ -103,7 +105,10 @@ try:
         phone.locator("input[type=file][multiple]").set_input_files(str(photo))
         expect(phone.get_by_text("Margens detetadas automaticamente", exact=False)).to_be_visible()
         corners = [phone.get_by_role("slider").nth(i).get_attribute("aria-valuetext") for i in range(4)]
-        assert corners[0].startswith("26% horizontal, 12%") and corners[2].startswith("77% horizontal, 90%"), corners
+        # Papel desenhado com cantos (420,140) (1180,190) (1240,1080) (360,1040) numa imagem 1600×1200.
+        truth = [(420 / 1600, 140 / 1200), (1180 / 1600, 190 / 1200), (1240 / 1600, 1080 / 1200), (360 / 1600, 1040 / 1200)]
+        found = [tuple(int(v) / 100 for v in re.findall(r"(\d+)%", c)) for c in corners]
+        assert all(abs(f[0] - t[0]) <= 0.015 and abs(f[1] - t[1]) <= 0.015 for f, t in zip(found, truth)), corners
         phone.get_by_role("button", name="Confirmar e rever").click()
         expect(phone.locator(".qs-pages li")).to_have_count(2)
         phone.get_by_role("button", name="Descer página 1").click()
@@ -118,6 +123,8 @@ try:
         expect(phone.get_by_role("link", name="Descarregar")).to_be_visible()
         assert phone.evaluate("document.documentElement.scrollWidth <= innerWidth")
         phone.get_by_role("button", name="Terminar").first.click()
+        # Com páginas por guardar, a saída pede confirmação (diálogo partilhado da aplicação).
+        phone.get_by_role("alertdialog").get_by_role("button", name="Terminar sem guardar").click()
         expect(phone.get_by_role("button", name="Digitalizar documento")).to_be_visible()
         assert phone.url.endswith("/entrar")
         phone.get_by_role("button", name="Digitalizar documento").click()

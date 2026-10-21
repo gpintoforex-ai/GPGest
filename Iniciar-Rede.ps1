@@ -1,4 +1,4 @@
-﻿param([switch]$Reiniciar, [string]$EnderecoIP)
+﻿param([switch]$Reiniciar, [string]$EnderecoIP, [switch]$Https)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 $gpgestRuntime = Join-Path $PSScriptRoot '.local'
@@ -25,7 +25,21 @@ if (!$env:GPGEST_ENV_FILE -and !(Get-NetTCPConnection -LocalPort 55432 -State Li
     & '.\.venv\Scripts\python.exe' scripts\init-local.py
     if ($LASTEXITCODE) { throw 'Não foi possível iniciar PostgreSQL.' }
 }
-$gpgestBackend = Start-Process -FilePath (Join-Path $PSScriptRoot '.venv\Scripts\python.exe') -ArgumentList @('scripts\run-lan-backend.py','--ip',$EnderecoIP) -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $gpgestRuntime 'backend-rede.log') -RedirectStandardError (Join-Path $gpgestRuntime 'backend-rede-error.log') -PassThru
+# HTTPS (opcional): certificado local autoassinado, necessário para a câmara em direto no telemóvel.
+$gpgestScheme = 'http'
+$gpgestBackendArgs = @('scripts\run-lan-backend.py','--ip',$EnderecoIP)
+$gpgestViteArgs = @()
+if ($Https) {
+    $gpgestCertificates = Join-Path $gpgestRuntime 'https'
+    & '.\.venv\Scripts\python.exe' scripts\lan-certificate.py --ip $EnderecoIP --out $gpgestCertificates
+    if ($LASTEXITCODE) { throw 'Não foi possível preparar o certificado HTTPS local.' }
+    $env:GPGEST_HTTPS_KEY = Join-Path $gpgestCertificates 'lan-key.pem'
+    $env:GPGEST_HTTPS_CERT = Join-Path $gpgestCertificates 'lan-cert.pem'
+    $gpgestScheme = 'https'
+    $gpgestBackendArgs += '--https'
+    $gpgestViteArgs = @('--config','vite.https.config.mjs')
+}
+$gpgestBackend = Start-Process -FilePath (Join-Path $PSScriptRoot '.venv\Scripts\python.exe') -ArgumentList $gpgestBackendArgs -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $gpgestRuntime 'backend-rede.log') -RedirectStandardError (Join-Path $gpgestRuntime 'backend-rede-error.log') -PassThru
 @{ Id=$gpgestBackend.Id; Started=$gpgestBackend.StartTime.ToUniversalTime().Ticks } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $gpgestRuntime 'backend.pid')
 $gpgestReady = $false
 for ($gpgestAttempt=0; $gpgestAttempt -lt 30; $gpgestAttempt++) {
@@ -34,8 +48,10 @@ for ($gpgestAttempt=0; $gpgestAttempt -lt 30; $gpgestAttempt++) {
 }
 if (!$gpgestReady) { throw 'A API não iniciou. Consulte .local/backend-rede-error.log; o perfil poderá exigir HTTPS.' }
 $gpgestVite = Join-Path $PSScriptRoot 'frontend\node_modules\vite\bin\vite.js'
-$gpgestFrontend = Start-Process -FilePath (Get-Command node.exe).Source -ArgumentList @(('"{0}"' -f $gpgestVite),'--host','0.0.0.0') -WorkingDirectory (Join-Path $PSScriptRoot 'frontend') -WindowStyle Hidden -RedirectStandardOutput (Join-Path $gpgestRuntime 'frontend-rede.log') -RedirectStandardError (Join-Path $gpgestRuntime 'frontend-rede-error.log') -PassThru
+$gpgestFrontend = Start-Process -FilePath (Get-Command node.exe).Source -ArgumentList (@(('"{0}"' -f $gpgestVite),'--host','0.0.0.0') + $gpgestViteArgs) -WorkingDirectory (Join-Path $PSScriptRoot 'frontend') -WindowStyle Hidden -RedirectStandardOutput (Join-Path $gpgestRuntime 'frontend-rede.log') -RedirectStandardError (Join-Path $gpgestRuntime 'frontend-rede-error.log') -PassThru
 @{ Id=$gpgestFrontend.Id; Started=$gpgestFrontend.StartTime.ToUniversalTime().Ticks } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $gpgestRuntime 'frontend.pid')
-Write-Host "No telemóvel ligado ao mesmo Wi-Fi: http://${EnderecoIP}:5174"
-Write-Host "Administração: http://${EnderecoIP}:5174/plataforma"
+Write-Host "No telemóvel ligado ao mesmo Wi-Fi: ${gpgestScheme}://${EnderecoIP}:5174"
+Write-Host "Administração: ${gpgestScheme}://${EnderecoIP}:5174/plataforma"
+if ($Https) { Write-Host 'Na primeira visita, aceite o aviso de segurança do certificado local (autoassinado). A câmara com deteção de margens fica disponível.' }
+else { Write-Host 'Para usar a câmara em direto no telemóvel, inicie com Iniciar-Rede-HTTPS.bat (os navegadores exigem HTTPS).' }
 Write-Host 'A API e o PostgreSQL permanecem em 127.0.0.1. Não é necessário abrir portas no router.'

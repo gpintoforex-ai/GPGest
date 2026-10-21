@@ -1,3 +1,5 @@
+import { ActionMenu, ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
+import { DetailDrawer, TaskWorkspace } from "./components/WorkspaceUI";
 import DatePresets from "./components/DatePresets";
 import { ActionLink } from "./components/InteractionUI";
 import { confirmAction } from "./components/InteractionUI";
@@ -98,7 +100,7 @@ export default function DocumentControl({
     [payments, setPayments] = useState<Row[]>([]),
     [sources, setSources] = useState<Row[]>([]),
     [banks, setBanks] = useState<Row[]>([]);
-  const [tab, setTab] = useState("conferencia"),
+  const [tab, setTab] = useWorkspaceTab("conferencia", "conferencia", ["conferencia", "anexos", "despesas", "contabilidade"]),
     [tools, setTools] = useState(false);
   const [gmail, setGmail] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -397,6 +399,7 @@ export default function DocumentControl({
         />
       </>
     );
+  const DocumentDialog = modal === "detail" ? DetailDrawer : AppDialog;
   return (
     <>
       <div className="page-intro doc-dashboard-header">
@@ -424,16 +427,18 @@ export default function DocumentControl({
               Importar e-Fatura
             </ActionButton>
             <ActionButton onClick={() => setModal("new")}>Registar documento</ActionButton><ScanButton store={selectedStore} onSaved={load} />
-            {admin && canReadErp && (
-              <ActionButton onClick={() => setModal("sync")}>
-                Consultar compras no ERP
+            <ActionMenu>
+              {admin && canReadErp && (
+                <ActionButton onClick={() => setModal("sync")}>
+                  Consultar compras no ERP
+                </ActionButton>
+              )}
+              <ActionButton onClick={() => openPayment(undefined, true)}>
+                Identificar pagamento ou comissão
               </ActionButton>
-            )}
-            <ActionButton onClick={() => openPayment(undefined, true)}>
-              Identificar pagamento ou comissão
-            </ActionButton>
-            <ActionButton onClick={() => setTools(true)}>Acessos e-Fatura</ActionButton>
-            <ActionButton onClick={() => setGmail(true)}>Anexos Gmail / Drive</ActionButton>
+              <ActionButton onClick={() => setTools(true)}>Acessos e-Fatura</ActionButton>
+              <ActionButton onClick={() => setGmail(true)}>Anexos Gmail / Drive</ActionButton>
+            </ActionMenu>
           </div>
         )}
       </div>
@@ -507,18 +512,7 @@ export default function DocumentControl({
         ))}
       </div>
       </details>
-      <div className="actions doc-tabs" aria-label="Áreas da conferência documental">
-        {[
-          ["conferencia", "Conferência documental"],
-          ["anexos", "Documentos e anexos"],
-          ["despesas", "Despesas por tratar"],
-          ["contabilidade", "Entrega à contabilidade"],
-        ].map(([id, title]) => (
-          <ActionButton key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>
-            {title}
-          </ActionButton>
-        ))}
-      </div>
+      <ModuleTabs label="Áreas da conferência documental" value={tab} tabs={[{"id": "conferencia", "label": "Faturas e conferência"}, {"id": "anexos", "label": "Documentos e anexos"}, {"id": "despesas", "label": "Despesas por tratar"}, {"id": "contabilidade", "label": "Estado contabilístico"}]} onChange={value => { setTab(value);  }} />
       {error && !modal && (
         <Notice role="alert" className="error">
           {error}
@@ -529,7 +523,7 @@ export default function DocumentControl({
       {loading && <p role="status">A carregar documentos e estados de conferência…</p>}
       {error && !modal && <ActionButton onClick={() => { setLoading(true); setError(""); load().catch(e => setError(e.message)).finally(() => setLoading(false)); }}>Tentar novamente</ActionButton>}
       <section className="panel">
-        <div className="doc-filters">
+        <div className="doc-filters filter-bar">
           <label>
             Mês
             <select aria-label="Mês" value={filterMonth} onChange={e => { if (e.target.value) setFilters({ ...filters, ...monthRange(filterYear, e.target.value) }); }}>
@@ -571,7 +565,7 @@ export default function DocumentControl({
           </label>
           <details className="doc-advanced-filters">
             <summary><Filter size={16} aria-hidden="true" /> Filtros avançados{Object.entries(filters).some(([key, value]) => !["from", "to", "search"].includes(key) && value) ? ` (${Object.entries(filters).filter(([key, value]) => !["from", "to", "search"].includes(key) && value).length})` : ""}</summary>
-            <div className="doc-advanced-filter-grid">
+            <div className="doc-advanced-filter-grid filter-bar">
           {[
             [
               "availability",
@@ -773,7 +767,7 @@ export default function DocumentControl({
         onClose={() => { setAssistant(null); load().catch(e => setError(e.message)); }}
         onPrepare={async () => { const fresh = await api(`/documents/${assistant.id}/detail`); setSelected(fresh); setAssistant(null); setModal("detail"); prepareDraft(fresh); }} />}
       {modal && (
-        <AppDialog busy={busy}
+        <DocumentDialog busy={busy}
           className={`doc-dialog ${modal === "detail" ? "invoice-detail-dialog" : ""}`}
           ref={dialog}
           onRequestClose={() => {
@@ -1379,8 +1373,7 @@ export default function DocumentControl({
             </ManagedForm>
           )}
           {modal === "detail" && selected && (
-            <>
-              <div className="document-comparison-grid">
+            <TaskWorkspace key={selected.id} name="documento" label="Detalhes do documento" items={[{id:"dados",label:"Dados e ERP",content:<><div className="document-comparison-grid">
               <section className="doc-section">
                 <h3>Dados da fatura</h3>{manager && <ScanButton initialDocument={selected} onSaved={load} />}
                 <p>
@@ -1483,12 +1476,11 @@ export default function DocumentControl({
                   </div>
                 )}
               </section>
-              </div>
-              <section className="doc-section">
+              </div></>},{id:"original",label:"Original e localização",content:<><section className="doc-section">
                 <h3>Pré-visualização do original</h3>
                 {detailPreview ? <InvoiceSidePreview key={selected.id} document={selected} onClose={() => setDetailPreview(false)} /> : <ActionButton onClick={() => setDetailPreview(true)}>Mostrar anexo</ActionButton>}
               </section>
-              <section className="doc-section">
+<section className="doc-section">
                 <h3>Disponibilidade e localização</h3>
                 {manager ? (
                   <ManagedForm
@@ -1558,8 +1550,7 @@ export default function DocumentControl({
                     Este estado regista a solicitação; não envia mensagens.
                   </p>
                 )}
-              </section>
-              <section className="doc-section">
+              </section></>},{id:"tratamento",label:"Despesa e contabilidade",content:<><section className="doc-section">
                 <h3>Tratamento da despesa</h3>
                 {manager ? (
                   <ManagedForm
@@ -1772,7 +1763,7 @@ export default function DocumentControl({
                     </ActionButton>
                   )}
               </section>
-              <section className="doc-section">
+<section className="doc-section">
                 <h3>Entrega à contabilidade</h3>
                 {manager ? (
                   <ManagedForm
@@ -1813,8 +1804,7 @@ export default function DocumentControl({
                   Exportar um pacote não equivale a entregar nem a lançar na
                   contabilidade.
                 </p>
-              </section>
-              <section className="doc-section">
+              </section></>},{id:"pagamentos",label:"Pagamentos e banco",content:<><section className="doc-section">
                 <h3>Pagamentos associados e banco</h3>
                 <p>
                   Pagamento: <strong>{labels[selected.payment_status]}</strong>{" "}
@@ -1858,8 +1848,7 @@ export default function DocumentControl({
                     Identificar pagamento desta fatura
                   </ActionButton>
                 )}
-              </section>
-              <section className="doc-section">
+              </section></>},{id:"historico",label:"Histórico",content:<><section className="doc-section">
                 <h3>Histórico de ações</h3>
                 {selected.history.map((a: Row) => (
                   <p key={a.id}>
@@ -1875,10 +1864,9 @@ export default function DocumentControl({
                       ` · ${labels[a.detail.after.accounting]}`}
                   </p>
                 ))}
-              </section>
-            </>
+              </section></>}]} />
           )}
-        </AppDialog>
+        </DocumentDialog>
       )}
     </>
   );

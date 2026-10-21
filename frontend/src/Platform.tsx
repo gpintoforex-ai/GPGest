@@ -1,3 +1,4 @@
+import { TaskWorkspace } from "./components/WorkspaceUI";
 import { ActionLink } from "./components/InteractionUI";
 import Brand from "./components/Brand";
 import ThemeSettings from "./ThemeSettings";
@@ -524,7 +525,7 @@ export default function Platform() {
           </section>
           </AppDialog>
         )}
-        <div className="cash-grid">
+        <TaskWorkspace name="plataforma" label="Áreas da plataforma" items={[{id:"empresas",label:"Empresas",content:<><div className="cash-grid">
           {companies.map((c) => (
             <section className="panel" key={c.id}>
               <div className="panel-title">
@@ -559,8 +560,7 @@ export default function Platform() {
               </ActionButton>
             </section>
           ))}
-        </div>
-        <section className="panel" style={{ marginTop: 24 }}>
+        </div></>},{id:"historico",label:"Histórico",content:<><section className="panel" style={{ marginTop: 24 }}>
           <h3>Histórico da plataforma</h3>
           <div className="table-wrap">
             <table>
@@ -594,8 +594,7 @@ export default function Platform() {
               </tbody>
             </table>
           </div>
-        </section>
-        <LegalAdmin />
+        </section></>},{id:"legal",label:"Informação legal e privacidade",content:<><LegalAdmin /></>}]} />
         <footer>
           Administração da plataforma · {admin.email}
           <span>Sessão reservada de 2 horas</span>

@@ -38,21 +38,22 @@ Image.MAX_IMAGE_PIXELS = 40_000_000
 class ScanBodyLimit:
     def __init__(self, app): self.app = app
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or not scope.get("path", "").startswith(("/api/scans/", "/api/quick-scan/")) or scope.get("method") != "POST":
+        if scope["type"] != "http" or not scope.get("path", "").startswith(("/api/scans/", "/api/quick-scan/", "/api/archive/upload")) or scope.get("method") != "POST":
             return await self.app(scope, receive, send)
         from starlette.responses import JSONResponse
         headers = dict(scope.get("headers", []))
         maximum = MAX_INPUT + 1024*1024
+        message = "Os ficheiros ultrapassam 50 MB por envio. Carregue menos ficheiros de cada vez." if scope["path"].startswith("/api/archive/") else "As fotografias ultrapassam o limite de 50 MB."
         try: length = int(headers.get(b"content-length", b"0"))
         except ValueError: length = maximum+1
         if length > maximum:
-            return await JSONResponse({"detail": "As fotografias ultrapassam o limite de 50 MB."}, status_code=413)(scope, receive, send)
+            return await JSONResponse({"detail": message}, status_code=413)(scope, receive, send)
         received = 0
         async def limited_receive():
             nonlocal received
             message = await receive()
             received += len(message.get("body", b""))
-            if received > maximum: raise HTTPException(413, "As fotografias ultrapassam o limite de 50 MB.")
+            if received > maximum: raise HTTPException(413, message)
             return message
         await self.app(scope, limited_receive, send)
 

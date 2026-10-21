@@ -330,7 +330,7 @@ export default function Employees({
         </Notice>
       )}
       <section className="panel" aria-busy={loading || busy !== null}>
-        <div className="employee-filters">
+        <div className="employee-filters filter-bar">
           <Field label="Pesquisar por nome ou contacto">
             <input
               value={search}

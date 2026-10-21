@@ -236,7 +236,7 @@ export default function RecordList({
   return (
     <>
       <div
-        className="record-filters"
+        className="record-filters filter-bar"
         role="group"
         aria-label={`Filtros: ${dateLabel}`}
       >
@@ -270,16 +270,6 @@ export default function RecordList({
                 }}
               />
             </div>
-            <ActionButton
-              type="button"
-              onClick={() => {
-                setDocumentGroup("");
-                setEntity("");
-                setPage(1);
-              }}
-            >
-              Limpar filtros
-            </ActionButton>
           </>
         )}
         {movementFilters && (
@@ -333,20 +323,8 @@ export default function RecordList({
                 }}
               />
             </div>
-            <ActionButton
-              type="button"
-              onClick={() => {
-                setRegister("");
-                setPayment("");
-                setEntity("");
-                setPage(1);
-              }}
-            >
-              Limpar filtros
-            </ActionButton>
           </>
         )}
-        <DatePresets from={from} to={to} onSelect={(start, end) => { setFrom(start); setTo(end); fromEdited.current = true; setPage(1); }} />
         <div className="record-field">
           <label htmlFor={`${id}-from`}>{dateLabel} desde</label>
           <input
@@ -389,6 +367,20 @@ export default function RecordList({
             ))}
           </select>
         </div>
+        {(plannedFilters || movementFilters) && <ActionButton
+          type="button"
+          onClick={() => {
+            if (plannedFilters) setDocumentGroup("");
+            if (movementFilters) {
+              setRegister("");
+              setPayment("");
+            }
+            setEntity("");
+            setPage(1);
+          }}
+        >
+          Limpar filtros
+        </ActionButton>}
         <ActionButton
           type="button"
           onClick={() => {
@@ -400,6 +392,7 @@ export default function RecordList({
         >
           Limpar datas
         </ActionButton>
+        <DatePresets from={from} to={to} onSelect={(start, end) => { setFrom(start); setTo(end); fromEdited.current = true; setPage(1); }} />
       </div>
       {invalid && (
         <Notice className="error" role="alert">

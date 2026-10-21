@@ -67,6 +67,11 @@ def start_scheduler():
             except Exception:
                 pass
             try:
+                from .archive import scheduled_tick as archive_tick
+                archive_tick()
+            except Exception:
+                pass
+            try:
                 from .invoice_workflow import scheduled_tick
                 scheduled_tick()
             except Exception:

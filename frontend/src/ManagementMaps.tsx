@@ -1,3 +1,4 @@
+import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import { takePeriod } from "./utils/periodHandoff";
 import { useEffect, useState } from "react";
 import { api } from "./lib/api";
@@ -13,7 +14,7 @@ const lisbonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/L
 /** Mapas de gestão indicativos: custos e proveitos por período e mapa de IVA. */
 export default function ManagementMaps({ store }: { store: string }) {
   const today = lisbonToday();
-  const [tab, setTab] = useState<"costs" | "vat">("costs");
+  const [tab, setTab] = useWorkspaceTab("mapas", "costs", ["costs", "vat"]);
   const [handoff] = useState(() => takePeriod("Mapas de gestão"));
   const [start, setStart] = useState(handoff?.start || today.slice(0, 4) + "-01-01"), [end, setEnd] = useState(handoff?.end || today);
   const [group, setGroup] = useState("month");
@@ -30,10 +31,9 @@ export default function ManagementMaps({ store }: { store: string }) {
   }, [tab, start, end, group, store]);
   return <>
     <div className="page-intro"><div><h1>Mapas de gestão</h1><p>Custos, proveitos e IVA a partir do SAF-T de vendas e dos documentos de compra. Valores indicativos para gestão; não substituem a contabilidade.</p></div></div>
-    <div className="maps-tabs" role="tablist">
-      {([["costs", "Custos e proveitos"], ["vat", "Mapa de IVA"]] as const).map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "active" : ""} onClick={() => { setData(null); setTab(key); }}>{label}</button>)}
-    </div>
-    <section className="panel maps-filters">
+    <ModuleTabs label="Mapas disponíveis" value={tab} tabs={[{ id: "costs", label: "Custos e proveitos" }, { id: "vat", label: "Mapa de IVA" }]} onChange={value => { setData(null); setTab(value); }} />
+
+    <section className="panel maps-filters filter-bar">
       <DatePresets from={start} to={end} onSelect={(from, to) => { setStart(from); setEnd(to); }} />
       <Field label="Desde"><input type="date" value={start} onChange={e => setStart(e.target.value)} /></Field>
       <Field label="Até"><input type="date" value={end} min={start} onChange={e => setEnd(e.target.value)} /></Field>

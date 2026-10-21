@@ -60,6 +60,15 @@ delivery_closed = False
 def intercept(route):
     global delivery_closed
     path = urlsplit(route.request.url).path.removeprefix("/api")
+    if path == "/dashboard/overview":
+        route.fulfill(json={"period": {"in_progress": False}, "comparison": {"method": "Teste isolado"}, "generated_at": "2026-10-20T12:00:00Z", "attention": [], "permissions": {"finance": False, "costs": False}})
+        return
+    if path == "/setup/status":
+        route.fulfill(json={"completed": True, "pending": [], "unclosed_count": 0})
+        return
+    if path == "/accounting/email/periods":
+        route.fulfill(json={"periodicity": "mensal", "note": "Teste isolado", "periods": []})
+        return
     if path == "/registers/demo-register/opening-suggestion":
         candidate = {"id": "fund-demo", "amount_cents": 4000, "document": "ENTRADA DEMO/1"} if "2026-10-12" in route.request.url else None
         route.fulfill(content_type="application/json", body=json.dumps({"candidate": candidate, "ambiguous": False, "last_opening_cents": 1500}))
@@ -138,6 +147,7 @@ with sync_playwright() as playwright:
     expect(dialog.get_by_role("heading", name="Dados da fatura", exact=True)).to_be_visible()
     expect(dialog.get_by_role("heading", name="Correspondência com o ERP", exact=True)).to_be_visible()
     expect(dialog.get_by_text("Divergências: Total", exact=True)).to_be_visible()
+    dialog.get_by_role("tab", name="Original e localização").click()
     expect(dialog.get_by_role("heading", name="Pré-visualização do original", exact=True)).to_be_visible()
     expect(dialog.locator("iframe")).to_be_visible()
     page.screenshot(path=str(output / "detail.png"))

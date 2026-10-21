@@ -18,7 +18,7 @@ export default function BankOverview({accounts,store="",fixedAccount="",onEdit,o
     api("/bank-balances?"+new URLSearchParams({start,end,store_id:store,account_id:selectedAccount})).then(r=>{if(active)setData(r);}).catch(e=>{if(active){setError(e.message);setData(null);}}).finally(()=>{if(active)setLoading(false);});
     return()=>{active=false;};
   },[start,end,store,selectedAccount,version]);
-  return <section className="bank-overview"><div className="panel bank-balance-filters"><h3>Saldos e reconciliação por conta</h3><p>Saldos acumulados até à data final. Pendentes e totais reconciliados respeitam o período selecionado.</p><div className="bank-filter-grid">
+  return <section className="bank-overview"><div className="panel bank-balance-filters"><h3>Saldos e reconciliação por conta</h3><p>Saldos acumulados até à data final. Pendentes e totais reconciliados respeitam o período selecionado.</p><div className="bank-filter-grid filter-bar">
     {!fixedAccount&&<label>Conta bancária<select aria-label="Conta bancária" value={selectedAccount} onChange={e=>setAccount(e.target.value)}><option value="">Todas as contas</option>{accounts.filter(a=>!store||a.store_id===store).map(a=><option key={a.id} value={a.id}>{a.bank} · {a.name} · {a.currency||"EUR"}</option>)}</select></label>}
     <DatePresets from={start} to={end} untilToday onSelect={(from, to) => { setStart(from); setEnd(to); }} /><label>Período desde<input type="date" value={start} max={end} onChange={e=>setStart(e.target.value)}/></label><label>Data final / data dos saldos<input type="date" value={end} min={start} max={today()} onChange={e=>setEnd(e.target.value)}/></label>
     <ActionButton disabled={loading} onClick={()=>setVersion(v=>v+1)}>Atualizar valores</ActionButton></div></div>

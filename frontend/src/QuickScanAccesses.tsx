@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Copy, QrCode, ScanLine } from "lucide-react";
 import { api } from "./lib/api";
-import { ActionButton, Notice, confirmAction } from "./components/InteractionUI";
+import { ActionButton, ManagedForm, Notice, confirmAction } from "./components/InteractionUI";
 import { Field } from "./components/Form";
 import "./DocumentScanner.css";
 
@@ -72,7 +72,7 @@ export default function QuickScanAccesses() {
       </tr>)}</tbody>
     </table></div> : <p>Ainda não existem acessos rápidos.</p>}
     {!form && <ActionButton type="button" className="primary" disabled={!data.folders.length || !data.stores.length} onClick={() => { setPairing(null); setForm({ name: "", store_id: data.stores[0]?.id || "", folder_id: data.folders[0]?.id || "", active: true, pin: "", confirm: "" }); }}>Novo acesso rápido</ActionButton>}
-    {form && <form className="quick-form" onSubmit={event => { event.preventDefault(); void run(async () => {
+    {form && <ManagedForm className="quick-form" onSubmit={event => { event.preventDefault(); void run(async () => {
       if ((form.pin || !editing) && form.pin !== form.confirm) throw new Error("Os dois PIN não coincidem.");
       const body = { name: form.name, store_id: form.store_id, folder_id: form.folder_id, active: form.active, pin: form.pin };
       if (editing) { await api(`/quick-scan/accesses/${form.id}`, body, { method: "PUT" }); setNotice("Acesso atualizado. As sessões abertas foram terminadas."); }
@@ -93,7 +93,7 @@ export default function QuickScanAccesses() {
         <ActionButton className="primary">{editing ? "Guardar alterações" : "Criar e emparelhar"}</ActionButton>
         <ActionButton type="button" dismiss onClick={() => setForm(null)}>Cancelar</ActionButton>
       </div>
-    </form>}
+    </ManagedForm>}
     {data.recent.length > 0 && <>
       <h4>Últimas digitalizações rápidas</h4>
       <p>Ficam na pasta de destino de cada acesso e são encontradas pela conferência documental. Não criam compras automaticamente.</p>

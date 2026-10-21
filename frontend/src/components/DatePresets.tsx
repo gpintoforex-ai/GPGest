@@ -65,8 +65,10 @@ export default function DatePresets({ from, to, onSelect, names, untilToday, dis
       onClick={event => apply(start, end, event.currentTarget)}>{label}</ActionButton>;
   };
   const selectedMonth = MONTHS.findIndex((_, month) => isRange(...monthsRange(year, month, month)));
-  const wholeYear = isRange(...monthsRange(year, 0, 11));
   const available = (month: number) => !untilToday || year < currentYear || month <= currentMonth;
+  const quarters = [1, 2, 3, 4].filter(q => available((q - 1) * 3));
+  const selectedQuarter = quarters.find(q => isRange(...monthsRange(year, (q - 1) * 3, q * 3 - 1)));
+  const wholeYear = isRange(...monthsRange(year, 0, 11));
 
   return <div className="date-presets" role="group" aria-label="Período rápido" ref={setAnchor}>
     {button("Hoje", [today, today])}
@@ -76,7 +78,11 @@ export default function DatePresets({ from, to, onSelect, names, untilToday, dis
       <option value="">Mês…</option>
       {MONTHS.map((name, month) => available(month) && <option key={name} value={month}>{name[0].toUpperCase() + name.slice(1)} {year}</option>)}
     </select>
-    {[1, 2, 3, 4].filter(q => available((q - 1) * 3)).map(q => button(year === currentYear ? `${q}.º trimestre` : `${q}.º trim. ${year}`, monthsRange(year, (q - 1) * 3, q * 3 - 1)))}
+    <select aria-label="Trimestre" className={selectedQuarter ? "active" : ""} disabled={disabled} value={selectedQuarter ? String(selectedQuarter) : ""}
+      onChange={event => { if (!event.target.value) return; const q = Number(event.target.value); apply(...monthsRange(year, (q - 1) * 3, q * 3 - 1), event.currentTarget); }}>
+      <option value="">Trimestre…</option>
+      {quarters.map(q => <option key={q} value={q}>{q}.º trimestre{year !== currentYear ? ` ${year}` : ""}</option>)}
+    </select>
     <select aria-label="Ano" className={wholeYear ? "active" : ""} disabled={disabled} value={wholeYear ? String(year) : ""}
       onChange={event => { if (!event.target.value) return; const next = Number(event.target.value); setChosen(next); apply(...monthsRange(next, 0, 11), event.currentTarget); }}>
       {!wholeYear && <option value="">Ano…</option>}

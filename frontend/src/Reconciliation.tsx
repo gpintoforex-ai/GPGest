@@ -1,6 +1,7 @@
+import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import DatePresets from "./components/DatePresets";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./lib/api";
 import Purchases from "./Purchases";
 import AssistantIdentity from "./components/AssistantIdentity";
@@ -46,7 +47,15 @@ export default function Reconciliation({
   admin: boolean;
   accounts?: Row[];
 }) {
-  const [tab, setTab] = useState("movimentos");
+  const [tab, setTab] = useWorkspaceTab("reconciliacao", "movimentos", ["movimentos", "faturas", "historico"]);
+  // Vista dentro de «Movimentos»: sugestões automáticas ou seleção manual nas duas colunas. Sem escolha
+  // explícita (URL), abre nas sugestões quando existem e na seleção manual quando não há nenhuma.
+  const [chosenView, setView] = useWorkspaceTab("reconciliacao-modo", "", ["", "sugestoes", "manual"]);
+  const [suggestionLimit, setSuggestionLimit] = useState(10);
+  const confirmPanel = useRef<HTMLElement>(null);
+  const reviewSelection = () => setTimeout(() => confirmPanel.current?.scrollIntoView({ block: "start", behavior: "smooth" }), 60);
+  const [documentsVisited, setDocumentsVisited] = useState(false);
+  useEffect(() => { if (tab === "faturas") setDocumentsVisited(true); }, [tab]);
   const [data, setData] = useState<Row>({
     banks: [],
     internals: [],
@@ -164,6 +173,12 @@ export default function Reconciliation({
     );
   const banks = visible(data.banks),
     internals = visible(data.internals);
+  // Sugestões cujos movimentos estão todos visíveis com os filtros atuais (critério anterior, calculado uma vez).
+  const visibleCards: Row[] = (data.card_suggestions || []).filter((s: Row) => banks.some((b) => b.id === s.bank_id)
+    && s.lines.every((l: Row) => internals.some((i) => i.source === l.source && i.id === l.source_id)));
+  const visibleSuggestions: Row[] = data.suggestions.filter((s: Row) => banks.some((b) => b.id === s.bank_id)
+    && internals.some((i) => i.source === s.source && i.id === s.source_id));
+  const view = chosenView || (!loaded || visibleCards.length + visibleSuggestions.length ? "sugestoes" : "manual");
   function toggle(r: Row) {
     setPostCommission(false);
     setSelected((previous) => {
@@ -181,6 +196,7 @@ export default function Reconciliation({
     if (!bank || !internal) return;
     const amount = (s.amount_cents / 100).toFixed(2);
     setSelected({ [key(bank)]: amount, [key(internal)]: amount });
+    setView("manual"); reviewSelection();
     setCommission("0");
     setPostCommission(false);
     setDifference("0");
@@ -199,6 +215,7 @@ export default function Reconciliation({
       next[`${l.source}:${l.source_id}`] = (l.amount_cents / 100).toFixed(2);
     setSelected(next);
     setKind("cartao");
+    setView("manual"); reviewSelection();
     setCommission((s.commission_cents / 100).toFixed(2));
     setDifference("0");
     setReason("");
@@ -346,31 +363,15 @@ export default function Reconciliation({
         </div>
       </div>
       <AssistantIdentity assistant="nuno" />
-      <div className="actions reconciliation-tabs">
-        {[
-          ["movimentos", "Movimentos e sugestões"],
-          ["faturas", "Faturas e documentos"],
-          ["historico", "Histórico"],
-        ].map(([id, label]) => (
-          <ActionButton
-            key={id}
-            aria-pressed={tab === id}
-            onClick={() => {
-              setTab(id);
-              setError("");
-            }}
-          >
-            {label}
-          </ActionButton>
-        ))}
-      </div>
+      <ModuleTabs label="Áreas da reconciliação" value={tab} tabs={[{"id": "movimentos", "label": "Movimentos e sugestões"}, {"id": "faturas", "label": "Faturas e documentos"}, {"id": "historico", "label": "Histórico"}]} onChange={value => { setTab(value); setError(""); }} />
       {error && (
         <Notice className="error" role="alert">
           {error}
         </Notice>
       )}
       {notice && <Notice onDismiss={() => setNotice("")} tone={notice.includes("selecionad") ? "info" : "success"}>{notice}</Notice>}
-      {tab === "faturas" && (
+      {(tab === "faturas" || documentsVisited) && (
+        <div hidden={tab !== "faturas"}>
         <Purchases
           stores={stores}
           store={store}
@@ -380,11 +381,12 @@ export default function Reconciliation({
           onOpenMovements={() => setTab("movimentos")}
           onOpenHistory={() => setTab("historico")}
         />
+        </div>
       )}
       {tab === "movimentos" && (
         <>
           <section className="panel reconciliation-filters">
-            <div className="purchase-filters">
+            <div className="purchase-filters filter-bar">
               <label>Conta bancária<select aria-label="Conta bancária" value={account} onChange={e=>{setAccount(e.target.value);setSelected({});setLimits({bank:50,internal:50});}}><option value="">Todas as contas</option>{accounts.filter(a=>!store||a.store_id===store).map(a=><option value={a.id} key={a.id}>{a.bank} · {a.name} · {a.currency||"EUR"}</option>)}</select></label>
               <label>Valor absoluto mínimo<input inputMode="decimal" value={minimum} onChange={e=>{setMinimum(e.target.value);setLimits({bank:50,internal:50});}}/></label>
               <label>Valor absoluto máximo<input inputMode="decimal" value={maximum} onChange={e=>{setMaximum(e.target.value);setLimits({bank:50,internal:50});}}/></label>
@@ -428,6 +430,11 @@ export default function Reconciliation({
               </label>
             </div>
           </section>
+          <ModuleTabs label="Modo de reconciliação" value={view} onChange={setView} tabs={[
+            { id: "sugestoes", label: "Sugestões", count: visibleCards.length + visibleSuggestions.length },
+            { id: "manual", label: "Seleção manual", count: chosen.length || undefined },
+          ]} />
+          {view === "manual" && <>
           <div className="reconciliation-columns">
             <section className="panel">
               <h2>Movimentos bancários ({banks.length})</h2>
@@ -439,8 +446,9 @@ export default function Reconciliation({
               {renderRows(internals, "internal")}
             </section>
           </div>
-          {manager && (
-            <section className="panel reconciliation-confirm">
+          {manager && chosen.length === 0 && <p className="reconciliation-hint">Selecione movimentos nas duas colunas (ou escolha uma sugestão) para rever e confirmar a associação.</p>}
+          {manager && chosen.length > 0 && (
+            <section className="panel reconciliation-confirm" ref={confirmPanel}>
               <h2>Confirmar associação</h2>
               <p>
                 {chosen.length} movimentos selecionados · Bruto interno:{" "}
@@ -460,7 +468,7 @@ export default function Reconciliation({
                     .join(" · ")}
                 </p>
               )}
-              <div className="purchase-filters">
+              <div className="purchase-filters filter-bar">
                 <label>
                   Tratamento
                   <select
@@ -551,23 +559,15 @@ export default function Reconciliation({
               </div>
             </section>
           )}
-          <section className="panel">
+          </>}
+          {view === "sugestoes" && <section className="panel">
             <h2>Sugestões de correspondência</h2>
             <p>
               O grau de confiança resulta do montante, proximidade das datas e
               termos da referência, entidade e descrição. Uma sugestão não
               associa valores automaticamente.
             </p>
-            {(data.card_suggestions || [])
-              .filter(
-                (s: Row) =>
-                  banks.some((b) => b.id === s.bank_id) &&
-                  s.lines.every((l: Row) =>
-                    internals.some(
-                      (i) => i.source === l.source && i.id === l.source_id,
-                    ),
-                  ),
-              )
+            {visibleCards
               .slice(0, 10)
               .map((s: Row) => (
                 <div
@@ -595,15 +595,8 @@ export default function Reconciliation({
                   )}
                 </div>
               ))}
-            {data.suggestions
-              .filter(
-                (s: Row) =>
-                  banks.some((b) => b.id === s.bank_id) &&
-                  internals.some(
-                    (i) => i.source === s.source && i.id === s.source_id,
-                  ),
-              )
-              .slice(0, 30)
+            {visibleSuggestions
+              .slice(0, suggestionLimit)
               .map((s: Row) => {
                 const b = all.find(
                   (r) => r.source === "bank" && r.id === s.bank_id,
@@ -637,29 +630,19 @@ export default function Reconciliation({
                   </div>
                 );
               })}
-            {!data.suggestions.some(
-              (s: Row) =>
-                banks.some((b) => b.id === s.bank_id) &&
-                internals.some(
-                  (i) => i.source === s.source && i.id === s.source_id,
-                ),
-            ) &&
-              !(data.card_suggestions || []).some(
-                (s: Row) =>
-                  banks.some((b) => b.id === s.bank_id) &&
-                  s.lines.every((link: Row) =>
-                    internals.some(
-                      (i) =>
-                        i.source === link.source && i.id === link.source_id,
-                    ),
-                  ),
-              ) && (
+            {visibleSuggestions.length > suggestionLimit && <ActionButton type="button" onClick={() => setSuggestionLimit(suggestionLimit + 20)}>Mostrar mais sugestões ({visibleSuggestions.length - suggestionLimit})</ActionButton>}
+            {!visibleSuggestions.length && !visibleCards.length && (
                 <p>
                   Sem sugestões para estes filtros. Pode selecionar movimentos
                   manualmente.
                 </p>
               )}
-          </section>
+          </section>}
+          {manager && chosen.length > 0 && <div className="reconciliation-selection-bar" aria-label="Seleção para reconciliar">
+            <span aria-live="polite"><b>{chosen.length}</b> selecionado(s) · diferença {selectionMoney(internalTotal - bankTotal)}</span>
+            <ActionButton type="button" className="primary" onClick={() => { setView("manual"); reviewSelection(); }}>Rever e confirmar</ActionButton>
+            <ActionButton type="button" onClick={() => setSelected({})}>Limpar</ActionButton>
+          </div>}
         </>
       )}
       {tab === "historico" && (

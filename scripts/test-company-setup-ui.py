@@ -110,7 +110,7 @@ try:
             parsed = urlsplit(route.request.url)
             route.fulfill(response=route.fetch(url="http://127.0.0.1:8018" + parsed.path + ("?" + parsed.query if parsed.query else "")))
         page.route("**/api/**", proxy)
-        page.goto("http://127.0.0.1:5174")
+        page.goto("http://127.0.0.1:5174/entrar")
         page.get_by_label("NIF da empresa", exact=True).fill("500000001")
         page.get_by_label("Email", exact=True).fill("setup@ui.test")
         page.get_by_label("Palavra-passe", exact=True).fill(password)

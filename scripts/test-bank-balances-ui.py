@@ -46,7 +46,7 @@ with sync_playwright() as p:
         output=root/'.local/bank-balances-ui';output.mkdir(exist_ok=True)
         page.screenshot(path=str(output/f'summary-{theme}-{width}.png'),full_page=True)
         page.get_by_role('button',name='Reconciliar esta conta',exact=True).click()
-        expect(page.get_by_label('Conta bancária',exact=True)).to_have_value('bank-a')
+        expect(page.locator('.page-cache:not([hidden])').get_by_label('Conta bancária',exact=True)).to_have_value('bank-a')
         page.get_by_role('button',name='Resolver movimento em falta',exact=True).click()
         dialog=page.get_by_role('dialog',name='Resolver movimento bancário',exact=True)
         expect(dialog).to_be_visible()

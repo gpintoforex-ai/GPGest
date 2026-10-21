@@ -1,3 +1,4 @@
+import { TaskWorkspace } from "./components/WorkspaceUI";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, Info, OctagonAlert, RefreshCw, Settings2, CircleDot } from "lucide-react";
 import { api } from "./lib/api";
@@ -9,8 +10,8 @@ import { handOffPeriod } from "./utils/periodHandoff";
 import "./ManagementDashboard.css";
 
 type Row = Record<string, any>;
-type SectionKey = "summary" | "evolution" | "attention" | "actions";
-const SECTIONS: [SectionKey, string][] = [["summary", "Resumo do negócio"], ["evolution", "Evolução"], ["attention", "O que precisa da sua atenção"], ["actions", "Ações rápidas"]];
+type SectionKey = "summary" | "evolution" | "attention" | "actions" | "operation";
+const SECTIONS: [SectionKey, string][] = [["summary", "Resumo do negócio"], ["evolution", "Evolução"], ["attention", "O que precisa da sua atenção"], ["actions", "Ações rápidas"], ["operation", "Operação de caixa"]];
 const DUE: [string, string][] = [["vencido", "Vencido"], ["7_dias", "Próx. 7 dias"], ["30_dias", "8–30 dias"], ["mais_30", "> 30 dias"], ["sem_data", "Sem data"]];
 const SEVERITY: Record<string, [string, typeof AlertTriangle]> = { critical: ["Crítico", OctagonAlert], warning: ["Atenção", AlertTriangle], info: ["Informação", CircleDot] };
 const lisbonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Lisbon", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -44,7 +45,7 @@ function Delta({ value, inverse }: { value: number | null | undefined; inverse?:
 function Kpi({ label, children, meta, onOpen, state }: { label: string; children: ReactNode; meta?: Row; onOpen?: () => void; state?: string }) {
   return <article className={`dash-kpi${state ? " is-" + state : ""}`}>
     <div className="dash-kpi-head"><span>{label}</span><MetaInfo meta={meta} /></div>
-    {onOpen ? <button type="button" className="dash-kpi-body" onClick={onOpen}>{children}</button> : <div className="dash-kpi-body">{children}</div>}
+    {onOpen ? <ActionButton type="button" className="dash-kpi-body" onClick={onOpen}>{children}</ActionButton> : <div className="dash-kpi-body">{children}</div>}
   </article>;
 }
 
@@ -57,8 +58,8 @@ function BlockState({ block, children }: { block?: Row; children: ReactNode }) {
 }
 
 /** Dashboard de gestão: resumo, evolução, atenção e ações rápidas, com os mesmos filtros. */
-export default function ManagementDashboard({ store, scopeKey, companyName, mode, role, navigate, onAction }: {
-  store: string; scopeKey: string; companyName: string; mode: string; role: string; navigate: (page: string) => void; onAction: (kind: string) => void;
+export default function ManagementDashboard({ store, scopeKey, companyName, mode, role, navigate, onAction, operation }: {
+  store: string; scopeKey: string; companyName: string; mode: string; role: string; navigate: (page: string) => void; onAction: (kind: string) => void; operation?: ReactNode;
 }) {
   const today = lisbonToday();
   const [start, setStart] = useState(today.slice(0, 8) + "01"), [end, setEnd] = useState(today);
@@ -82,6 +83,7 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
   const salesPage = data?.mode === "local" ? "Faturação e recebimentos" : "Movimentos reais";
 
   const sections: Record<SectionKey, ReactNode> = {
+    operation,
     summary: <div className="dash-kpis">
       {data?.permissions?.finance !== false && <Kpi label={`Faturação${sales?.vat_basis ? ` (${sales.vat_basis})` : ""}`} meta={sales?.meta} onOpen={() => open(salesPage)}>
         <BlockState block={sales}><strong>{formatEuro(sales?.total_cents)}</strong><Delta value={sales?.change_percent} /><small>{sales?.documents} documento(s)</small></BlockState></Kpi>}
@@ -137,7 +139,7 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
         table={{ columns: ["Rubrica", "Período", "Comparação"], rows: expenses.rows.map((r: Row) => [r.name, formatEuro(r.amount_cents), formatEuro(r.previous_cents)]) }}
         footnote={<>Total {formatEuro(expenses.total_cents)} · <Delta value={expenses.change_percent} inverse /> <MetaInfo meta={expenses.meta} /></>}>
         <BarList ariaLabel="Despesas por rubrica" rows={expenses.rows.map((r: Row) => ({ label: r.name, value: r.amount_cents, note: r.previous_cents ? `comparação ${formatEuro(r.previous_cents)}` : undefined }))} />
-        <button type="button" className="dash-link" onClick={() => open("Despesas por rubrica")}>Ver documentos por rubrica</button>
+        <ActionButton type="button" className="dash-link" onClick={() => open("Despesas por rubrica")}>Ver documentos por rubrica</ActionButton>
       </ChartFrame>}</BlockState>}
       {data?.permissions?.costs && <BlockState block={margin}>{margin?.rows && <ChartFrame title="Vendas por família de artigo (sem IVA)"
         table={{ columns: ["Família", "Vendas", "Artigos", "Custo conhecido", "Margem"], rows: margin.rows.map((r: Row) => [r.name, formatEuro(r.sales_cents), r.articles, r.cost_coverage_percent == null ? "—" : `${r.cost_coverage_percent}%`, r.margin_cents == null ? "Indisponível" : formatEuro(r.margin_cents)]) }}
@@ -174,7 +176,7 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
   };
 
   return <div className="dash" aria-busy={loading}>
-    <div className="dash-filters" role="group" aria-label="Filtros do painel">
+    <div className="dash-filters filter-bar" role="group" aria-label="Filtros do painel">
       <DatePresets from={start} to={end} onSelect={(from, to) => { setStart(from); setEnd(to); }} />
       <label>Desde<input type="date" value={start} onChange={e => setStart(e.target.value)} /></label>
       <label>Até<input type="date" value={end} min={start} onChange={e => setEnd(e.target.value)} /></label>
@@ -195,10 +197,12 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
       <ActionButton type="button" onClick={() => savePrefs({ order: SECTIONS.map(([k]) => k), hidden: [] })}>Repor</ActionButton>
     </section>}
     <div className={loading && data ? "dash-refreshing" : ""}>
-      {order.filter(key => !prefs.hidden.includes(key)).map(key => <section key={key} className="dash-section" aria-labelledby={`dash-${key}`}>
-        <h2 id={`dash-${key}`}>{SECTIONS.find(([k]) => k === key)?.[1]}{key === "attention" && !!data?.attention.length && <span className="pill">{data.attention.length}</span>}</h2>
-        {sections[key]}
-      </section>)}
+      <TaskWorkspace name="dashboard" label="Áreas do dashboard" items={order.filter(key => !prefs.hidden.includes(key)).map(key => ({
+        id: key, label: SECTIONS.find(([k]) => k === key)?.[1] || key,
+        count: key === "attention" && data?.attention.length ? data.attention.length : undefined,
+        content: <section className="dash-section" aria-label={SECTIONS.find(([k]) => k === key)?.[1]}>{sections[key]}</section>,
+      }))} />
+      {order.every(key => prefs.hidden.includes(key)) && <p>As áreas estão ocultas nas suas preferências. Utilize Personalizar para as mostrar.</p>}
     </div>
   </div>;
 }

@@ -102,7 +102,7 @@ export default function BillingConference({ stores, store, manager }: { stores: 
   return <div className="billing-conference">
     <div className="page-intro"><div><h1>Faturação e recebimentos</h1><p>A faturação (SAF-T) e os recebimentos registados são medidas distintas. A conferência associa-os sem criar movimentos.</p></div></div>
     {error && <Notice tone="error">{error}</Notice>}{notice && <Notice tone="success" onDismiss={() => setNotice("")}>{notice}</Notice>}
-    <section className="panel"><div className="form-grid">
+    <section className="panel"><div className="form-grid filter-bar">
       <Field label="Estabelecimento"><select value={target} onChange={e => setTarget(e.target.value)}><option value="">Todos os autorizados</option>{stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
       <DatePresets from={start} to={end} untilToday onSelect={(from, to) => { setStart(from); setEnd(to); }} />
       <Field label="Desde"><input type="date" value={start} max={end} onChange={e => setStart(e.target.value)} /></Field>

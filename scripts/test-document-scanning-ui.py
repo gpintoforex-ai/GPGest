@@ -85,9 +85,10 @@ with sync_playwright() as playwright:
     expect(dialog.get_by_text("Guardado na cloud", exact=True)).to_be_visible()
     expect(dialog.get_by_text("Anexo por validar", exact=True)).to_be_visible()
     dialog.get_by_role("button", name="Validar anexo após revisão", exact=True).click()
+    page.get_by_role("alertdialog").get_by_role("button", name="Validar anexo", exact=True).click()
     expect(dialog.get_by_text("Anexo validado", exact=True)).to_be_visible()
     assert calls == {"prepare": 1, "upload": 2, "preview": 1}, calls
-    dialog.get_by_role("button", name="Fechar digitalização", exact=True).click()
+    dialog.get_by_role("button", name="Fechar", exact=True).first.click()
     cloud_configured = False
     page.get_by_role("main").get_by_role("button", name="Digitalizar documento", exact=True).click()
     dialog.get_by_label("Carregar PDF existente", exact=True).set_input_files({"name":"existing.pdf","mimeType":"application/pdf","buffer":pdf_buffer.getvalue()})

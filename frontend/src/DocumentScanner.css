@@ -23,3 +23,4 @@
 .quick-pairing img { background: #fff; padding: 12px; border-radius: 8px; image-rendering: pixelated; }
 .quick-pairing-link { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
 .quick-pairing-link input { flex: 1 1 260px; min-width: 0; }
+.scanner-detected { display: block; margin: 4px 0; color: var(--color-success); font-size: 0.8rem; font-weight: 600; }

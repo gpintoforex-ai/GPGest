@@ -76,13 +76,14 @@ try:
         page.route("**/api/**", lambda route: route.fulfill(response=route.fetch(url=route.request.url.replace("127.0.0.1:5174", "127.0.0.1:8002"))))
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
-        page.goto("http://127.0.0.1:5174")
+        page.goto("http://127.0.0.1:5174/entrar")
         page.get_by_label("NIF da empresa", exact=True).fill("500000000")
         page.get_by_label("Email", exact=True).fill("ui@gpgest.local")
         page.get_by_label("Palavra-passe", exact=True).fill(password)
         page.get_by_role("button", name="Entrar", exact=True).click()
         page.get_by_role("button", name="Contabilidade", exact=True).click()
         page.get_by_role("button", name="Confer\u00eancia documental", exact=True).click()
+        page.locator(".action-menu > summary").first.click()  # ações secundárias em «Mais ações»
         page.get_by_role("button", name="Anexos Gmail / Drive", exact=True).click()
         page.get_by_label("Emails desde").fill("2026-10-01")
         page.get_by_label("Emails at\u00e9").fill("2026-10-31")

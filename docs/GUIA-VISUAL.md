@@ -10,7 +10,8 @@ migrações nem novas dependências.
 sombras e tamanhos de navegação. É carregado depois dos estilos existentes em
 `main.tsx`, permitindo modernizar a apresentação sem remover estilos dos módulos.
 
-Usar `var(--color-primary)` para ações, `--color-nav` para navegação e as famílias
+Usar `var(--color-primary)` para ações (turquesa escuro da marca no tema claro),
+`--color-nav` para navegação e as famílias
 `--color-success`, `--color-warning`, `--color-danger` para estados. Superfícies
 brancas e fundo cinzento; fontes DM Sans/Manrope com fallback Segoe UI. As fontes
 Google existentes são opcionais: sem Internet, o browser usa as fontes locais.
@@ -20,6 +21,11 @@ sempre incluem texto. Os estilos comuns uniformizam botões, campos, tabelas,
 separadores, modais, estados vazios e mensagens. `utils/format.ts` formata cêntimos
 como `1.234,56 €`, preserva sinais e mostra `—` quando o valor não está disponível.
 
+No tema claro, o menu lateral usa um cinzento neutro inspirado nas Definições do
+Windows, com texto escuro, logótipo sem fundo e sombra discreta; no tema escuro
+mantém o fundo azul-petróleo. Os botões primários claros usam turquesa da marca
+com texto escuro para conservar contraste e sombra turquesa subtil, reforçada
+no estado hover.
 O menu lateral é recolhível em computador, com nomes acessíveis e títulos nos
 ícones. Em tablet/telemóvel, o botão de menu abre a navegação sobre a página;
 o fundo permite fechá-la. O cabeçalho mostra empresa, módulo, página, filtro de

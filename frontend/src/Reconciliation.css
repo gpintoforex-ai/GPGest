@@ -81,3 +81,9 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Seleção em curso: resumo sempre à vista e acesso direto à confirmação. */
+.reconciliation-selection-bar { position: sticky; bottom: 12px; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; margin-top: 12px; padding: 10px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-surface); box-shadow: 0 6px 24px rgba(15, 30, 45, .18); }
+.reconciliation-selection-bar span { flex: 1 1 200px; }
+.reconciliation-hint { color: var(--color-muted); margin: 8px 0 0; }
+.reconciliation-confirm { scroll-margin-top: 96px; }

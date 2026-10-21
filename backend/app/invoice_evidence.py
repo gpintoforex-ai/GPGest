@@ -72,7 +72,7 @@ def text_fields(text):
         except ValueError: pass
     return {"due_dates":sorted(dues),"nifs":sorted(nifs),"numbers":[{"kind":kind,"number":number} for kind,number in sorted(numbers)],"dates":sorted(dates),"totals":sorted(totals),"currencies":sorted(currencies)}
 
-def extract(raw, mime, use_ocr=False):
+def extract(raw, mime, use_ocr=False, keep_text=False):
     documents=[]; warnings=[]; source="text"; text=pdf_text(raw,mime); incomplete=False
     if mime=="application/pdf":
         result=extract_pdf_qr(raw,{"max_pages":40,"max_bytes":5*1024*1024})
@@ -114,7 +114,10 @@ def extract(raw, mime, use_ocr=False):
                         finally: page.close()
                 finally: pdf.close()
             text="\n".join(parts); fields=text_fields(text); source="ocr"
-    return {**fields,"documents":documents,"source":"qr" if documents else source,"warnings":warnings,"incomplete":incomplete}
+    result={**fields,"documents":documents,"source":"qr" if documents else source,"warnings":warnings,"incomplete":incomplete}
+    # O arquivo digital classifica o tipo pelo texto; os restantes chamadores não guardam o texto.
+    if keep_text: result["text"]=text[:20000]
+    return result
 
 def compare_evidence(evidence, purchase, tolerance=2):
     target=invoice_key(purchase.supplier_nif,purchase.document_type,purchase.document)

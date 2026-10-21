@@ -196,7 +196,7 @@ try:
             )
 
         page.route("**/api/**", proxy)
-        page.goto("http://127.0.0.1:5174")
+        page.goto("http://127.0.0.1:5174/entrar")
         expect(page.get_by_role("heading", name="Entrar na IAZELA", exact=True)).to_be_visible()
         expect(page).to_have_title("Entrar · IAZELA")
         expect(page.get_by_role("img", name="IAZELA", exact=True)).to_be_visible()

@@ -5,7 +5,8 @@
   --surface-primary: #fff; --surface-secondary: #f5f7f9; --surface-elevated: #fff;
   --border-default: #dce5e9; --border-control: #7c8f9a; --border-focus: #087765;
   --icon-primary: #304653; --icon-secondary: #526572;
-  --action-primary: #102c39; --action-primary-hover: #173b49; --action-danger: #ad2935;
+  --action-primary: #0f6b5e; --action-primary-hover: #0b594f; --action-danger: #ad2935;
+  --action-primary-light: #32cbb0; --action-primary-light-hover: #48d8c5; --action-primary-light-ink: #102c39;
   --context-accent: #087765; --context-accent-bg: #e5f7f3;
   --context-success: #176b45; --context-success-bg: #eaf6ee;
   --context-warning: #805400; --context-warning-bg: #fff5e5;

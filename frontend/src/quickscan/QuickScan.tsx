@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowDown, ArrowUp, Camera, CheckCircle2, CloudUpload, Crop, Download, FileText, Images, LogOut, Plus, RefreshCw, RotateCw, ScanLine, Trash2 } from "lucide-react";
 import Brand from "../components/Brand";
-import { FULL_FRAME, findDocument, validCorners, type Corners } from "./edges";
+import { ActionButton, ManagedForm, confirmAction } from "../components/InteractionUI";
+import { FULL_FRAME, validCorners, type Corners } from "./edges";
+import { type LiveDetection } from "./LiveEdges";
+import { CameraView, captureFrame, flash, fromFile, useAutoCapture, useCamera } from "./camera";
 import { deviceToken, quick, QuickError, sendWithProgress } from "./quickApi";
 import "./QuickScan.css";
 
@@ -13,55 +16,9 @@ type Step = "loading" | "pair" | "pin" | "capture" | "edit" | "review" | "pdf" |
 type Row = Record<string, any>;
 
 const MODES: [Mode, string][] = [["colour", "Original"], ["enhanced", "Cor"], ["grey", "Cinzentos"], ["bw", "Preto e branco"]];
-const MAX_SIDE = 3000, SMALL_SIDE = 1200;
 const megabytes = (value: number) => new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 2 }).format(value / 1048576) + " MB";
 const slug = (value: string) => value.normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
 
-function toBlob(canvas: HTMLCanvasElement, quality: number) {
-  return new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Não foi possível preparar a imagem.")), "image/jpeg", quality));
-}
-
-function scaled(source: CanvasImageSource, width: number, height: number, side: number) {
-  const scale = Math.min(1, side / Math.max(width, height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(width * scale); canvas.height = Math.round(height * scale);
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("O navegador não permite preparar a imagem.");
-  context.drawImage(source, 0, 0, canvas.width, canvas.height);
-  return canvas;
-}
-
-/** Fotografia → JPEG sem metadados (orientação já aplicada pelo navegador), só em memória. */
-async function normalise(source: CanvasImageSource, width: number, height: number) {
-  const full = scaled(source, width, height, MAX_SIDE), small = scaled(source, width, height, SMALL_SIDE);
-  const [fullBlob, smallBlob, corners] = await Promise.all([toBlob(full, 0.9), toBlob(small, 0.85), findDocument(small)]);
-  full.width = full.height = 0;
-  return { full: fullBlob, small: smallBlob, corners };
-}
-
-async function fromFile(file: File) {
-  if (!file.type.startsWith("image/") && !/\.(jpe?g|png|webp|heic|heif)$/i.test(file.name)) throw new Error("Escolha uma fotografia (JPG, PNG, WebP ou HEIC).");
-  if (file.size > 40 * 1024 * 1024) throw new Error("A fotografia ultrapassa 40 MB.");
-  const url = URL.createObjectURL(file);
-  try {
-    const image = new Image();
-    image.src = url;
-    await image.decode().catch(() => { throw new Error("Não foi possível abrir esta imagem. Em iPhone, escolha o formato «Mais compatível» (JPEG) nas definições da câmara."); });
-    return await normalise(image, image.naturalWidth, image.naturalHeight);
-  } finally { URL.revokeObjectURL(url); }
-}
-
-function cameraHelp(error: unknown) {
-  const name = (error as DOMException)?.name;
-  const apple = /iPhone|iPad|iPod/.test(navigator.userAgent);
-  if (name === "NotAllowedError" || name === "SecurityError")
-    return apple
-      ? "A câmara foi recusada. No iPhone: toque em «aA» na barra de endereço › Definições do site › Câmara › Permitir (ou Definições › Safari › Câmara). Depois toque em «Tentar novamente». Pode também escolher fotografias da galeria."
-      : "A câmara foi recusada. No Android (Chrome): toque no cadeado junto ao endereço › Permissões › Câmara › Permitir e recarregue a página. Pode também escolher fotografias da galeria.";
-  if (name === "NotFoundError" || name === "OverconstrainedError") return "Não foi encontrada nenhuma câmara. Use a galeria para escolher fotografias.";
-  if (name === "NotReadableError") return "A câmara está a ser usada por outra aplicação. Feche-a e tente novamente.";
-  return "Não foi possível abrir a câmara. Use «Fotografar» com a aplicação da câmara ou escolha da galeria.";
-}
 
 export default function QuickScan({ onExit }: { onExit: () => void }) {
   const [step, setStep] = useState<Step>("loading");
@@ -72,16 +29,18 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
   const [type, setType] = useState("fatura"), [description, setDescription] = useState(""), [name, setName] = useState(""), [nameEdited, setNameEdited] = useState(false);
   const [scan, setScan] = useState<Row | null>(null), [pdfURL, setPdfURL] = useState(""), [requestKey, setRequestKey] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(""), [progress, setProgress] = useState<number | null>(null);
-  const [error, setError] = useState(""), [notice, setNotice] = useState(""), [cameraError, setCameraError] = useState(""), [cameraReady, setCameraReady] = useState(false), [cameraAttempt, setCameraAttempt] = useState(0);
-  const video = useRef<HTMLVideoElement>(null), stream = useRef<MediaStream | null>(null), urls = useRef(new Set<string>());
+  const [error, setError] = useState(""), [notice, setNotice] = useState("");
+  const urls = useRef(new Set<string>());
   const gallery = useRef<HTMLInputElement>(null), nativeCamera = useRef<HTMLInputElement>(null), replacing = useRef<string | null>(null);
   const activity = useRef(Date.now()), editor = useRef<HTMLDivElement>(null), dragging = useRef<number | null>(null);
+  // Deteção em direto: últimos cantos vistos no ecrã e preferência de captura automática (só neste dispositivo).
+  const live = useRef<LiveDetection>(null), cameraBox = useRef<HTMLDivElement>(null);
+  const [autoCapture, toggleAuto] = useAutoCapture();
   const page = pages.find(p => p.id === current) || null;
   const maxPages = context?.max_pages || 20;
 
   function remember(blob: Blob) { const url = URL.createObjectURL(blob); urls.current.add(url); return url; }
   function forget(url: string) { if (url && urls.current.delete(url)) URL.revokeObjectURL(url); }
-  function stopCamera() { stream.current?.getTracks().forEach(track => track.stop()); stream.current = null; setCameraReady(false); }
   function clearDocument() {
     pages.forEach(p => { forget(p.source); forget(p.preview); });
     forget(pdfURL);
@@ -91,7 +50,7 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
 
   /** Sessão terminada (inatividade, revogação): pede o PIN de novo, mantendo as páginas em memória. */
   function sessionEnded(message: string) {
-    setSession(""); setLocked(message); setPin(""); stopCamera();
+    setSession(""); setLocked(message); setPin("");
   }
 
   async function run<T>(label: string, task: () => Promise<T>) {
@@ -128,7 +87,7 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
         setError((problem as Error).message); setStep("pair");
       }
     })();
-    return () => { stopCamera(); urls.current.forEach(url => URL.revokeObjectURL(url)); urls.current.clear(); };
+    return () => { urls.current.forEach(url => URL.revokeObjectURL(url)); urls.current.clear(); };
   }, []);
 
   // Inatividade: o servidor termina a sessão; aqui pede-se o PIN logo que o prazo passa.
@@ -150,24 +109,9 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
     return () => window.removeEventListener("beforeunload", warn);
   }, [pages.length, scan, step]);
 
-  // Câmara traseira preferida, apenas no passo de captura e com sessão ativa.
-  useEffect(() => {
-    if (step !== "capture" || !session) { stopCamera(); return; }
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      setCameraError("A câmara em direto exige ligação segura (HTTPS). Use «Fotografar» (aplicação da câmara) ou a galeria.");
-      return;
-    }
-    let cancelled = false;
-    setCameraError("");
-    navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } } })
-      .then(media => {
-        if (cancelled) { media.getTracks().forEach(t => t.stop()); return; }
-        stream.current = media;
-        if (video.current) { video.current.srcObject = media; void video.current.play().catch(() => undefined); }
-      })
-      .catch(problem => { if (!cancelled) setCameraError(cameraHelp(problem)); });
-    return () => { cancelled = true; stopCamera(); };
-  }, [step, session, cameraAttempt]);
+
+  // Câmara traseira preferida, apenas no passo de captura e com sessão ativa (fecha-se ao sair).
+  const camera = useCamera(step === "capture" && !!session);
 
   useEffect(() => {
     if (nameEdited || !scan) return;
@@ -210,10 +154,11 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
     if (scan && !scan.cloud_saved) { forget(pdfURL); setScan(null); setPdfURL(""); setRequestKey(crypto.randomUUID()); }
   }
 
-  async function capture() {
-    const element = video.current;
-    if (!element || !element.videoWidth) return;
-    await run("A preparar a fotografia…", async () => addPage(await normalise(element, element.videoWidth, element.videoHeight)));
+  /** Fotografa a imagem atual; usa os cantos detetados em direto (o que o utilizador viu) quando existem. */
+  async function capture(seen?: Corners) {
+    if (!camera.ready || busy) return;
+    flash(cameraBox.current);
+    await run("A preparar a fotografia…", async () => addPage(await captureFrame(camera, live, seen)));
   }
 
   async function chooseFiles(files: FileList | null) {
@@ -298,8 +243,12 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
   }
 
   async function finish() {
-    if ((pages.length || (scan && !scan.cloud_saved)) && !window.confirm("Terminar sem guardar? As páginas digitalizadas serão apagadas deste dispositivo.")) return;
-    stopCamera();
+    if ((pages.length || (scan && !scan.cloud_saved)) && !(await confirmAction({
+      title: "Terminar sem guardar?",
+      message: "As páginas digitalizadas serão apagadas deste dispositivo.",
+      confirmLabel: "Terminar sem guardar",
+      tone: "danger",
+    }))) return;
     if (session) await quick("/session/end", { session, body: {} }).catch(() => undefined);
     clearDocument(); setSession(""); setContext(null);
     urls.current.forEach(url => URL.revokeObjectURL(url)); urls.current.clear();
@@ -329,7 +278,7 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
   const header = <header className="qs-header">
     <div className="qs-brand"><Brand /><span>Digitalização rápida</span></div>
     {device && <p className="qs-where">{device.company} · {device.store}</p>}
-    <button type="button" className="ui-action qs-exit" onClick={() => void finish()}><LogOut size={18} aria-hidden="true" />Terminar</button>
+    <ActionButton type="button" className="qs-exit" onClick={() => void finish()}><LogOut size={18} aria-hidden="true" />Terminar</ActionButton>
   </header>;
   const messages = <>
     {error && <div className="ui-notice ui-notice-error qs-message" role="alert">{error}</div>}
@@ -348,15 +297,15 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
       <li>Cria um acesso (ou pede um novo emparelhamento) e mostra o QR code.</li>
       <li>Leia o QR code com a câmara deste dispositivo, ou cole aqui o código de emparelhamento.</li>
     </ol>
-    <form className="qs-form" onSubmit={event => { event.preventDefault(); void run("A emparelhar…", async () => {
+    <ManagedForm className="qs-form" onSubmit={event => { event.preventDefault(); void run("A emparelhar…", async () => {
       const value = code.includes("digitalizar=") ? new URL(code.trim()).searchParams.get("digitalizar") || "" : code.trim();
       const result = await quick("/pair", { pairing: value });
       deviceToken.set(result.device_token); setDevice(result.device); setCode(""); setNotice("Dispositivo emparelhado."); setStep("pin");
     }); }}>
       <label htmlFor="qs-code">Código ou link de emparelhamento</label>
       <input id="qs-code" value={code} onChange={e => setCode(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} required />
-      <button className="ui-action primary" disabled={!!busy || code.trim().length < 20}>Emparelhar</button>
-    </form>
+      <ActionButton className="primary" disabled={!!busy || code.trim().length < 20}>Emparelhar</ActionButton>
+    </ManagedForm>
   </main></div>;
 
   if (step === "pin" || !session) return <div className="qs">{header}<main className="qs-main qs-narrow">
@@ -364,11 +313,11 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
     {device && <p><b>{device.name}</b> · guarda em «{device.folder}»</p>}
     {locked && <div className="ui-notice ui-notice-warning qs-message" role="status">{locked}{pages.length > 0 && <> As {pages.length} página(s) continuam neste ecrã.</>}</div>}
     {messages}
-    <form className="qs-form" onSubmit={event => { event.preventDefault(); void enter(); }}>
+    <ManagedForm className="qs-form" onSubmit={event => { event.preventDefault(); void enter(); }}>
       <label htmlFor="qs-pin">PIN (6 a 12 algarismos)</label>
       <input id="qs-pin" className="qs-pin" type="password" inputMode="numeric" pattern="[0-9]{6,12}" minLength={6} maxLength={12} autoComplete="off" value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ""))} required autoFocus />
-      <button className="ui-action primary" disabled={!!busy || pin.length < 6}>Continuar</button>
-    </form>
+      <ActionButton className="primary" disabled={!!busy || pin.length < 6}>Continuar</ActionButton>
+    </ManagedForm>
     <p className="qs-small">O acesso rápido só permite digitalizar e guardar documentos. Não mostra dados da empresa nem documentos anteriores.</p>
   </main></div>;
 
@@ -385,24 +334,24 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
         <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
           <polygon points={points} className={validCorners(draft.corners) ? "" : "invalid"} />
         </svg>
-        {draft.corners.map(([x, y], index) => <button key={index} type="button" className="qs-handle" style={{ left: `${x * 100}%`, top: `${y * 100}%` }} role="slider"
+        {draft.corners.map(([x, y], index) => <ActionButton key={index} type="button" className="qs-handle" style={{ left: `${x * 100}%`, top: `${y * 100}%` }} role="slider"
           aria-label={["Canto superior esquerdo", "Canto superior direito", "Canto inferior direito", "Canto inferior esquerdo"][index]}
           aria-valuetext={`${Math.round(x * 100)}% horizontal, ${Math.round(y * 100)}% vertical`}
           onKeyDown={event => keyCorner(index, event)}
           onPointerDown={event => { event.preventDefault(); editor.current?.setPointerCapture?.(event.pointerId); dragging.current = index; }} />)}
       </div>
       <div className="qs-toolbar" role="group" aria-label="Modo de cor">
-        {MODES.map(([value, label]) => <button key={value} type="button" className={`qs-chip ${draft.colour === value ? "active" : ""}`} aria-pressed={draft.colour === value} onClick={() => setDraft({ ...draft, colour: value })}>{label}</button>)}
+        {MODES.map(([value, label]) => <ActionButton key={value} type="button" className={`qs-chip ${draft.colour === value ? "active" : ""}`} aria-pressed={draft.colour === value} onClick={() => setDraft({ ...draft, colour: value })}>{label}</ActionButton>)}
       </div>
       <div className="qs-toolbar">
-        <button type="button" className="ui-action" onClick={() => setDraft({ ...draft, rotation: ((draft.rotation + 90) % 360) as Edit["rotation"] })}><RotateCw size={18} aria-hidden="true" />Rodar{draft.rotation ? ` (${draft.rotation}°)` : ""}</button>
-        <button type="button" className="ui-action" onClick={() => setDraft({ ...draft, corners: FULL_FRAME })}>Página inteira</button>
-        <button type="button" className="ui-action" onClick={() => { replacing.current = page.id; setStep("capture"); }}><Camera size={18} aria-hidden="true" />Repetir fotografia</button>
-        <button type="button" className="ui-action ui-action-danger" onClick={() => { removePage(page.id); setCurrent(null); setDraft(null); setStep(pages.length > 1 ? "review" : "capture"); }}><Trash2 size={18} aria-hidden="true" />Eliminar</button>
+        <ActionButton type="button" onClick={() => setDraft({ ...draft, rotation: ((draft.rotation + 90) % 360) as Edit["rotation"] })}><RotateCw size={18} aria-hidden="true" />Rodar{draft.rotation ? ` (${draft.rotation}°)` : ""}</ActionButton>
+        <ActionButton type="button" onClick={() => setDraft({ ...draft, corners: FULL_FRAME })}>Página inteira</ActionButton>
+        <ActionButton type="button" onClick={() => { replacing.current = page.id; setStep("capture"); }}><Camera size={18} aria-hidden="true" />Repetir fotografia</ActionButton>
+        <ActionButton type="button" className="ui-action-danger" onClick={() => { removePage(page.id); setCurrent(null); setDraft(null); setStep(pages.length > 1 ? "review" : "capture"); }}><Trash2 size={18} aria-hidden="true" />Eliminar</ActionButton>
       </div>
       <footer className="qs-actions">
-        {pages.length < maxPages && <button type="button" className="ui-action" disabled={!!busy} onClick={() => void applyEdit("capture")}><Plus size={18} aria-hidden="true" />Confirmar e fotografar outra</button>}
-        <button type="button" className="ui-action primary" disabled={!!busy} onClick={() => void applyEdit("review")}>Confirmar e rever</button>
+        {pages.length < maxPages && <ActionButton type="button" disabled={!!busy} onClick={() => void applyEdit("capture")}><Plus size={18} aria-hidden="true" />Confirmar e fotografar outra</ActionButton>}
+        <ActionButton type="button" className="primary" disabled={!!busy} onClick={() => void applyEdit("review")}>Confirmar e rever</ActionButton>
       </footer>
     </main></div>;
   }
@@ -411,22 +360,26 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
     {messages}
     <input ref={gallery} type="file" accept="image/*" multiple hidden onChange={e => { void chooseFiles(e.target.files); e.target.value = ""; }} />
     <input ref={nativeCamera} type="file" accept="image/*" capture="environment" hidden onChange={e => { void chooseFiles(e.target.files); e.target.value = ""; }} />
-    {cameraError
-      ? <div className="ui-notice ui-notice-warning qs-message" role="alert">{cameraError}</div>
-      : <div className="qs-camera">
-        <video ref={video} playsInline muted autoPlay onLoadedMetadata={() => setCameraReady(true)} aria-label="Imagem da câmara" />
-        <div className="qs-frame" aria-hidden="true"><span>Enquadre o documento dentro da moldura, com boa luz e sem sombras</span></div>
-      </div>}
-    <p className="qs-small">{pages.length} de {maxPages} página(s){replacing.current ? " · a repetir uma página" : ""}</p>
+    {camera.error
+      ? <div className="ui-notice ui-notice-warning qs-message" role="alert">{camera.error}</div>
+      : <CameraView camera={camera} live={live} box={cameraBox} autoCapture={autoCapture}
+        active={!busy && (pages.length < maxPages || !!replacing.current)}
+        onCapture={corners => void capture(corners)} />}
+    <div className="qs-capture-info">
+      <p className="qs-small">{pages.length} de {maxPages} página(s){replacing.current ? " · a repetir uma página" : ""}</p>
+      {!camera.error && <ActionButton type="button" className={`live-auto ${autoCapture ? "active" : ""}`} aria-pressed={autoCapture} onClick={toggleAuto}>
+        {autoCapture ? <CheckCircle2 size={16} aria-hidden="true" /> : <ScanLine size={16} aria-hidden="true" />}Captura automática {autoCapture ? "ligada" : "desligada"}
+      </ActionButton>}
+    </div>
     <footer className="qs-actions qs-capture-actions">
-      <button type="button" className="ui-action" onClick={() => gallery.current?.click()} disabled={!!busy}><Images size={18} aria-hidden="true" />Galeria</button>
-      {cameraError
+      <ActionButton type="button" onClick={() => gallery.current?.click()} disabled={!!busy}><Images size={18} aria-hidden="true" />Galeria</ActionButton>
+      {camera.error
         ? <>
-          <button type="button" className="ui-action primary" onClick={() => nativeCamera.current?.click()} disabled={!!busy || pages.length >= maxPages}><Camera size={18} aria-hidden="true" />Fotografar</button>
-          {/recusada/.test(cameraError) && <button type="button" className="ui-action" onClick={() => setCameraAttempt(n => n + 1)}><RefreshCw size={18} aria-hidden="true" />Tentar novamente</button>}
+          <ActionButton type="button" className="primary" onClick={() => nativeCamera.current?.click()} disabled={!!busy || pages.length >= maxPages}><Camera size={18} aria-hidden="true" />Fotografar</ActionButton>
+          {/recusada/.test(camera.error) && <ActionButton type="button" onClick={camera.retry}><RefreshCw size={18} aria-hidden="true" />Tentar novamente</ActionButton>}
         </>
-        : <button type="button" className="qs-shutter" aria-label="Capturar página" onClick={() => void capture()} disabled={!!busy || !cameraReady || (pages.length >= maxPages && !replacing.current)}><span /></button>}
-      <button type="button" className="ui-action" disabled={!pages.length || !!busy} onClick={() => { replacing.current = null; setStep("review"); }}>Rever ({pages.length})</button>
+        : <ActionButton type="button" className="qs-shutter" aria-label="Capturar página" onClick={() => void capture()} disabled={!!busy || !camera.ready || (pages.length >= maxPages && !replacing.current)}><span /></ActionButton>}
+      <ActionButton type="button" disabled={!pages.length || !!busy} onClick={() => { replacing.current = null; setStep("review"); }}>Rever ({pages.length})</ActionButton>
     </footer>
   </main></div>;
 
@@ -439,23 +392,23 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
           <img src={item.preview || item.source} alt={`Página ${index + 1}`} />
           <span className="qs-page-number">{index + 1}</span>
           <div className="qs-page-tools">
-            <button type="button" className="qs-icon" aria-label={`Subir página ${index + 1}`} disabled={!index} onClick={() => move(item.id, -1)}><ArrowUp size={18} /></button>
-            <button type="button" className="qs-icon" aria-label={`Descer página ${index + 1}`} disabled={index === pages.length - 1} onClick={() => move(item.id, 1)}><ArrowDown size={18} /></button>
-            <button type="button" className="qs-icon" aria-label={`Rodar página ${index + 1}`} onClick={() => void rotate(item)}><RotateCw size={18} /></button>
-            <button type="button" className="qs-icon" aria-label={`Editar recorte da página ${index + 1}`} onClick={() => { setCurrent(item.id); setDraft(item.edit); setStep("edit"); }}><Crop size={18} /></button>
-            <button type="button" className="qs-icon danger" aria-label={`Eliminar página ${index + 1}`} onClick={() => removePage(item.id)}><Trash2 size={18} /></button>
+            <ActionButton type="button" className="qs-icon" aria-label={`Subir página ${index + 1}`} disabled={!index} onClick={() => move(item.id, -1)}><ArrowUp size={18} /></ActionButton>
+            <ActionButton type="button" className="qs-icon" aria-label={`Descer página ${index + 1}`} disabled={index === pages.length - 1} onClick={() => move(item.id, 1)}><ArrowDown size={18} /></ActionButton>
+            <ActionButton type="button" className="qs-icon" aria-label={`Rodar página ${index + 1}`} onClick={() => void rotate(item)}><RotateCw size={18} /></ActionButton>
+            <ActionButton type="button" className="qs-icon" aria-label={`Editar recorte da página ${index + 1}`} onClick={() => { setCurrent(item.id); setDraft(item.edit); setStep("edit"); }}><Crop size={18} /></ActionButton>
+            <ActionButton type="button" className="qs-icon danger" aria-label={`Eliminar página ${index + 1}`} onClick={() => removePage(item.id)}><Trash2 size={18} /></ActionButton>
           </div>
         </li>)}
       </ol>
-      {pages.length < maxPages && <button type="button" className="ui-action" onClick={() => setStep("capture")}><Plus size={18} aria-hidden="true" />Adicionar página</button>}
+      {pages.length < maxPages && <ActionButton type="button" onClick={() => setStep("capture")}><Plus size={18} aria-hidden="true" />Adicionar página</ActionButton>}
     </>}
     {step === "pdf" && scan && <section className="qs-summary">
       <p><b>{scan.pages}</b> página(s) · <b>{megabytes(scan.size)}</b> · destino «{scan.folder || context?.folder}»</p>
       {scan.warnings?.length > 0 && <ul className="qs-warnings">{scan.warnings.map((w: string) => <li key={w}>{w}</li>)}</ul>}
       <div className="qs-toolbar">
-        <a className="ui-action" href={pdfURL} target="_blank" rel="noopener"><FileText size={18} aria-hidden="true" />Ver PDF</a>
-        <a className="ui-action" href={pdfURL} download={(slug(name) || "documento") + ".pdf"}><Download size={18} aria-hidden="true" />Descarregar</a>
-        {!scan.name_locked && <button type="button" className="ui-action" onClick={() => setStep("review")}>Voltar às páginas</button>}
+        <a href={pdfURL} target="_blank" rel="noopener"><FileText size={18} aria-hidden="true" />Ver PDF</a>
+        <a href={pdfURL} download={(slug(name) || "documento") + ".pdf"}><Download size={18} aria-hidden="true" />Descarregar</a>
+        {!scan.name_locked && <ActionButton type="button" onClick={() => setStep("review")}>Voltar às páginas</ActionButton>}
       </div>
     </section>}
     <fieldset className="qs-types" disabled={!!scan?.name_locked}>
@@ -473,8 +426,8 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
     </div>
     <footer className="qs-actions">
       {step === "review"
-        ? <button type="button" className="ui-action primary" disabled={!pages.length || !!busy} onClick={() => void generate()}>Gerar PDF</button>
-        : <button type="button" className="ui-action primary" disabled={!!busy || !scan} onClick={() => void save()}><CloudUpload size={18} aria-hidden="true" />{scan?.status === "upload_error" || error ? "Tentar novamente" : "Guardar na cloud"}</button>}
+        ? <ActionButton type="button" className="primary" disabled={!pages.length || !!busy} onClick={() => void generate()}>Gerar PDF</ActionButton>
+        : <ActionButton type="button" className="primary" disabled={!!busy || !scan} onClick={() => void save()}><CloudUpload size={18} aria-hidden="true" />{scan?.status === "upload_error" || error ? "Tentar novamente" : "Guardar na cloud"}</ActionButton>}
     </footer>
   </main></div>;
 
@@ -483,8 +436,8 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
     <h1>Documento guardado</h1>
     {scan && <p>«{scan.name}» foi guardado na pasta «{scan.folder || context?.folder}» e fica disponível para a conferência documental.</p>}
     <footer className="qs-actions">
-      <button type="button" className="ui-action primary" onClick={another}><ScanLine size={18} aria-hidden="true" />Digitalizar outro documento</button>
-      <button type="button" className="ui-action" onClick={() => void finish()}><LogOut size={18} aria-hidden="true" />Terminar</button>
+      <ActionButton type="button" className="primary" onClick={another}><ScanLine size={18} aria-hidden="true" />Digitalizar outro documento</ActionButton>
+      <ActionButton type="button" onClick={() => void finish()}><LogOut size={18} aria-hidden="true" />Terminar</ActionButton>
     </footer>
   </main></div>;
 }

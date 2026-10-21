@@ -1,0 +1,101 @@
+/* Shared compact layout for query controls; editing forms keep their own spacing. */
+.filter-bar.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 10px;
+  min-width: 0;
+  margin: 10px 0;
+}
+
+.filter-bar.filter-bar:is(.panel, .doc-filters, .record-filters) {
+  padding: 10px 12px;
+}
+
+.filter-bar.filter-bar > :is(.field, .record-field, label:not(.checkbox):not(.doc-check)) {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 176px;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+}
+
+.filter-bar.filter-bar :is(label, .field > label) {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.filter-bar.filter-bar :is(input:not([type="checkbox"]):not([type="radio"]), select),
+.filter-bar.filter-bar > button,
+.filter-bar .date-presets > :is(button, select) {
+  min-height: 36px;
+  height: 36px;
+  padding: 6px 10px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.filter-bar.filter-bar :is(.field, .record-field, label) > :is(input:not([type="checkbox"]):not([type="radio"]), select) {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.filter-bar.filter-bar > button {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.filter-bar.filter-bar > .date-presets {
+  flex: 0 1 auto;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+}
+
+.filter-bar.filter-bar > .date-presets > select {
+  padding-right: 28px;
+}
+
+.filter-bar.filter-bar > .doc-advanced-filters {
+  flex: 1 0 100%;
+}
+
+.filter-bar.filter-bar.filter-bar-search > .field {
+  flex-basis: 320px;
+}
+
+.filter-bar > .liquidity-flow-entity > .field {
+  margin: 0;
+}
+
+.filter-bar.filter-bar.doc-advanced-filter-grid {
+  margin: 8px 0 0;
+}
+
+/* Keep comfortable touch targets without restoring the large desktop gaps. */
+@media (pointer: coarse), (max-width: 600px) {
+  .filter-bar.filter-bar :is(input:not([type="checkbox"]):not([type="radio"]), select),
+  .filter-bar.filter-bar > button,
+  .filter-bar .date-presets > :is(button, select) {
+    min-height: 44px;
+    height: 44px;
+  }
+}
+
+@media (max-width: 600px) {
+  .filter-bar.filter-bar > :is(.field, .record-field, label:not(.checkbox):not(.doc-check)) {
+    flex: 1 1 145px;
+  }
+
+  .filter-bar.filter-bar > .date-presets {
+    flex-basis: 100%;
+  }
+}

@@ -1,6 +1,6 @@
 # Digitalização de documentos
 
-O botão **Folhas por página** está no dossiê contabilístico, na conferência documental e nas fichas de compras, movimentos de caixa abertos e depósitos. Administradores e gestores podem preparar e guardar. A associação a uma ficha existente reutiliza o documento; o envio não cria uma segunda compra.
+A página **Digitalizar documento** está no menu *Arquivo digital*; os documentos guardados entram no [arquivo digital](ARQUIVO-DIGITAL.md). O botão **Folhas por página** está no dossiê contabilístico, na conferência documental e nas fichas de compras, movimentos de caixa abertos e depósitos. Administradores e gestores podem preparar e guardar. A associação a uma ficha existente reutiliza o documento; o envio não cria uma segunda compra.
 
 ## Configurar
 
@@ -13,9 +13,17 @@ O servidor verifica a pasta e a capacidade de escrita antes de enviar. Mudanças
 
 ## Utilizar
 
-Fotografar usa o seletor de ficheiros com indicação da câmara traseira (`capture=environment`), sujeito ao comportamento do navegador. Há alternativas de galeria e PDF existente. Fotografias aceites: JPEG, PNG e WebP, até 15 MB cada e 50 MB no conjunto. HEIC requer exportação para JPEG.
+**Câmara com deteção de margens.** É a mesma da [digitalização rápida](DIGITALIZACAO-RAPIDA.md): o contorno do documento é desenhado sobre a imagem em direto, com indicações em texto.
+- Funciona em **modo contínuo**: a câmara fica aberta para várias páginas.
+- Com a captura automática ligada, cada página é fotografada quando fica imóvel. A mesma página não volta a ser fotografada; a captura seguinte só acontece depois de virar a página ou trocar de documento.
+- O botão de disparo fotografa a qualquer momento.
+- «Concluir câmara» volta à lista de páginas.
+- «Repetir fotografia» abre a câmara só para substituir essa página.
+- Exige HTTPS ou `localhost`; ver [acesso pelo telemóvel](ACESSO-TELEMOVEL.md).
 
-Pode adicionar, repetir, eliminar e reordenar páginas; rodar, recortar, ajustar quatro cantos para perspetiva e escolher cor, cinzentos ou contraste. O servidor aceita ainda os modos «cor realçada» e «preto e branco» (limiar local), usados pela [digitalização rápida por PIN](DIGITALIZACAO-RAPIDA.md), que inclui deteção automática das margens. A orientação EXIF é aplicada antes das alterações. Não há deteção automática do papel nem OCR. O aviso de possível desfocagem é uma estimativa visual e não substitui a revisão.
+«Fotografar / adicionar página» continua a usar o seletor de ficheiros com indicação da câmara traseira (`capture=environment`), sujeito ao comportamento do navegador. Há alternativas de galeria e PDF existente. Nas fotografias da câmara do sistema e da galeria, os cantos também são detetados localmente. A miniatura mostra o recorte proposto, com a indicação «Margens detetadas · reveja o recorte». Fotografias aceites: JPEG, PNG e WebP, até 15 MB cada e 50 MB no conjunto. HEIC requer exportação para JPEG.
+
+Pode adicionar, repetir, eliminar e reordenar páginas; rodar, recortar, ajustar quatro cantos para perspetiva (pré-preenchidos quando detetados) e escolher cor, cinzentos ou contraste. O servidor aceita ainda os modos «cor realçada» e «preto e branco» (limiar local), usados pela [digitalização rápida por PIN](DIGITALIZACAO-RAPIDA.md), que inclui deteção automática das margens. A orientação EXIF é aplicada antes das alterações. A deteção do papel é local e o utilizador revê sempre os cantos. O aviso de possível desfocagem é uma estimativa visual e não substitui a revisão.
 
 Os PDFs de fotografias conservam as proporções, incluindo talões compridos. PDFs existentes são verificados e conservam os bytes originais; PDFs cifrados ou com conteúdos ativos não suportados são rejeitados. A pré-visualização e o descarregamento permitem rever antes de confirmar o envio. Sem data, é necessário introduzi-la ou confirmar explicitamente a data de hoje.
 
@@ -37,6 +45,7 @@ As fotografias ficam apenas na janela aberta. Fechar ou recarregar pode perdê-l
 - Frontend: `DocumentScanner.tsx` e CSS, botões nas fichas e definições nos Anexos.
 - API autenticada: `/api/scans/setup`, `/settings`, `/image-preview`, `/prepare`, `/{id}`, `/{id}/pdf`, `/{id}/upload`, `/{id}/associate` e `/{id}/validate`.
 - `backend/tests/test_document_scanning.py`: imagens/PDF reais gerados em memória, base de dados de teste, Drive simulado, falha de envio, recuperação, expiração, permissões e isolamento entre empresas.
+- `scripts/test-document-scanning-live-ui.py`: câmara simulada com vídeo sintético e API simulada; contorno em direto, modo contínuo sem duplicar a mesma página, captura manual, «Repetir fotografia» com substituição, cantos enviados ao gerar o PDF e contraste dos textos sobre o vídeo.
 - `scripts/test-document-scanning-ui.py`: navegador Chromium com ecrã móvel emulado e respostas fictícias; galeria, páginas, rotação, associação, PDF, repetição e validação.
 
 Os testes simulados não demonstram acesso a uma câmara física nem a uma conta Google real. Antes de utilização em produção, verificar captura e revisão num iPhone/Safari e Android/Chrome, leitura de um documento real legível e envio para a pasta configurada, incluindo perda de rede e permissões de escrita.

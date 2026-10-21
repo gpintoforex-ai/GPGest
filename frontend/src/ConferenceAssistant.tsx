@@ -167,7 +167,7 @@ export default function ConferenceAssistant({ stores, defaultStore, filterStore,
     {step === "files" && <section className="efc-step">
       <h3>1. Pesquisar ficheiros do e-Fatura</h3>
       <p>Escolha o período a conferir e a loja de destino. São procurados os ficheiros exportados do portal e-Fatura (CSV ou XLSX) nas pastas Drive configuradas; SAF-T de vendas e anexos não entram nesta lista.</p>
-      <div className="form-grid">
+      <div className="form-grid filter-bar">
         <DatePresets from={start} to={end} onSelect={(from, to) => { setStart(from); setEnd(to); }} />
         <Field label="Período desde"><input type="date" value={start} onChange={e => setStart(e.target.value)} /></Field>
         <Field label="Até"><input type="date" value={end} min={start} onChange={e => setEnd(e.target.value)} /></Field>
@@ -233,7 +233,7 @@ export default function ConferenceAssistant({ stores, defaultStore, filterStore,
           {Object.entries(counts("result")).map(([key, count]) => <span key={key}><StatusBadge tone={RESULT[key]?.[1]}>{count as number} {RESULT[key]?.[0] || key}</StatusBadge></span>)}
           {!!data?.summary?.without_efatura && <span><StatusBadge tone="warning">{data.summary.without_efatura} sem e-Fatura</StatusBadge></span>}
         </div>
-        <div className="efc-filters" role="group" aria-label="Filtrar documentos">
+        <div className="efc-filters filter-bar" role="group" aria-label="Filtrar documentos">
           <Field label="Fornecedor ou documento"><input value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)} placeholder="Nome, NIF ou número" /></Field>
           <Field label="Estado"><select value={stateFilter} onChange={e => setStateFilter(e.target.value)}>
             <option value="">Todos</option>

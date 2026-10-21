@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ip", required=True)
+    parser.add_argument("--https", action="store_true", help="Interface servida em HTTPS na rede local (certificado local).")
     options = parser.parse_args()
     address = ipaddress.IPv4Address(options.ip)
     if not address.is_private or address.is_loopback or address.is_link_local:
@@ -22,10 +23,11 @@ def main():
     # Load the selected environment once before adding a runtime-only origin.
     from app.db import engine
 
-    if os.getenv("COOKIE_SECURE", "").lower() == "true":
+    if os.getenv("COOKIE_SECURE", "").lower() == "true" and not options.https:
         raise SystemExit("Este perfil exige HTTPS. Não foi desativada a segurança dos cookies; use um acesso HTTPS ou um perfil local separado.")
     origins = {value.strip() for value in os.getenv("ALLOWED_ORIGINS", "").split(",") if value.strip()}
-    origins.update({"http://127.0.0.1:5174", "http://localhost:5174", f"http://{address}:5174"})
+    scheme = "https" if options.https else "http"
+    origins.update({f"{scheme}://127.0.0.1:5174", f"{scheme}://localhost:5174", f"{scheme}://{address}:5174"})
     os.environ["ALLOWED_ORIGINS"] = ",".join(sorted(origins))
     with engine.connect() as connection:
         connection.execute(text("SELECT 1"))

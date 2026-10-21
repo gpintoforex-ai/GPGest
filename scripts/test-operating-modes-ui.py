@@ -46,6 +46,7 @@ with sync_playwright() as playwright:
     expect(page.get_by_role("button", name="Integrações", exact=True)).to_be_visible()
     page.get_by_role("button", name="Integrações", exact=True).click()
     expect(page.get_by_role("heading", name="Integrações", exact=True, level=1)).to_be_visible()
+    page.get_by_role("tab", name="Configuração ERP").click()
     expect(page.get_by_role("heading", name="Modo e ligação ERP", exact=True, level=2)).to_be_visible()
     expect(page.get_by_text("Modo local autónomo", exact=True).first).to_be_visible()
     expect(page.get_by_role("button", name="Testar ligação", exact=True)).to_have_count(0)

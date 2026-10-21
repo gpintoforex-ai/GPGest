@@ -1,0 +1,109 @@
+.workspace-filterbar {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.workspace-filterbar label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+.workspace-search {
+  flex: 1 1 240px;
+}
+.workspace-search input {
+  width: 100%;
+}
+.workspace-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+.workspace-pagination > span {
+  margin-right: auto;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+.responsive-data-table td > div {
+  overflow-wrap: anywhere;
+}
+.responsive-data-table .cash-payment-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.responsive-data-table th .ui-action {
+  padding: 3px 0;
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  text-align: left;
+  font-weight: inherit;
+}
+@media (max-width: 600px) {
+  .workspace-data-table .table-wrap {
+    overflow: visible;
+  }
+  .responsive-data-table {
+    width: 100%;
+    min-width: 0 !important;
+    border: 0;
+  }
+  .responsive-data-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    clip-path: inset(50%);
+    overflow: hidden;
+  }
+  .responsive-data-table thead:focus-within {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+    overflow: visible;
+  }
+  .responsive-data-table tbody {
+    display: grid;
+    gap: 12px;
+  }
+  .responsive-data-table tbody tr {
+    display: grid;
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-surface);
+  }
+  .responsive-data-table tbody td {
+    display: grid;
+    grid-template-columns: minmax(90px, 32%) minmax(0, 1fr);
+    gap: 12px;
+    padding: 9px 0;
+    white-space: normal;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .responsive-data-table tbody td:last-child {
+    border: 0;
+  }
+  .responsive-data-table tbody td::before {
+    content: attr(data-label);
+    color: var(--color-muted);
+    font-weight: 600;
+    font-size: 12px;
+  }
+  .workspace-pagination .ui-action {
+    flex: 1;
+  }
+  .workspace-pagination > span {
+    flex-basis: 100%;
+  }
+}

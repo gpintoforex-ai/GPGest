@@ -2168,3 +2168,8 @@ app.include_router(dashboard_router)
 
 from .quick_scan import router as quick_scan_router
 app.include_router(quick_scan_router)
+
+from .archive_api import router as archive_router
+app.include_router(archive_router)
+from .archive_assistant import router as archive_assistant_router
+app.include_router(archive_assistant_router)

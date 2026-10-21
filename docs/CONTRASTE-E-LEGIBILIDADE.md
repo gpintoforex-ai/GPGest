@@ -30,7 +30,8 @@ Revisão de 18/10/2026. Alterações exclusivamente na apresentação; sem escri
 | `border-focus` | `#087765` | `#53E0C6` |
 | `icon-primary` | `#304653` | `#E0EAF0` |
 | `icon-secondary` | `#526572` | `#CBD8DF` |
-| `action-primary` | `#102C39` | `#0E7469` |
+| `action-primary` | `#0F6B5E` | `#0E7469` |
+| Botão primário claro | `#32CBB0` com texto `#102C39` | — |
 | `action-danger` | `#AD2935` | `#FFACB4` |
 
 Estados informativos, sucesso, aviso e erro conservam os pares semânticos e os seus textos/ícones; não dependem apenas da cor. Botões inativos têm cores próprias, sem reduzir a opacidade do cartão. Checkboxes e radios mantêm inputs nativos no DOM, com seleção, contorno e foco visíveis, sem alterar os eventos ou permissões.
@@ -61,6 +62,8 @@ Fórmula de luminância sRGB e contraste da [WCAG 2.2](https://www.w3.org/TR/WCA
 | Borda de campo clara / branco | 3,36:1 |
 | Borda de campo escura / superfície escura | 4,39:1 |
 | Branco / ação principal escura | 5,64:1 |
+| Texto escuro / botão turquesa da marca | 7,15:1 |
+| Texto escuro / hover turquesa | 8,26:1 |
 
 ## Verificação reproduzível
 
