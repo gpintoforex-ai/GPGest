@@ -54,7 +54,8 @@ A câmara em direto exige HTTPS (ver `ALLOWED_ORIGINS` e publicação em [Digita
   - verde, com barra de progresso: imóvel e pronto a fotografar.
 
   Uma indicação em texto acompanha sempre a cor (não depende só da cor): «A procurar o documento…», «Aproxime o telemóvel», «Afaste um pouco», «Pouco contraste», «Mantenha o telemóvel imóvel…», «A fotografar…».
-- **Captura automática.** Ligada por omissão. Fotografa quando o documento está inteiro na imagem e imóvel cerca de 1 segundo. O botão «Captura automática ligada/desligada» guarda a preferência neste dispositivo. O botão de fotografar funciona sempre. A fotografia usa os cantos que estavam no ecrã.
+- **Imagem nítida.** Ao fotografar (automático ou botão), a aplicação guarda uma rajada curta de ~6 imagens em 0,4 s e fica com a mais nítida na zona do documento, para não usar a imagem tremida pelo toque ou pela mão. Pede foco automático contínuo quando o telemóvel o permite.
+- **Captura automática.** Ligada por omissão. Fotografa quando o documento está inteiro na imagem, imóvel e sem tremer cerca de 1 segundo. O botão «Captura automática ligada/desligada» guarda a preferência neste dispositivo. O botão de fotografar funciona sempre. A fotografia usa os cantos que estavam no ecrã.
 - **Como funciona a deteção.** É local, no navegador, sem bibliotecas nem serviços externos. As imagens analisadas não são guardadas nem enviadas.
   - Analisa cerca de 8 imagens por segundo, numa versão reduzida do vídeo (256 px), e analisa menos vezes em telemóveis lentos.
   - Combina dois métodos e fica com o melhor quadrilátero:

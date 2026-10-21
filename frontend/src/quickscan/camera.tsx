@@ -9,6 +9,7 @@ import "./LiveCamera.css";
  * digitalização da área autenticada. As imagens ficam só em memória; nada é guardado no dispositivo.
  */
 const MAX_SIDE = 3000, SMALL_SIDE = 1200;
+const BURST = 6, BURST_GAP = 70; // fotografia: a mais nítida de 6 imagens em ≈0,4 s (evita a imagem tremida)
 const AUTO_KEY = "iazela_digitalizacao_auto";
 
 /** A câmara em direto exige contexto seguro (HTTPS ou localhost) e suporte do navegador. */
@@ -43,6 +44,10 @@ export function useCamera(active: boolean) {
       .then(stream => {
         if (cancelled) { stream.getTracks().forEach(track => track.stop()); return; }
         media = stream;
+        // Foco automático contínuo, quando o telemóvel o permite (Chrome em Android); ignorado nos restantes.
+        const track = stream.getVideoTracks()[0];
+        const modes = (track?.getCapabilities?.() as { focusMode?: unknown } | undefined)?.focusMode;
+        if (Array.isArray(modes) && modes.includes("continuous")) void track.applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] }).catch(() => undefined);
         if (video.current) { video.current.srcObject = stream; void video.current.play().catch(() => undefined); }
       })
       .catch(problem => { if (!cancelled) setError(cameraHelp(problem)); });
@@ -115,13 +120,70 @@ export async function detectInFile(file: Blob) {
   } finally { URL.revokeObjectURL(url); }
 }
 
-/** Fotografa a imagem atual do vídeo, preferindo os cantos vistos em direto (o que o utilizador viu). */
+/**
+ * Nitidez de uma imagem reduzida: variância do laplaciano do brilho, só na zona do documento (quando
+ * conhecida). Uma imagem tremida ou desfocada perde os contornos finos das letras e o valor desce.
+ */
+function sharpness(context: CanvasRenderingContext2D, width: number, height: number, corners: Corners | null) {
+  const { data } = context.getImageData(0, 0, width, height);
+  let x0 = 1, y0 = 1, x1 = width - 2, y1 = height - 2;
+  if (corners) {
+    const xs = corners.map(p => p[0] * width), ys = corners.map(p => p[1] * height);
+    const insetX = (Math.max(...xs) - Math.min(...xs)) * 0.1, insetY = (Math.max(...ys) - Math.min(...ys)) * 0.1;
+    x0 = Math.max(1, Math.round(Math.min(...xs) + insetX)); x1 = Math.min(width - 2, Math.round(Math.max(...xs) - insetX));
+    y0 = Math.max(1, Math.round(Math.min(...ys) + insetY)); y1 = Math.min(height - 2, Math.round(Math.max(...ys) - insetY));
+  }
+  const lum = (x: number, y: number) => { const q = (y * width + x) * 4; return 0.299 * data[q] + 0.587 * data[q + 1] + 0.114 * data[q + 2]; };
+  let sum = 0, squares = 0, count = 0;
+  for (let y = y0; y <= y1; y += 2) {
+    for (let x = x0; x <= x1; x += 2) {
+      const value = 4 * lum(x, y) - lum(x - 1, y) - lum(x + 1, y) - lum(x, y - 1) - lum(x, y + 1);
+      sum += value; squares += value * value; count++;
+    }
+  }
+  return count ? squares / count - (sum / count) ** 2 : 0;
+}
+
+const nextFrame = (element: HTMLVideoElement) => new Promise<void>(resolve => {
+  const video = element as HTMLVideoElement & { requestVideoFrameCallback?: (callback: () => void) => number };
+  const timer = setTimeout(resolve, BURST_GAP * 2);
+  const done = () => { clearTimeout(timer); setTimeout(resolve, BURST_GAP / 2); };
+  if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(done); else setTimeout(done, BURST_GAP / 2);
+});
+
+/** A imagem mais nítida de uma rajada curta do vídeo, já copiada em resolução total. */
+async function sharpestFrame(element: HTMLVideoElement, corners: Corners | null) {
+  const width = element.videoWidth, height = element.videoHeight;
+  const probe = scaled(element, width, height, 480), probeContext = probe.getContext("2d", { willReadFrequently: true });
+  const best = document.createElement("canvas");
+  best.width = width; best.height = height;
+  const bestContext = best.getContext("2d");
+  if (!probeContext || !bestContext) throw new Error("O navegador não permite preparar a imagem.");
+  let top = -1;
+  for (let shot = 0; shot < BURST; shot++) {
+    if (shot) await nextFrame(element);
+    probeContext.drawImage(element, 0, 0, probe.width, probe.height);
+    const value = sharpness(probeContext, probe.width, probe.height, corners);
+    // Copia logo a mesma imagem (sem esperar), para a versão completa corresponder à medida.
+    if (value > top) { top = value; bestContext.drawImage(element, 0, 0, width, height); }
+  }
+  probe.width = probe.height = 0;
+  return best;
+}
+
+/**
+ * Fotografa a partir do vídeo: escolhe a imagem mais nítida de uma rajada curta (o toque no ecrã e a
+ * mão fazem tremer a primeira) e usa os cantos vistos em direto (o que o utilizador viu).
+ */
 export async function captureFrame(camera: Camera, live: MutableRefObject<LiveDetection>, seen?: Corners) {
   const element = camera.video.current;
   if (!element || !element.videoWidth) throw new Error("A câmara ainda não está pronta.");
   const recent = live.current && Date.now() - live.current.at < 700 && live.current.reason !== "irregular" ? live.current.corners : null;
-  const result = await normalise(element, element.videoWidth, element.videoHeight);
-  return { ...result, corners: seen || recent || result.corners };
+  const frame = await sharpestFrame(element, seen || recent);
+  try {
+    const result = await normalise(frame, frame.width, frame.height);
+    return { ...result, corners: seen || recent || result.corners };
+  } finally { frame.width = frame.height = 0; }
 }
 
 /** Efeito visual (e vibração curta, quando existe) no momento da fotografia. */

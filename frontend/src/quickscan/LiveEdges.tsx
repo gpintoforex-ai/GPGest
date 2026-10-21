@@ -16,6 +16,7 @@ const HOLD = 1000;      // ms de estabilidade antes da captura automática
 const STEADY = 0.02;    // deslocação máxima de um canto entre análises (fração da imagem)
 const SNAP = 0.08;      // acima disto o contorno salta para a nova posição em vez de suavizar
 const HINT_DELAY = 500; // ms que um novo estado tem de durar antes de mudar a indicação
+const SHAKE = 4;        // diferença média de brilho entre análises acima da qual a imagem está a tremer
 
 const HINTS: Record<DetectionReason | "steady" | "manual" | "captured", string> = {
   none: "A procurar o documento… Use um fundo escuro e liso e boa luz.",
@@ -61,6 +62,7 @@ export default function LiveEdges({ video, active, autoCapture, onCapture, lates
     let shown: Corners | null = null, previous: Corners | null = null;
     let candidate: keyof typeof HINTS = "none", candidateSince = 0, current: keyof typeof HINTS = "none";
     const canvas = document.createElement("canvas");
+    let before: Float32Array | null = null; // brilho (amostrado) da análise anterior, para medir o tremor
     const tick = (time: number) => {
       frame = requestAnimationFrame(tick);
       if (time - last < interval) return;
@@ -71,6 +73,15 @@ export default function LiveEdges({ video, active, autoCapture, onCapture, lates
       const pixels = analyse(element, element.videoWidth, element.videoHeight, canvas, 256);
       if (!pixels) return;
       const result = detectDocument(pixels);
+      // Tremor: diferença média de brilho entre esta análise e a anterior (1 em cada 4 píxeis).
+      const samples = new Float32Array(Math.ceil(pixels.width * pixels.height / 4));
+      let shake = 0;
+      for (let i = 0, k = 0; k < samples.length; i += 16, k++) {
+        samples[k] = 0.299 * pixels.data[i] + 0.587 * pixels.data[i + 1] + 0.114 * pixels.data[i + 2];
+        if (before && before.length === samples.length) shake += Math.abs(samples[k] - before[k]);
+      }
+      shake = before && before.length === samples.length ? shake / samples.length : Infinity;
+      before = samples;
       // Dispositivos lentos: menos análises por segundo em vez de prender a interface.
       interval = Math.min(400, Math.max(INTERVAL, (performance.now() - started) * 3));
       if (shots.current !== seenShots) { seenShots = shots.current; fired = true; firedAt = shown || result.corners; lost = 0; steadySince = 0; }
@@ -83,7 +94,8 @@ export default function LiveEdges({ video, active, autoCapture, onCapture, lates
         const movement = previous ? distance(previous, result.corners) : 1;
         previous = result.corners;
         shown = shown && distance(shown, result.corners) < SNAP ? blend(shown, result.corners, 0.5) : result.corners;
-        steadySince = result.reason === "ok" && movement < STEADY ? steadySince || time : 0;
+        // Só conta como imóvel com os cantos parados e a imagem sem tremer (fotografia nítida).
+        steadySince = result.reason === "ok" && movement < STEADY && shake < SHAKE ? steadySince || time : 0;
       } else {
         previous = null; steadySince = 0;
         if (++misses > 3) shown = null; // mantém o último contorno por instantes, sem piscar
