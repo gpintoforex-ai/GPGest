@@ -361,9 +361,68 @@ def supplier(db, identifier):
     return entity_reference(db, identifier, "supplier", True) if identifier else None
 
 
+def prefetched(db, kind, key):
+    """Dados já carregados em bloco pela listagem (ver `prefetch`), ou `None` fora dela."""
+    cache = db.info.get("customer_orders_cache")
+    return cache[kind].get(key, []) if cache and key in cache["known"] else None
+
+
+def prefetch(db, orders):
+    """
+    Carrega de uma vez as linhas, reservas, ligações a compras, contactos, artigos, lotes e emails das
+    encomendas listadas. Sem isto a lista fazia ~7 consultas por encomenda, o que com a base na cloud
+    (Neon) tornava lento abrir o ecrã e gravar (a gravação recarrega a lista).
+    """
+    ids = [o.id for o in orders]
+    cache = {"known": set(), "lines": {}, "reserved": {}, "supplies": {}, "contacts": {}, "keep": []}
+    db.info["customer_orders_cache"] = cache
+    if not ids:
+        return
+    group = lambda kind, key, item: cache[kind].setdefault(key, []).append(item)  # noqa: E731
+    lines = list(db.scalars(select(Line).where(Line.order_id.in_(ids)).order_by(Line.id)))
+    for line in lines:
+        group("lines", line.order_id, line)
+    line_ids = [line.id for line in lines]
+    reservations, supplies = [], []
+    if line_ids:
+        reservations = list(db.scalars(select(Reservation).where(Reservation.line_id.in_(line_ids), Reservation.quantity > 0).order_by(Reservation.id)))
+        supplies = list(db.scalars(select(Supply).where(Supply.line_id.in_(line_ids)).order_by(Supply.id)))
+    for hold in reservations:
+        group("reserved", hold.line_id, hold)
+    for link in supplies:
+        group("supplies", link.line_id, link)
+    contacts = list(db.scalars(select(Event).where(Event.order_id.in_(ids), Event.action == "contact").order_by(Event.created_at.desc())))
+    for item in contacts:
+        group("contacts", item.order_id, item)
+    # Objetos lidos depois com db.get: ficam no mapa de identidade da sessão (referências mantidas em "keep").
+    keep = cache["keep"]
+    keep += lines + reservations + supplies + contacts
+    simulation_ids = {link.simulation_id for link in supplies}
+    simulations = list(db.scalars(select(Simulation).where(Simulation.id.in_(simulation_ids)))) if simulation_ids else []
+    document_ids = {sim.procurement_id for sim in simulations if sim.procurement_id}
+    documents = list(db.scalars(select(Document).where(Document.id.in_(document_ids)))) if document_ids else []
+    article_ids = {line.article_id for line in lines if line.article_id}
+    lot_ids = {hold.lot_id for hold in reservations if hold.lot_id}
+    dispatch_ids = {item.dispatch_id for item in contacts if item.dispatch_id}
+    for doc in documents:
+        dispatch_ids.update(json.loads(doc.data).get("email_ids", []))
+    keep += simulations + documents
+    if article_ids:
+        keep += list(db.scalars(select(StockArticle).where(StockArticle.id.in_(article_ids))))
+    if lot_ids:
+        keep += list(db.scalars(select(StockLot).where(StockLot.id.in_(lot_ids))))
+    if dispatch_ids:
+        keep += list(db.scalars(select(EmailDispatch).where(EmailDispatch.id.in_(dispatch_ids))))
+    cache["known"].update(ids)
+    cache["known"].update(line_ids)
+
+
 def active_supplies(db, line_id):
     result = []
-    for link in db.scalars(select(Supply).where(Supply.line_id == line_id).order_by(Supply.id)):
+    links = prefetched(db, "supplies", line_id)
+    if links is None:
+        links = db.scalars(select(Supply).where(Supply.line_id == line_id).order_by(Supply.id))
+    for link in links:
         sim = db.get(Simulation, link.simulation_id)
         doc = db.get(Document, sim.procurement_id) if sim.procurement_id else None
         if sim.status != "cancelled" and not (doc and doc.status == "cancelled"):
@@ -372,6 +431,9 @@ def active_supplies(db, line_id):
 
 
 def reserved(db, line_id):
+    cached = prefetched(db, "reserved", line_id)
+    if cached is not None:
+        return list(cached)
     return list(
         db.scalars(
             select(Reservation)
@@ -395,13 +457,15 @@ def usable_reservations(db, line):
 
 
 def contact_status(db, order_id):
-    events = list(
-        db.scalars(
-            select(Event)
-            .where(Event.order_id == order_id, Event.action == "contact")
-            .order_by(Event.created_at.desc())
+    events = prefetched(db, "contacts", order_id)
+    if events is None:
+        events = list(
+            db.scalars(
+                select(Event)
+                .where(Event.order_id == order_id, Event.action == "contact")
+                .order_by(Event.created_at.desc())
+            )
         )
-    )
     covered = {}
     for item in events:
         data = json.loads(item.data)
@@ -410,7 +474,8 @@ def contact_status(db, order_id):
             for identifier, quantity in data.get("availability", {}).items():
                 covered[identifier] = max(covered.get(identifier, ZERO), D(quantity))
     ready = []
-    for line in db.scalars(select(Line).where(Line.order_id == order_id)):
+    lines = prefetched(db, "lines", order_id)
+    for line in lines if lines is not None else db.scalars(select(Line).where(Line.order_id == order_id)):
         held = sum((r.quantity for r in usable_reservations(db, line)), ZERO)
         if held:
             ready.append(covered.get(line.id, ZERO) >= held + line.delivered)
@@ -518,10 +583,10 @@ def line_view(db, line, notified=False):
 
 def order_view(db, row):
     notified = contact_status(db, row.id)
-    lines = [
-        line_view(db, line_item, notified)
-        for line_item in db.scalars(select(Line).where(Line.order_id == row.id).order_by(Line.id))
-    ]
+    rows = prefetched(db, "lines", row.id)
+    if rows is None:
+        rows = db.scalars(select(Line).where(Line.order_id == row.id).order_by(Line.id))
+    lines = [line_view(db, line_item, notified) for line_item in rows]
     data = json.loads(row.data)
     return {
         **data,
@@ -685,7 +750,11 @@ def listing(store_id: str = "", user=Depends(current), db: Session = Depends(db_
             select(Order).where(Order.store_id.in_(stores)).order_by(Order.created_at.desc())
         )
     )
-    orders = [order_view(db, row) for row in rows]
+    prefetch(db, rows)
+    try:
+        orders = [order_view(db, row) for row in rows]
+    finally:
+        db.info.pop("customer_orders_cache", None)
     simulations = list(
         db.scalars(
             select(Simulation)
