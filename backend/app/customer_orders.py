@@ -711,18 +711,21 @@ def listing(store_id: str = "", user=Depends(current), db: Session = Depends(db_
 def catalog(user=Depends(current), db: Session = Depends(db_session)):
     from .entities import list_entities
 
+    # Fichas locais carregadas de uma vez (uma consulta por entidade tornava o ecrã lento com a base
+    # na cloud: centenas de clientes do ERP = centenas de idas à base de dados).
+    items = [item for item in list_entities(user, db) if item["active"]]
+    local_ids = [i["id"].removeprefix("local:") for i in items if i["id"].startswith("local:")]
+    erp_ids = [i["id"].removeprefix("wt:") for i in items if not i["id"].startswith("local:")]
+    by_id = {e.id: e for e in db.scalars(select(BusinessEntity).where(BusinessEntity.id.in_(local_ids)))} if local_ids else {}
+    by_erp = (
+        {e.wintouch_id: e for e in db.scalars(select(BusinessEntity).where(BusinessEntity.wintouch_id.in_(erp_ids)))}
+        if erp_ids
+        else {}
+    )
     entities = []
-    for item in list_entities(user, db):
-        if not item["active"]:
-            continue
+    for item in items:
         key = item["id"]
-        local = (
-            db.get(BusinessEntity, key.removeprefix("local:"))
-            if key.startswith("local:")
-            else db.scalar(
-                select(BusinessEntity).where(BusinessEntity.wintouch_id == key.removeprefix("wt:"))
-            )
-        )
+        local = by_id.get(key.removeprefix("local:")) if key.startswith("local:") else by_erp.get(key.removeprefix("wt:"))
         entities.append({**item, "id": local.id if local else key})
     can_buy = (
         user.role in ("administrador", "gestor")
