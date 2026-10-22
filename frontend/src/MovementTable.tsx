@@ -9,11 +9,13 @@ type Row = Record<string, any>;
 export default function MovementTable({
   rows,
   categories,
+  registers = [],
   onAttachments,
   onReverse,
 }: {
   rows: Row[];
   categories: Row[];
+  registers?: Row[];
   onAttachments: (r: Row) => void;
   onReverse?: (r: Row) => void;
 }) {
@@ -52,7 +54,11 @@ export default function MovementTable({
               </td>
               <td>
                 <strong>
-                  {m.kind === "documento"
+                  {m.origin === "deposito_banco"
+                    ? m.direction > 0 ? "Depósito no banco" : "Estorno de depósito no banco"
+                    : m.origin === "deposito_modulo" && m.reversal_of
+                    ? "Estorno da retirada para depósito"
+                    : m.kind === "documento"
                     ? "Documento de venda"
                     : m.origin === "bank_statement" ? "Movimento bancário" : labels[m.kind] || m.kind}
                 </strong>
@@ -72,6 +78,13 @@ export default function MovementTable({
                 <span className="pill neutral">
                   {m.origin === "bank_statement" ? "Extrato bancário" : m.origin === "fecho_local" ? "Fecho de caixa" : m.origin === "deposito_banco" || m.origin === "deposito_modulo" ? "Depósito" : m.external ? "Wintouch" : "IAZELA"}
                 </span>
+                {(() => {
+                  const bank = m.origin === "deposito_banco" || m.origin === "bank_statement" || m.bank_account_id || m.filter_register?.startsWith("bank:");
+                  const name = bank
+                    ? m.bank_account_name || m.bank_name || m.filter_register_name?.replace(/^Bancos? · /, "")
+                    : registers.find(r => r.id === m.register_id)?.name || m.filter_register_name || m.account_name;
+                  return <small>{bank ? "Banco" : "Caixa"} · {name || (bank ? "Conta por associar" : "Por identificar")}</small>;
+                })()}
               </td>
               <td>
                 <span

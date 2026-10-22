@@ -12,6 +12,13 @@ ns['boot']['accounts'].append({'id': 'bank-empty', 'store_id': 'demo', 'name': '
 
 def intercept(route):
     path = urlsplit(route.request.url).path
+    if path == '/api/movements':
+        base = {'kind': 'deposito', 'amount_cents': 6000, 'payment': 'numerario', 'document': 'DEP-TESTE', 'occurred_at': '2026-10-18T12:00:00Z'}
+        route.fulfill(json=[
+            {**base, 'id': 'deposit-cash', 'origin': 'deposito_modulo', 'register_id': 'demo-register', 'direction': -1},
+            {**base, 'id': 'deposit-bank', 'origin': 'deposito_banco', 'bank_account_id': 'bank-test', 'bank_account_name': 'Conta teste', 'bank_store_id': 'demo', 'direction': 1},
+        ])
+        return
     if path == '/api/accounts/bank-empty/transactions':
         route.fulfill(content_type='application/json', body='[]')
         return
@@ -32,9 +39,19 @@ with sync_playwright() as p:
     page.get_by_role('button', name='Movimentos reais', exact=True, include_hidden=True).evaluate('(e)=>e.click()')
     expect(page.get_by_text('Credito bancario teste', exact=True).first).to_be_visible()
     expect(page.get_by_text('Debito bancario teste', exact=True).first).to_be_visible()
+    cash = page.locator('tbody tr').filter(has_text='Retirada para depósito')
+    bank = page.locator('tbody tr').filter(has_text='Depósito no banco')
+    expect(cash).to_have_count(1)
+    expect(cash).to_contain_text('Caixa · Caixa de demonstração')
+    expect(cash.locator('.negative')).to_contain_text('60,00')
+    expect(bank).to_have_count(1)
+    expect(bank).to_contain_text('Banco · Conta teste')
+    expect(bank.locator('.positive')).to_contain_text('60,00')
     page.get_by_label('Caixas / bancos', exact=True).select_option('bank:bank-test')
     expect(page.locator('tbody tr').filter(has_text='Credito bancario teste')).to_have_count(1)
     expect(page.locator('tbody tr').filter(has_text='Debito bancario teste')).to_have_count(1)
+    expect(cash).to_have_count(0)
+    expect(bank).to_have_count(1)
     expect(page.locator('tbody tr').filter(has_text='Credito bancario teste').get_by_role('button', name='Estornar')).to_have_count(0)
     expect(page.get_by_text('Extrato bancário', exact=True)).to_have_count(2)
     account_filter = page.get_by_label('Caixas / bancos', exact=True)

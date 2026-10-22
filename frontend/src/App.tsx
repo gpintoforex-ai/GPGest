@@ -859,7 +859,7 @@ export default function App() {
                     Ver todos <ChevronRight size={16} />
                   </ActionButton>
                 </div>
-                <MovementTable categories={boot.categories} onAttachments={(m) => openModal("attachments", m)} rows={visibleMovements.slice(0, 5)} />
+                <MovementTable categories={boot.categories} registers={boot.registers} onAttachments={(m) => openModal("attachments", m)} rows={visibleMovements.slice(0, 5)} />
               </section>
               </>} />
             </>
@@ -992,7 +992,7 @@ export default function App() {
                 integrated={integratedMode}
               >
                 {(pageRows) => (
-                  <MovementTable categories={boot.categories} onAttachments={(m) => openModal("attachments", m)}
+                  <MovementTable categories={boot.categories} registers={boot.registers} onAttachments={(m) => openModal("attachments", m)}
                     rows={pageRows}
                     onReverse={
                       manager ? (r) => openModal("reverse", r) : undefined
