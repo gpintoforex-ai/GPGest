@@ -502,7 +502,9 @@ def test_cancellation_before_and_after_exit_preserves_history(deposits):
     )
     sheet = next(s for s in client.get("/api/sessions").json() if s["id"] == session)
     assert sheet["balance_cents"] == 10000
-    assert len(client.get("/api/movements").json()) == 2
+    rows = client.get("/api/movements").json()
+    # Caixa: saída e estorno; banco (derivado do depósito): entrada e estorno.
+    assert sorted(m["origin"] for m in rows) == ["deposito_banco", "deposito_banco", "deposito_modulo", "deposito_modulo"]
 
 
 def test_pdf_proof_validation_and_dossier_pending(deposits):
@@ -684,7 +686,11 @@ def test_register_in_one_step_then_reconcile_in_banks(deposits):
     assert body["status"] == "entregue" and body["movement_id"] and body["delivery_date"] == today()
     # Repetir não duplica: a saída da caixa fica registada uma única vez.
     assert command(client, deposit, "register").json()["movement_id"] == body["movement_id"]
-    assert [m["kind"] for m in client.get("/api/movements").json()] == ["deposito"]
+    # Movimentos reais: saída da caixa e entrada na conta de destino (derivada do depósito, sem duplicar).
+    rows = client.get("/api/movements").json()
+    assert sorted((m["kind"], m["direction"], m.get("bank_account_id")) for m in rows) == [("deposito", -1, None), ("deposito", 1, account)]
+    bank_row = next(m for m in rows if m["direction"] == 1)
+    assert bank_row["origin"] == "deposito_banco" and bank_row["amount_cents"] == 3000 and bank_row["occurred_at"].startswith(today())
     # Aparece na reconciliação geral como entrada na conta de destino, por reconciliar.
     overview = client.get("/api/reconciliation").json()
     row = next(i for i in overview["internals"] if i["source"] == "movement" and i["id"] == body["movement_id"])
@@ -708,6 +714,8 @@ def test_register_in_one_step_then_reconcile_in_banks(deposits):
     assert client.get(f"/api/deposits/{deposit['id']}").json()["status"] == "entregue"
     # Depois de desfeita, o cancelamento faz estorno (não apaga) e sai da reconciliação.
     assert command(client, deposit, "cancel", reason="Erro de registo", returned=True).status_code == 200
+    bank_side = [m for m in client.get("/api/movements").json() if m["origin"] == "deposito_banco"]
+    assert sorted(m["direction"] for m in bank_side) == [-1, 1] and any(m["reversal_of"] for m in bank_side)
     overview = client.get("/api/reconciliation").json()
     assert not any(i["id"] == body["movement_id"] for i in overview["internals"] if i["source"] == "movement")
 

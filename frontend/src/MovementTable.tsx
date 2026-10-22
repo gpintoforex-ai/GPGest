@@ -38,7 +38,7 @@ export default function MovementTable({
           {rows.map((m) => (
             <tr key={m.id}>
               <td>
-                {m.origin === "deposito_modulo"
+                {m.origin === "deposito_modulo" || m.origin === "deposito_banco"
                   ? <time dateTime={m.occurred_at} title="Hora não registada">{m.occurred_at.slice(0, 10).split("-").reverse().join("/")}</time>
                   : m.external && !/(Z|[+-]\d{2}:?\d{2})$/.test(m.occurred_at)
                   ? m.occurred_at
@@ -70,7 +70,7 @@ export default function MovementTable({
               </td>
               <td>
                 <span className="pill neutral">
-                  {m.origin === "bank_statement" ? "Extrato bancário" : m.origin === "fecho_local" ? "Fecho de caixa" : m.external ? "Wintouch" : "IAZELA"}
+                  {m.origin === "bank_statement" ? "Extrato bancário" : m.origin === "fecho_local" ? "Fecho de caixa" : m.origin === "deposito_banco" || m.origin === "deposito_modulo" ? "Depósito" : m.external ? "Wintouch" : "IAZELA"}
                 </span>
               </td>
               <td>
@@ -92,15 +92,18 @@ export default function MovementTable({
                 </span>
               </td>
               <td>
-                {!m.external && (
+                {!m.external && m.origin !== "deposito_banco" && (
                   <ActionButton onClick={() => onAttachments(m.movement_id ? { ...m, id: m.movement_id } : m)}>
                     Anexos
                   </ActionButton>
                 )}
                 {m.external && <small>{m.origin === "bank_statement" ? "Gerido nos extratos bancários" : "Gerido na Wintouch"}</small>}
                 {m.origin === "fecho_local" && <small>Gerido na folha de caixa</small>}
+                {(m.origin === "deposito_banco" || m.origin === "deposito_modulo") && <small>Gerido em Depósitos</small>}
                 {onReverse &&
                   !m.external &&
+                  m.origin !== "deposito_banco" &&
+                  m.origin !== "deposito_modulo" &&
                   m.origin !== "fecho_caixa" &&
                   m.origin !== "fecho_local" &&
                   !m.reversed_by &&

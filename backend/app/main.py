@@ -1105,10 +1105,45 @@ def movements(all_records: bool = False, user=Depends(current), db: Session = De
     accounts = {account.id: account for account in db.scalars(select(BankAccount).where(BankAccount.store_id.in_(scope(user, db))))}
     rows = list(rows)
     supplier_views = cash_posting.supplier_views(db, [m for m, _ in rows])
-    return [{**serial(m), **supplier_views.get(m.id, {}), "register_id": register_id, "payment_name": payment_names.get(m.payment_method_id or m.payment),
-             "bank_store_id": accounts[m.bank_account_id].store_id if m.bank_account_id in accounts else None,
-             "bank_account_name": accounts[m.bank_account_id].name if m.bank_account_id in accounts else None,
-             "bank_name": accounts[m.bank_account_id].bank if m.bank_account_id in accounts else None} for m, register_id in rows]
+    result = [{**serial(m), **supplier_views.get(m.id, {}), "register_id": register_id, "payment_name": payment_names.get(m.payment_method_id or m.payment),
+               "bank_store_id": accounts[m.bank_account_id].store_id if m.bank_account_id in accounts else None,
+               "bank_account_name": accounts[m.bank_account_id].name if m.bank_account_id in accounts else None,
+               "bank_name": accounts[m.bank_account_id].bank if m.bank_account_id in accounts else None} for m, register_id in rows]
+    return result + deposit_bank_rows(db, accounts, payment_names)
+
+
+def deposit_bank_rows(db, accounts, payment_names):
+    """
+    Entrada na conta bancária de cada depósito registado, ao lado da saída da caixa. É derivada do
+    próprio depósito (não é um segundo registo): os saldos bancários já a contam a partir do depósito.
+    Um depósito cancelado depois do registo mostra também o estorno no banco.
+    """
+    from datetime import date, datetime, time
+    from zoneinfo import ZoneInfo
+    rows = []
+    deposits = db.scalars(select(BankDeposit).where(BankDeposit.account_id.in_(list(accounts)), BankDeposit.delivery_date.is_not(None),
+                                                    BankDeposit.movement_id.is_not(None)))
+    for deposit in deposits:
+        cash_out = db.get(Movement, deposit.movement_id)
+        reversal = db.get(Movement, deposit.reversal_id) if deposit.reversal_id else None
+        if not cash_out or deposit.status == "cancelado" and not reversal:
+            continue
+        account = accounts[deposit.account_id]
+        base = {"kind": "deposito", "amount_cents": cash_out.amount_cents, "payment": cash_out.payment,
+                "payment_name": payment_names.get(cash_out.payment), "category_id": cash_out.category_id,
+                "document": deposit.number, "reference": deposit.id, "entity": "", "origin": "deposito_banco",
+                "register_id": None, "session_id": None, "deposit_id": deposit.id, "transfer_id": None,
+                "bank_account_id": account.id, "bank_account_name": account.name, "bank_name": account.bank,
+                "bank_store_id": account.store_id}
+        entry_id, reversal_id = "deposit-bank:" + deposit.id, "deposit-bank-reversal:" + deposit.id
+        rows.append({**base, "id": entry_id, "direction": 1, "occurred_at": datetime.combine(date.fromisoformat(deposit.delivery_date), time(12), ZoneInfo("Europe/Lisbon")).isoformat(),
+                     "created_at": cash_out.created_at, "notes": "Entrada no banco do depósito " + deposit.number,
+                     "reversed_by": reversal_id if reversal else None, "reversal_of": None})
+        if reversal:
+            rows.append({**base, "id": reversal_id, "direction": -1, "occurred_at": serial(reversal)["occurred_at"],
+                         "created_at": reversal.created_at, "notes": "Estorno do depósito " + deposit.number,
+                         "reversed_by": None, "reversal_of": entry_id})
+    return rows
 
 
 @app.post("/api/movements")
