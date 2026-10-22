@@ -8,12 +8,18 @@ Os novos depósitos são calculados a partir dos movimentos reais da caixa e da 
 
 Se os movimentos mudarem depois da preparação, atualize os movimentos de origem e prepare novamente antes da saída. Os depósitos anteriores e os seus históricos são preservados.
 
-1. **Guardar rascunho** e **Preparar** não alteram saldos.
-2. **Confirmar saída** utiliza o acumulado dos movimentos reais da caixa até à data indicada, incluindo dias já conferidos. Não exige abrir ou reabrir uma folha de caixa. Regista um único movimento de transferência para depósito e passa a **Em trânsito**.
-3. **Registar entrega ao banco** passa a **Entregue ao banco**. A entrega não cria um crédito nem confirma fundos disponíveis.
-4. **Talão interno / imprimir** abre o PDF para guardar ou imprimir através do visualizador do navegador. O documento identifica claramente que não é um comprovativo do banco.
-5. Em **Anexos**, carregue PDF, PNG ou JPG até 5 MB. Administradores e gestores podem validar o comprovativo. É possível pré-visualizar os ficheiros.
-6. **Reconciliar** apresenta movimentos do extrato da conta, com sugestões por valor, data e referência. Selecione e confirme o crédito e o montante. Repita para créditos separados ou parciais. A data-valor continua a ser a do extrato, sem antecipar a disponibilização dos fundos.
+### Registar um depósito (um só passo)
+
+1. **Registar depósito**: escolha a caixa, a conta de destino e a **data do depósito no banco**. O numerário vem do saldo acumulado da caixa (pode depositar só parte) e os cheques são preenchidos automaticamente.
+2. **Registar depósito** (botão do formulário) faz, numa única operação: a **saída da caixa** (um movimento de transferência para depósito, não é receita) e a **entrada na conta bancária** na mesma data. O depósito fica **Por reconciliar** e passa a contar no saldo pelos registos da conta.
+3. Mais tarde, em **Bancos › Reconciliação**, o depósito aparece como movimento da aplicação na conta de destino («Depósito DEP-… · caixa»), com sugestão automática pelo valor, data e referência face ao crédito do extrato. Ao confirmar a associação (tipo «Depósito próprio / transferência», sem justificação obrigatória), o depósito fica **Reconciliado** — ou **Parcialmente reconciliado** se o crédito for parcial. Desfazer a reconciliação devolve-o a **Por reconciliar**.
+4. Comissões e diferenças tratam-se na própria reconciliação (comissão justificada ou «Resolver movimento em falta»). Cheques devolvidos continuam a registar-se na ficha do depósito.
+
+**Guardar rascunho** continua disponível para preparar um depósito sem alterar saldos; na ficha, **Registar no banco** conclui-o. Os depósitos antigos que ficaram «Preparado» ou «Em trânsito» concluem-se da mesma forma. Os passos separados (preparar, confirmar saída, registar entrega) deixaram de ser necessários; a API mantém-nos para compatibilidade.
+
+- **Talão interno / imprimir** abre o PDF para guardar ou imprimir. O documento identifica claramente que não é um comprovativo do banco.
+- Em **Anexos**, carregue PDF, PNG ou JPG até 5 MB (ou digitalize o talão). Administradores e gestores podem validar o comprovativo.
+- Associações feitas no ecrã de Depósitos (versões anteriores) contam também na reconciliação geral, sem duplicar o crédito.
 
 ## Saldos, permissões e controlo
 
@@ -29,9 +35,9 @@ Comissões e cheques devolvidos são associados a débitos separados do extrato,
 
 ## Cancelar e períodos encerrados
 
-É possível cancelar rascunhos e preparados com justificação, sem movimentos. Depois da saída, é necessário confirmar o regresso físico de todos os valores. É criado um movimento de reversão ligado ao original, sem necessidade de abrir uma folha. Os movimentos são preservados. O estorno genérico do livro de caixa não substitui este fluxo.
+É possível cancelar rascunhos e preparados com justificação, sem movimentos. Depois do registo, é necessário confirmar o regresso físico de todos os valores. É criado um movimento de reversão ligado ao original, sem necessidade de abrir uma folha. Os movimentos são preservados. O estorno genérico do livro de caixa não substitui este fluxo.
 
-As associações bancárias têm de ser desfeitas antes da reversão. Períodos contabilísticos encerrados bloqueiam alterações às operações e aos movimentos do extrato abrangidos. Reabra o período através do fluxo de entrega à contabilidade antes de corrigir esses dados.
+As associações bancárias (no ecrã de Depósitos ou em Bancos › Reconciliação) têm de ser desfeitas antes da reversão. Períodos contabilísticos encerrados bloqueiam alterações às operações e aos movimentos do extrato abrangidos. Reabra o período através do fluxo de entrega à contabilidade antes de corrigir esses dados.
 
 ## Dossiê contabilístico
 

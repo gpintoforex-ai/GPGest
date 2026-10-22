@@ -181,6 +181,8 @@ export default function Reconciliation({
   const view = chosenView || (!loaded || visibleCards.length + visibleSuggestions.length ? "sugestoes" : "manual");
   function toggle(r: Row) {
     setPostCommission(false);
+    // Depósitos e transferências próprias são sempre associados como transferência.
+    if (r.source !== "bank" && r.transfer && !(key(r) in selected)) setKind("transferencia");
     setSelected((previous) => {
       const next = { ...previous };
       if (key(r) in next) delete next[key(r)];
@@ -517,7 +519,7 @@ export default function Reconciliation({
                   value={reason}
                   maxLength={2000}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="Obrigatória para comissões, diferenças e transferências"
+                  placeholder="Obrigatória para comissões, diferenças e transferências (dispensada em depósitos registados)"
                 />
               </label>
               <div className="actions">

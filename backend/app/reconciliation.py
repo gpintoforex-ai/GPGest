@@ -18,6 +18,7 @@ from .models import (
     Audit,
     BankAccount,
     BankBookEntry,
+    BankDeposit,
     BankTransaction,
     DepositCredit,
     CashSession,
@@ -104,6 +105,10 @@ def used(db, source, source_id):
             )
             or 0
         )
+    if source == "movement":
+        deposit = db.scalar(select(BankDeposit).where(BankDeposit.movement_id == source_id))
+        if deposit:
+            total += int((db.scalar(select(func.sum(DepositCredit.amount)).where(DepositCredit.deposit_id == deposit.id, DepositCredit.kind == "credito", DepositCredit.undone_at.is_(None))) or 0) * 100)
     if source in {"movement", "wintouch", "book"}:
         total += int(
             db.scalar(
@@ -343,7 +348,25 @@ def register_routes(app, current, authorize, scope, record, serial):
             )
         elif source == "movement":
             if row.origin == "deposito_modulo":
-                return None
+                # Depósito registado no banco: entrada na conta de destino, por reconciliar com o extrato.
+                deposit = (context or {}).get("deposits", {}).get(row.id) if context else None
+                if deposit is None:
+                    deposit = db.scalar(select(BankDeposit).where(BankDeposit.movement_id == row.id))
+                if not deposit or row.reversed_by or row.reversal_of or deposit.status not in {"entregue", "parcialmente_reconciliado", "reconciliado"}:
+                    return None
+                account = db.get(BankAccount, deposit.account_id)
+                register = db.get(Register, deposit.register_id)
+                return {
+                    "id": row.id, "source": "movement", "store_id": deposit.store_id,
+                    "amount_cents": int((deposit.cash_amount + deposit.cheque_amount) * 100),
+                    "date": deposit.delivery_date or deposit.exit_date,
+                    "description": f"Depósito {deposit.number}" + (f" · {register.name}" if register else ""),
+                    "entity": "", "reference": deposit.number, "payment": row.payment, "transfer": True,
+                    "account": account.name if account else "", "account_id": deposit.account_id,
+                    "currency": account.currency if account else "EUR",
+                    "origin_source": "movement", "origin_source_id": row.id,
+                    "deposit_id": deposit.id,
+                }
             if (
                 row.reversed_by
                 or row.reversal_of
@@ -479,6 +502,14 @@ def register_routes(app, current, authorize, scope, record, serial):
                 totals[key] = totals.get(key, 0) + n
         for bank_id,amount in db.execute(select(DepositCredit.transaction_id,func.sum(DepositCredit.amount)).where(DepositCredit.undone_at.is_(None)).group_by(DepositCredit.transaction_id)):
             totals['bank',bank_id]=totals.get(('bank',bank_id),0)+int(amount*100)
+        # Créditos feitos no próprio ecrã de Depósitos também contam no movimento do depósito.
+        for movement_id, amount in db.execute(
+            select(BankDeposit.movement_id, func.sum(DepositCredit.amount))
+            .join(DepositCredit, DepositCredit.deposit_id == BankDeposit.id)
+            .where(DepositCredit.undone_at.is_(None), DepositCredit.kind == "credito", BankDeposit.movement_id.is_not(None))
+            .group_by(BankDeposit.movement_id)
+        ):
+            totals["movement", movement_id] = totals.get(("movement", movement_id), 0) + int(amount * 100)
         ignores = {
             (r.source, r.source_id): r.reason for r in db.scalars(select(ReconciliationIgnore))
         }
@@ -506,7 +537,8 @@ def register_routes(app, current, authorize, scope, record, serial):
             "movement": select(Movement)
             .outerjoin(CashSession)
             .outerjoin(Register)
-            .where(Register.store_id.in_(stores) | Movement.bank_account_id.in_(select(BankAccount.id).where(BankAccount.store_id.in_(stores)))),
+            .where(Register.store_id.in_(stores) | Movement.bank_account_id.in_(select(BankAccount.id).where(BankAccount.store_id.in_(stores)))
+                   | Movement.id.in_(select(BankDeposit.movement_id).where(BankDeposit.store_id.in_(stores), BankDeposit.movement_id.is_not(None)))),
             "wintouch": select(WintouchSaleRecord).where(
                 WintouchSaleRecord.store_id.in_(stores),
                 WintouchSaleRecord.active.is_(True),
@@ -747,7 +779,9 @@ def register_routes(app, current, authorize, scope, record, serial):
                 raise HTTPException(
                     422, "Depósitos e transferências devem ser tratados como transferências."
                 )
-        if (data.commission_cents or data.difference_cents or data.kind == "transferencia") and len(
+        # Um depósito registado já identifica a transferência (talão); só a comissão ou diferença pedem justificação.
+        deposits_only = bool(internal_lines) and all(items[link.source, link.source_id].get("deposit_id") for link in internal_lines)
+        if (data.commission_cents or data.difference_cents or (data.kind == "transferencia" and not deposits_only)) and len(
             data.reason.strip()
         ) < 3:
             raise HTTPException(
@@ -784,6 +818,9 @@ def register_routes(app, current, authorize, scope, record, serial):
             {**data.model_dump(), "gross_cents": internal_total, "net_cents": bank_total},
             group.store_id,
         )
+        db.flush()
+        from .deposits import refresh_after_reconciliation
+        refresh_after_reconciliation(db, [link.source_id for link in data.lines if link.source == "movement"])
         db.commit()
         return {"id": group.id}
 
@@ -828,6 +865,9 @@ def register_routes(app, current, authorize, scope, record, serial):
             {"reason": data.reason.strip()},
             group.store_id,
         )
+        db.flush()
+        from .deposits import refresh_after_reconciliation
+        refresh_after_reconciliation(db, [link.source_id for link in lines if link.source == "movement"])
         db.commit()
         return {"ok": True}
 

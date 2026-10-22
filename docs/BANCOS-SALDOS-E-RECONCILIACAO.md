@@ -28,7 +28,7 @@ Recebimentos TPA (e MB WAY com terminal e prazo de liquidação) já registados 
 
 ## Reconciliação
 
-Mantêm-se as duas listas, sugestões e histórico existentes. Podem filtrar-se conta, período, estado, intervalo de valor absoluto e descrição/referência/entidade. Os registos sem conta identificada são assinalados pelo contexto e continuam sujeitos à conferência do utilizador.
+Mantêm-se as duas listas, sugestões e histórico existentes. Os depósitos registados no módulo de Depósitos aparecem como movimentos da aplicação na conta de destino; confirmar a associação ao crédito do extrato atualiza o estado do depósito (Reconciliado / Parcialmente reconciliado) e desfazê-la devolve-o a «Por reconciliar». Podem filtrar-se conta, período, estado, intervalo de valor absoluto e descrição/referência/entidade. Os registos sem conta identificada são assinalados pelo contexto e continuam sujeitos à conferência do utilizador.
 
 As seleções mostram os totais de cada lado, a diferença bruta e a diferença ainda não explicada após comissão/diferença justificada. Totais em moedas diferentes não são apresentados como comparáveis. São suportadas associações um para um, um para vários, vários para um e parciais. A confirmação valida novamente os valores remanescentes, contas, moedas, permissões e conflitos concorrentes.
 

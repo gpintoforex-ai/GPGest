@@ -672,3 +672,52 @@ def test_company_schema_isolation_blocks_detail_actions_pdf_and_proof(deposits):
             other_engine.dispose()
         with engine.begin() as conn:
             conn.execute(text("DROP SCHEMA IF EXISTS " + other_schema + " CASCADE"))
+
+
+def test_register_in_one_step_then_reconcile_in_banks(deposits):
+    """Talão entregue no banco: um só registo; a reconciliação faz-se depois, em Bancos › Reconciliação."""
+    client, _, factory, _, account, _ = deposits
+    deposit, _ = create(deposits, "10", True)
+    registered = command(client, deposit, "register")
+    assert registered.status_code == 200, registered.text
+    body = registered.json()
+    assert body["status"] == "entregue" and body["movement_id"] and body["delivery_date"] == today()
+    # Repetir não duplica: a saída da caixa fica registada uma única vez.
+    assert command(client, deposit, "register").json()["movement_id"] == body["movement_id"]
+    assert [m["kind"] for m in client.get("/api/movements").json()] == ["deposito"]
+    # Aparece na reconciliação geral como entrada na conta de destino, por reconciliar.
+    overview = client.get("/api/reconciliation").json()
+    row = next(i for i in overview["internals"] if i["source"] == "movement" and i["id"] == body["movement_id"])
+    assert row["amount_cents"] == 3000 and row["account_id"] == account and row["status"] == "pendente"
+    # O crédito do extrato com a referência do talão é sugerido automaticamente.
+    bank = statement(deposits, 3000, "DEPOSITO " + body["number"])
+    overview = client.get("/api/reconciliation").json()
+    assert any(body["movement_id"] in json.dumps(s) and bank in json.dumps(s) for s in overview["suggestions"])
+    confirm = client.post("/api/reconciliation/confirm", json={"lines": [
+        {"source": "bank", "source_id": bank, "amount_cents": 3000},
+        {"source": "movement", "source_id": body["movement_id"], "amount_cents": 3000}], "kind": "transferencia"})
+    assert confirm.status_code == 200, confirm.text
+    after = client.get(f"/api/deposits/{deposit['id']}").json()
+    assert after["status"] == "reconciliado"
+    with factory() as db:
+        assert used(db, "bank", bank) == 3000
+    # Reconciliado: não pode ser cancelado sem desfazer a associação em Bancos.
+    blocked = command(client, deposit, "cancel", reason="Erro de registo", returned=True)
+    assert blocked.status_code == 409 and "Bancos" in blocked.json()["detail"]
+    assert client.post(f"/api/reconciliation/{confirm.json()['id']}/undo", json={"reason": "Associação errada"}).status_code == 200
+    assert client.get(f"/api/deposits/{deposit['id']}").json()["status"] == "entregue"
+    # Depois de desfeita, o cancelamento faz estorno (não apaga) e sai da reconciliação.
+    assert command(client, deposit, "cancel", reason="Erro de registo", returned=True).status_code == 200
+    overview = client.get("/api/reconciliation").json()
+    assert not any(i["id"] == body["movement_id"] for i in overview["internals"] if i["source"] == "movement")
+
+
+def test_module_credit_counts_in_general_reconciliation(deposits):
+    """Um crédito associado no ecrã de Depósitos reduz o que falta reconciliar em Bancos (sem duplicar)."""
+    client = deposits[0]
+    deposit = delivered(deposits, "10")
+    bank = statement(deposits, 600)
+    assert command(client, deposit, "reconcile", transaction_id=bank, amount="6").status_code == 200
+    movement_id = client.get(f"/api/deposits/{deposit['id']}").json()["movement_id"]
+    row = next(i for i in client.get("/api/reconciliation").json()["internals"] if i["id"] == movement_id)
+    assert row["available_cents"] == 400 and row["status"] == "parcial"

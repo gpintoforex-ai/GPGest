@@ -40,8 +40,8 @@ def deposit_intercept(route):
         action = path.rsplit("/", 1)[-1]
         operations.append(action)
         result = deposits[0]
-        result["status"] = {"prepare": "preparado", "exit": "em_transito", "deliver": "entregue", "reconcile": "reconciliado"}[action]
-        if action == "exit":
+        result["status"] = {"register": "entregue", "prepare": "preparado", "exit": "em_transito", "deliver": "entregue", "reconcile": "reconciliado"}[action]
+        if action in ("exit", "register"):
             result["movement_id"] = "demo-movement"
         if action == "reconcile":
             result.update(matched="30", remaining="0", difference="0")
@@ -59,7 +59,7 @@ with sync_playwright() as playwright:
     page.goto("http://127.0.0.1:5174")
     page.get_by_role("button", name="Tesouraria", exact=True).click()
     page.get_by_role("button", name="Depósitos", exact=True).click()
-    page.get_by_role("button", name="Novo depósito", exact=True).click()
+    page.get_by_role("button", name="Registar depósito", exact=True).click()
     dialog = page.get_by_role("dialog", name="Depósito bancário")
     dialog.get_by_label("Caixa de origem", exact=True).select_option("demo-register")
     expect(dialog.get_by_label("Valor em numerário (€)", exact=True)).to_have_value("10")
@@ -69,19 +69,17 @@ with sync_playwright() as playwright:
     expect(dialog.locator(".deposit-total strong")).to_contain_text("28,00")
     dialog.get_by_label("Valor em numerário (€)", exact=True).fill("10")
     expect(dialog.get_by_role("button", name="Adicionar cheque", exact=True)).to_have_count(0)
+    dialog.locator(".deposit-source-history summary").click()  # histórico fechado por omissão
     expect(dialog.get_by_text("Abertura Demo", exact=True)).to_be_visible()
     expect(dialog.locator(".deposit-total strong")).to_contain_text("30,00")
-    dialog.get_by_role("button", name="Guardar rascunho", exact=True).click()
-    expect(dialog.get_by_role("button", name="Preparar", exact=True)).to_be_visible()
-    dialog.get_by_role("button", name="Preparar", exact=True).click()
-    dialog.get_by_role("button", name="Confirmar saída", exact=True).click()
-    dialog.get_by_role("button", name="Confirmar operação", exact=True).click()
-    dialog.get_by_role("button", name="Registar entrega ao banco", exact=True).click()
-    dialog.get_by_role("button", name="Confirmar operação", exact=True).click()
-    dialog.get_by_role("button", name="Reconciliar", exact=True).click()
-    dialog.get_by_label("Movimento do extrato", exact=True).select_option("demo-credit")
-    dialog.get_by_role("button", name="Confirmar operação", exact=True).click()
-    expect(dialog.locator(".status-badge").first).to_have_text("Reconciliado")
+    # Um só passo: sai da caixa e entra na conta; a reconciliação faz-se depois, em Bancos.
+    expect(dialog.get_by_label("Data do depósito no banco", exact=True)).to_be_visible()
+    dialog.get_by_role("button", name="Registar depósito", exact=True).click()
+    expect(dialog.locator(".status-badge").first).to_have_text("Por reconciliar")
+    expect(dialog.get_by_role("status").filter(has_text="Depósito registado")).to_be_visible()
+    expect(dialog.locator(".deposit-next")).to_contain_text("Bancos › Reconciliação")
+    for name in ["Preparar", "Confirmar saída", "Registar entrega ao banco", "Reconciliar"]:
+        expect(dialog.get_by_role("button", name=name, exact=True)).to_have_count(0)
     dialog.get_by_role("button", name="Anexos", exact=True).click()
     expect(dialog.get_by_text(re.compile("Comprovativo bancário em falta"))).to_be_visible()
     expect(dialog.get_by_role("link", name="Talão interno / imprimir", exact=True)).to_have_attribute("href", "/api/deposits/demo-deposit/pdf")
@@ -90,7 +88,7 @@ with sync_playwright() as playwright:
         assert page.evaluate("document.querySelector('dialog').scrollWidth <= document.querySelector('dialog').clientWidth")
     page.keyboard.press("Escape")
     expect(dialog).not_to_be_visible()
-    assert operations == ["prepare", "exit", "deliver", "reconcile"], operations
+    assert operations == ["register"], operations
     assert not errors, errors
     browser.close()
-print("Deposits UI passed: mixed draft from real movements, editable cash amount, source references, prepare/exit/deliver/reconcile, proof pending, tablet/mobile, keyboard. Fixtures only.")
+print("Deposits UI passed: mixed deposit from real movements, editable cash amount, source references, one-step bank registration, reconciliation guidance, proof pending, tablet/mobile, keyboard. Fixtures only.")

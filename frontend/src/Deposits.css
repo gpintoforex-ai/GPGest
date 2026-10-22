@@ -23,3 +23,5 @@
 .deposit-preview { width: 100%; height: 480px; border: 1px solid var(--color-border); }
 @media (max-width: 800px) { .deposit-metrics, .deposit-filters, .deposit-counts, .deposit-cheque { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 480px) { .deposit-metrics, .deposit-filters, .deposit-cheque { grid-template-columns: 1fr; } .deposit-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* Próximo passo depois de registar: reconciliação em Bancos. */
+.deposit-next { flex-basis: 100%; color: var(--color-text-muted, inherit); font-size: 0.92rem; }

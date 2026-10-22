@@ -106,6 +106,8 @@ def book_rows(db, account, allocated=None):
         inverse=db.get(Movement,deposit.reversal_id) if deposit.reversal_id else None
         if deposit.status=='cancelado' and not inverse:continue
         associated=sum((int(credit.amount*100) for credit in db.scalars(select(DepositCredit).where(DepositCredit.deposit_id==deposit.id,DepositCredit.undone_at.is_(None)))),0)
+        from .deposits import general_reconciled_cents
+        associated+=general_reconciled_cents(db,deposit.movement_id)
         rows.append({'source':'deposit','id':deposit.id,'date':deposit.delivery_date,'amount_cents':int((deposit.cash_amount+deposit.cheque_amount)*100),
             'description':'Depósito entregue ao banco','reference':deposit.number,'kind':'deposito','transfer':True,'origin':'Módulo de depósitos',
             'associated_cents':associated,'created_at':deposit.created_at})

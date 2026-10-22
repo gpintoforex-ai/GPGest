@@ -29,6 +29,8 @@ from .models import (
     DepositCredit,
     DocumentPayment,
     Movement,
+    Reconciliation,
+    ReconciliationLine,
     Register,
     Store,
     User,
@@ -161,14 +163,41 @@ def unlocked(db, dates):
             )
 
 
+def general_reconciled_cents(db, movement_id):
+    """Montante do depósito já associado ao extrato na reconciliação geral (Bancos › Reconciliação)."""
+    if not movement_id:
+        return 0
+    return int(
+        db.scalar(
+            select(func.sum(ReconciliationLine.amount_cents))
+            .join(Reconciliation, Reconciliation.id == ReconciliationLine.reconciliation_id)
+            .where(
+                Reconciliation.undone_at.is_(None),
+                ReconciliationLine.source == "movement",
+                ReconciliationLine.source_id == movement_id,
+            )
+        )
+        or 0
+    )
+
+
 def credit_total(db, deposit):
-    return db.scalar(
+    module = db.scalar(
         select(func.sum(DepositCredit.amount)).where(
             DepositCredit.deposit_id == deposit.id,
             DepositCredit.kind == "credito",
             DepositCredit.undone_at.is_(None),
         )
     ) or Decimal(0)
+    return module + Decimal(general_reconciled_cents(db, deposit.movement_id)) / 100
+
+
+def refresh_after_reconciliation(db, movement_ids):
+    """Atualiza o estado dos depósitos cujos movimentos foram associados/desassociados em Bancos."""
+    for movement_id in set(movement_ids):
+        deposit = db.scalar(select(BankDeposit).where(BankDeposit.movement_id == movement_id))
+        if deposit and deposit.status in {"entregue", "parcialmente_reconciliado", "reconciliado"}:
+            state_after_credit(db, deposit)
 
 
 def state_after_credit(db, deposit):
@@ -915,7 +944,7 @@ def register_routes(app, current, authorize, scope, record):
     def transition(
         deposit_id: str,
         action: Literal[
-            "prepare", "exit", "deliver", "cancel", "reconcile", "undo", "fee", "cheque-return"
+            "register", "prepare", "exit", "deliver", "cancel", "reconcile", "undo", "fee", "cheque-return"
         ],
         data: Action,
         user=Depends(current),
@@ -927,290 +956,310 @@ def register_routes(app, current, authorize, scope, record):
             raise HTTPException(422, "Não pode confirmar uma operação futura.")
         if data.action_date.isoformat() < deposit.preparation_date:
             raise HTTPException(422, "A operação não pode anteceder a preparação do depósito.")
-        if action == "prepare":
-            if deposit.status == "rascunho":
-                deposit.status = "preparado"
-            elif deposit.status != "preparado":
-                raise HTTPException(409, "O depósito já passou a preparação.")
-        elif action == "exit":
-            if deposit.movement_id:
-                return projection(db, deposit)
-            if deposit.status != "preparado":
-                raise HTTPException(409, "Prepare o depósito antes de confirmar a saída.")
-            db.scalar(select(Register).where(Register.id == deposit.register_id).with_for_update())
-            session = db.scalar(
-                select(CashSession)
-                .where(
-                    CashSession.register_id == deposit.register_id, CashSession.closed_at.is_(None)
-                )
-                .with_for_update()
-            )
-            snapshot = json.loads(deposit.details)
-            if snapshot.get("cash_mode") == "real_movements":
-                current_sources = accumulated_sources(
-                    db,
-                    db.get(Register, deposit.register_id),
-                    data.action_date.isoformat(),
-                    deposit.id,
-                )
-                cash, cheques = (
-                    cents(Decimal(current_sources["cash_balance"])),
-                    cents(Decimal(current_sources["cheque_balance"])),
-                )
-            else:
-                if not session:
-                    raise HTTPException(
-                        409,
-                        "Atualize este depósito antigo para utilizar o acumulado dos movimentos reais.",
-                    )
-                cash, cheques = available(db, deposit, session)
-            snapshot = json.loads(deposit.details)
-            if snapshot.get("cash_mode") == "real_movements":
-                fresh = current_sources
-
-                def signature(rows):
-                    return sorted((row["source"], row["id"], row["amount"]) for row in rows)
-
-                stored_cheques = list(
-                    db.scalars(
-                        select(DepositCheque).where(
-                            DepositCheque.deposit_id == deposit.id, DepositCheque.active.is_(True)
-                        )
-                    )
-                )
-                old_receipts = sorted(
-                    (row.source_receipt or "payment:" + row.receipt_id, cents(row.amount))
-                    for row in stored_cheques
-                )
-                new_receipts = sorted(
-                    (
-                        row.get("source_receipt") or "payment:" + row["receipt_id"],
-                        cents(money(row["amount"])),
-                    )
-                    for row in fresh["cheques"]
-                )
-                if (
-                    signature(fresh["movements"]) != signature(snapshot.get("sources", []))
-                    or old_receipts != new_receipts
-                ):
-                    raise HTTPException(
-                        409,
-                        "Os movimentos reais da caixa mudaram. Atualize o depósito e prepare-o novamente antes da saída.",
-                    )
-            deficit = (max(0, cents(deposit.cash_amount) - cash) if deposit.cash_amount else 0) + (
-                max(0, cents(deposit.cheque_amount) - cheques) if deposit.cheque_amount else 0
-            )
-            if deficit:
-                if not data.allow_insufficient:
-                    raise HTTPException(
-                        409,
-                        "Saldo insuficiente. Falta: "
-                        + euros(Decimal(deficit) / 100)
-                        + ". Numerário disponível: "
-                        + euros(Decimal(cash) / 100)
-                        + "; cheques: "
-                        + euros(Decimal(cheques) / 100),
-                    )
-                authorize(user, db, deposit.store_id, ["administrador"])
-                if len(data.reason.strip()) < 5:
-                    raise HTTPException(422, "Justifique a exceção ao saldo disponível.")
-            category = db.scalar(select(Category).where(Category.name == "Transferências e fundos"))
-            if not category:
-                category = Category(name="Transferências e fundos")
-                db.add(category)
-                db.flush()
-            move = Movement(
-                session_id=session.id if session else None,
-                user_id=user.id,
-                category_id=category.id,
-                kind="deposito",
-                payment="numerario"
-                if not deposit.cheque_amount
-                else "cheque"
-                if not deposit.cash_amount
-                else "misto",
-                amount_cents=cents(deposit.cash_amount + deposit.cheque_amount),
-                direction=-1,
-                occurred_at=datetime.combine(
-                    data.action_date, time(12), tzinfo=ZoneInfo("Europe/Lisbon")
-                ),
-                document=deposit.number,
-                reference=deposit.id,
-                origin="deposito_modulo",
-                request_key="deposit-exit:" + deposit.id,
-                notes="Transferência para banco; não é receita.",
-            )
-            db.add(move)
-            db.flush()
-            deposit.movement_id, deposit.exit_date, deposit.status = (
-                move.id,
-                data.action_date.isoformat(),
-                "em_transito",
-            )
-        elif action == "deliver":
-            if deposit.status not in {
-                "em_transito",
-                "entregue",
-                "parcialmente_reconciliado",
-                "reconciliado",
-            }:
-                raise HTTPException(409, "Confirme a saída antes da entrega.")
-            if data.action_date.isoformat() < deposit.exit_date:
-                raise HTTPException(422, "A entrega não pode anteceder a saída.")
-            if not deposit.delivery_date:
-                deposit.delivery_date = data.action_date.isoformat()
-                deposit.status = "entregue"
-        elif action == "cancel":
-            if deposit.status == "cancelado":
-                return projection(db, deposit)
-            if len(data.reason.strip()) < 5:
-                raise HTTPException(422, "Justifique o cancelamento.")
-            if db.scalar(
-                select(DepositCredit.id).where(
-                    DepositCredit.deposit_id == deposit.id, DepositCredit.undone_at.is_(None)
-                )
-            ):
-                raise HTTPException(409, "Desfaça as associações bancárias antes da reversão.")
-            if deposit.movement_id:
-                authorize(user, db, deposit.store_id, ["administrador", "gestor"])
-                if not data.returned:
-                    raise HTTPException(
-                        422, "Confirme que os valores regressaram fisicamente à caixa."
-                    )
+        def step(action):
+            if action == "prepare":
+                if deposit.status == "rascunho":
+                    deposit.status = "preparado"
+                elif deposit.status != "preparado":
+                    raise HTTPException(409, "O depósito já passou a preparação.")
+            elif action == "exit":
+                if deposit.movement_id:
+                    return projection(db, deposit)
+                if deposit.status != "preparado":
+                    raise HTTPException(409, "Prepare o depósito antes de confirmar a saída.")
+                db.scalar(select(Register).where(Register.id == deposit.register_id).with_for_update())
                 session = db.scalar(
                     select(CashSession)
                     .where(
-                        CashSession.register_id == deposit.register_id,
-                        CashSession.closed_at.is_(None),
+                        CashSession.register_id == deposit.register_id, CashSession.closed_at.is_(None)
                     )
                     .with_for_update()
                 )
-                original = db.get(Movement, deposit.movement_id)
-                reversal = Movement(
+                snapshot = json.loads(deposit.details)
+                if snapshot.get("cash_mode") == "real_movements":
+                    current_sources = accumulated_sources(
+                        db,
+                        db.get(Register, deposit.register_id),
+                        data.action_date.isoformat(),
+                        deposit.id,
+                    )
+                    cash, cheques = (
+                        cents(Decimal(current_sources["cash_balance"])),
+                        cents(Decimal(current_sources["cheque_balance"])),
+                    )
+                else:
+                    if not session:
+                        raise HTTPException(
+                            409,
+                            "Atualize este depósito antigo para utilizar o acumulado dos movimentos reais.",
+                        )
+                    cash, cheques = available(db, deposit, session)
+                snapshot = json.loads(deposit.details)
+                if snapshot.get("cash_mode") == "real_movements":
+                    fresh = current_sources
+
+                    def signature(rows):
+                        return sorted((row["source"], row["id"], row["amount"]) for row in rows)
+
+                    stored_cheques = list(
+                        db.scalars(
+                            select(DepositCheque).where(
+                                DepositCheque.deposit_id == deposit.id, DepositCheque.active.is_(True)
+                            )
+                        )
+                    )
+                    old_receipts = sorted(
+                        (row.source_receipt or "payment:" + row.receipt_id, cents(row.amount))
+                        for row in stored_cheques
+                    )
+                    new_receipts = sorted(
+                        (
+                            row.get("source_receipt") or "payment:" + row["receipt_id"],
+                            cents(money(row["amount"])),
+                        )
+                        for row in fresh["cheques"]
+                    )
+                    if (
+                        signature(fresh["movements"]) != signature(snapshot.get("sources", []))
+                        or old_receipts != new_receipts
+                    ):
+                        raise HTTPException(
+                            409,
+                            "Os movimentos reais da caixa mudaram. Atualize o depósito e prepare-o novamente antes da saída.",
+                        )
+                deficit = (max(0, cents(deposit.cash_amount) - cash) if deposit.cash_amount else 0) + (
+                    max(0, cents(deposit.cheque_amount) - cheques) if deposit.cheque_amount else 0
+                )
+                if deficit:
+                    if not data.allow_insufficient:
+                        raise HTTPException(
+                            409,
+                            "Saldo insuficiente. Falta: "
+                            + euros(Decimal(deficit) / 100)
+                            + ". Numerário disponível: "
+                            + euros(Decimal(cash) / 100)
+                            + "; cheques: "
+                            + euros(Decimal(cheques) / 100),
+                        )
+                    authorize(user, db, deposit.store_id, ["administrador"])
+                    if len(data.reason.strip()) < 5:
+                        raise HTTPException(422, "Justifique a exceção ao saldo disponível.")
+                category = db.scalar(select(Category).where(Category.name == "Transferências e fundos"))
+                if not category:
+                    category = Category(name="Transferências e fundos")
+                    db.add(category)
+                    db.flush()
+                move = Movement(
                     session_id=session.id if session else None,
                     user_id=user.id,
-                    category_id=original.category_id,
+                    category_id=category.id,
                     kind="deposito",
-                    payment=original.payment,
-                    amount_cents=original.amount_cents,
-                    direction=1,
+                    payment="numerario"
+                    if not deposit.cheque_amount
+                    else "cheque"
+                    if not deposit.cash_amount
+                    else "misto",
+                    amount_cents=cents(deposit.cash_amount + deposit.cheque_amount),
+                    direction=-1,
                     occurred_at=datetime.combine(
                         data.action_date, time(12), tzinfo=ZoneInfo("Europe/Lisbon")
                     ),
                     document=deposit.number,
                     reference=deposit.id,
                     origin="deposito_modulo",
-                    request_key="deposit-return:" + deposit.id,
-                    reversal_of=original.id,
-                    notes=data.reason,
+                    request_key="deposit-exit:" + deposit.id,
+                    notes="Transferência para banco; não é receita.",
                 )
-                db.add(reversal)
+                db.add(move)
                 db.flush()
-                original.reversed_by = reversal.id
-                deposit.reversal_id = reversal.id
-            deposit.status = "cancelado"
-            for cheque in db.scalars(
-                select(DepositCheque).where(DepositCheque.deposit_id == deposit.id)
-            ):
-                cheque.active = False
-        elif action == "undo":
-            authorize(user, db, deposit.store_id, ["administrador", "gestor"])
-            if len(data.reason.strip()) < 5:
-                raise HTTPException(422, "Justifique a remoção da associação bancária.")
-            for link in db.scalars(
-                select(DepositCredit).where(
-                    DepositCredit.deposit_id == deposit.id, DepositCredit.undone_at.is_(None)
+                deposit.movement_id, deposit.exit_date, deposit.status = (
+                    move.id,
+                    data.action_date.isoformat(),
+                    "em_transito",
                 )
-            ):
-                bank = db.get(BankTransaction, link.transaction_id)
-                unlocked(db, [bank.movement_date])
-                link.undone_at = now()
-            db.flush()
-            state_after_credit(db, deposit)
-        else:
-            authorize(user, db, deposit.store_id, ["administrador", "gestor"])
-            if deposit.status not in {"entregue", "parcialmente_reconciliado", "reconciliado"}:
-                raise HTTPException(409, "Registe a entrega ao banco antes de associar o extrato.")
-            old = db.scalar(
-                select(DepositCredit).where(DepositCredit.request_key == data.request_key)
-            )
-            if old:
-                if old.deposit_id != deposit.id:
-                    raise HTTPException(409, "Este pedido pertence a outro depósito.")
-                return projection(db, deposit)
-            bank = db.scalar(
-                select(BankTransaction)
-                .where(BankTransaction.id == data.transaction_id)
-                .with_for_update()
-            )
-            amount = money(data.amount)
-            if not bank or bank.account_id != deposit.account_id or amount <= 0:
-                raise HTTPException(
-                    422, "Selecione um movimento e um montante válido da conta de destino."
-                )
-            unlocked(db, [bank.movement_date])
-            from .reconciliation import used
-
-            available_cents = abs(bank.amount_cents) - used(db, "bank", bank.id)
-            if cents(amount) > available_cents:
-                raise HTTPException(409, "O montante excede o valor disponível no extrato.")
-            kind = (
-                "credito"
-                if action == "reconcile"
-                else "comissao"
-                if action == "fee"
-                else "devolucao"
-            )
-            if (bank.amount_cents > 0) != (kind == "credito"):
-                raise HTTPException(
-                    422, "Créditos, comissões e devoluções devem ser associados separadamente."
-                )
-            if (
-                kind == "credito"
-                and amount > deposit.cash_amount + deposit.cheque_amount - credit_total(db, deposit)
-            ):
-                raise HTTPException(409, "O crédito excede o montante por reconciliar.")
-            cheque = db.get(DepositCheque, data.cheque_id) if data.cheque_id else None
-            if kind == "devolucao":
-                if (
-                    not cheque
-                    or cheque.deposit_id != deposit.id
-                    or cheque.returned_at
-                    or amount != cheque.amount
-                    or len(data.reason.strip()) < 5
+            elif action == "deliver":
+                if deposit.status not in {
+                    "em_transito",
+                    "entregue",
+                    "parcialmente_reconciliado",
+                    "reconciliado",
+                }:
+                    raise HTTPException(409, "Confirme a saída antes da entrega.")
+                if data.action_date.isoformat() < deposit.exit_date:
+                    raise HTTPException(422, "A entrega não pode anteceder a saída.")
+                if not deposit.delivery_date:
+                    deposit.delivery_date = data.action_date.isoformat()
+                    deposit.status = "entregue"
+            elif action == "cancel":
+                if deposit.status == "cancelado":
+                    return projection(db, deposit)
+                if len(data.reason.strip()) < 5:
+                    raise HTTPException(422, "Justifique o cancelamento.")
+                if db.scalar(
+                    select(DepositCredit.id).where(
+                        DepositCredit.deposit_id == deposit.id, DepositCredit.undone_at.is_(None)
+                    )
                 ):
-                    raise HTTPException(
-                        422, "Indique o cheque devolvido, o seu valor e a justificação."
+                    raise HTTPException(409, "Desfaça as associações bancárias antes da reversão.")
+                if general_reconciled_cents(db, deposit.movement_id):
+                    raise HTTPException(409, "Desfaça a reconciliação deste depósito em Bancos antes da reversão.")
+                if deposit.movement_id:
+                    authorize(user, db, deposit.store_id, ["administrador", "gestor"])
+                    if not data.returned:
+                        raise HTTPException(
+                            422, "Confirme que os valores regressaram fisicamente à caixa."
+                        )
+                    session = db.scalar(
+                        select(CashSession)
+                        .where(
+                            CashSession.register_id == deposit.register_id,
+                            CashSession.closed_at.is_(None),
+                        )
+                        .with_for_update()
                     )
-                cheque.returned_at = now()
-            elif cheque and cheque.deposit_id != deposit.id:
-                raise HTTPException(422, "Cheque de outro depósito.")
-            if kind == "credito" and cheque:
-                allocated = db.scalar(
-                    select(func.sum(DepositCredit.amount)).where(
-                        DepositCredit.cheque_id == cheque.id,
-                        DepositCredit.kind == "credito",
-                        DepositCredit.undone_at.is_(None),
+                    original = db.get(Movement, deposit.movement_id)
+                    reversal = Movement(
+                        session_id=session.id if session else None,
+                        user_id=user.id,
+                        category_id=original.category_id,
+                        kind="deposito",
+                        payment=original.payment,
+                        amount_cents=original.amount_cents,
+                        direction=1,
+                        occurred_at=datetime.combine(
+                            data.action_date, time(12), tzinfo=ZoneInfo("Europe/Lisbon")
+                        ),
+                        document=deposit.number,
+                        reference=deposit.id,
+                        origin="deposito_modulo",
+                        request_key="deposit-return:" + deposit.id,
+                        reversal_of=original.id,
+                        notes=data.reason,
                     )
-                ) or Decimal(0)
-                if amount > cheque.amount - allocated:
-                    raise HTTPException(409, "O montante excede o valor por creditar deste cheque.")
-            if kind == "comissao" and len(data.reason.strip()) < 5:
-                raise HTTPException(422, "Justifique a comissão bancária.")
-            db.add(
-                DepositCredit(
-                    deposit_id=deposit.id,
-                    transaction_id=bank.id,
-                    cheque_id=data.cheque_id,
-                    amount=amount,
-                    kind=kind,
-                    request_key=data.request_key,
-                    user_id=user.id,
-                    reason=data.reason,
+                    db.add(reversal)
+                    db.flush()
+                    original.reversed_by = reversal.id
+                    deposit.reversal_id = reversal.id
+                deposit.status = "cancelado"
+                for cheque in db.scalars(
+                    select(DepositCheque).where(DepositCheque.deposit_id == deposit.id)
+                ):
+                    cheque.active = False
+            elif action == "undo":
+                authorize(user, db, deposit.store_id, ["administrador", "gestor"])
+                if len(data.reason.strip()) < 5:
+                    raise HTTPException(422, "Justifique a remoção da associação bancária.")
+                for link in db.scalars(
+                    select(DepositCredit).where(
+                        DepositCredit.deposit_id == deposit.id, DepositCredit.undone_at.is_(None)
+                    )
+                ):
+                    bank = db.get(BankTransaction, link.transaction_id)
+                    unlocked(db, [bank.movement_date])
+                    link.undone_at = now()
+                db.flush()
+                state_after_credit(db, deposit)
+            else:
+                authorize(user, db, deposit.store_id, ["administrador", "gestor"])
+                if deposit.status not in {"entregue", "parcialmente_reconciliado", "reconciliado"}:
+                    raise HTTPException(409, "Registe a entrega ao banco antes de associar o extrato.")
+                old = db.scalar(
+                    select(DepositCredit).where(DepositCredit.request_key == data.request_key)
                 )
-            )
-            db.flush()
-            state_after_credit(db, deposit)
+                if old:
+                    if old.deposit_id != deposit.id:
+                        raise HTTPException(409, "Este pedido pertence a outro depósito.")
+                    return projection(db, deposit)
+                bank = db.scalar(
+                    select(BankTransaction)
+                    .where(BankTransaction.id == data.transaction_id)
+                    .with_for_update()
+                )
+                amount = money(data.amount)
+                if not bank or bank.account_id != deposit.account_id or amount <= 0:
+                    raise HTTPException(
+                        422, "Selecione um movimento e um montante válido da conta de destino."
+                    )
+                unlocked(db, [bank.movement_date])
+                from .reconciliation import used
+
+                available_cents = abs(bank.amount_cents) - used(db, "bank", bank.id)
+                if cents(amount) > available_cents:
+                    raise HTTPException(409, "O montante excede o valor disponível no extrato.")
+                kind = (
+                    "credito"
+                    if action == "reconcile"
+                    else "comissao"
+                    if action == "fee"
+                    else "devolucao"
+                )
+                if (bank.amount_cents > 0) != (kind == "credito"):
+                    raise HTTPException(
+                        422, "Créditos, comissões e devoluções devem ser associados separadamente."
+                    )
+                if (
+                    kind == "credito"
+                    and amount > deposit.cash_amount + deposit.cheque_amount - credit_total(db, deposit)
+                ):
+                    raise HTTPException(409, "O crédito excede o montante por reconciliar.")
+                cheque = db.get(DepositCheque, data.cheque_id) if data.cheque_id else None
+                if kind == "devolucao":
+                    if (
+                        not cheque
+                        or cheque.deposit_id != deposit.id
+                        or cheque.returned_at
+                        or amount != cheque.amount
+                        or len(data.reason.strip()) < 5
+                    ):
+                        raise HTTPException(
+                            422, "Indique o cheque devolvido, o seu valor e a justificação."
+                        )
+                    cheque.returned_at = now()
+                elif cheque and cheque.deposit_id != deposit.id:
+                    raise HTTPException(422, "Cheque de outro depósito.")
+                if kind == "credito" and cheque:
+                    allocated = db.scalar(
+                        select(func.sum(DepositCredit.amount)).where(
+                            DepositCredit.cheque_id == cheque.id,
+                            DepositCredit.kind == "credito",
+                            DepositCredit.undone_at.is_(None),
+                        )
+                    ) or Decimal(0)
+                    if amount > cheque.amount - allocated:
+                        raise HTTPException(409, "O montante excede o valor por creditar deste cheque.")
+                if kind == "comissao" and len(data.reason.strip()) < 5:
+                    raise HTTPException(422, "Justifique a comissão bancária.")
+                db.add(
+                    DepositCredit(
+                        deposit_id=deposit.id,
+                        transaction_id=bank.id,
+                        cheque_id=data.cheque_id,
+                        amount=amount,
+                        kind=kind,
+                        request_key=data.request_key,
+                        user_id=user.id,
+                        reason=data.reason,
+                    )
+                )
+                db.flush()
+                state_after_credit(db, deposit)
+            return None
+
+        if action == "register":
+            # Registo num só passo (talão entregue no banco): prepara, confirma a saída da caixa e a
+            # entrada na conta na mesma data. A reconciliação com o extrato faz-se depois, em Bancos.
+            if deposit.status == "rascunho":
+                step("prepare")
+            if deposit.status == "preparado":
+                step("exit")
+            if deposit.status == "em_transito":
+                step("deliver")
+            if deposit.status not in {"entregue", "parcialmente_reconciliado", "reconciliado"}:
+                raise HTTPException(409, "Este depósito não pode ser registado no banco.")
+        else:
+            early = step(action)
+            if early is not None:
+                return early
         audit(db, user, deposit, action, data.model_dump(mode="json"))
         db.commit()
         return projection(db, deposit)
@@ -1225,6 +1274,7 @@ def register_routes(app, current, authorize, scope, record):
         return endpoint
 
     for action_name in [
+        "register",
         "prepare",
         "exit",
         "deliver",
