@@ -116,7 +116,8 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
 
   useEffect(() => {
     if (nameEdited || !scan) return;
-    setName(`${context?.today || ""}_${type}_${String(scan.id).slice(0, 8)}`);
+    // Com o QR da fatura lido: data do documento, fornecedor e número; sem QR, data de hoje e tipo.
+    setName(scan.suggested_name || `${context?.today || ""}_${type}_${String(scan.id).slice(0, 8)}`);
   }, [type, scan, nameEdited, context]);
 
   async function enter() {
@@ -454,6 +455,9 @@ export default function QuickScan({ onExit }: { onExit: () => void }) {
     </>}
     {step === "pdf" && scan && <section className="qs-summary">
       <p><b>{scan.pages}</b> página(s) · <b>{megabytes(scan.size)}</b> · destino «{scan.folder || context?.folder}»</p>
+      {scan.supplier_nif
+        ? <p className="qs-fiscal">Lido do QR da fatura: <b>{scan.supplier || `NIF ${scan.supplier_nif}`}</b>{scan.document && <> · {scan.document}</>}{scan.document_date && <> · {scan.document_date.split("-").reverse().join("/")}</>}</p>
+        : <p className="qs-small">QR da fatura não lido: o nome usa a data de hoje. Pode alterá-lo antes de guardar.</p>}
       {scan.warnings?.length > 0 && <ul className="qs-warnings">{scan.warnings.map((w: string) => <li key={w}>{w}</li>)}</ul>}
       <div className="qs-toolbar">
         <a href={pdfURL} target="_blank" rel="noopener"><FileText size={18} aria-hidden="true" />Ver PDF</a>

@@ -80,6 +80,9 @@ A câmara em direto exige HTTPS (ver `ALLOWED_ORIGINS` e publicação em [Digita
 
 ## Classificação e envio
 
+- **Nome do ficheiro.** Quando o código QR fiscal da fatura é legível numa das fotografias, o nome sugerido é `Data_Fornecedor_Número` (ex.: `2026-10-20_Farmoplex_Produtos_Naturais_FT_FA.2026_264994.pdf`): data e número do documento lidos do QR e nome do fornecedor pelo NIF (ficha local, ERP ou compras anteriores; sem nome conhecido fica o NIF). O tipo passa a «Fatura de fornecedor». Sem QR legível, mantém-se a data de hoje e o tipo. O nome pode sempre ser alterado antes de guardar; o QR é lido localmente.
+- **Pastas.** Dentro da pasta do acesso aplica-se a **Organização dentro da pasta cloud** de Configurações › Digitalização (por omissão Empresa / Contabilidade / Ano / Mês / Tipo), pela data do documento — a mesma estrutura da digitalização na área autenticada. Com «Diretamente na pasta configurada», o ficheiro fica na pasta do acesso.
+
 - **Tipos.** Fatura de fornecedor, Despesa, Comprovativo de pagamento, Documento de caixa e Outro. Descrição opcional. Fornecedor, número e valor não são pedidos.
 - **Nome.** É sugerido como `AAAA-MM-DD_tipo_identificador.pdf` (data de Lisboa) e pode ser editado. Se já existir um ficheiro com esse nome na pasta, acrescenta-se o identificador; nunca se substitui um ficheiro.
 - **Envio.**

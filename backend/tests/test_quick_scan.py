@@ -130,7 +130,11 @@ def test_admin_configures_pairing_pin_scan_and_cloud_upload(quick):
     assert again.status_code == 200 and again.json()["name"] == "Fatura_Alfa.pdf"
     assert drive.uploads == 1
     saved = drive.files[next(iter(drive.contents))]
-    assert saved["parents"] == ["root"] and saved["name"] == "Fatura_Alfa.pdf"
+    assert saved["name"] == "Fatura_Alfa.pdf"
+    # Organização das Configurações (por omissão Empresa / Contabilidade / Ano / Mês / Tipo) dentro da pasta do acesso.
+    chain = folder_chain(drive, saved)
+    today = quick_scan.lisbon_today().isoformat()
+    assert chain == ["Empresa_Demo_demo-com", "Contabilidade", today[:4], today[5:7], "Fatura_de_fornecedor"], chain
     with factory() as db:
         row = db.get(DocumentScan, scan["id"])
         details = json.loads(row.data)
@@ -315,3 +319,50 @@ def test_pairing_qr_is_readable_and_admin_only(quick):
     assert client.post("/api/quick-scan/qr", json={"text": "https://outro.example/"}).status_code == 422
     image = zxingcpp.create_barcode(link, zxingcpp.BarcodeFormat.QRCode).to_image(scale=4)
     assert zxingcpp.read_barcodes(image)[0].text == link
+
+
+
+def folder_chain(drive, item):
+    """Nomes das subpastas entre a pasta do acesso («root») e o ficheiro."""
+    chain, parent = [], item["parents"][0]
+    while parent != "root":
+        chain.insert(0, drive.files[parent]["name"])
+        parent = drive.files[parent]["parents"][0]
+    return chain
+
+
+def fiscal_photo():
+    """Página com o QR fiscal (código AT) de uma fatura, como numa fotografia."""
+    import zxingcpp
+    from PIL import Image
+    code = zxingcpp.create_barcode("A:503916099*B:510774318*C:PT*D:FT*E:N*F:20261020*G:FT FA.2026/264994*H:J6N7FD2P-264994*I1:PT*I7:110.65*I8:25.45*N:25.45*O:136.10*Q:abcd*R:0030", zxingcpp.BarcodeFormat.QRCode)
+    view = memoryview(code.to_image(scale=6))
+    qr = Image.frombytes("L", (view.shape[1], view.shape[0]), view.tobytes())
+    page = Image.new("RGB", (1240, 1754), "white")
+    page.paste(qr.convert("RGB"), (800, 1300))
+    buffer = io.BytesIO()
+    page.save(buffer, "JPEG", quality=90)
+    return buffer.getvalue()
+
+
+def test_name_with_supplier_and_date_from_fiscal_qr_and_organised_folders(quick):
+    client, phone, factory, store, drive = quick
+    from app.models import BusinessEntity, DocumentScanSettings
+    with factory.begin() as db:
+        db.add(BusinessEntity(name="Farmoplex Produtos Naturais, Lda.", tax_number="503916099"))
+        db.add(DocumentScanSettings(id="default", organisation="period_type"))
+    _, device = paired(client, phone, store)
+    token = login(phone, device).json()["token"]
+    scan = generate(phone, token, pages=[({"colour": "enhanced"}, fiscal_photo())]).json()
+    assert scan["suggested_name"] == "2026-10-20_Farmoplex_Produtos_Naturais_FT_FA.2026_264994"
+    assert scan["supplier"] == "Farmoplex Produtos Naturais, Lda." and scan["supplier_nif"] == "503916099"
+    assert scan["document"] == "FT FA.2026/264994" and scan["document_date"] == "2026-10-20"
+    saved = phone.post(f"/api/quick-scan/scans/{scan['id']}/upload", json={"document_type": "fatura", "name": scan["suggested_name"]}, headers=bearer(token))
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["name"] == "2026-10-20_Farmoplex_Produtos_Naturais_FT_FA.2026_264994.pdf"
+    # Ano / Mês / Tipo pela data do documento (do QR), não pela data de hoje.
+    chain = folder_chain(drive, drive.files[next(iter(drive.contents))])
+    assert chain == ["2026", "10", "Fatura_de_fornecedor"], chain
+    # Sem QR legível: data de hoje e tipo, como antes.
+    plain = generate(phone, token).json()
+    assert plain["suggested_name"] == "" and not plain["supplier_nif"]

@@ -47,6 +47,28 @@ def tax_breakdown(fields):
         result.append({"region": region, "kind": kind, "base_cents": base, "tax_cents": tax, "rate": rate})
     return result
 
+def read_images_qr(raws):
+    """QR fiscal (código AT) nas fotografias das páginas, localmente; o primeiro válido ou `None`."""
+    import io
+
+    from PIL import Image, ImageOps
+
+    for raw in raws:
+        try:
+            with Image.open(io.BytesIO(raw)) as opened:
+                image = ImageOps.exif_transpose(opened).convert("L")
+        except (OSError, ValueError):
+            continue
+        for side in (2400, 1400):
+            sample = image.copy()
+            sample.thumbnail((side, side))
+            for found in zxingcpp.read_barcodes(sample):
+                parsed = parse_fiscal_qr(found.text or "")
+                if parsed:
+                    return parsed
+    return None
+
+
 def extract_pdf_qr(raw, limits):
     from .document_scanning import make_pdf
     make_pdf([raw], [], limits)  # Same type, active-content, size and page validation as uploads.

@@ -40,7 +40,17 @@ from .document_scanning import (
     scan_settings,
 )
 from .google_invoices import DRIVE, api_json, authorized_client
-from .models import DocumentScan, GoogleConnection, QuickScanAccess, QuickScanSession, Store, now
+from .models import (
+    BusinessEntity,
+    DocumentScan,
+    GoogleConnection,
+    Purchase,
+    QuickScanAccess,
+    QuickScanSession,
+    Store,
+    WintouchEntity,
+    now,
+)
 from .platform import cipher
 from .platform_models import Company
 from .scan_storage import GoogleDriveStorage
@@ -301,7 +311,32 @@ def quick_view(row):
     return {"id": row.id, "status": row.status, "name": row.name, "size": row.size, "pages": row.pages,
             "document_type": details["quick"]["type"], "description": details["quick"]["description"],
             "folder": details["quick"]["folder_name"], "error": row.error, "warnings": details.get("warnings", []),
-            "cloud_saved": row.status == "cloud_saved", "name_locked": bool(row.drive_id), "expires_at": row.expires_at}
+            "cloud_saved": row.status == "cloud_saved", "name_locked": bool(row.drive_id), "expires_at": row.expires_at,
+            "suggested_name": details["quick"].get("suggested_name", ""), "supplier": details["metadata"].get("entity", ""),
+            "supplier_nif": details["metadata"].get("nif", ""), "document": details["quick"].get("document", ""),
+            "document_date": details["metadata"].get("document_date", "")}
+
+
+def supplier_name(db, nif):
+    """Nome do fornecedor pelo NIF: ficha local, ERP ou a compra mais recente; vazio se desconhecido."""
+    entity = db.scalar(select(BusinessEntity.name).where(BusinessEntity.tax_number == nif, BusinessEntity.removed.is_(False)).limit(1))
+    if not entity:
+        entity = db.scalar(select(WintouchEntity.name).where(WintouchEntity.tax_number == nif).limit(1))
+    if not entity:
+        entity = db.scalar(select(Purchase.supplier_name).where(Purchase.supplier_nif == nif).order_by(Purchase.document_date.desc()).limit(1))
+    return (entity or "").strip()
+
+
+def short_name(name):
+    """Nome curto para o ficheiro: sem a forma jurídica e o resto depois de vírgula ou travessão."""
+    name = re.split(r",| - | – ", name)[0]
+    # Só no fim do nome (ex.: «Dietimport Sa», «Ibernat Unipessoal Lda»); nunca no meio.
+    while True:
+        shorter = re.sub(r"\s+(lda|l\.da|s\.?a|unipessoal|sociedade unipessoal)\.?$", "", name.strip(), flags=re.IGNORECASE)
+        if shorter == name.strip():
+            break
+        name = shorter
+    return re.sub(r"\s+", " ", name).strip(" .-")[:40]
 
 
 @router.post("/api/quick-scan/prepare")
@@ -335,23 +370,33 @@ async def prepare(payload: str = Form(...), files: list[UploadFile] = File(...),
                 raise HTTPException(422, "Use fotografias (JPG, PNG ou WebP).")
             raws.append(raw)
         pdf, pages, warnings = await run_in_threadpool(make_pdf, raws, data.edits, limits)
+        from .invoice_qr import read_images_qr
+        try:
+            fiscal = await run_in_threadpool(read_images_qr, raws)
+        except Exception:  # leitura do QR é uma ajuda: nunca impede o PDF
+            fiscal = None
         if len(pdf) > limits["max_bytes"]:
             raise HTTPException(422, f"O PDF tem {len(pdf) / 1048576:.1f} MB e o limite é {limits['max_bytes'] / 1048576:.0f} MB. Use Cinzentos ou Preto e branco, ou menos páginas.")
         today = lisbon_today().isoformat()
+        supplier = supplier_name(db, fiscal["nif"]) if fiscal else ""
+        day = fiscal["document_date"] if fiscal else today
         details = {
-            "metadata": {"store_id": item.store_id, "document_type": "DIG", "document_date": today, "document": "Digitalização rápida",
-                         "entity": "", "nif": "", "notes": ""},
-            "quick": {"type": "outro", "type_label": TYPES["outro"], "description": "", "access_id": item.id,
-                      "access_name": item.name, "folder_name": item.folder_name, "session": session.token_hash[:12]},
-            "pdf_md5": hashlib.md5(pdf).hexdigest(), "warnings": warnings, "organisation": "root",
+            "metadata": {"store_id": item.store_id, "document_type": "DIG", "document_date": day, "document": "Digitalização rápida",
+                         "entity": supplier, "nif": fiscal["nif"] if fiscal else "", "notes": ""},
+            "quick": {"type": "fatura" if fiscal else "outro", "type_label": TYPES["fatura" if fiscal else "outro"], "description": "", "access_id": item.id,
+                      "access_name": item.name, "folder_name": item.folder_name, "session": session.token_hash[:12],
+                      "document": fiscal["document"] if fiscal else "",
+                      # Data do documento, fornecedor (ou NIF) e número, lidos do QR fiscal.
+                      "suggested_name": safe_name(f"{day}_{short_name(supplier) or fiscal['nif']}_{fiscal['document']}", 120) if fiscal else ""},
+            "pdf_md5": hashlib.md5(pdf).hexdigest(), "warnings": warnings, "organisation": limits["organisation"],
         }
         row = DocumentScan(request_key=data.request_key, store_id=item.store_id, user_id=item.created_by, account="",
-                           root_folder=item.folder_id, document_date=today, digest=hashlib.sha256(pdf).hexdigest(),
+                           root_folder=item.folder_id, document_date=day, digest=hashlib.sha256(pdf).hexdigest(),
                            size=len(pdf), pages=pages, data=json.dumps(details), pdf_ciphertext=cipher().encrypt(pdf),
                            expires_at=now() + TEMPORARY, name="preparar.pdf", origin=ORIGIN, quick_access_id=item.id)
         db.add(row)
         db.flush()
-        row.name = f"{today}_outro_{row.id[:8]}.pdf"
+        row.name = (details["quick"]["suggested_name"] or f"{today}_outro_{row.id[:8]}") + ".pdf"
         audit(db, item, "digitalizacao_rapida_pdf_gerado", {"pages": pages, "size": len(pdf)}, row.id)
         db.commit()
         return quick_view(row)
@@ -431,15 +476,28 @@ def upload(identifier: str, data: UploadInput, current=Depends(session_for), db:
             storage = GoogleDriveStorage(client)
             stage = "folder"
             storage.check_folder(item.folder_id)
-            if row.drive_folder and row.drive_folder != item.folder_id:
+            if row.root_folder and row.drive_folder and row.root_folder != item.folder_id:
                 raise HTTPException(409, "A pasta de destino deste acesso mudou. Gere novamente o documento.")
+            row.account = config.google_email
+            target = row.drive_folder or item.folder_id
+            if not row.drive_folder:
+                # Mesma organização da digitalização na área autenticada, pela data do documento.
+                organisation, day = details.get("organisation", "root"), details["metadata"]["document_date"]
+                segments = []
+                if organisation == "company_period_type":
+                    company = db.info.get("company", {})
+                    segments += [safe_name(company.get("name", "Empresa") + "_" + (company.get("nif") or company.get("id", "")[:8])), "Contabilidade"]
+                if organisation != "root":
+                    segments += [day[:4], day[5:7], safe_name(details["quick"]["type_label"])]
+                for segment in segments:
+                    target = storage.folder(db, row.account, target, segment)
             stage = "upload"
             if not row.drive_id:
-                if name_taken(client, db, row, item.folder_id, row.name):
+                if name_taken(client, db, row, target, row.name):
                     row.name = row.name[:-4] + "_" + row.id[:8] + ".pdf"
-                    if name_taken(client, db, row, item.folder_id, row.name):
+                    if name_taken(client, db, row, target, row.name):
                         row.name = row.name[:-4] + "_" + secrets.token_hex(3) + ".pdf"
-                row.drive_folder = item.folder_id
+                row.drive_folder = target
             row.account, row.root_folder = config.google_email, item.folder_id
             db.commit()
             raw = cipher().decrypt(row.pdf_ciphertext) if row.pdf_ciphertext and row.expires_at > now() else None
