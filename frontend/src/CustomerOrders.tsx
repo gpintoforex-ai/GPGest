@@ -18,7 +18,7 @@ import {
   useWorkspaceTab,
 } from "./components/WorkspaceUI";
 import { DataTable } from "./components/DataTable";
-import { MetricCard } from "./components/BusinessUI";
+import { MetricCard, StatusBadge } from "./components/BusinessUI";
 import "./CustomerOrders.css";
 import {
   ERPCatalogPicker,
@@ -850,11 +850,23 @@ export default function CustomerOrders({
                 render: (r) =>
                   r.ready
                     ? r.notified
-                      ? "Cliente notificado"
-                      : "Cliente por contactar"
+                      ? (
+                        <StatusBadge tone="success">
+                          Cliente notificado
+                        </StatusBadge>
+                      )
+                      : (
+                        <StatusBadge tone="info">
+                          Cliente por contactar
+                        </StatusBadge>
+                      )
                     : r.closed
-                      ? "Concluído"
-                      : "A aguardar produtos",
+                      ? <StatusBadge tone="success">Concluído</StatusBadge>
+                      : (
+                        <StatusBadge tone="warning">
+                          A aguardar produtos
+                        </StatusBadge>
+                      ),
               },
               {
                 id: "actions",

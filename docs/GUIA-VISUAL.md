@@ -12,9 +12,10 @@ sombras e tamanhos de navegação. É carregado depois dos estilos existentes em
 
 Usar `var(--color-primary)` para ações (turquesa escuro da marca no tema claro),
 `--color-nav` para navegação e as famílias
-`--color-success`, `--color-warning`, `--color-danger` para estados. Superfícies
-brancas e fundo cinzento; fontes DM Sans/Manrope com fallback Segoe UI. As fontes
-Google existentes são opcionais: sem Internet, o browser usa as fontes locais.
+`--color-success`, `--color-warning`, `--color-danger` e `--color-info` para
+estados. Superfícies brancas e fundo cinzento; fontes DM Sans/Manrope com fallback
+Segoe UI. As fontes Google existentes são opcionais: sem Internet, o browser usa
+as fontes locais.
 
 `components/BusinessUI.tsx` disponibiliza `MetricCard` e `StatusBadge`. Os badges
 sempre incluem texto. Os estilos comuns uniformizam botões, campos, tabelas,

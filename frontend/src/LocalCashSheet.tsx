@@ -731,8 +731,9 @@ export default function LocalCashSheet({
             movimentos na data do fecho.
           </p>
         )}
-        <div className="table-wrap">
-          <table className="cash-sheet-table local-cash-table">
+        <div className="table-wrap local-cash-conference">
+          <table className="cash-sheet-table local-cash-table" aria-label="Conferência do faturado por meio de pagamento">
+            <caption className="local-cash-caption">Origem: {manualRealized ? "Manual" : "Movimentos"}</caption>
             <thead>
               <tr>
                 <th>
@@ -769,7 +770,7 @@ export default function LocalCashSheet({
                     : confirmed - expected;
                 return (
                   <tr key={row.key}>
-                    <td>
+                    <td data-label="Meio de pagamento">
                       <div className="local-cash-method-cell">
                         <span className="cash-payment-label">
                           <Icon size={18} aria-hidden="true" /> {row.name}
@@ -795,7 +796,7 @@ export default function LocalCashSheet({
                         )}
                       </div>
                     </td>
-                    <td>
+                    <td data-label="Faturado">
                       {editable && manualRealized ? (
                         <ActionButton
                           className={`local-realized-button local-cash-value-box ${tone(confirmedDifference)}`}
@@ -823,7 +824,7 @@ export default function LocalCashSheet({
                         </span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Débitos / créditos">
                       {editable ? (
                         <ActionButton
                           className={`local-debit-button local-cash-value-box ${tone(confirmedDifference)}`}
@@ -851,7 +852,7 @@ export default function LocalCashSheet({
                         </span>
                       )}
                     </td>
-                    <td className="local-cash-expected">
+                    <td className="local-cash-expected" data-label="Esperado">
                       <strong>
                         {expected === null ? "Por preencher" : money(expected)}
                       </strong>
@@ -862,7 +863,7 @@ export default function LocalCashSheet({
                         <small>Outros movimentos: {money(other)}</small>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Contado / conferido">
                       {editable && row.key === "numerario" ? (
                         <ActionButton
                           className={`cash-count-trigger local-cash-value-box ${tone(confirmedDifference)}`}
@@ -905,7 +906,7 @@ export default function LocalCashSheet({
                         </span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Diferença">
                       <span
                         className={`local-cash-value-box ${tone(confirmedDifference)}`}
                       >
@@ -921,24 +922,24 @@ export default function LocalCashSheet({
             <tfoot>
               <tr>
                 <th>Total</th>
-                <td>
+                <td data-label="Faturado">
                   {money(declaredTotal)}
                   {!complete && <small>Faturado incompleto</small>}
                 </td>
-                <td>
+                <td data-label="Débitos / créditos">
                   {debitsTotal === null || creditsTotal === null
                     ? "—"
                     : money(creditsTotal - debitsTotal)}
                 </td>
-                <td className="local-cash-expected">
+                <td className="local-cash-expected" data-label="Esperado">
                   {expectedTotal === null
                     ? "Por preencher"
                     : money(expectedTotal)}
                 </td>
-                <td>
+                <td data-label="Contado / conferido">
                   {countsComplete ? money(countedTotal) : "Contagem incompleta"}
                 </td>
-                <td>
+                <td data-label="Diferença">
                   {countDifference === null
                     ? "Por conferir"
                     : money(countDifference)}

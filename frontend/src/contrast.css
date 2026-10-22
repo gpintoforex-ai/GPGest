@@ -102,6 +102,7 @@
 .status-badge.status-success { color: var(--color-success); background: var(--color-success-bg); border-color: var(--color-success); }
 .status-badge.status-warning { color: var(--color-warning); background: var(--color-warning-bg); border-color: var(--color-warning); }
 .status-badge.status-danger { color: var(--color-danger); background: var(--color-danger-bg); border-color: var(--color-danger); }
+.status-badge.status-info { color: var(--color-info); background: var(--color-info-bg); border-color: var(--color-info); }
 .status-badge.deposit-status-rascunho { color: #526572; background: #edf1f4; border-color: #7c8f9a; }
 .status-badge.deposit-status-preparado { color: #24559a; background: #eef4ff; border-color: #24559a; }
 .status-badge.deposit-status-em_transito { color: #805400; background: #fff5e5; border-color: #805400; }

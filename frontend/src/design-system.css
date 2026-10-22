@@ -163,6 +163,7 @@ tbody tr:hover { background: #f4f7fc; }
 .status-success, .erp-status-confirmada { color: var(--color-success); background: var(--color-success-bg); }
 .status-warning, .erp-status-sugerida, .erp-status-sem_correspondencia { color: var(--color-warning); background: var(--color-warning-bg); }
 .status-danger, .erp-status-divergencias { color: var(--color-danger); background: var(--color-danger-bg); }
+.status-info { color: var(--color-info); background: var(--color-info-bg); }
 .doc-tabs { border-color: var(--color-border); }
 .doc-filters { grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--color-subtle); padding: 16px; border-radius: 8px; }
 .doc-filters label { font-size: 12px; color: var(--color-muted); font-weight: 500; }
