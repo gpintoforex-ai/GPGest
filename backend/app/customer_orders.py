@@ -581,6 +581,10 @@ def line_view(db, line, notified=False):
     }
 
 
+def order_number(row):
+    return json.loads(row.data).get("number") or "PC-" + row.id[:8].upper()
+
+
 def order_view(db, row):
     notified = contact_status(db, row.id)
     rows = prefetched(db, "lines", row.id)
@@ -591,7 +595,7 @@ def order_view(db, row):
     return {
         **data,
         "id": row.id,
-        "number": "PC-" + row.id[:8].upper(),
+        "number": order_number(row),
         "store_id": row.store_id,
         "customer_id": row.customer_id,
         "created_at": row.created_at,
@@ -879,6 +883,8 @@ def create(data: OrderInput, user=Depends(current), db: Session = Depends(db_ses
     )
     db.add(row)
     db.flush()
+    raw["number"] = "PC-" + row.id.replace("-", "").upper()
+    row.data = dump(raw)
     for item in data.lines:
         if not item.description.strip():
             fail("Indique a descrição de cada produto.")
@@ -1045,7 +1051,7 @@ def line_action(
                     quantity=amount,
                     net_sales=amount * D(price or 0) / 100,
                     reason=data.reason,
-                    document="PC-" + row.id[:8],
+                    document=order_number(row),
                     request_key=data.request_key + ":" + hold.id,
                 ),
                 authorize,
@@ -1309,7 +1315,7 @@ def prepare(
         kind="order",
         store_id=row.store_id,
         supplier_id=row.supplier_id,
-        document="EC-" + row.id[:8].upper(),
+        document="EC-" + row.id.replace("-", "").upper(),
         expected_date=date.today() + timedelta(days=config.lead_days),
         contact=config.email or supplier(db, row.supplier_id).email,
         notes=raw.get("notes", ""),
@@ -1506,7 +1512,7 @@ def contact_pdf(order, message):
     styles = getSampleStyleSheet()
     SimpleDocTemplate(out).build(
         [
-            Paragraph(escape("Pedido PC-" + order.id[:8].upper()), styles["Title"]),
+            Paragraph(escape("Pedido " + order_number(order)), styles["Title"]),
             Spacer(1, 12),
             Paragraph(escape(message).replace("\n", "<br/>"), styles["Normal"]),
             Spacer(1, 12),
@@ -1616,7 +1622,7 @@ def prepare_contact(
                             "key": key,
                             "sha256": hashlib.sha256(pdf).hexdigest(),
                             "original_name": key,
-                            "document": "PC-" + row.id[:8],
+                            "document": order_number(row),
                             "supplier": raw["customer_name"],
                             "amount_cents": 0,
                             "date": date.today().isoformat(),

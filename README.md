@@ -235,3 +235,5 @@ O módulo integrado está em **Tabelas → Artigos e validades**, com catálogo 
 ## Encomendas de clientes
 
 Disponível em **Compras e Stock → Encomendas de clientes**, com pedidos, reservas, simulação por fornecedor, compras, receções parciais, contactos e entregas. Consulte [utilização, arquitetura e limitações](docs/ENCOMENDAS-CLIENTES.md). Requer a migração 0057 antes de reiniciar o backend.
+
+A evolução do [ciclo integrado de encomendas](docs/CICLO-ENCOMENDAS.md) acrescenta recomendações de reposição, originais/OCR/cloud, conferência tripla, propostas e escritas Wintouch confirmadas, e automatizações autorizadas por loja. Requer a migração 0058; consulte os limites do stock ERP e dos documentos suportados antes de ativar escritas.

@@ -16,6 +16,7 @@ from .models import (
     BusinessEntity,
     CustomerOrderLine,
     CustomerPurchaseSimulation,
+    OrderReplenishmentPolicy,
     ProcurementDocument,
     StockArticle,
     StockEntry,
@@ -876,6 +877,11 @@ def register_routes(app, current, authorize, scope, audit):
             or db.scalar(
                 select(CustomerOrderLine.id)
                 .where(CustomerOrderLine.article_id == identifier)
+                .limit(1)
+            )
+            or db.scalar(
+                select(OrderReplenishmentPolicy.id)
+                .where(OrderReplenishmentPolicy.article_id == identifier)
                 .limit(1)
             )
             or any(

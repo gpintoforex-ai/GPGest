@@ -46,6 +46,7 @@ from .models import (
     ArchiveLink,
     BankAccount,
     BankDeposit,
+    BusinessEntity,
     BankTransaction,
     DocumentPayment,
     DriveDocumentAttachment,
@@ -54,6 +55,7 @@ from .models import (
     Purchase,
     PurchaseAllocation,
     PurchaseAttachment,
+    ProcurementDocument,
     Store,
     User,
     now,
@@ -126,6 +128,13 @@ def store_names(db):
 
 def target_view(db, kind, identifier):
     stores = store_names(db)
+    if kind == "procurement":
+        row = db.get(ProcurementDocument, identifier)
+        if not row:
+            return None
+        data = json.loads(row.data)
+        entity = db.get(BusinessEntity, row.supplier_id)
+        return {"label": data.get("document") or row.id, "entity": entity.name if entity else "", "nif": entity.tax_number if entity else "", "date": data.get("document_date"), "amount_cents": data.get("total_cents"), "store": stores.get(row.store_id, ""), "detail": "Encomenda / compras"}
     if kind == "purchase":
         row = db.get(Purchase, identifier)
         return row and {"label": label(row.document_type, row.document), "entity": row.supplier_name, "nif": row.supplier_nif,

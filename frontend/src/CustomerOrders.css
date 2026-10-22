@@ -121,3 +121,6 @@
     align-items: flex-start;
   }
 }
+.customer-orders h2 {
+  overflow-wrap: anywhere;
+}

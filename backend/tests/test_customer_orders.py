@@ -647,15 +647,18 @@ def test_customer_migration_is_additive_and_repeatable(case, monkeypatch):
     from sqlalchemy import inspect, text
 
     migration = importlib.import_module("migrations.versions.0057_customer_orders")
+    cycle_migration = importlib.import_module("migrations.versions.0058_order_cycle")
     helper = importlib.import_module("migrations.versions.0006_cash_sheet")
     with case[0][2].kw["bind"].begin() as connection:
         schema = connection.scalar(text("SELECT current_schema()"))
         monkeypatch.setattr(helper, "schemas", lambda _: [schema])
         before = connection.scalar(text("SELECT count(*) FROM users"))
         with Operations.context(MigrationContext.configure(connection)):
+            cycle_migration.downgrade()
             migration.downgrade()
             migration.upgrade()
             migration.upgrade()
+            cycle_migration.upgrade()
         assert all(
             model.__tablename__ in inspect(connection).get_table_names(schema=schema)
             for model in migration.TABLES

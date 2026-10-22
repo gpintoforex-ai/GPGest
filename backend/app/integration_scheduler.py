@@ -1,4 +1,4 @@
-"""Opt-in periodic catalog reads. Never sends ERP payments or documents."""
+"""Periodic catalog reads and explicitly authorized company background jobs."""
 from threading import Event, Thread
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -69,6 +69,11 @@ def start_scheduler():
             try:
                 from .archive import scheduled_tick as archive_tick
                 archive_tick()
+            except Exception:
+                pass
+            try:
+                from .order_cycle import scheduled_tick as order_cycle_tick
+                order_cycle_tick()
             except Exception:
                 pass
             try:

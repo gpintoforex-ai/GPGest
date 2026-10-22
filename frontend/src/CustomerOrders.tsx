@@ -20,16 +20,23 @@ import {
 import { DataTable } from "./components/DataTable";
 import { MetricCard } from "./components/BusinessUI";
 import "./CustomerOrders.css";
+import {
+  ERPCatalogPicker,
+  OrderCyclePanel,
+  ReplenishmentRecommendations,
+  StockAvailability,
+} from "./OrderCycle";
 
 type Row = Record<string, any>;
 const tabs = [
   ["resumo", "Resumo"],
-  ["pedidos", "Pedidos de clientes"],
-  ["pendentes", "Por encomendar"],
-  ["fornecedores", "Fornecedores"],
-  ["simulacoes", "Simulações"],
-  ["rececoes", "Receções"],
-  ["entregas", "Entregas"],
+  ["pedidos", "Encomendas de Clientes"],
+  ["pendentes", "Necessidades de Compra"],
+  ["simulacoes", "Simulador de Fornecedores"],
+  ["fornecedores", "Encomendas a Fornecedores"],
+  ["rececoes", "Receção e OCR"],
+  ["conferencia", "Conferência ERP"],
+  ["entregas", "Levantamentos"],
   ["historico", "Histórico"],
 ];
 const qty = (value: unknown) =>
@@ -1274,6 +1281,51 @@ export default function CustomerOrders({
         </>
       )}
       {area === "entregas" && display(ready, "orders")}
+      {area === "conferencia" &&
+        (canBuy ? (
+          <OrderCyclePanel
+            mode="review"
+            store={store}
+            stores={stores}
+            simulations={simulations}
+            catalog={catalog}
+            navigate={navigate}
+          />
+        ) : (
+          <Notice>
+            A conferência de compras está reservada à gestão autorizada.
+          </Notice>
+        ))}
+      {area === "rececoes" && canBuy && (
+        <details>
+          <summary>Originais, OCR e cloud</summary>
+          <OrderCyclePanel
+            mode="receiving"
+            store={store}
+            stores={stores}
+            simulations={simulations}
+            catalog={catalog}
+            navigate={navigate}
+          />
+        </details>
+      )}
+      {area === "pendentes" && canBuy && (
+        <details>
+          <summary>Necessidades de reposição e razões</summary>
+          <ReplenishmentRecommendations
+            storeId={store || stores[0]?.id || ""}
+          />
+        </details>
+      )}
+      {area === "fornecedores" && canBuy && (
+        <>
+          <h3>Encomendas preparadas e acompanhamento</h3>
+          {display(
+            simulations.filter((s) => s.procurement_id),
+            "simulations",
+          )}
+        </>
+      )}
       {area === "historico" && display(history, "history")}
 
       {active && (
@@ -1285,6 +1337,73 @@ export default function CustomerOrders({
           <h2>
             {active.number} · {active.customer_name}
           </h2>
+          {active.ready && (
+            <p>
+              Valor estimado dos produtos disponíveis, sem IVA:{" "}
+              {money(
+                active.lines.reduce(
+                  (total: number, line: Row) =>
+                    total +
+                    (line.sale_price_cents == null
+                      ? 0
+                      : Number(line.sale_price_cents) *
+                        Number(line.quantities.available || 0)),
+                  0,
+                ),
+              )}
+              .{" "}
+              {active.lines.some(
+                (line: Row) =>
+                  Number(line.quantities.available) > 0 &&
+                  line.sale_price_cents == null,
+              )
+                ? "Existem preços por confirmar. "
+                : ""}
+              O pagamento e o documento fiscal seguem o circuito de faturação.
+            </p>
+          )}
+          <StockAvailability
+            storeId={active.store_id}
+            articleIds={active.lines
+              .map((line: Row) => line.article_id)
+              .filter(Boolean)}
+          />
+          <ol
+            className="order-cycle-progress"
+            aria-label="Progresso da encomenda"
+          >
+            {[
+              "Registo",
+              "Compra / reserva",
+              "Disponibilidade física",
+              "Contacto",
+              "Levantamento",
+            ].map((label, index) => (
+              <li
+                key={label}
+                aria-current={
+                  index ===
+                  (active.closed
+                    ? 4
+                    : active.notified
+                      ? 3
+                      : active.ready
+                        ? 2
+                        : active.lines.some(
+                              (line: Row) =>
+                                Number(line.quantities.ordered) > 0 ||
+                                Number(line.quantities.simulated) > 0,
+                            )
+                          ? 1
+                          : 0)
+                    ? "step"
+                    : undefined
+                }
+              >
+                {label}
+              </li>
+            ))}
+          </ol>
           <p>
             {day(active.requested_at)} · Entrega prevista:{" "}
             {day(active.due_date)} ·{" "}
@@ -2035,6 +2154,25 @@ export default function CustomerOrders({
                           conhecidos. Não cria um artigo no ERP.
                         </p>
                       )}
+                      <ERPCatalogPicker
+                        canAttach={!!catalog.permissions?.adjust_stock}
+                        onSelect={(a) => {
+                          editLine(i, {
+                            article_id: a.id,
+                            description: a.name,
+                            supplier_id: a.supplier_id || l.supplier_id || "",
+                          });
+                          setCatalog((c) => ({
+                            ...c,
+                            articles: [
+                              ...c.articles.filter(
+                                (item: Row) => item.id !== a.id,
+                              ),
+                              a,
+                            ],
+                          }));
+                        }}
+                      />
                       <div className="co-grid">
                         {[
                           ["description", "Descrição"],
@@ -2460,6 +2598,41 @@ export default function CustomerOrders({
                       >
                         Calcular simulação
                       </ActionButton>
+                      <details>
+                        <summary>
+                          Artigos recomendados para completar a compra
+                        </summary>
+                        <ReplenishmentRecommendations
+                          storeId={draft.store_id}
+                          supplierId={draft.supplier_id}
+                          onAdd={(item) => {
+                            const lines = structuredClone(draft.lines);
+                            const found = lines.find(
+                              (line: Row) =>
+                                line.article_id === item.article_id,
+                            );
+                            if (found)
+                              found.quantity = String(
+                                Math.max(
+                                  Number(found.quantity),
+                                  Number(item.quantity),
+                                ),
+                              );
+                            else
+                              lines.push({
+                                article_id: item.article_id,
+                                description: item.description,
+                                quantity: item.quantity,
+                                unit_cost: item.unit_cost,
+                                vat: item.vat,
+                                discount: null,
+                                allocations: [],
+                              });
+                            setDraft({ ...draft, lines });
+                            setPreview(null);
+                          }}
+                        />
+                      </details>
                       {preview && (
                         <SimulationTotals
                           totals={preview}

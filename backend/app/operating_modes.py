@@ -23,6 +23,7 @@ from .schemas import Strict
 
 RESOURCES = {"products": "Artigos", "entities": "Clientes e fornecedores", "cash_accounts": "Contas de caixa", "sales": "Documentos, valores em aberto e movimentos", "purchase_documents": "Documentos de compras", "rubrics": "Rubricas"}
 CAPABILITIES = {"read_products": "Consultar artigos", "read_stocks": "Consultar quantidades em stock", "read_entities": "Consultar clientes e fornecedores", "read_accounts": "Consultar contas de caixa", "read_documents": "Consultar documentos", "read_open_items": "Consultar valores em aberto", "read_payments": "Consultar recebimentos e pagamentos", "read_rubrics": "Consultar rubricas", "write_rubrics": "Criar rubricas", "write_settlements": "Registar pagamentos e recebimentos", "write_expenses": "Criar documentos de despesas"}
+CAPABILITIES.update({"write_products": "Criar artigos aprovados", "write_purchase_documents": "Criar compras conferidas"})
 CONNECTORS = {
     "wintouch": {"name": "Wintouch", "operational": True, "capabilities": [key for key in CAPABILITIES if key not in ("write_expenses", "read_stocks")], "incremental": False, "limitations": ["Os catálogos usam snapshots idempotentes; não existe cursor incremental validado.", "A criação de documentos de despesas e a consulta de quantidades em stock não estão implementadas neste conector."]},
     "eticadata": {"name": "Eticadata", "operational": False, "capabilities": [], "limitations": ["Falta um mecanismo de acesso documentado, autenticação, contratos de documentos e liquidações, versões e confirmação de escrita."]},

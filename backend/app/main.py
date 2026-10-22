@@ -2211,3 +2211,5 @@ app.include_router(archive_assistant_router)
 
 from .customer_orders import router as customer_orders_router
 app.include_router(customer_orders_router)
+from .order_cycle import router as order_cycle_router
+app.include_router(order_cycle_router)

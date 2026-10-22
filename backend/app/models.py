@@ -1445,6 +1445,47 @@ class CustomerOrderEvent(Base):
     data: Mapped[str] = mapped_column(Text, default="{}")
 
 
+class OrderReplenishmentPolicy(Base):
+    __tablename__ = "order_replenishment_policies"
+    __table_args__ = (UniqueConstraint("store_id", "article_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
+    article_id: Mapped[str] = mapped_column(ForeignKey("stock_articles.id"), index=True)
+    revision: Mapped[int] = mapped_column(default=0)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class OrderDocumentReview(Base):
+    __tablename__ = "order_document_reviews"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    document_id: Mapped[str] = mapped_column(ForeignKey("archive_documents.id"), unique=True)
+    simulation_id: Mapped[str] = mapped_column(ForeignKey("customer_purchase_simulations.id"), index=True)
+    receipt_id: Mapped[str | None] = mapped_column(ForeignKey("procurement_documents.id"), nullable=True)
+    procurement_id: Mapped[str | None] = mapped_column(ForeignKey("procurement_documents.id"), unique=True, nullable=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    revision: Mapped[int] = mapped_column(default=0)
+    status: Mapped[str] = mapped_column(String(30), default="draft")
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    drive_id: Mapped[str] = mapped_column(String(300), default="")
+    drive_folder: Mapped[str] = mapped_column(String(300), default="")
+    account: Mapped[str] = mapped_column(String(200), default="")
+    cloud_status: Mapped[str] = mapped_column(String(30), default="pending")
+    cloud_error: Mapped[str] = mapped_column(Text, default="")
+    name: Mapped[str] = mapped_column(String(300), default="")
+    mime: Mapped[str] = mapped_column(String(100), default="")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    digest: Mapped[str] = mapped_column(String(64), default="")
+
+
+class OrderCycleSettings(Base):
+    __tablename__ = "order_cycle_settings"
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    revision: Mapped[int] = mapped_column(default=0)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+
+
 class ProcurementLink(Base):
     __tablename__ = "procurement_links"
     __table_args__ = (UniqueConstraint("document_id", "line_index"),)

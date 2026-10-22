@@ -93,6 +93,7 @@ ORIGINS = {
     "anexo_deposito": "Anexo de depósito",
 }
 TARGETS = {
+    "procurement": "Encomenda ao fornecedor",
     "purchase": "Compra / e-Fatura",
     "erp_document": "Compra do ERP",
     "bank_transaction": "Movimento bancário",
@@ -546,6 +547,10 @@ def extract_document(db, doc, config):
         raise HTTPException(415, "Formato sem extração automática (use PDF, JPG ou PNG). Preencha os dados manualmente.")
     evidence = extract(raw, mime, use_ocr=config.ocr_enabled, keep_text=True)
     apply_extraction(db, doc, evidence)
+    from .purchase_line_evidence import extract_lines
+    extraction = json.loads(doc.extraction or "{}")
+    extraction["purchase_lines"] = extract_lines(evidence.get("text", ""))
+    doc.extraction = json.dumps(extraction, ensure_ascii=False)
     doc.processing_status = "processado"
     event(db, doc.id, None, "processado", {"fonte": evidence.get("source"), "avisos": len(evidence.get("warnings", []))})
     queue(db, doc.id, "match", reset=True)
@@ -831,6 +836,9 @@ def process_jobs(db, limit=10, deadline_seconds=50):
             doc = db.get(ArchiveDocument, job.document_id)
             if job.kind == "extract":
                 extract_document(db, doc, config)
+            elif job.kind == "order_cloud":
+                from .order_cycle import transfer_original
+                transfer_original(db, doc)
             else:
                 match_document(db, doc, config)
             job.status, job.error, job.updated_at = "concluido", "", now()

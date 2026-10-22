@@ -262,15 +262,18 @@ def test_procurement_migration_recreates_tables_and_purchase_link(case,monkeypat
     # Current metadata includes customer-order links to purchasing documents.
     # Roll back that dependent migration before exercising the older one.
     customer_migration=importlib.import_module('migrations.versions.0057_customer_orders')
+    cycle_migration=importlib.import_module('migrations.versions.0058_order_cycle')
     helper=importlib.import_module('migrations.versions.0006_cash_sheet')
     with stock[2].kw['bind'].begin() as conn:
         schema=conn.scalar(text('SELECT current_schema()'))
         monkeypatch.setattr(helper,'schemas',lambda _:[schema])
         before=conn.scalar(text('SELECT count(*) FROM users'))
         with Operations.context(MigrationContext.configure(conn)):
+            cycle_migration.downgrade()
             customer_migration.downgrade()
             migration.downgrade();migration.upgrade();migration.upgrade()
             customer_migration.upgrade()
+            cycle_migration.upgrade()
         assert {'procurement_documents','procurement_links'} <= set(inspect(conn).get_table_names(schema=schema))
         assert 'purchase_id' in {c['name'] for c in inspect(conn).get_columns('planned_movements',schema=schema)}
         assert conn.scalar(text('SELECT count(*) FROM users'))==before
