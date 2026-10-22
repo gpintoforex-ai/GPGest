@@ -12,11 +12,12 @@ import { analyse, detectDocument, type Corners, type DetectionReason } from "./e
 export type LiveDetection = { corners: Corners; reason: DetectionReason; at: number } | null;
 
 const INTERVAL = 120;   // ms entre análises (ajustado automaticamente em dispositivos lentos)
-const HOLD = 1000;      // ms de estabilidade antes da captura automática
-const STEADY = 0.02;    // deslocação máxima de um canto entre análises (fração da imagem)
+const HOLD = 800;       // ms de estabilidade antes da captura automática
+const STEADY = 0.03;    // deslocação máxima de um canto face ao início da contagem (fração da imagem)
+const GRACE = 2;        // análises seguidas sem documento toleradas (reflexo, foco a ajustar) sem recomeçar
 const SNAP = 0.08;      // acima disto o contorno salta para a nova posição em vez de suavizar
 const HINT_DELAY = 500; // ms que um novo estado tem de durar antes de mudar a indicação
-const SHAKE = 4;        // diferença média de brilho entre análises acima da qual a imagem está a tremer
+const SHAKE = 9;        // diferença média de brilho entre análises acima da qual a imagem está a mexer
 
 const HINTS: Record<DetectionReason | "steady" | "manual" | "captured", string> = {
   none: "A procurar o documento… Use um fundo escuro e liso e boa luz.",
@@ -59,7 +60,8 @@ export default function LiveEdges({ video, active, autoCapture, onCapture, lates
     if (!active) { setState(s => ({ ...s, corners: null, progress: 0 })); return; }
     // fired: já fotografado este documento; só volta a disparar quando o documento muda ou sai da imagem.
     let frame = 0, last = 0, interval = INTERVAL, steadySince = 0, misses = 0, fired = false, firedAt: Corners | null = null, lost = 0, seenShots = shots.current;
-    let shown: Corners | null = null, previous: Corners | null = null;
+    // anchor: cantos no início da contagem; a estabilidade mede-se face a eles (sem acumular desvios).
+    let shown: Corners | null = null, anchor: Corners | null = null, glitches = 0;
     let candidate: keyof typeof HINTS = "none", candidateSince = 0, current: keyof typeof HINTS = "none";
     const canvas = document.createElement("canvas");
     let before: Float32Array | null = null; // brilho (amostrado) da análise anterior, para medir o tremor
@@ -91,13 +93,16 @@ export default function LiveEdges({ video, active, autoCapture, onCapture, lates
       }
       if (result.corners) {
         misses = 0;
-        const movement = previous ? distance(previous, result.corners) : 1;
-        previous = result.corners;
         shown = shown && distance(shown, result.corners) < SNAP ? blend(shown, result.corners, 0.5) : result.corners;
-        // Só conta como imóvel com os cantos parados e a imagem sem tremer (fotografia nítida).
-        steadySince = result.reason === "ok" && movement < STEADY && shake < SHAKE ? steadySince || time : 0;
+        // Imóvel: cantos perto dos do início da contagem e imagem sem movimento brusco. Uma análise que
+        // falhe pontualmente não recomeça a contagem (ver GRACE); a fotografia escolhe depois a imagem
+        // mais nítida de uma rajada, por isso não se exige nitidez perfeita em cada análise.
+        const good = result.reason === "ok" && shake < SHAKE;
+        if (good && anchor && distance(anchor, result.corners) >= STEADY) { anchor = result.corners; steadySince = time; glitches = 0; } // mexeu: recomeça daqui
+        else if (good) { anchor = anchor || result.corners; steadySince = steadySince || time; glitches = 0; }
+        else if (++glitches > GRACE) { steadySince = 0; anchor = null; }
       } else {
-        previous = null; steadySince = 0;
+        if (++glitches > GRACE) { steadySince = 0; anchor = null; }
         if (++misses > 3) shown = null; // mantém o último contorno por instantes, sem piscar
       }
       const progress = steadySince && automatic.current && !fired ? Math.min(1, (time - steadySince) / HOLD) : 0;
@@ -106,7 +111,7 @@ export default function LiveEdges({ video, active, autoCapture, onCapture, lates
       if (next !== candidate) { candidate = next; candidateSince = time; }
       if (next !== current && (RANK[next] >= RANK[current] || time - candidateSince >= HINT_DELAY)) { current = next; setHint(next); }
       setState({ corners: shown, reason: result.corners ? result.reason : "none", progress, size: [element.videoWidth, element.videoHeight] });
-      if (progress >= 1 && shown && !fired) {
+      if (progress >= 1 && shown && !fired && glitches === 0) {
         fired = true; firedAt = shown; steadySince = 0;
         capture.current(shown);
       }

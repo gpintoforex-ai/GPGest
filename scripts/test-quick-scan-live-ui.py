@@ -44,8 +44,9 @@ def rotated(cx, cy, w, h, degrees):
             for x, y in ((-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2))]
 
 
-def video(path, quad):
-    """Vídeo Y4M (4:2:0) estático: mesa de madeira e, opcionalmente, uma fatura com texto."""
+def video(path, quad, glare_every=0):
+    """Vídeo Y4M (4:2:0) estático: mesa de madeira e, opcionalmente, uma fatura com texto. Com
+    `glare_every`, um em cada N fotogramas fica branco (reflexo ou exposição a ajustar)."""
     image = Image.new("RGB", (WIDTH, HEIGHT), (120, 80, 44))
     draw = ImageDraw.Draw(image)
     for y in range(0, HEIGHT, 7):  # veios da madeira
@@ -59,7 +60,9 @@ def video(path, quad):
     y_plane, cb, cr = image.convert("YCbCr").split()
     cb, cr = cb.resize((WIDTH // 2, HEIGHT // 2), Image.BOX), cr.resize((WIDTH // 2, HEIGHT // 2), Image.BOX)
     frame = b"FRAME\n" + y_plane.tobytes() + cb.tobytes() + cr.tobytes()
-    path.write_bytes(f"YUV4MPEG2 W{WIDTH} H{HEIGHT} F30:1 Ip A1:1 C420jpeg\n".encode() + frame * 30)
+    glare = b"FRAME\n" + bytes([250]) * (WIDTH * HEIGHT) + bytes([128]) * (WIDTH * HEIGHT // 2)
+    frames = [glare if glare_every and i % glare_every == 0 else frame for i in range(30)]
+    path.write_bytes(f"YUV4MPEG2 W{WIDTH} H{HEIGHT} F30:1 Ip A1:1 C420jpeg\n".encode() + b"".join(frames))
 
 
 def corners_of(page):
@@ -85,6 +88,7 @@ work = Path(tempfile.mkdtemp(prefix="quick-scan-live-"))
 truth = rotated(320, 240, 250, 330, 9)
 video(work / "documento.y4m", truth)
 video(work / "mesa.y4m", None)
+video(work / "reflexos.y4m", truth, glare_every=5)
 
 with database.engine.begin() as conn:
     previous_folders = conn.execute(text(f'SELECT folders FROM "{schema}".invoice_workflow_settings WHERE id = \'default\'')).scalar()
@@ -119,6 +123,7 @@ try:
         assert client.post("/api/auth/login", json={"email": email, "password": password}).status_code == 200
         store = client.get("/api/bootstrap").json()["stores"][0]["id"]
         first, second = pairing_code(client, store, "Teste em direto"), pairing_code(client, store, "Teste sem documento")
+        third = pairing_code(client, store, "Teste com reflexos")
 
     with sync_playwright() as p:
         fake = ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"]
@@ -162,6 +167,15 @@ try:
         assert not errors, errors
         browser.close()
 
+        # Imagens falhadas pontuais (1 em cada 5 fotogramas branco) não impedem a captura automática.
+        browser = p.chromium.launch(args=[*fake, f"--use-file-for-fake-video-capture={work / 'reflexos.y4m'}"])
+        page, errors = open_camera(browser, third)
+        expect(page.get_by_role("heading", name="Página 1 pronta")).to_be_visible(timeout=12000)
+        page.get_by_role("button", name="Ajustar cantos").click()
+        flicker = assert_corners(corners_of(page), truth)
+        assert not errors, errors
+        browser.close()
+
         browser = p.chromium.launch(args=[*fake, f"--use-file-for-fake-video-capture={work / 'mesa.y4m'}"])
         page, errors = open_camera(browser, second)
         expect(page.locator(".qs-live-hint")).to_contain_text("A procurar o documento")
@@ -171,7 +185,7 @@ try:
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert not errors, errors
         browser.close()
-    print(f"Deteção em direto: contorno, captura automática (erro {automatic:.1%}), manual (erro {manual:.1%}), sem documento sem captura. Imagens em {work}")
+    print(f"Deteção em direto: contorno, captura automática (erro {automatic:.1%}), manual (erro {manual:.1%}), com reflexos intermitentes (erro {flicker:.1%}), sem documento sem captura. Imagens em {work}")
 finally:
     with database.engine.begin() as conn:
         created = [i for i in conn.execute(text(f'SELECT id FROM "{schema}".quick_scan_accesses')).scalars() if i not in existing]
