@@ -1,7 +1,8 @@
 import { ActionLink } from "./components/InteractionUI";
 import { ActionButton, AppDialog, Notice, confirmAction } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeftRight, Banknote, CreditCard, FileText, LockKeyhole, LockKeyholeOpen, Wallet } from "lucide-react";
+import { ArrowLeftRight, Banknote, CreditCard, FileText, LockKeyhole, LockKeyholeOpen, Smartphone, Wallet } from "lucide-react";
+import { paymentTone } from "./lib/paymentTone";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
 import CashCountDialog from "./CashCountDialog";
@@ -243,10 +244,11 @@ export default function CashSheet({
               const counted = amountFor(row.key);
               const PaymentIcon = row.key === "numerario" ? Banknote
                 : row.key === "cartao" ? CreditCard
+                : row.key === "mbway" ? Smartphone
                 : row.key === "transferencia" ? ArrowLeftRight
                 : String(row.key).startsWith("cheque") ? FileText : Wallet;
               return (
-                <tr key={row.key}>
+                <tr key={row.key} className={paymentTone(String(row.key))}>
                   <td>
                     <strong className="cash-payment-label">
                       <PaymentIcon size={18} aria-hidden="true" />

@@ -27,6 +27,7 @@ import CashSupplierDialog, { type CashSupplierAllocation } from "./CashSupplierD
 import CashReconciliation from "./CashReconciliation";
 import { useCashPreferences } from "./CashPreferences";
 import { SaftReference } from "./SaftSales";
+import { paymentTone } from "./lib/paymentTone";
 import "./CashSheet.css";
 import "./LocalCashSheet.css";
 
@@ -113,7 +114,7 @@ function RealizedDialog({
           <h2 id={titleId}>Registar faturado</h2>
 
         </div>
-        <p className="cash-payment-label">
+        <p className={`cash-payment-label ${paymentTone(row.key)}`}>
           <Icon size={20} aria-hidden="true" /> {row.name}
         </p>
         <Field label={`Faturado ${row.name} (€)`}>
@@ -769,7 +770,7 @@ export default function LocalCashSheet({
                     ? null
                     : confirmed - expected;
                 return (
-                  <tr key={row.key}>
+                  <tr key={row.key} className={paymentTone(row.key)}>
                     <td data-label="Meio de pagamento">
                       <div className="local-cash-method-cell">
                         <span className="cash-payment-label">

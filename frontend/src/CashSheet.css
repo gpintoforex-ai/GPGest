@@ -132,6 +132,23 @@
   flex-shrink: 0;
   color: var(--color-nav, #14263f);
 }
+.payment-tone { --payment-fg: var(--payment-other); --payment-bg: var(--payment-other-bg); }
+.payment-tone-numerario { --payment-fg: var(--payment-cash); --payment-bg: var(--payment-cash-bg); }
+.payment-tone-cartao { --payment-fg: var(--payment-card); --payment-bg: var(--payment-card-bg); }
+.payment-tone-mbway { --payment-fg: var(--payment-mbway); --payment-bg: var(--payment-mbway-bg); }
+.payment-tone-transferencia { --payment-fg: var(--payment-transfer); --payment-bg: var(--payment-transfer-bg); }
+.payment-tone-cheque { --payment-fg: var(--payment-cheque); --payment-bg: var(--payment-cheque-bg); }
+.workspace :is(.payment-tone .cash-payment-label, .cash-payment-label.payment-tone) svg,
+:is(.payment-tone .cash-payment-label, .cash-payment-label.payment-tone) svg {
+  box-sizing: content-box;
+  padding: 6px;
+  border-radius: 8px;
+  color: var(--payment-fg);
+  background: var(--payment-bg);
+}
+.payment-tone > td:first-child {
+  box-shadow: inset 4px 0 var(--payment-fg);
+}
 .cash-sheet-table {
   min-width: 960px;
 }

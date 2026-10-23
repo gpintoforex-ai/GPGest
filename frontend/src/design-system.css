@@ -24,6 +24,18 @@
   --color-danger-bg: #fff0f1;
   --color-info: #24559a;
   --color-info-bg: #eef4ff;
+  --payment-cash: #2f6b12;
+  --payment-cash-bg: #e9f5e1;
+  --payment-card: #1d4f91;
+  --payment-card-bg: #e6eefb;
+  --payment-mbway: #6b3fa0;
+  --payment-mbway-bg: #f1e9fa;
+  --payment-transfer: #0b6475;
+  --payment-transfer-bg: #def3f7;
+  --payment-cheque: #7a4a12;
+  --payment-cheque-bg: #fbefdf;
+  --payment-other: #3d5260;
+  --payment-other-bg: #ecf1f4;
   --font-body: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --font-heading: var(--font-body);
   --space-1: 4px;

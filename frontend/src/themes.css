@@ -16,6 +16,12 @@
   --color-warning: #f2ce7d; --color-warning-bg: #3b321c;
   --color-danger: #ffacb4; --color-danger-bg: #41232d;
   --color-info: #a9c5ff; --color-info-bg: #172e4b;
+  --payment-cash: #a3e07f; --payment-cash-bg: #1f3a14;
+  --payment-card: #9cc2ff; --payment-card-bg: #16304f;
+  --payment-mbway: #d4b5ff; --payment-mbway-bg: #2e2348;
+  --payment-transfer: #7fd6ea; --payment-transfer-bg: #0f3a46;
+  --payment-cheque: #f0c48a; --payment-cheque-bg: #3a2c17;
+  --payment-other: #cbd8df; --payment-other-bg: #1a3440;
   --shadow-panel: 0 1px 3px rgb(0 0 0 / 18%), 0 8px 24px rgb(0 0 0 / 14%);
 }
 [data-theme="dark"] .zela-brand { background: transparent; }
