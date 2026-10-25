@@ -1,0 +1,35 @@
+/* A moving turquoise light along the menu edge, without covering text/icons. */
+@property --menu-current-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+:is(.sidebar nav, .module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs, .setup-step-nav) > button,
+.sidebar nav button {
+  position: relative;
+  isolation: isolate;
+}
+:is(.sidebar nav, .module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs, .setup-step-nav) > button::after,
+.sidebar nav button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1.5px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: conic-gradient(from var(--menu-current-angle), transparent 0deg 220deg, #00b6cf 260deg, #00e5bd 300deg, #d2fff6 318deg, transparent 345deg);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+:is(.sidebar nav, .module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs, .setup-step-nav) button:is(:hover, :focus-visible, .active, .is-active, [aria-current="page"], [aria-selected="true"], [aria-pressed="true"]):not(:disabled)::after {
+  opacity: 1;
+  animation: menu-current-flow 3s linear infinite;
+}
+@keyframes menu-current-flow { to { --menu-current-angle: 360deg; } }
+@media (prefers-reduced-motion: reduce) {
+  :is(.sidebar nav, .module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs, .setup-step-nav) button::after { animation: none !important; transition: none; }
+}

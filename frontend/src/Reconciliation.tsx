@@ -1,3 +1,4 @@
+import { currentMonthRange } from "./components/DatePresets";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import DatePresets from "./components/DatePresets";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
@@ -66,8 +67,8 @@ export default function Reconciliation({
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState("abertos");
   const [search, setSearch] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useState(currentMonthRange().from);
+  const [to, setTo] = useState(currentMonthRange().to);
   const [account,setAccount]=useState(()=>{const saved=sessionStorage.getItem("iazela-bank-reconciliation-account")||"";return accounts.some(a=>a.id===saved&&(!store||a.store_id===store))?saved:"";});
   const [minimum,setMinimum]=useState(""),[maximum,setMaximum]=useState("");
   const [postCommission,setPostCommission]=useState(false);

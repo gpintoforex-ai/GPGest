@@ -3,7 +3,7 @@
 from typing import Literal
 
 from fastapi import Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .db import db_session
@@ -24,28 +24,37 @@ class RemoveRegister(Strict):
     confirmed: Literal[True]
 
 
-def protected_reason(db, identifier):
-    for model, reason in (
-        (CashSession, "sessões ou folhas de caixa no histórico"),
-        (BankDeposit, "depósitos associados"),
-        (PaymentTerminal, "terminais de pagamento associados"),
-        (WintouchCashAccount, "uma associação a uma caixa Wintouch"),
-    ):
-        if db.scalar(select(model.id).where(model.register_id == identifier).limit(1)):
-            return reason
-    if db.scalar(
-        select(IntegrationBinding.id)
-        .where(
-            IntegrationBinding.internal_kind == "register",
-            IntegrationBinding.internal_id == identifier,
+def register_dependencies(db, identifier):
+    """Registos que impedem remover uma caixa: (descrição, quantidade)."""
+    result = [
+        (label, db.scalar(select(func.count()).select_from(model).where(model.register_id == identifier)))
+        for model, label in (
+            (CashSession, "sessões ou folhas de caixa no histórico"),
+            (BankDeposit, "depósitos associados"),
+            (PaymentTerminal, "terminais de pagamento associados"),
+            (WintouchCashAccount, "associação a uma caixa Wintouch"),
         )
-        .limit(1)
-    ):
-        return "uma associação de integração"
+    ]
+    result.append(
+        (
+            "associação de integração",
+            db.scalar(
+                select(func.count())
+                .select_from(IntegrationBinding)
+                .where(
+                    IntegrationBinding.internal_kind == "register",
+                    IntegrationBinding.internal_id == identifier,
+                )
+            ),
+        )
+    )
     reference = db.get(AccountBalanceReference, "cash:" + identifier)
-    if reference and reference.amount_cents:
-        return "um saldo inicial registado"
-    return None
+    result.append(("saldo inicial registado", 1 if reference and reference.amount_cents else 0))
+    return result
+
+
+def protected_reason(db, identifier):
+    return next((label for label, count in register_dependencies(db, identifier) if count), None)
 
 
 def register_routes(app, current, authorize, audit, serial):

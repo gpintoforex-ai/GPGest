@@ -1,6 +1,8 @@
+import { currentMonthRange } from "./components/DatePresets";
+import Info from "./components/InfoIcon";
 import { TaskWorkspace } from "./components/WorkspaceUI";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ArrowDown, ArrowUp, Info, OctagonAlert, RefreshCw, Settings2, CircleDot } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp,  OctagonAlert, RefreshCw, Settings2, CircleDot } from "lucide-react";
 import { api } from "./lib/api";
 import { ActionButton, Notice } from "./components/InteractionUI";
 import DatePresets from "./components/DatePresets";
@@ -28,7 +30,7 @@ function usePreferences(scope: string) {
 
 function MetaInfo({ meta }: { meta?: Row }) {
   if (!meta) return null;
-  return <details className="dash-meta" onClick={e => e.stopPropagation()}><summary aria-label="Como é calculado"><Info size={15} aria-hidden="true" /></summary>
+  return <details className="dash-meta" onClick={e => e.stopPropagation()}><summary aria-label="Como é calculado"><Info text={`${meta.definition}. ${meta.formula}`} size={15} aria-hidden="true" /></summary>
     <div className="dash-meta-body" role="note">
       <p><b>O que significa:</b> {meta.definition}</p><p><b>Fórmula:</b> {meta.formula}</p><p><b>Origem:</b> {meta.source}</p>
       <p><b>Última atualização:</b> {meta.updated_at ? when(meta.updated_at) : "não indicada pela origem"}</p>{meta.limitations && <p><b>Limitações:</b> {meta.limitations}</p>}
@@ -62,7 +64,7 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
   store: string; scopeKey: string; companyName: string; mode: string; role: string; navigate: (page: string) => void; onAction: (kind: string) => void; operation?: ReactNode;
 }) {
   const today = lisbonToday();
-  const [start, setStart] = useState(today.slice(0, 8) + "01"), [end, setEnd] = useState(today);
+  const [start, setStart] = useState(today.slice(0, 8) + "01"), [end, setEnd] = useState(currentMonthRange().to);
   const [compare, setCompare] = useState("previous");
   const [data, setData] = useState<Row | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState("");
   const [customizing, setCustomizing] = useState(false), [version, setVersion] = useState(0);

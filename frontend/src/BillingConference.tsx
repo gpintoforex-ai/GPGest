@@ -1,3 +1,4 @@
+import { currentMonthRange } from "./components/DatePresets";
 import { takePeriod } from "./utils/periodHandoff";
 import DatePresets from "./components/DatePresets";
 import { useEffect, useMemo, useState } from "react";
@@ -29,7 +30,7 @@ const cents = (value: string) => Math.round(Number(value.replace(",", ".")) * 10
 export default function BillingConference({ stores, store, manager }: { stores: Row[]; store: string; manager: boolean }) {
   const today = lisbonToday();
   const [handoff] = useState(() => takePeriod("Faturação e recebimentos"));
-  const [target, setTarget] = useState(store), [start, setStart] = useState(handoff?.start || today.slice(0, 8) + "01"), [end, setEnd] = useState(handoff?.end || today);
+  const [target, setTarget] = useState(store), [start, setStart] = useState(handoff?.start || today.slice(0, 8) + "01"), [end, setEnd] = useState(handoff?.end || currentMonthRange().to);
   const [data, setData] = useState<Row | null>(null), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false), [version, setVersion] = useState(0), [tab, setTab] = useState<Tab>("documentos");
   const [docs, setDocs] = useState<Record<string, string>>({}), [recs, setRecs] = useState<Record<string, string>>({}), [notes, setNotes] = useState("");

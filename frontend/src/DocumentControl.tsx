@@ -1,3 +1,4 @@
+import { currentMonthRange } from "./components/DatePresets";
 import { ActionMenu, ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import { DetailDrawer, TaskWorkspace } from "./components/WorkspaceUI";
 import DatePresets from "./components/DatePresets";
@@ -112,7 +113,7 @@ export default function DocumentControl({
   const [listPreview, setListPreview] = useState<Row | null>(null);
   const [assistantDocId, setAssistantDocId] = useState("");
   const [assistantFrom, setAssistantFrom] = useState(today().slice(0, 8) + "01");
-  const [assistantTo, setAssistantTo] = useState(today());
+  const [assistantTo, setAssistantTo] = useState(currentMonthRange().to);
   const [filters, setFilters] = useState<Row>(() => ({
     ...monthRange(today().slice(0, 4), today().slice(5, 7)),
     search: "",

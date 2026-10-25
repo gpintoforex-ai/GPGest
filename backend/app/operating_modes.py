@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import db as database
+from .table_rules import ensure_usable
 from .db import db_session
 from .models import (AccountBalanceReference, Audit, BankAccount, BusinessEntity, Category,
                      CategoryIntegrationLink, ERPDocument, IntegrationBinding, LiquiditySettlement, Movement,
@@ -23,7 +24,7 @@ from .schemas import Strict
 
 RESOURCES = {"products": "Artigos", "entities": "Clientes e fornecedores", "cash_accounts": "Contas de caixa", "sales": "Documentos, valores em aberto e movimentos", "purchase_documents": "Documentos de compras", "rubrics": "Rubricas"}
 CAPABILITIES = {"read_products": "Consultar artigos", "read_stocks": "Consultar quantidades em stock", "read_entities": "Consultar clientes e fornecedores", "read_accounts": "Consultar contas de caixa", "read_documents": "Consultar documentos", "read_open_items": "Consultar valores em aberto", "read_payments": "Consultar recebimentos e pagamentos", "read_rubrics": "Consultar rubricas", "write_rubrics": "Criar rubricas", "write_settlements": "Registar pagamentos e recebimentos", "write_expenses": "Criar documentos de despesas"}
-CAPABILITIES.update({"write_products": "Criar artigos aprovados", "write_purchase_documents": "Criar compras conferidas"})
+CAPABILITIES.update({"write_products": "Criar artigos aprovados", "write_purchase_documents": "Criar compras conferidas", "write_entities": "Criar e atualizar clientes e fornecedores"})
 CONNECTORS = {
     "wintouch": {"name": "Wintouch", "operational": True, "capabilities": [key for key in CAPABILITIES if key not in ("write_expenses", "read_stocks")], "incremental": False, "limitations": ["Os catálogos usam snapshots idempotentes; não existe cursor incremental validado.", "A criação de documentos de despesas e a consulta de quantidades em stock não estão implementadas neste conector."]},
     "eticadata": {"name": "Eticadata", "operational": False, "capabilities": [], "limitations": ["Falta um mecanismo de acesso documentado, autenticação, contratos de documentos e liquidações, versões e confirmação de escrita."]},
@@ -321,7 +322,7 @@ def register_routes(app, current, authorize, scope, audit, serial):
         existing = db.scalar(select(IntegrationBinding).where(IntegrationBinding.external_kind == "pending", IntegrationBinding.external_id == row.external_id, IntegrationBinding.connector == "wintouch"))
         if existing:
             return {"id": existing.internal_id, "existing": True}
-        if not db.get(Category, data.category_id):
+        if not ensure_usable(db, Category, data.category_id):
             raise HTTPException(404, "Rubrica indisponível.")
         values = json.loads(row.data)
         if not values.get("due_date") or values["amount_cents"] <= 0:

@@ -125,6 +125,8 @@ A base inclui [11 tabelas de integração Wintouch](docs/TABELAS-WINTOUCH.md) po
 
 A [importação manual de artigos, entidades e caixas](docs/SINCRONIZACAO-WINTOUCH.md) está disponível em **Integrações → Wintouch**, com paginação, atualização sem duplicados e histórico. Apenas o administrador da empresa pode gerir a sincronização da sua empresa. Na demonstração exige confirmação explícita; não arranca automaticamente nem altera saldos financeiros.
 
+Todas as tabelas seguem o mesmo [comportamento comum](docs/TABELAS-COMPORTAMENTO-COMUM.md): operações, estado ativo/inativo, remoção com dependências e destino explícito, e sincronização com o ERP com pré-visualização. A tabela de [prazos de pagamento](docs/PRAZOS-PAGAMENTO.md) (**Tabelas → Prazos de pagamento**) aceita prazos criados na IAZELA e importa os da Wintouch, sem os enviar para o ERP; o prazo escolhido em cada cliente/fornecedor serve para calcular vencimentos.
+
 A [importação de vendas e recebimentos](docs/VENDAS-WINTOUCH.md) está disponível em **Integrações → Importar vendas Wintouch**. Selecione loja e período. Documentos, pagamentos e saldos a crédito são apresentados nos menus de movimentos, com origem Wintouch, sem alterar as caixas locais.
 
 As listagens de movimentos reais, previstos e Wintouch têm filtros por datas inclusivas, **Limpar datas** e paginação de 10, 25, 50 ou 100 registos. Nos previstos, a data usada é o vencimento. Cada listagem mantém os seus próprios filtros; mudar a loja, as datas ou o número por página repõe a primeira página. A paginação é aplicada no navegador aos registos carregados.

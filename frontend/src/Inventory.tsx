@@ -1,3 +1,4 @@
+import { currentMonthRange } from "./components/DatePresets";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import OpeningStockImport from "./OpeningStockImport";
 import DatePresets from "./components/DatePresets";
@@ -171,7 +172,7 @@ export default function Inventory({
   const [query, setQuery] = useState(""),
     [filters, setFilters] = useState<Row>({
       start: today().slice(0, 8) + "01",
-      end: today(),
+      end: currentMonthRange().to,
       warehouse_id: "",
       article_id: "",
       category: "",
@@ -1280,7 +1281,7 @@ export default function Inventory({
             >
               <Field label="Armazém">
                 <select name="warehouse_id" required>
-                  {warehouses.map((w) => (
+                  {warehouses.filter((w) => w.active !== false).map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.name}
                     </option>
@@ -1687,7 +1688,7 @@ function MovementForm({
             value={value.warehouse_id}
             onChange={(e) => change("warehouse_id", e.target.value)}
           >
-            {warehouses.map((w) => (
+            {warehouses.filter((w) => w.active !== false || w.id === value.warehouse_id).map((w) => (
               <option key={w.id} value={w.id}>
                 {w.name}
               </option>
@@ -2473,7 +2474,7 @@ function StockImports({
                 }}
               >
                 <option value="">Selecione</option>
-                {catalog.warehouses.map((w: Row) => (
+                {catalog.warehouses.filter((w: Row) => w.active !== false).map((w: Row) => (
                   <option key={w.id} value={w.id}>
                     {w.name}
                   </option>

@@ -1,0 +1,27 @@
+/* Shared action language, including actions rendered in portal dialogs. */
+:root {
+  --action-transfer-ink: #65349b;
+  --action-transfer-bg: #f4edfc;
+}
+:root[data-theme="dark"] {
+  --action-transfer-ink: #dcc0ff;
+  --action-transfer-bg: #38264d;
+}
+:is(.ui-action, .ui-action-link)[data-action-tone="success"] { --button-ink: var(--context-success); --button-bg: var(--context-success-bg); }
+:is(.ui-action, .ui-action-link)[data-action-tone="warning"] { --button-ink: var(--context-warning); --button-bg: var(--context-warning-bg); }
+:is(.ui-action, .ui-action-link)[data-action-tone="danger"] { --button-ink: var(--action-danger); --button-bg: var(--context-danger-bg); }
+:is(.ui-action, .ui-action-link)[data-action-tone="info"] { --button-ink: var(--context-info); --button-bg: var(--context-info-bg); }
+:is(.ui-action, .ui-action-link)[data-action-tone="transfer"] { --button-ink: var(--action-transfer-ink); --button-bg: var(--action-transfer-bg); }
+:is(.ui-action, .ui-action-link)[data-action-tone="neutral"] { --button-ink: var(--text-secondary); --button-bg: var(--surface-secondary); }
+:is(.ui-action, .ui-action-link)[data-action-tone]:not(:disabled):not(.module-tab):not([role="tab"]) {
+  color: var(--button-ink);
+  background: var(--button-bg);
+  border-color: color-mix(in srgb, var(--button-ink) 65%, var(--border-default));
+}
+:is(.ui-action, .ui-action-link)[data-action-tone]:not(:disabled):hover {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+/* Confirm/save remains the main action; destructive actions remain red. */
+.ui-action.primary[data-action-tone="success"]:not(:disabled) { color: #fff; background: var(--action-primary); border-color: var(--action-primary); }
+.ui-action.primary[data-action-tone="danger"]:not(:disabled) { color: var(--button-ink); background: var(--button-bg); border-color: var(--button-ink); }
+:is(.ui-action, .ui-action-link)[data-action-tone] > svg { color: currentColor; flex-shrink: 0; }

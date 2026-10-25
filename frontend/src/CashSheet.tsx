@@ -1,3 +1,4 @@
+import CashConferenceWindow from "./CashConferenceWindow";
 import { ActionLink } from "./components/InteractionUI";
 import { ActionButton, AppDialog, Notice, confirmAction } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
@@ -191,8 +192,33 @@ export default function CashSheet({
         </span>
       </div>
       <CashReconciliation opening={s.retained_fund_cents ?? s.opening_cents} expected={cashRow.expected_cents} counted={cashCount} />
-      <details className="cash-sheet-details">
-        <summary>{s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"}</summary>
+      <CashConferenceWindow title={s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"} busy={busy} error={error} notice={notice} context={`Dia ${s.sheet.day.split("-").reverse().join("/")}`} footer={<div className="actions">
+        {editable && (
+          <>
+            <ActionButton disabled={busy} onClick={() => save(false)}>
+              Guardar contagem
+            </ActionButton>
+            <ActionButton
+              className="primary"
+              disabled={busy}
+              onClick={() => save(true)}
+            >
+              Fechar folha de caixa
+            </ActionButton>
+            <ActionButton disabled={busy} onClick={() => onAction("handover", s)}>
+              Passar caixa
+            </ActionButton>
+          </>
+        )}
+        {s.closed_at && (
+          <ActionLink className="download-link" href={`/api/sessions/${s.id}/report`}>
+            Relatório PDF
+          </ActionLink>
+        )}
+        {s.closed_at && manager && (
+          <ActionButton onClick={() => onAction("reopen", s)}>Reabrir</ActionButton>
+        )}
+      </div>}>
         {canImportErp && <ActionButton disabled={busy || !!s.closed_at} title={s.closed_at ? "Reabra a folha para atualizar a conferência." : undefined} onClick={() => { setConfirmDemo(false); setImportPrompt(true); }}>Importar movimentos do ERP</ActionButton>}
       <p className="footnote">
         Origem dos valores: Manual (IAZELA) e ERP (Wintouch).
@@ -380,35 +406,9 @@ export default function CashSheet({
         </Notice>
       )}
       {notice && <p role="status">{notice}</p>}
-      <div className="actions">
-        {editable && (
-          <>
-            <ActionButton disabled={busy} onClick={() => save(false)}>
-              Guardar contagem
-            </ActionButton>
-            <ActionButton
-              className="primary"
-              disabled={busy}
-              onClick={() => save(true)}
-            >
-              Fechar folha de caixa
-            </ActionButton>
-            <ActionButton disabled={busy} onClick={() => onAction("handover", s)}>
-              Passar caixa
-            </ActionButton>
-          </>
-        )}
-        {s.closed_at && (
-          <ActionLink className="download-link" href={`/api/sessions/${s.id}/report`}>
-            Relatório PDF
-          </ActionLink>
-        )}
-        {s.closed_at && manager && (
-          <ActionButton onClick={() => onAction("reopen", s)}>Reabrir</ActionButton>
-        )}
-      </div>
 
-      </details>
+
+      </CashConferenceWindow>
       {supplierPrompt && <CashSupplierDialog context={`${register} · ${store} · ${s.sheet.day.split("-").reverse().join("/")}`} total={rows.reduce((sum, row) => sum + row.debits_cents, 0)} initialId={stored.debit_supplier?.id} canCreate={manager} busy={busy} error={error} onCancel={() => setSupplierPrompt(false)} onConfirm={allocations => save(true, allocations)} />}
       {closeNotice && <SettlementConfirmation title="Caixa fechada" message={closeNotice} onClose={() => setCloseNotice("")} />}
     </section>

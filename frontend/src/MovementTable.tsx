@@ -1,4 +1,7 @@
 import RubricBadge from "./components/RubricBadge";
+import PaymentIdentity from "./components/PaymentIdentity";
+import { GitBranch, CircleCheck, Settings2 } from "lucide-react";
+import MovementIdentity, { movementIdentity } from "./components/MovementIdentity";
 import { Empty } from "./components/Form";
 import { ActionButton } from "./components/InteractionUI";
 import { formatEuro as money } from "./utils/format";
@@ -31,13 +34,20 @@ export default function MovementTable({
             <th>Entidade</th>
             <th>Pagamento</th>
             <th className="numeric">Montante</th>
-            <th>Origem</th>
-            <th>Estado</th>
-            <th>Ações</th>
+            <th className="movement-header-origin"><span><GitBranch size={15} aria-hidden="true" />Origem</span></th>
+            <th className="movement-header-status"><span><CircleCheck size={15} aria-hidden="true" />Estado</span></th>
+            <th className="movement-header-actions"><span><Settings2 size={15} aria-hidden="true" />Ações</span></th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((m) => (
+          {rows.map((m) => {
+            const identity = movementIdentity(m);
+            const label = m.origin === "deposito_banco"
+              ? m.direction > 0 ? "Depósito no banco" : "Estorno de depósito no banco"
+              : m.origin === "deposito_modulo" && m.reversal_of ? "Estorno da retirada para depósito"
+              : m.kind === "documento" ? "Documento de venda"
+              : m.origin === "bank_statement" ? "Movimento bancário" : labels[m.kind] || m.kind;
+            return (
             <tr key={m.id}>
               <td>
                 {m.origin === "deposito_modulo" || m.origin === "deposito_banco"
@@ -54,13 +64,7 @@ export default function MovementTable({
               </td>
               <td>
                 <strong>
-                  {m.origin === "deposito_banco"
-                    ? m.direction > 0 ? "Depósito no banco" : "Estorno de depósito no banco"
-                    : m.origin === "deposito_modulo" && m.reversal_of
-                    ? "Estorno da retirada para depósito"
-                    : m.kind === "documento"
-                    ? "Documento de venda"
-                    : m.origin === "bank_statement" ? "Movimento bancário" : labels[m.kind] || m.kind}
+                  {identity ? <MovementIdentity reversal={identity === "reversal"}>{identity === "reversal" && !label?.startsWith("Estorno") ? `Estorno · ${label}` : label}</MovementIdentity> : label}
                 </strong>
                 <small>
                   {m.entity || m.document || m.reference || "Manual"}
@@ -69,7 +73,7 @@ export default function MovementTable({
               <td>{(() => { const category = categories.find(row => row.id === m.category_id || (m.category_name && row.name.toLocaleLowerCase("pt-PT") === m.category_name.toLocaleLowerCase("pt-PT"))); return <RubricBadge name={m.category_name || category?.name || (m.external ? "Não indicada na origem" : "—")} icon={category?.icon} color={category?.color} />; })()}</td>
               <td>{m.document || "—"}</td>
               <td>{m.entity || "—"}</td>
-              <td>{m.payment_name || labels[m.payment] || m.payment || "—"}</td>
+              <td><PaymentIdentity name={m.payment_name || labels[m.payment] || m.payment || "—"} code={m.payment} /></td>
               <td className={["numeric", m.direction > 0 ? "positive" : "negative"].filter(Boolean).join(" ")}>
                 {m.direction > 0 ? "+" : "−"}
                 {money(m.amount_cents)}
@@ -126,7 +130,7 @@ export default function MovementTable({
                   )}
               </td>
             </tr>
-          ))}
+          ); })}
         </tbody>
       </table>
     </div>

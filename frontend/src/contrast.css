@@ -120,22 +120,22 @@
 .workspace .cash-reconciliation.unbalanced { color: var(--color-danger); background: var(--color-danger-bg); border-color: var(--color-danger); }
 .workspace .cash-reconciliation :is(b,strong,small,p) { color: inherit; }
 .workspace .cash-reconciliation p { font-size: 13px; }
-.workspace .local-cash-sheet .matched { color: var(--color-success); background: var(--color-success-bg); border-color: var(--color-success); }
-.workspace .local-cash-sheet .pending { color: var(--color-warning); background: var(--color-warning-bg); border-color: var(--color-warning); }
-.workspace .local-cash-sheet .difference { color: var(--color-danger); background: var(--color-danger-bg); border-color: var(--color-danger); }
-.workspace .local-cash-table .local-cash-expected { color: var(--color-warning); background: var(--color-warning-bg); border-color: var(--color-warning); }
-.workspace .cash-sheet-table tfoot,
-.workspace .cash-sheet-table tfoot td { color: var(--text-primary); background: var(--surface-secondary); }
-.workspace .local-cash-sheet :is(.local-cash-expected,.local-cash-amount) :is(small,strong) { color: inherit; }
-.workspace .cash-payment-label svg { color: var(--icon-primary); }
-.workspace :is(.local-cash-badge,.local-cash-conference-help) { color: var(--color-info); background: var(--color-info-bg); }
-.workspace .local-cash-conference-help :is(p,small) { color: inherit; }
-.workspace .local-cash-no-movement { color: var(--color-danger); background: var(--color-danger-bg); border: 1px solid var(--color-danger); }
-.workspace .local-cash-no-movement svg circle { fill: none; stroke: currentColor; }
-.workspace .local-cash-no-movement svg path { stroke: currentColor; }
-.workspace .local-cash-no-movement[aria-pressed="true"] { color: var(--color-danger); background: var(--color-danger-bg); border-color: var(--color-danger); box-shadow: inset 0 0 0 2px var(--color-danger); }
-.workspace .local-cash-no-movement:not(:disabled):hover { outline: 2px solid var(--color-danger); outline-offset: 2px; }
-.workspace .local-cash-no-movement:disabled { color: var(--text-disabled); background: var(--surface-secondary); border-color: var(--border-control); box-shadow: none; }
+:is(.workspace, .cash-conference-window) .local-cash-sheet .matched { color: var(--color-success); background: var(--color-success-bg); border-color: var(--color-success); }
+:is(.workspace, .cash-conference-window) .local-cash-sheet .pending { color: var(--color-warning); background: var(--color-warning-bg); border-color: var(--color-warning); }
+:is(.workspace, .cash-conference-window) .local-cash-sheet .difference { color: var(--color-danger); background: var(--color-danger-bg); border-color: var(--color-danger); }
+:is(.workspace, .cash-conference-window) .local-cash-table .local-cash-expected { color: var(--color-warning); background: var(--color-warning-bg); border-color: var(--color-warning); }
+:is(.workspace, .cash-conference-window) .cash-sheet-table tfoot,
+:is(.workspace, .cash-conference-window) .cash-sheet-table tfoot td { color: var(--text-primary); background: var(--surface-secondary); }
+:is(.workspace, .cash-conference-window) .local-cash-sheet :is(.local-cash-expected,.local-cash-amount) :is(small,strong) { color: inherit; }
+:is(.workspace, .cash-conference-window) .cash-payment-label svg { color: var(--icon-primary); }
+:is(.workspace, .cash-conference-window) :is(.local-cash-badge,.local-cash-conference-help) { color: var(--color-info); background: var(--color-info-bg); }
+:is(.workspace, .cash-conference-window) .local-cash-conference-help :is(p,small) { color: inherit; }
+:is(.workspace, .cash-conference-window) .local-cash-no-movement { color: var(--color-danger); background: var(--color-danger-bg); border: 1px solid var(--color-danger); }
+:is(.workspace, .cash-conference-window) .local-cash-no-movement svg circle { fill: none; stroke: currentColor; }
+:is(.workspace, .cash-conference-window) .local-cash-no-movement svg path { stroke: currentColor; }
+:is(.workspace, .cash-conference-window) .local-cash-no-movement[aria-pressed="true"] { color: var(--color-danger); background: var(--color-danger-bg); border-color: var(--color-danger); box-shadow: inset 0 0 0 2px var(--color-danger); }
+:is(.workspace, .cash-conference-window) .local-cash-no-movement:not(:disabled):hover { outline: 2px solid var(--color-danger); outline-offset: 2px; }
+:is(.workspace, .cash-conference-window) .local-cash-no-movement:disabled { color: var(--text-disabled); background: var(--surface-secondary); border-color: var(--border-control); box-shadow: none; }
 .supplier-picker .supplier-picker-input,
 .supplier-picker .supplier-picker-dropdown { color: var(--text-primary); background: var(--surface-primary); border-color: var(--border-control); }
 .supplier-picker .supplier-picker-dropdown li { color: var(--text-primary); }

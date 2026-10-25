@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 from .models import (
     WintouchCashAccount,
     WintouchEntity,
+    WintouchPaymentMethod,
+    WintouchPaymentTerm,
     WintouchProduct,
     WintouchSyncRun,
     WintouchSyncState,
@@ -98,8 +100,137 @@ def normalize(resource, row):
         ]:
             if source in row:
                 values[target] = string(row[source], maximum)
+        # Morada principal (moradas juntas por with_addresses): morada, localidade, código postal e contactos.
+        if isinstance(row.get("EntityAddresses"), list):
+            main = main_address(row["EntityAddresses"]) or {}
+            lines = [str(main.get(k) or "").strip() for k in ("Address1", "Address2")]
+            values["address"] = string("\n".join(line for line in lines if line), 500) or ""
+            values["locality"] = string(main.get("City"), 120) or ""
+            values["postal_code"] = string(main.get("PostalCode"), 20) or ""
+            if not values.get("email"):
+                values["email"] = string(main.get("Email"), 200) or ""
+            if not values.get("phone"):
+                values["phone"] = string(main.get("Telephone") or main.get("MobilePhone"), 60) or ""
+        # Condições de pagamento confirmadas na listagem /entities (cliente e fornecedor).
+        for source, target in [
+            ("PaymentTermID", "payment_term_external_id"),
+            ("PaymentMethodID", "payment_method_external_id"),
+            ("SupplierPaymentTermID", "supplier_payment_term_external_id"),
+            ("SupplierPaymentMethodID", "supplier_payment_method_external_id"),
+        ]:
+            if source in row:
+                values[target] = string(row[source], 200)
         # IsClient e IsSupplier foram confirmados na resposta da API configurada.
     return values
+
+
+def main_address(addresses):
+    """Morada principal de uma entidade Wintouch (a primeira, se nenhuma estiver marcada)."""
+    rows = [a for a in addresses or [] if isinstance(a, dict)]
+    return next((a for a in rows if a.get("IsMainAddress")), rows[0] if rows else None)
+
+
+def addresses_by_entity(rows):
+    """Moradas da Wintouch agrupadas por entidade (lidas à parte: ver with_addresses)."""
+    grouped = {}
+    for address in rows:
+        if isinstance(address, dict) and address.get("EntityID"):
+            grouped.setdefault(str(address["EntityID"]), []).append(address)
+    return grouped
+
+
+def with_addresses(rows, grouped):
+    """Junta a cada entidade as suas moradas, como faria embed=EntityAddresses.
+
+    A Wintouch recusa listas de entidades com embed=EntityAddresses quando há muitas entidades
+    (HTTP 500 «O nº de registos é demasiado elevado»), mesmo pedindo uma de cada vez; a lista de
+    moradas (/addresses) lê-se sem esse limite. Entidades sem moradas na leitura ficam sem o campo,
+    para não apagar a morada guardada (ex.: entidade criada entre as duas leituras).
+    """
+    return [
+        {**row, "EntityAddresses": grouped[str(row.get("ID"))]}
+        if isinstance(row, dict) and str(row.get("ID")) in grouped
+        else row
+        for row in rows
+    ]
+
+
+def catalog_rows(client, url, path, key, enterprise, maximum=5000):
+    """Lê um catálogo paginado; só GET."""
+    items = []
+    while True:
+        response = client.get(
+            url + path,
+            params={"limit": 200, "skip": len(items)},
+            headers={
+                "Authorization": "ApiKey " + key,
+                "Accept": "application/json",
+                "x-current-enterprise": enterprise,
+            },
+        )
+        if response.status_code != 200:
+            raise SyncError(f"{path} respondeu com HTTP {response.status_code}.")
+        payload = response.json()
+        rows = payload if isinstance(payload, list) else next(
+            (payload[k] for k in ("items", "Items", "data", "Data") if isinstance(payload.get(k), list)),
+            None,
+        ) if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise SyncError(f"Formato de {path} não reconhecido.")
+        if not rows:
+            return items
+        items.extend(rows)
+        if len(items) > maximum:
+            raise SyncError(f"{path} excede {maximum} registos.")
+
+
+def term_days(value):
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 3650:
+        raise SyncError("O número de dias do prazo de pagamento é inválido.")
+    return value
+
+
+def sync_payment_catalogs(db, client, url, key, enterprise, run_id):
+    """Atualiza prazos e meios de pagamento referidos pelas entidades.
+
+    Uma falha aqui não anula as entidades já lidas: devolve um aviso para o histórico.
+    """
+    try:
+        with db.begin_nested():
+            for path, model in (("/payment_terms", WintouchPaymentTerm), ("/payment_methods", WintouchPaymentMethod)):
+                existing = {
+                    item.external_id: item
+                    for item in db.scalars(select(model).where(model.enterprise_id == enterprise))
+                }
+                for row in catalog_rows(client, url, path, key, enterprise):
+                    if not isinstance(row, dict):
+                        raise SyncError(f"{path} contém um registo inválido.")
+                    values = {
+                        "external_id": string(row.get("ID"), 200, True),
+                        "name": string(row.get("Name"), 200, True),
+                    }
+                    if model is WintouchPaymentTerm:
+                        values.update(
+                            code=string(row.get("Code"), 200),
+                            days=term_days(row.get("Days")),
+                            term_type=string(row.get("TermType"), 20),
+                        )
+                    item = existing.get(values["external_id"])
+                    if item is None:
+                        item = model(enterprise_id=enterprise, **values)
+                        db.add(item)
+                    else:
+                        for field, value in values.items():
+                            setattr(item, field, value)
+                    item.sync_run_id = run_id
+                    item.synced_at = now()
+            db.flush()
+    except (SyncError, httpx.HTTPError, ValueError) as exc:
+        detail = str(exc) if isinstance(exc, SyncError) else "falha de comunicação"
+        return f"Entidades importadas, mas os prazos/meios de pagamento não foram atualizados ({detail})."
+    return ""
 
 
 def synchronize(bind, enterprise, resource, url, key):
@@ -134,6 +265,12 @@ def synchronize(bind, enterprise, resource, url, key):
         deadline = monotonic() + 180
         try:
             with httpx.Client(timeout=20, follow_redirects=False) as client:
+                # Moradas lidas à parte (a lista de entidades com embed falha com muitas entidades).
+                addresses = (
+                    addresses_by_entity(catalog_rows(client, url, "/addresses", key, enterprise, maximum=50000))
+                    if resource == "entities"
+                    else None
+                )
                 while True:
                     if monotonic() >= deadline or len(seen) > 50000:
                         raise SyncError(
@@ -194,6 +331,8 @@ def synchronize(bind, enterprise, resource, url, key):
                         break
                     if len(rows) > 200 or len(seen) + len(rows) > 50000:
                         raise SyncError("A API não respeitou os limites de paginação.")
+                    if addresses is not None:
+                        rows = with_addresses(rows, addresses)
                     page = [normalize(resource, r) for r in rows]
                     ids = [r["external_id"] for r in page]
                     if len(set(ids)) != len(ids) or seen.intersection(ids):
@@ -222,6 +361,8 @@ def synchronize(bind, enterprise, resource, url, key):
                         item.synced_at = now()
                     db.flush()
                     seen.update(ids)
+                if resource == "entities":
+                    warning = sync_payment_catalogs(db, client, url, key, enterprise, run_id)
             state = db.scalar(
                 select(WintouchSyncState).where(
                     WintouchSyncState.enterprise_id == enterprise,
@@ -239,6 +380,8 @@ def synchronize(bind, enterprise, resource, url, key):
             run.read_count = len(seen)
             run.inserted_count = inserted
             run.updated_count = updated
+            if resource == "entities" and warning:
+                run.error_message = warning
             db.commit()
         except Exception as exc:
             db.rollback()

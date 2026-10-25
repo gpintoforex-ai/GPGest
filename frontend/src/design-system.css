@@ -24,7 +24,8 @@
   --color-danger-bg: #fff0f1;
   --color-info: #24559a;
   --color-info-bg: #eef4ff;
-  --payment-cash: #2f6b12;
+  --accent-light-edge: #1d9e88;
+  --payment-cash:#2f6b12;
   --payment-cash-bg: #e9f5e1;
   --payment-card: #1d4f91;
   --payment-card-bg: #e6eefb;
@@ -158,6 +159,9 @@ tbody tr:hover { background: #f4f7fc; }
 .rubric-select-options button { display: flex; align-items: center; justify-content: flex-start; width: 100%; min-height: 42px; padding: 6px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--color-text); text-align: left; }
 .rubric-select-options button:hover, .rubric-select-options button[aria-selected="true"] { background: var(--color-surface-soft); }
 .rubric-select-options .rubric-icon { width: 30px; height: 30px; }
+.rubric-select-options [role="listbox"] { display: grid; }
+.rubric-select-search { position: sticky; top: -4px; z-index: 1; width: 100%; min-height: 40px; margin-bottom: 4px; box-sizing: border-box; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); }
+.rubric-select-empty { margin: 8px; color: var(--color-muted); font-size: 0.9rem; }
 .entity-create-controls { display: grid; justify-items: end; gap: 7px; }
 .entity-create-controls small { max-width: 300px; color: var(--color-muted); text-align: right; }
 .rubric-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }

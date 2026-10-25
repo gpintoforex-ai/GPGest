@@ -1,0 +1,22 @@
+.zela-brand { position: relative; isolation: isolate; }
+.zela-brand::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 35%, #64ffe657 44%, #ffffffcf 50%, #00d9d36b 56%, transparent 65%);
+  background-size: 300% 100%;
+  background-position: 150% 0;
+  mask: url("/brand/iazela/IAZELA_logo_transparente.png") center / contain no-repeat;
+  opacity: .7;
+  animation: iazela-logo-light 7s ease-in-out infinite;
+}
+.zela-brand-symbol::after { mask-image: url("/brand/iazela/IAZELA_icone_transparente.png"); }
+.zela-brand:hover::after { animation-duration: 3s; opacity: 1; }
+@keyframes iazela-logo-light {
+  0%, 12% { background-position: 150% 0; }
+  45%, 100% { background-position: -50% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zela-brand::after, .zela-brand:hover::after { animation: none; opacity: 0; }
+}

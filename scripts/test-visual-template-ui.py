@@ -89,6 +89,24 @@ def intercept(route):
     if path == "/documents" and fail_documents:
         route.fulfill(status=503, content_type="application/json", body=json.dumps({"detail": "Falha de ligação de demonstração"}))
         return
+    if path.startswith("/tables/"):
+        # Página comum das tabelas (fixture mínima e neutra, sem integração ERP).
+        key = path.split("/")[2]
+        field = {"name": "name", "label": "Descrição", "type": "text", "required": True, "max_length": 100, "min_length": 2,
+                 "minimum": None, "maximum": None, "options": [], "column": True, "create_only": False, "help": ""}
+        if path.endswith("/records"):
+            row = {"id": key + "-demo", "values": {"name": "Registo demonstração", "active": True}, "labels": {}, "code": None,
+                   "description": "Registo demonstração", "active": True, "origin": "local", "erp_id": "", "erp_code": "",
+                   "sync_state": "apenas_local", "sync_label": "Apenas local", "last_sync_at": None, "last_error": ""}
+            route.fulfill(json={"rows": [row], "total": 1, "total_all": 1, "page": 1, "pages": 1, "size": 25})
+        else:
+            route.fulfill(json={"key": key, "title": key, "singular": "registo", "feminine": False, "description": "Demonstração.",
+                                "fields": [field], "extra_columns": [], "code_field": None, "description_field": "name",
+                                "has_active": True, "allow_create": True, "allow_remove": True, "remove_reason": "",
+                                "permissions": {k: True for k in ("view", "create", "edit", "status", "remove", "import", "export", "erp_remove")},
+                                "erp": {"integrated": False, "available": False, "reason": "A empresa está em modo local.", "operations": {}},
+                                "local_only_reason": ""})
+        return
     result = {
         "/bootstrap": boot, "/sessions": [], "/movements": [], "/dashboard": {}, "/audit": [],
         "/documents": documents, "/documents/erp-catalog": [], "/document-payments": [],

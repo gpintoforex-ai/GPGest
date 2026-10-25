@@ -106,6 +106,19 @@ def test_explicit_association_readonly_external_and_local_metadata(platform):
         db.get(WintouchEntity, remote_id).name = "Nome atualizado pelo ERP"; db.commit()
     listed = next(e for e in client.get("/api/entities").json() if e["id"] == key)
     assert listed["name"] == "Nome atualizado pelo ERP" and listed["category_id"] == boot["categories"][0]["id"] and listed["editable"] is False
+    erp_payload = {**payload, "name": "Nome atualizado pelo ERP"}
+    flags = {"is_customer": True, "is_supplier": True, "active": False}
+    assert client.post("/api/entities/" + key, json={**erp_payload, **flags}).status_code == 200
+    listed = next(e for e in client.get("/api/entities").json() if e["id"] == key)
+    assert {name: listed[name] for name in flags} == flags
+    with tenant(company) as db:
+        assert db.get(WintouchEntity, remote_id).active is True and db.get(WintouchEntity, remote_id).is_customer is False
+        db.get(WintouchEntity, remote_id).is_customer = True; db.commit()
+    # Iguais ao ERP: a entidade volta a seguir a Wintouch.
+    assert client.post("/api/entities/" + key, json={**erp_payload, "is_customer": True}).status_code == 200
+    with tenant(company) as db:
+        db.get(WintouchEntity, remote_id).active = False; db.commit()
+    assert next(e for e in client.get("/api/entities").json() if e["id"] == key)["active"] is False
     apply(client, proposed(mode="local", api_active=False, api_key=""))
     assert client.post("/api/entities/" + key, json={**payload, "name": "Nome local"}).status_code == 200
     with tenant(company) as db:

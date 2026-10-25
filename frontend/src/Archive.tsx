@@ -1,3 +1,4 @@
+import { currentMonthRange } from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import type { ReactNode } from "react";
@@ -373,7 +374,7 @@ export default function Archive({ page, stores, store, navigate }: { page: strin
 }
 
 function DocumentList({ inbox, stores, store, canManage, open, onChanged, meta }: { inbox?: boolean; stores: Store[]; store: string; canManage: boolean; open: (id: string) => void; onChanged: () => void; meta?: Row | null }) {
-  const [filters, setFilters] = useState<Row>({ q: "", doc_type: "", origin: "", status: "", relation: "", start: "", end: "" });
+  const [filters, setFilters] = useState<Row>({ q: "", doc_type: "", origin: "", status: "", relation: "", start: currentMonthRange().from, end: currentMonthRange().to });
   const [data, setData] = useState<Row | null>(null), [offset, setOffset] = useState(0), [selected, setSelected] = useState<Set<string>>(new Set()), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const load = () => {
     const params = new URLSearchParams({ ...filters, store_id: store, offset: String(offset), limit: "50", ...(inbox ? { inbox: "true" } : {}) });

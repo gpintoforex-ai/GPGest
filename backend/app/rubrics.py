@@ -159,8 +159,12 @@ def verify_item(client, url, enterprise, key, headers, link):
     return True
 
 
+# Adaptadores ERP das rubricas (importar/enviar), partilhados com as Tabelas.
+ERP_ADAPTERS = {}
+
+
 def register_routes(app, current, authorize, record, serial):
-    adapters = {}
+    adapters = ERP_ADAPTERS
 
     def selected_adapter(db):
         company_id = db.info.get("company", {}).get("id")

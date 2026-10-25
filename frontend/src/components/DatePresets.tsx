@@ -15,6 +15,14 @@ export function monthsRange(year: number, from: number, to: number): [string, st
   return [iso(new Date(Date.UTC(year, from, 1, 12))), iso(new Date(Date.UTC(year, to + 1, 0, 12)))];
 }
 
+/** Default filter period, using the company's Lisbon calendar. */
+export function currentMonthRange() {
+  const today = lisbonToday();
+  const month = Number(today.slice(5, 7)) - 1;
+  const [from, to] = monthsRange(Number(today.slice(0, 4)), month, month);
+  return { from, to };
+}
+
 /** Semana atual, de segunda a domingo. */
 export function weekRange(today = lisbonToday()): [string, string] {
   const day = utc(today);

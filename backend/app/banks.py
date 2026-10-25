@@ -22,6 +22,30 @@ class DriveStatement(Strict):
     drive_id: str = Field(min_length=1, max_length=200)
 
 
+def bank_accounts(db, bank, lock=False):
+    """Contas bancárias ligadas à instituição (pelo identificador ou, nas antigas, pelo nome)."""
+    query = select(BankAccount).with_for_update() if lock else select(BankAccount)
+    result = []
+    for account in db.scalars(query):
+        try:
+            settings = json.loads(account.settings)
+        except (TypeError, ValueError):
+            settings = {}
+        linked_id = settings.get("bank_id") if isinstance(settings, dict) else None
+        if linked_id == bank.id or (not linked_id and account.bank.casefold() == bank.name.casefold()):
+            result.append(account)
+    return result
+
+
+def rename_bank(db, bank, name):
+    """Muda o nome da instituição e das contas que a usam; devolve o número de contas."""
+    accounts = bank_accounts(db, bank, lock=True) if name != bank.name else []
+    for account in accounts:
+        account.bank = name
+    bank.name = name
+    return len(accounts)
+
+
 @router.get("/api/banks")
 def list_banks(user=Depends(current), db: Session = Depends(db_session)):
     rows = db.scalars(select(BankInstitution).order_by(BankInstitution.name)).all()
@@ -56,18 +80,7 @@ def edit_bank(bank_id: str, data: BankInstitutionEdit, user=Depends(current), db
     if duplicate:
         raise HTTPException(409, "Esta instituição financeira já está registada.")
     previous_name = obj.name
-    renamed_accounts = 0
-    if previous_name != data.name:
-        for account in db.scalars(select(BankAccount).with_for_update()):
-            try:
-                settings = json.loads(account.settings)
-            except (TypeError, ValueError):
-                settings = {}
-            linked_id = settings.get("bank_id") if isinstance(settings, dict) else None
-            if linked_id == obj.id or (not linked_id and account.bank.casefold() == previous_name.casefold()):
-                account.bank = data.name
-                renamed_accounts += 1
-    obj.name = data.name
+    renamed_accounts = rename_bank(db, obj, data.name)
     obj.active = data.active
     record(db, user, "banco_editado", obj.id, {"name": obj.name, "previous_name": previous_name, "active": obj.active, "accounts_updated": renamed_accounts})
     db.commit()

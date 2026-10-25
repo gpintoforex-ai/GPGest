@@ -1,4 +1,5 @@
 /** Official IAZELA artwork supplied by the owner; original files are preserved. */
+import "./Brand.css";
 export default function Brand({ compact = false, transparent = false, className = "" }: {
   compact?: boolean;
   transparent?: boolean;

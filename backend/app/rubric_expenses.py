@@ -30,6 +30,7 @@ from .models import (
     Store,
 )
 from .schemas import Strict
+from .table_rules import ensure_usable
 
 router = APIRouter()
 
@@ -156,7 +157,7 @@ def set_erp_rubric(erp_id: str, data: RubricInput, user=Depends(current), db: Se
     authorize(user, db, doc.store_id, ["administrador", "gestor"])
     shares = {}
     for share in data.allocations:
-        if not db.get(Category, share.category_id):
+        if not ensure_usable(db, Category, share.category_id):
             raise HTTPException(422, "Rubrica inválida.")
         shares[share.category_id] = shares.get(share.category_id, 0) + cents(share.amount)
     if any(value <= 0 for value in shares.values()):

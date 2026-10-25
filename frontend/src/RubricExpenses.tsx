@@ -1,3 +1,4 @@
+import { currentMonthRange } from "./components/DatePresets";
 import { takePeriod } from "./utils/periodHandoff";
 import { useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
@@ -20,7 +21,7 @@ export default function RubricExpenses({ stores, store, categories, admin, integ
 }) {
   const today = lisbonToday();
   const [handoff] = useState(() => takePeriod("Despesas por rubrica"));
-  const [start, setStart] = useState(handoff?.start || today.slice(0, 8) + "01"), [end, setEnd] = useState(handoff?.end || today);
+  const [start, setStart] = useState(handoff?.start || today.slice(0, 8) + "01"), [end, setEnd] = useState(handoff?.end || currentMonthRange().to);
   const [data, setData] = useState<Row | null>(null), [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [rubricFilter, setRubricFilter] = useState<string | null>(null), [search, setSearch] = useState("");

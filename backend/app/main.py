@@ -37,6 +37,7 @@ from .cash_sheet import summary as sheet_summary
 from .access import authorize, cents, current, record, scope, serial
 from .db import db_session
 from .entities import list_entities
+from .table_rules import ensure_usable
 from .models import (
     Access,
     Attachment,
@@ -560,6 +561,8 @@ def open_session(data: OpenCash, user=Depends(current), db: Session = Depends(db
     if not r:
         raise HTTPException(404, "Caixa não encontrada.")
     authorize(user, db, r.store_id, ["administrador", "gestor", "operador"])
+    if not r.active:
+        raise HTTPException(409, f"A caixa «{r.name}» está inativa e não abre novas folhas de caixa. Reative-a em Tabelas → Caixas.")
     if db.scalar(
         select(CashSession).where(CashSession.register_id == r.id, CashSession.closed_at.is_(None))
     ):
@@ -1158,7 +1161,7 @@ def add_movement(data, user, db):
     allowed = cash_local.methods(db, active_only=True) if integration_policy(db)["mode"] == "local" else {"numerario", "cartao", "transferencia", "outro"}
     if data.payment not in allowed:
         raise HTTPException(422, "Escolha um meio de pagamento ativo e configurado nesta empresa.")
-    if not db.get(Category, data.category_id):
+    if not ensure_usable(db, Category, data.category_id):
         raise HTTPException(422, "Categoria inválida.")
     amount = cents(data.amount)
     direction = 1 if data.kind in IN else -1
@@ -1251,7 +1254,7 @@ def planned_list(user=Depends(current), db: Session = Depends(db_session)):
 @app.post("/api/planned-movements")
 def planned_create(data: PlannedCreate, user=Depends(current), db: Session = Depends(db_session)):
     authorize(user, db, data.store_id, ["administrador", "gestor", "operador"])
-    if not db.get(Store, data.store_id) or not db.get(Category, data.category_id):
+    if not db.get(Store, data.store_id) or not ensure_usable(db, Category, data.category_id):
         raise HTTPException(422, "Loja ou categoria inválida.")
     row = PlannedMovement(
         **data.model_dump(exclude={"amount", "due_date"}),
@@ -1271,7 +1274,7 @@ def planned_edit(planned_id: str, data: PlannedCreate, user=Depends(current), db
     if not row:
         raise HTTPException(404, "Movimento previsto não encontrado.")
     authorize(user, db, row.store_id, ["administrador", "gestor"])
-    if data.store_id != row.store_id or not db.get(Category, data.category_id):
+    if data.store_id != row.store_id or not ensure_usable(db, Category, data.category_id, row.category_id):
         raise HTTPException(422, "Mantenha a loja original e escolha uma rubrica válida.")
     paid = planned_summary(db, row)["paid_cents"]
     amount = cents(data.amount)
@@ -1443,7 +1446,7 @@ def transfer(data: Transfer, user=Depends(current), db: Session = Depends(db_ses
     s, r = pairs[data.source_id]
     destination, dr = pairs[data.destination_id]
     authorize(user, db, roles=["administrador", "gestor"])
-    if not db.get(Category, data.category_id):
+    if not ensure_usable(db, Category, data.category_id):
         raise HTTPException(422, "Categoria inválida.")
     amount = cents(data.amount)
     if amount > balance(db, s):
@@ -2188,6 +2191,14 @@ register_inventory_routes(app, current, authorize, scope, record)
 
 from .procurement import register_routes as register_procurement_routes
 register_procurement_routes(app, current, authorize, scope, record)
+
+from .payment_terms import router as payment_terms_router
+app.include_router(payment_terms_router)
+
+# Comportamento comum das tabelas: as definições registam-se ao importar table_specs.
+from . import table_specs  # noqa: E402,F401
+from .table_framework import router as tables_router
+app.include_router(tables_router)
 
 from .bank_balances import router as bank_balances_router
 app.include_router(bank_balances_router)

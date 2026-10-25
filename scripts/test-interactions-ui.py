@@ -248,11 +248,11 @@ try:
             dialog.locator(".ui-dialog-dismissbar button").click()
 
         navigate("Bancos", "Tabelas")
-        opener = page.get_by_role("button", name="Adicionar banco", exact=True)
+        opener = page.get_by_role("button", name="Novo banco", exact=True)
         opener.click()
-        bank = page.get_by_role("dialog", name="Adicionar banco", exact=True)
-        expect(bank.get_by_label("Nome do banco", exact=True)).to_be_focused()
-        bank.get_by_label("Nome do banco", exact=True).fill("Banco por guardar")
+        bank = page.get_by_role("dialog", name="Novo banco", exact=True)
+        expect(bank.get_by_label("Descrição", exact=True)).to_be_focused()
+        bank.get_by_label("Descrição", exact=True).fill("Banco por guardar")
         box = bank.bounding_box()
         page.mouse.click(max(0, box["x"] - 8), max(0, box["y"] - 8))
         expect(bank).to_be_visible()
@@ -262,18 +262,18 @@ try:
         expect(discard.get_by_role("button", name="Continuar a editar", exact=True)).to_be_focused()
         page.screenshot(path=str(output / "discard-desktop.png"))
         discard.get_by_role("button", name="Continuar a editar", exact=True).click()
-        expect(bank.get_by_label("Nome do banco", exact=True)).to_have_value("Banco por guardar")
+        expect(bank.get_by_label("Descrição", exact=True)).to_have_value("Banco por guardar")
         close_window(bank)
         discard.get_by_role("button", name="Descartar alterações", exact=True).click()
         expect(bank).to_have_count(0)
         expect(opener).to_be_focused()
         opener.click()
-        bank.get_by_role("button", name="Guardar", exact=True).click()
-        expect(bank.get_by_label("Nome do banco", exact=True)).to_have_attribute(
+        bank.get_by_role("button", name="Criar banco", exact=True).click()
+        expect(bank.get_by_label("Descrição", exact=True)).to_have_attribute(
             "aria-invalid", "true"
         )
         expect(bank.get_by_text("Preencha este campo.", exact=True)).to_be_visible()
-        bank.get_by_label("Nome do banco", exact=True).fill("Banco de teste")
+        bank.get_by_label("Descrição", exact=True).fill("Banco de teste")
         # Two synchronous submissions must produce only one backend operation.
         page.evaluate("""() => {
             const form = document.querySelector('dialog[open] form');
@@ -286,25 +286,25 @@ try:
             }, 50);
         }""")
         expect(bank).to_have_count(0)
-        expect(page.get_by_role("status").filter(has_text="Banco adicionado.")).to_be_visible()
-        assert counts.get("POST /api/banks") == 1, counts
+        expect(page.get_by_role("status").filter(has_text="Banco criado.")).to_be_visible()
+        assert counts.get("POST /api/tables/banks/records") == 1, counts
         assert page.evaluate("window.__savingCheck") == {
             "closeDisabled": True,
             "inputDisabled": True,
             "stillOpen": True,
         }
         opener.click()
-        bank.get_by_label("Nome do banco", exact=True).fill("AB")
-        bank.get_by_role("button", name="Guardar", exact=True).click()
-        expect(bank.get_by_label("Nome do banco", exact=True)).to_have_attribute(
+        bank.get_by_label("Descrição", exact=True).fill("A")
+        bank.get_by_role("button", name="Criar banco", exact=True).click()
+        expect(bank.get_by_label("Descrição", exact=True)).to_have_attribute(
             "aria-invalid", "true"
         )
-        expect(bank.get_by_label("Nome do banco", exact=True)).to_have_value("AB")
-        expect(bank.get_by_text("Introduza pelo menos 3 caracteres.", exact=True)).to_be_visible()
+        expect(bank.get_by_label("Descrição", exact=True)).to_have_value("A")
+        expect(bank.get_by_text("Introduza pelo menos 2 caracteres.", exact=True)).to_be_visible()
         close_window(bank)
         discard.get_by_role("button", name="Continuar a editar", exact=True).click()
-        bank.get_by_label("Nome do banco", exact=True).fill("Banco corrigido")
-        bank.get_by_role("button", name="Guardar", exact=True).click()
+        bank.get_by_label("Descrição", exact=True).fill("Banco corrigido")
+        bank.get_by_role("button", name="Criar banco", exact=True).click()
         expect(bank).to_have_count(0)
         page.screenshot(path=str(output / "iazela-banks-desktop.png"))
         navigate("Operadores / funcionários", "Tabelas")
@@ -315,10 +315,8 @@ try:
         discard.get_by_role("button", name="Descartar alterações", exact=True).click()
         expect(employee).to_have_count(0)
         navigate("Rubricas", "Tabelas")
-        page.locator(".rubric-row").filter(has_text="Vendas").get_by_role(
-            "button", name="Remover", exact=True
-        ).click()
-        rubric = page.get_by_role("dialog", name="Configurar rubricas", exact=True)
+        page.get_by_role("button", name="Remover Vendas", exact=True).click()
+        rubric = page.get_by_role("dialog", name="Remover rubrica", exact=True)
         expect(rubric.get_by_role("button", name="Cancelar", exact=True)).to_be_focused()
         rubric.get_by_role("button", name="Cancelar", exact=True).click()
         expect(rubric).to_have_count(0)
@@ -334,20 +332,25 @@ try:
         accounting.get_by_role("button", name="Cancelar", exact=True).click()
         expect(accounting).to_have_count(0)
         navigate("Clientes", "Tabelas")
-        page.get_by_role("button", name="Criar cliente", exact=True).click()
-        entity = page.get_by_role("dialog", name="Criar entidade", exact=True)
+        page.get_by_role("button", name="Novo cliente", exact=True).click()
+        entity = page.get_by_role("dialog", name="Novo cliente", exact=True)
         entity.get_by_label("Nome", exact=True).fill("Cliente fictício de interface")
-        entity.get_by_role("button", name="Guardar", exact=True).click()
+        entity.get_by_role("button", name="Criar cliente", exact=True).click()
         expect(entity).to_have_count(0)
         customer = page.get_by_role("row").filter(has_text="Cliente fictício de interface")
         expect(customer).to_be_visible()
-        customer.get_by_role("button", name="Remover", exact=True).click()
-        removal = page.get_by_role("alertdialog", name="Remover entidade da lista?", exact=True)
+        remove_customer = page.get_by_role("button", name="Remover Cliente fictício de interface", exact=True)
+        remove_customer.click()
+        removal = page.get_by_role("dialog", name="Remover cliente", exact=True)
         expect(removal.get_by_role("button", name="Cancelar", exact=True)).to_be_focused()
         removal.get_by_role("button", name="Cancelar", exact=True).click()
         expect(customer).to_be_visible()
-        customer.get_by_role("button", name="Remover", exact=True).click()
-        removal.get_by_role("button", name="Remover entidade", exact=True).click()
+        remove_customer.click()
+        removal.get_by_role("radio", name="Remover da aplicação").check()
+        removal.get_by_role("button", name="Remover da aplicação", exact=True).click()
+        confirmation = page.get_by_role("alertdialog", name="Remover da aplicação?", exact=True)
+        expect(confirmation.get_by_role("button", name="Cancelar", exact=True)).to_be_focused()
+        confirmation.get_by_role("button", name="Remover da aplicação", exact=True).click()
         expect(customer).to_have_count(0)
         navigate("Digitalizar documento", "Contabilidade")
         page.locator("main").get_by_role("button", name="Digitalizar documento", exact=True).click()

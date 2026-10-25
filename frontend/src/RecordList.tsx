@@ -1,4 +1,5 @@
-import DatePresets from "./components/DatePresets";
+import DatePresets, { currentMonthRange } from "./components/DatePresets";
+import { paymentTone } from "./lib/paymentTone";
 import { ActionButton, Notice } from "./components/InteractionUI";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ArrowLeftRight, Banknote, CreditCard, FileText, Smartphone, Wallet } from "lucide-react";
@@ -12,7 +13,7 @@ function PaymentLabel({ name }: { name: string }) {
     : name === "Cartão" ? CreditCard
     : name === "Transferência" ? ArrowLeftRight
     : name === "Cheque" || name === "Cheques" ? FileText : Wallet;
-  return <span className="record-payment-label"><Icon size={18} aria-hidden="true" /><span>{name}</span></span>;
+  return <span className={`record-payment-label ${paymentTone(name)}`}><Icon size={18} aria-hidden="true" /><span>{name}</span></span>;
 }
 
 export function paymentGroup(row: Row) {
@@ -72,14 +73,7 @@ export function calendarDay(value: string): string {
 }
 
 export function currentMonth() {
-  const today = calendarDay(new Date().toISOString());
-  const [year, month] = today.split("-").map(Number);
-  const prefix = today.slice(0, 7);
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return {
-    from: `${prefix}-01`,
-    to: `${prefix}-${String(lastDay).padStart(2, "0")}`,
-  };
+  return currentMonthRange();
 }
 
 export default function RecordList({

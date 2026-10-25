@@ -20,6 +20,7 @@ from . import procurement as buying
 from .access import authorize, current, record, scope
 from .db import db_session
 from .email_delivery import SendInput, parts_for
+from .entities import effective_flags
 from .models import (
     BusinessEntity,
     EmailDispatch,
@@ -336,7 +337,8 @@ def entity_reference(db, identifier, kind, materialize=False):
         if not company or not imported or imported.enterprise_id != company.api_enterprise:
             fail("Entidade ERP indisponível nesta empresa.", 404)
         entity = db.scalar(select(BusinessEntity).where(BusinessEntity.wintouch_id == imported.id))
-        if not imported.active or not getattr(imported, "is_" + kind):
+        flags = effective_flags(imported, entity)
+        if not flags["active"] or not flags["is_" + kind]:
             fail("Entidade ERP inativa ou de outro tipo.")
         if not entity and materialize:
             entity = BusinessEntity(

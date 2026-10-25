@@ -20,13 +20,19 @@ from .models import (
     CustomerOrder,
     CustomerOrderLine,
     CustomerPurchaseSimulation,
+    ErpLink,
     Movement,
+    PaymentTerm,
     SupplierOrderTerms,
     WintouchEntity,
+    WintouchPaymentMethod,
+    WintouchPaymentTerm,
 )
 from .operating_modes import policy as integration_policy
+from .payment_terms import payment_days_for
 from .platform_models import Company
 from .schemas import Strict
+from .table_rules import ensure_usable
 
 router = APIRouter()
 
@@ -45,6 +51,10 @@ class EntityEdit(Strict):
     active: bool = True
     # Prazo de pagamento habitual em dias (informação local, também em entidades do ERP).
     payment_days: int | None = Field(default=None, ge=0, le=365)
+    # Prazo da tabela «Prazos de pagamento»; quando indicado, define também payment_days.
+    payment_term_id: str | None = None
+    # Meio de pagamento habitual (tabela «Meios de pagamento»).
+    payment_method_id: str | None = Field(default=None, max_length=20)
 
     @model_validator(mode="after")
     def validate_entity(self):
@@ -67,6 +77,8 @@ def entity_view(entity, source, key):
         "source": source,
         "category_id": getattr(entity, "category_id", None),
         "payment_days": getattr(entity, "payment_days", None),
+        "payment_term_id": getattr(entity, "payment_term_id", None),
+        "payment_method_id": getattr(entity, "payment_method_id", None),
         **{
             name: getattr(entity, name, "")
             for name in (
@@ -83,6 +95,16 @@ def entity_view(entity, source, key):
             )
         },
     }
+
+
+LOCAL_FLAGS = ("is_customer", "is_supplier", "active")
+CONTACT_FIELDS = ("address", "locality", "postal_code", "email", "phone")
+
+
+def effective_flags(imported, override):
+    """Cliente/Fornecedor/Ativo de uma entidade do ERP, com a definição local quando existe."""
+    source = override if override is not None and override.flags_local else imported
+    return {name: bool(getattr(source, name)) for name in LOCAL_FLAGS}
 
 
 def annotate_entity_movement_history(entities, db):
@@ -203,6 +225,26 @@ def lookup_entity_by_nif(tax_number: str, user=Depends(current), db: Session = D
     }
 
 
+def erp_payment_view(imported, terms, methods, local_terms):
+    """Prazo e meio de pagamento da Wintouch, separados para cliente e fornecedor."""
+    view = {}
+    for role, term_id, method_id in (
+        ("customer", imported.payment_term_external_id, imported.payment_method_external_id),
+        (
+            "supplier",
+            imported.supplier_payment_term_external_id,
+            imported.supplier_payment_method_external_id,
+        ),
+    ):
+        term = terms.get(term_id) if term_id else None
+        view[f"erp_{role}_payment_term"] = term.name if term else None
+        view[f"erp_{role}_payment_days"] = term.days if term else None
+        # Linha correspondente na tabela local de prazos (após sincronizar).
+        view[f"erp_{role}_payment_term_id"] = local_terms.get(term.external_id) if term else None
+        view[f"erp_{role}_payment_method"] = methods.get(method_id) if method_id else None
+    return view
+
+
 @router.get("/api/entities")
 def list_entities(user=Depends(current), db: Session = Depends(db_session)):
     local = list(db.scalars(select(BusinessEntity).order_by(BusinessEntity.name)))
@@ -225,12 +267,32 @@ def list_entities(user=Depends(current), db: Session = Depends(db_session)):
     if not enterprise:
         annotate_entity_movement_history(result, db)
         return sorted(result, key=lambda e: e["name"].casefold())
+    terms = {
+        t.external_id: t
+        for t in db.scalars(select(WintouchPaymentTerm).where(WintouchPaymentTerm.enterprise_id == enterprise))
+    }
+    methods = {
+        m.external_id: m.name
+        for m in db.scalars(
+            select(WintouchPaymentMethod).where(WintouchPaymentMethod.enterprise_id == enterprise)
+        )
+    }
+    local_terms = dict(
+        db.execute(
+            select(ErpLink.external_id, ErpLink.local_id).where(
+                ErpLink.table_key == "payment_terms",
+                ErpLink.provider == "wintouch",
+                ErpLink.enterprise_id == enterprise,
+            )
+        ).all()
+    )
     for imported in db.scalars(
         select(WintouchEntity).where(WintouchEntity.enterprise_id == enterprise)
     ):
-        entity = imported if external_primary else overrides.get(imported.id, imported)
-        if isinstance(entity, BusinessEntity) and entity.removed:
+        override = overrides.get(imported.id)
+        if imported.erp_deleted_at is not None or (override is not None and override.removed):
             continue
+        entity = imported if external_primary else (override or imported)
         result.append(
             entity_view(
                 entity,
@@ -239,18 +301,51 @@ def list_entities(user=Depends(current), db: Session = Depends(db_session)):
             )
         )
         result[-1]["editable"] = not external_primary
+        result[-1].update(erp_payment_view(imported, terms, methods, local_terms))
         if external_primary and imported.id in overrides:
             result[-1]["category_id"] = overrides[imported.id].category_id
             result[-1]["payment_days"] = overrides[imported.id].payment_days
+            result[-1]["payment_term_id"] = overrides[imported.id].payment_term_id
+            result[-1]["payment_method_id"] = overrides[imported.id].payment_method_id
+            local = overrides[imported.id]
+            for name in CONTACT_FIELDS:
+                # Contactos alterados na IAZELA (pendentes) ou ainda não recebidos da Wintouch.
+                if local.contact_local or not (result[-1].get(name) or "").strip():
+                    result[-1][name] = getattr(local, name) or result[-1].get(name) or ""
+            result[-1].update(effective_flags(imported, overrides[imported.id]))
     annotate_entity_movement_history(result, db)
     return sorted(result, key=lambda e: e["name"].casefold())
+
+
+def check_payment_method(db, method_id, current=None):
+    """O meio tem de existir na tabela «Meios de pagamento» e estar ativo (salvo se já estava escolhido)."""
+    if not method_id:
+        return
+    from .cash_local import method_catalog
+
+    method = next((m for m in method_catalog(db) if m["id"] == method_id), None)
+    if method is None:
+        raise HTTPException(422, "Meio de pagamento não encontrado.")
+    if not method["active"] and method_id != current:
+        raise HTTPException(422, f"O meio de pagamento «{method['name']}» está inativo e não pode ser escolhido.")
+
+
+def apply_payment_term(db, data, current=None):
+    if data.payment_term_id is None:
+        return
+    term = ensure_usable(db, PaymentTerm, data.payment_term_id, current)
+    if term is None:
+        raise HTTPException(422, "Prazo de pagamento não encontrado.")
+    data.payment_days = payment_days_for(term)
 
 
 @router.post("/api/entities")
 def create_entity(data: EntityEdit, user=Depends(current), db: Session = Depends(db_session)):
     authorize(user, db, roles=["administrador", "gestor"])
-    if data.category_id and not db.get(Category, data.category_id):
+    if data.category_id and not ensure_usable(db, Category, data.category_id):
         raise HTTPException(422, "Rubrica não encontrada.")
+    apply_payment_term(db, data)
+    check_payment_method(db, data.payment_method_id)
     entity = BusinessEntity(**data.model_dump())
     db.add(entity)
     db.flush()
@@ -264,9 +359,19 @@ def edit_entity(
     entity_key: str, data: EntityEdit, user=Depends(current), db: Session = Depends(db_session)
 ):
     authorize(user, db, roles=["administrador", "gestor"])
-    if data.category_id and not db.get(Category, data.category_id):
-        raise HTTPException(422, "Rubrica não encontrada.")
     source, separator, key = entity_key.partition(":")
+    previous = (
+        db.get(BusinessEntity, key)
+        if source == "local"
+        else db.scalar(select(BusinessEntity).where(BusinessEntity.wintouch_id == key))
+    )
+    # Uma rubrica ou um prazo entretanto inativos podem manter-se na ficha que já os tinha.
+    if data.category_id and not ensure_usable(
+        db, Category, data.category_id, previous.category_id if previous else None
+    ):
+        raise HTTPException(422, "Rubrica não encontrada.")
+    apply_payment_term(db, data, previous.payment_term_id if previous else None)
+    check_payment_method(db, data.payment_method_id, previous.payment_method_id if previous else None)
     if not separator or source not in {"local", "wt"}:
         raise HTTPException(404, "Entidade não encontrada.")
     if source == "local":
@@ -283,17 +388,11 @@ def edit_entity(
             config["mode"] == "integrated"
             and config.get("authority", {}).get("entities", "erp") == "erp"
         ):
+            # Nome e NIF pertencem ao ERP. Tipo, estado, morada e contactos podem ser alterados na IAZELA
+            # e ficam pendentes até serem enviados para a Wintouch.
             if any(
                 (getattr(data, field) or "") != (getattr(imported, field) or "")
-                for field in (
-                    "name",
-                    "tax_number",
-                    "email",
-                    "phone",
-                    "is_customer",
-                    "is_supplier",
-                    "active",
-                )
+                for field in ("name", "tax_number")
             ):
                 raise HTTPException(
                     409,
@@ -308,6 +407,14 @@ def edit_entity(
     before = entity_view(entity, source, entity_key) if entity.id else {}
     for name, value in data.model_dump().items():
         setattr(entity, name, value)
+    if source == "wt":
+        # Iguais aos da Wintouch: voltam a seguir o ERP nas sincronizações seguintes.
+        entity.flags_local = any(
+            getattr(data, name) != bool(getattr(imported, name)) for name in LOCAL_FLAGS
+        )
+        entity.contact_local = any(
+            (getattr(data, name) or "").strip() != (getattr(imported, name) or "").strip() for name in CONTACT_FIELDS
+        )
     db.flush()
     record(db, user, "entidade_alterada", entity.id, {"antes": before, "depois": data.model_dump()})
     db.commit()

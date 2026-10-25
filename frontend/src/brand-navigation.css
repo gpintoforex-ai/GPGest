@@ -1,0 +1,35 @@
+/* IAZELA logo colours for navigation inside the workspace. */
+.workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button {
+  position: relative;
+  border-color: color-mix(in srgb, var(--border-default) 65%, #00b8b8);
+  background: linear-gradient(115deg, color-mix(in srgb, var(--surface-primary) 94%, #00dec2), color-mix(in srgb, var(--surface-primary) 94%, #009dce));
+  color: var(--text-primary);
+  box-shadow: 0 2px 5px rgb(0 121 150 / 8%);
+  transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+.workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button:hover:not(:disabled) {
+  border-color: #00a9b3;
+  background: linear-gradient(115deg, color-mix(in srgb, var(--surface-primary) 80%, #00dec2), color-mix(in srgb, var(--surface-primary) 82%, #009dce));
+  color: var(--text-primary);
+  box-shadow: 0 3px 12px rgb(0 188 189 / 22%);
+}
+.workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button:is(.is-active, .active, [aria-selected="true"], [aria-pressed="true"], [aria-current="page"]) {
+  background: linear-gradient(115deg, #00dec2 0%, #00c8c6 50%, #04a8d0 100%);
+  border-color: #008eaa;
+  color: #042c38;
+  box-shadow: 0 3px 12px rgb(0 188 189 / 22%), inset 0 1px 0 rgb(255 255 255 / 32%);
+  font-weight: 700;
+}
+.workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button:focus-visible {
+  outline: 3px solid var(--border-focus);
+  outline-offset: 3px;
+}
+.workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button:disabled {
+  background: var(--surface-secondary);
+  color: var(--text-disabled);
+  border-color: var(--border-default);
+  box-shadow: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button { transition: none; }
+}

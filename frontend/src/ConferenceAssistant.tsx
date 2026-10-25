@@ -1,3 +1,4 @@
+import { currentMonthRange } from "./components/DatePresets";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, CheckCircle, FileText, Mail, Paperclip, RefreshCw, Search } from "lucide-react";
 import { api } from "./lib/api";
@@ -50,7 +51,7 @@ export default function ConferenceAssistant({ stores, defaultStore, filterStore,
 }) {
   const today = lisbonToday();
   const [step, setStep] = useState("files");
-  const [start, setStart] = useState(today.slice(0, 8) + "01"), [end, setEnd] = useState(today);
+  const [start, setStart] = useState(today.slice(0, 8) + "01"), [end, setEnd] = useState(currentMonthRange().to);
   const [store, setStore] = useState(defaultStore || stores[0]?.id || "");
   const [restored, setRestored] = useState(false);
   const [preview, setPreview] = useState<Row | null>(null), [source, setSource] = useState<{ drive?: DriveFile; file?: File } | null>(null);

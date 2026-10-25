@@ -1,6 +1,7 @@
+import InfoIcon from "./components/InfoIcon";
 import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Building2, CheckCircle, CircleHelp, CreditCard, FileUp, Landmark, Plus, Save, Settings, Trash2, Wallet, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, CheckCircle, CreditCard, FileUp, Landmark, Plus, Save, Settings, Trash2, Wallet, X } from "lucide-react";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
 import { VatRegimeFields, vatLabel } from "./FiscalSettings";
@@ -17,7 +18,7 @@ const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Europe/L
 const money = (text: string | null, currency = "EUR") => text?.trim() ? new Intl.NumberFormat("pt-PT", { style: "currency", currency }).format(Number(text.replace(",", "."))) : "Por configurar";
 
 function Hint({ children }: { children: React.ReactNode }) {
-  return <details className="setup-help"><summary><CircleHelp size={17} aria-hidden="true" />Como funciona</summary><div>{children}</div></details>;
+  return <details className="setup-help"><summary><InfoIcon text="Clicar para saber mais" size={17} aria-hidden="true" />Como funciona</summary><div>{children}</div></details>;
 }
 
 export default function CompanySetupPanel(props: Props) {

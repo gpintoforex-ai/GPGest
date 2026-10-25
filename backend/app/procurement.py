@@ -13,6 +13,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from .db import db_session
+from .table_rules import ensure_usable
 from .schemas import Strict
 from . import inventory as stock
 from .models import (BusinessEntity, Category, DocumentERPLink, DocumentState,
@@ -201,9 +202,9 @@ def validate(db, user, payload, authorize):
     authorize(user, db, payload.store_id, ['administrador', 'gestor'])
     stock.require(user, stock.settings(db), 'view_cost')
     supplier(db, payload.supplier_id)
-    if payload.category_id and not db.get(Category, payload.category_id):
+    if payload.category_id and not ensure_usable(db, Category, payload.category_id):
         fail('Rubrica inválida.')
-    if any(line.category_id and not db.get(Category, line.category_id) for line in payload.lines):
+    if any(line.category_id and not ensure_usable(db, Category, line.category_id) for line in payload.lines):
         fail('Rubrica inválida numa das linhas.')
     for line in payload.lines:
         if line.nature == 'goods':

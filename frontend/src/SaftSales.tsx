@@ -1,3 +1,4 @@
+import { currentMonthRange } from "./components/DatePresets";
 import { TaskWorkspace } from "./components/WorkspaceUI";
 import DatePresets from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
@@ -56,7 +57,7 @@ export default function SaftSales({ stores, store, admin, local }: { stores: Row
   const [history, setHistory] = useState<Row | null>(null), [opened, setOpened] = useState<Row | null>(null);
   const [target, setTarget] = useState(store || stores[0]?.id || ""), [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
-  const [mapping, setMapping] = useState<Row | null>(null), [start, setStart] = useState(today.slice(0, 8) + "01"), [end, setEnd] = useState(today);
+  const [mapping, setMapping] = useState<Row | null>(null), [start, setStart] = useState(today.slice(0, 8) + "01"), [end, setEnd] = useState(currentMonthRange().to);
   const [analysis, setAnalysis] = useState<Row | null>(null);
   const running = useRef(false);
   const drive = useDriveFiles(local && admin ? "/saft/drive-files" : null);

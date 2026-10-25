@@ -7,6 +7,9 @@ const tones: Record<string, string> = {
 };
 
 export function paymentTone(key: string): string {
-  const tone = tones[key] ?? (key.startsWith("cheque") ? "cheque" : "outro");
+  const name = key.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  const aliases: Record<string, string> = { nu: "numerario", mo: "numerario", cc: "cartao", cd: "cartao", tb: "transferencia", ch: "cheque", "mb way": "mbway", "multibanco / tpa": "cartao", "multibanco / cartao": "cartao" };
+  const normalized = aliases[name] || name;
+  const tone = tones[normalized] ?? (normalized.startsWith("cheque") ? "cheque" : "outro");
   return `payment-tone payment-tone-${tone}`;
 }

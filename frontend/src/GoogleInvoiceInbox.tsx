@@ -1,4 +1,4 @@
-import DatePresets from "./components/DatePresets";
+import DatePresets, { currentMonthRange } from "./components/DatePresets";
 import { ActionLink } from "./components/InteractionUI";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
@@ -48,8 +48,8 @@ export default function GoogleInvoiceInbox() {
       <Form submitLabel="Consultar emails" onSubmit={v => scan(v)}>
         <fieldset disabled={busy} className="form-grid">
           <DatePresets names={["start_date", "end_date"]} />
-          <Field label="Emails desde"><input name="start_date" type="date" required /></Field>
-          <Field label="Emails até"><input name="end_date" type="date" required /></Field>
+          <Field label="Emails desde"><input name="start_date" type="date" defaultValue={currentMonthRange().from} required /></Field>
+          <Field label="Emails até"><input name="end_date" type="date" defaultValue={currentMonthRange().to} required /></Field>
         </fieldset>
       </Form>
       {nextPage && period && <ActionButton disabled={busy} onClick={() => scan(period, nextPage)}>Consultar mais emails</ActionButton>}

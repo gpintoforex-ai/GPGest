@@ -1,3 +1,4 @@
+import { currentMonthRange } from "./components/DatePresets";
 import DatePresets from "./components/DatePresets";
 import { useEffect, useState } from "react";
 import { api } from "./lib/api";
@@ -41,7 +42,7 @@ export default function Procurement({ section, store, stores, categories, naviga
   const [preview, setPreview] = useState<Row | null>(null);
   const [sourceChoice, setSourceChoice] = useState("");
   const [ledger, setLedger] = useState<Row>({ rows: [], more: false });
-  const [ledgerFilters, setLedgerFilters] = useState({ start: "", end: "", article_id: "", kind: "", page: 1 });
+  const [ledgerFilters, setLedgerFilters] = useState({ start: currentMonthRange().from, end: currentMonthRange().to, article_id: "", kind: "", page: 1 });
   const [loading, setLoading] = useState(true);
   const docs = data.documents.filter((d: Row) => !store || d.store_id === store);
   const whs = catalog.warehouses.filter((w: Row) => !draft?.store_id || w.store_id === draft.store_id);

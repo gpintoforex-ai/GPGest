@@ -1,3 +1,4 @@
+import { currentMonthRange } from "./components/DatePresets";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import { takePeriod } from "./utils/periodHandoff";
 import { useEffect, useState } from "react";
@@ -9,14 +10,12 @@ import { formatEuro } from "./utils/format";
 import "./ManagementMaps.css";
 
 type Row = Record<string, any>;
-const lisbonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Lisbon", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
 /** Mapas de gestão indicativos: custos e proveitos por período e mapa de IVA. */
 export default function ManagementMaps({ store }: { store: string }) {
-  const today = lisbonToday();
   const [tab, setTab] = useWorkspaceTab("mapas", "costs", ["costs", "vat"]);
   const [handoff] = useState(() => takePeriod("Mapas de gestão"));
-  const [start, setStart] = useState(handoff?.start || today.slice(0, 4) + "-01-01"), [end, setEnd] = useState(handoff?.end || today);
+  const [start, setStart] = useState(handoff?.start || currentMonthRange().from), [end, setEnd] = useState(handoff?.end || currentMonthRange().to);
   const [group, setGroup] = useState("month");
   const [data, setData] = useState<Row | null>(null), [error, setError] = useState(""), [loading, setLoading] = useState(false);
   const valid = !!start && !!end && start <= end;

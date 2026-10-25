@@ -36,6 +36,9 @@ import {
   Printer,
   RotateCcw,
   Save,
+  Send,
+  RefreshCw,
+  Link2,
   Search,
   Settings,
   Trash2,
@@ -461,13 +464,18 @@ function textOf(value: ReactNode): string {
     .trim();
 }
 const actions: [RegExp, LucideIcon, string, string?][] = [
-  [/imprimir/i, Printer, "Imprimir"],
-  [/^modelo csv|^relatório/i, ArrowDownToLine, "Descarregar"],
+  [/^(atualizar|recarregar|sincronizar)\b/i, RefreshCw, "Atualizar", "info"],
+  [/^(enviar|reenviar)\b/i, Send, "Enviar", "transfer"],
+  [/^(associar|ligar)\b/i, Link2, "Associar", "info"],
+  [/^(rever|corrigir|ajustar)\b/i, Pencil, "Rever", "warning"],
+  [/^(conferir|reconciliar|aceitar)\b/i, Check, "Conferir", "success"],
+  [/imprimir/i, Printer, "Imprimir", "info"],
+  [/^modelo csv|^relatório/i, ArrowDownToLine, "Descarregar", "transfer"],
   [/^cancelar (depósito|\/)|^devolver/i, Undo2, "Anular", "danger"],
-  [/^(fechar caixa|encerrar período)\b/i, LockKeyhole, "Fechar"],
-  [/^abrir (primeira )?(folha de )?caixa\b/i, Wallet, "Abrir caixa"],
+  [/^(fechar caixa|encerrar período)\b/i, LockKeyhole, "Fechar", "success"],
+  [/^abrir (primeira )?(folha de )?caixa\b/i, Wallet, "Abrir caixa", "success"],
   [/^reabrir\b/i, UnlockKeyhole, "Reabrir", "warning"],
-  [/^inativar\b/i, CircleMinus, "Inativar", "danger"],
+  [/^(inativar|desativar)\b/i, CircleMinus, "Desativar", "danger"],
   [/^ativar\b/i, RotateCcw, "Ativar", "success"],
   [/^desfazer\b/i, Undo2, "Desfazer", "danger"],
   [/^(reinicializar|confirmar reinicialização)\b/i, RotateCcw, "Reinicializar", "danger"],
@@ -476,17 +484,17 @@ const actions: [RegExp, LucideIcon, string, string?][] = [
   [/^descartar\b/i, Trash2, "Descartar alterações", "danger"],
   [/^(cancelar|fechar|ocultar)\b/i, X, "Fechar"],
   [/^(voltar|anterior|regressar)\b/i, ArrowLeft, "Voltar"],
-  [/^editar\b/i, Pencil, "Editar"],
-  [/^(guardar|gravar)\b/i, Save, "Guardar"],
-  [/^(adicionar|acrescentar|criar|novo|nova|registar)\b/i, Plus, "Adicionar"],
-  [/^(consultar|ver|visualizar|mostrar|abrir)\b/i, Eye, "Consultar"],
-  [/^(pesquisar|procurar)\b/i, Search, "Pesquisar"],
-  [/^filtrar\b/i, Filter, "Filtrar"],
-  [/^(importar|carregar)\b/i, ArrowUpFromLine, "Importar"],
-  [/^(exportar|descarregar)\b/i, ArrowDownToLine, "Exportar"],
-  [/^imprimir\b/i, Printer, "Imprimir"],
-  [/^(configurar|definições|parâmetros)\b/i, Settings, "Definições"],
-  [/^(confirmar|aplicar|concluir|validar)\b/i, Check, "Confirmar"],
+  [/^editar\b/i, Pencil, "Editar", "warning"],
+  [/^(guardar|gravar)\b/i, Save, "Guardar", "success"],
+  [/^(adicionar|acrescentar|criar|novo|nova|registar)\b/i, Plus, "Adicionar", "success"],
+  [/^(consultar|ver|visualizar|mostrar|abrir)\b/i, Eye, "Consultar", "info"],
+  [/^(pesquisar|procurar)\b/i, Search, "Pesquisar", "info"],
+  [/^filtrar\b/i, Filter, "Filtrar", "info"],
+  [/^(importar|carregar)\b/i, ArrowUpFromLine, "Importar", "transfer"],
+  [/^(exportar|descarregar)\b/i, ArrowDownToLine, "Exportar", "transfer"],
+  [/^imprimir\b/i, Printer, "Imprimir", "info"],
+  [/^(configurar|definições|parâmetros)\b/i, Settings, "Definições", "neutral"],
+  [/^(confirmar|aplicar|concluir|validar)\b/i, Check, "Confirmar", "success"],
 ];
 function iconElement(child: ReactNode) {
   return (
@@ -552,7 +560,7 @@ export const ActionButton = forwardRef<
   const dialog = useContext(DialogContext);
   const windowBusy = useWindowBusy();
   const text = textOf(children);
-  const matched = actions.find(([pattern]) => pattern.test(action || text));
+  const matched = actions.find(([pattern]) => pattern.test(action || text || props["aria-label"] || props.title || ""));
   const Icon = matched?.[1];
   const direct = Children.toArray(children);
   const onlyIcon = !text && direct.some(iconElement);
@@ -571,6 +579,7 @@ export const ActionButton = forwardRef<
       disabled={props.disabled || windowBusy}
       ref={ref}
       data-cancel={closing || undefined}
+      data-action-tone={className.includes("danger") ? "danger" : matched?.[3]}
       aria-label={props["aria-label"] || (onlyIcon ? label : undefined)}
       title={props.title || (onlyIcon ? label : undefined)}
       className={`ui-action ${matched?.[3] && !className.includes("primary") ? `ui-action-${matched[3]} ` : ""}${className}`}
@@ -606,6 +615,7 @@ export const ActionLink = forwardRef<
     <a
       {...props}
       ref={ref}
+      data-action-tone={className.includes("danger") ? "danger" : matched?.[3]}
       className={`${Icon ? "ui-action-link " : ""}${className}`}
     >
       {Icon && <Icon size={17} aria-hidden="true" />}
@@ -873,7 +883,13 @@ export const ManagedForm = forwardRef<
         onSubmit={onSubmit}
         onInputCapture={(event) => {
           if (element.current) editedForms.add(element.current);
-          const field = event.target as HTMLInputElement;
+          onInputCapture?.(event);
+        }}
+        onChange={(event) => {
+          // Limpa o erro só depois do onChange do próprio campo (fase de bubble, mesmo redesenho).
+          // Na fase de captura, o redesenho intermédio repunha o valor antigo de uma lista
+          // e a primeira escolha perdia-se.
+          const field = event.target as unknown as HTMLInputElement;
           const key = field.name || field.id;
           if (errors[key])
             setErrors((old) => {
@@ -881,7 +897,7 @@ export const ManagedForm = forwardRef<
               delete next[key];
               return next;
             });
-          onInputCapture?.(event);
+          props.onChange?.(event);
         }}
       >
         <fieldset className="ui-form-fields" disabled={!!working}>
@@ -992,7 +1008,7 @@ export function FeedbackHost() {
         <AppDialog
           key={item.id}
           autoOpen
-          className="ui-confirmation"
+          className={`ui-confirmation confirmation-${item.tone || "success"}`}
           role="alertdialog"
           aria-labelledby={`${id}-title`}
           aria-describedby={`${id}-message`}
@@ -1000,6 +1016,9 @@ export function FeedbackHost() {
           initialFocus="cancel"
           onRequestClose={() => answer(item.id, false)}
         >
+          {item.tone === "danger" || item.tone === "warning"
+            ? <CircleAlert className="confirmation-symbol" size={44} aria-hidden="true" />
+            : <CheckCircle2 className="confirmation-symbol" size={44} aria-hidden="true" />}
           <h2 id={`${id}-title`}>{item.title}</h2>
           <div id={`${id}-message`} className="ui-confirmation-message">
             {item.message}

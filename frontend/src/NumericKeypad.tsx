@@ -1,7 +1,7 @@
+import Info from "./components/InfoIcon";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { Delete } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Info } from "lucide-react";
 import ReadAloud from "./ReadAloud";
 import { calculateMoney } from "./utils/calculator";
 
@@ -165,12 +165,12 @@ export default function NumericKeypad({
                 type="button"
                 className="numeric-keypad-info"
                 aria-label="Informação da calculadora"
-                title="Informação da calculadora"
+                title="Clicar para saber mais"
                 aria-expanded={showDescription}
                 aria-controls={descriptionId}
                 onClick={() => setShowDescription((shown) => !shown)}
               >
-                <Info size={20} aria-hidden="true" />
+                <Info text={description || label} size={20} aria-hidden="true" />
               </ActionButton>
             )}
           </div>

@@ -1,3 +1,4 @@
+import Info from "./components/InfoIcon";
 import DocumentScanner, { ScanSettings } from "./DocumentScanner";
 import { DataTable } from "./components/DataTable";
 import { LoadingState, ModuleTabs, TaskWorkspace, useLocationSearch, updateLocationParam } from "./components/WorkspaceUI";
@@ -24,7 +25,7 @@ import {
   Settings,
   Plug,
   Monitor,
-  Info,
+
   LogOut,
   Menu,
   CheckCircle,
@@ -99,7 +100,6 @@ const Procurement = lazy(() => import("./Procurement"));
 const HomePage = lazy(() => import("./HomePage"));
 const QuickScan = lazy(() => import("./quickscan/QuickScan"));
 const Archive = lazy(() => import("./Archive"));
-const Warehouses = lazy(() => import("./Warehouses"));
 const CompanySetupPanel = lazy(() => import("./CompanySetup"));
 const QuickScanAccesses = lazy(() => import("./QuickScanAccesses"));
 const ReadAloud = lazy(() => import("./ReadAloud"));
@@ -107,15 +107,13 @@ const AttachmentSettings = lazy(() => import("./AttachmentSettings"));
 const PlannedMovements = lazy(() => import("./PlannedMovements"));
 const RealMovements = lazy(() => import("./RealMovements"));
 const Employees = lazy(() => import("./Employees"));
-const Entities = lazy(() => import("./Entities"));
-const BanksCatalog = lazy(() => import("./BanksCatalog"));
 const CustomerOrders = lazy(() => import("./CustomerOrders"));
 const BankOverview = lazy(() => import("./BankOverview"));
-const Rubrics = lazy(() => import("./Rubrics"));
 const PaymentMethods = lazy(() => import("./PaymentMethods"));
+const TablePage = lazy(() => import("./tables/TablePage"));
 const InvoiceWorkflowSettings = lazy(() => import("./InvoiceWorkflow").then(module => ({ default: module.InvoiceWorkflowSettings })));
 const ARCHIVE_PAGES = ["Arquivo — Visão geral", "Caixa de entrada", "Todos os documentos", "Associações", "Pendências", "Dossiês contabilísticos", "Arquivo — Auditoria", "Arquivo — Configurações"];
-const APP_PAGES: readonly string[] = ["Encomendas de clientes", ...ARCHIVE_PAGES, ...["Dashboard", "Compras e Stock — Visão geral", "Meios de pagamento", "Folha de caixa", "Movimentos previstos", "Movimentos reais", "Múltiplas contas", "Bancos", "Extratos", "Reconciliação automática", "Conferência documental", "Despesas por rubrica", "Mapas de gestão", "Entrega à contabilidade", "Email", "Importar SAF-T de vendas", "Digitalizar documento", "Relatórios", "Integrações", "Rubricas", "Caixas", "Operadores / funcionários", "Organização", "Depósitos", "Previsão de liquidez", "Faturação e recebimentos", "Armazéns", "Artigos e validades", "Clientes", "Fornecedores", "Regime de IVA", "Aparência", "Configuração inicial", "Anexos", "Digitalização", "Verificação automática e-Fatura", "Tesouraria", "Contabilidade", "Arquivo digital", "Compras e Stock", "Tabelas", "Receitas e despesas", "Configurações", "Parâmetros", "Arquivo — Visão geral", "Caixa de entrada", "Todos os documentos", "Associações", "Pendências", "Dossiês contabilísticos", "Arquivo — Auditoria", "Arquivo — Configurações", "Encomendas a fornecedores", "Receções de mercadoria", "Compras", "Devoluções a fornecedores", "Movimentos de stock"]];
+const APP_PAGES: readonly string[] = ["Encomendas de clientes", ...ARCHIVE_PAGES, ...["Dashboard", "Compras e Stock — Visão geral", "Meios de pagamento", "Prazos de pagamento", "Folha de caixa", "Movimentos previstos", "Movimentos reais", "Múltiplas contas", "Bancos", "Extratos", "Reconciliação automática", "Conferência documental", "Despesas por rubrica", "Mapas de gestão", "Entrega à contabilidade", "Email", "Importar SAF-T de vendas", "Digitalizar documento", "Relatórios", "Integrações", "Rubricas", "Caixas", "Operadores / funcionários", "Organização", "Depósitos", "Previsão de liquidez", "Faturação e recebimentos", "Armazéns", "Artigos e validades", "Clientes", "Fornecedores", "Regime de IVA", "Aparência", "Configuração inicial", "Anexos", "Digitalização", "Verificação automática e-Fatura", "Tesouraria", "Contabilidade", "Arquivo digital", "Compras e Stock", "Tabelas", "Receitas e despesas", "Configurações", "Parâmetros", "Arquivo — Visão geral", "Caixa de entrada", "Todos os documentos", "Associações", "Pendências", "Dossiês contabilísticos", "Arquivo — Auditoria", "Arquivo — Configurações", "Encomendas a fornecedores", "Receções de mercadoria", "Compras", "Devoluções a fornecedores", "Movimentos de stock"]];
 const MANAGER_PAGES: readonly string[] = ["Despesas por rubrica", "Mapas de gestão", "Configuração inicial", "Regime de IVA", "Anexos", "Digitalização", "Verificação automática e-Fatura", "Arquivo — Auditoria", "Arquivo — Configurações"];
 const canViewPage = (name: string, role: string) => ["administrador", "gestor"].includes(role) || !MANAGER_PAGES.includes(name);
 const PAGE_ALIASES: Record<string, string> = { "Tesouraria": "Folha de caixa", "Contabilidade": "Conferência documental", "Arquivo digital": "Arquivo — Visão geral", "Compras e Stock": "Compras e Stock — Visão geral", "Tabelas": "Clientes", "Configurações": "Organização", "Parâmetros": "Configuração inicial" };
@@ -143,8 +141,6 @@ export default function App() {
   const dataVersions = useRef<Record<DataTarget, number>>({ bootstrap: 0, sessions: 0, movements: 0, dashboard: 0 });
   const [paymentReturn, setPaymentReturn] = useState<PaymentReturn | null>(null);
   const pendingPaymentReturn = useRef<PaymentReturn | null>(null);
-  const removingRegister = useRef(false);
-  const [registerBusy, setRegisterBusy] = useState("");
   const [boot, setBoot] = useState<Bootstrap | null>(null),
     // Digitalização rápida por PIN: ecrã próprio, sem a sessão da aplicação.
     [quickScan, setQuickScan] = useState(() => window.location.pathname === "/digitalizar" || new URLSearchParams(window.location.search).has("digitalizar")),
@@ -495,7 +491,7 @@ export default function App() {
     ["Associações", Link2], ["Pendências", AlertTriangle], ["Dossiês contabilísticos", FolderArchive],
     ...(manager ? [["Arquivo — Auditoria", ShieldCheck] as const, ["Arquivo — Configurações", Settings] as const] : []),
   ] as const;
-  const procurementMenu = [["Compras e Stock — Visão geral", LayoutDashboard], ["Encomendas de clientes", Receipt], ["Encomendas a fornecedores", Receipt], ["Receções de mercadoria", Package], ["Compras", Receipt], ["Devoluções a fornecedores", ArrowLeftRight], ["Movimentos de stock", ArrowLeftRight]] as const;
+  const procurementMenu = [["Compras e Stock — Visão geral", LayoutDashboard], ["Encomendas de clientes", Receipt], ["Encomendas a fornecedores", Receipt], ["Receções de mercadoria", Package], ["Devoluções a fornecedores", ArrowLeftRight], ["Movimentos de stock", ArrowLeftRight]] as const;
   const tablesMenu = [
     ["Clientes", Receipt],
     ["Fornecedores", Landmark],
@@ -505,6 +501,7 @@ export default function App() {
     ["Rubricas", FileBarChart],
     ["Caixas", Wallet],
     ["Meios de pagamento", CreditCard],
+    ["Prazos de pagamento", Clock],
     ["Operadores / funcionários", Users],
   ] as const;
   const moduleNavigation = [
@@ -530,25 +527,11 @@ export default function App() {
     setRequestKey(crypto.randomUUID());
     setModal(kind);
   };
-  async function removeRegister(row: Row) {
-    if (removingRegister.current) return;
-    removingRegister.current = true;
-    try {
-      if (!(await confirmAction({
-        title: "Remover caixa?",
-        message: `Pretende remover a caixa «${row.name}» de «${boot!.stores.find(item => item.id === row.store_id)?.name || "Estabelecimento"}»? Esta ação não pode ser anulada. A remoção só é permitida quando não existe histórico nem associações protegidas.`,
-        confirmLabel: "Remover caixa", tone: "danger",
-      }))) return;
-      setRegisterBusy(row.id); setError(""); setNotice("");
-      await api(`/registers/${encodeURIComponent(row.id)}/delete`, { confirmed: true });
-      setBoot(current => current ? { ...current, registers: current.registers.filter(item => item.id !== row.id) } : current);
-      setNotice(`Caixa «${row.name}» removida.`);
-      try { await reload(["bootstrap"]); }
-      catch { setError("A caixa foi removida, mas não foi possível atualizar todos os dados do ecrã. Atualize a página."); }
-    } catch (e) { setError((e as Error).message); }
-    finally { setRegisterBusy(""); removingRegister.current = false; }
-  }
   const integratedMode = boot.integration?.mode === "integrated";
+  const tableContext = {
+    stores: boot.stores as { id: string; name: string }[],
+    categories: boot.categories as { id: string; name: string; icon?: string; color?: string; active?: boolean }[],
+  };
   const operatingMode = integratedMode
     ? "Modo integrado com ERP"
     : "Modo local autónomo";
@@ -793,7 +776,7 @@ export default function App() {
               {error}
             </Notice>
           )}
-          {moduleNavigation && <div className="module-navigation"><span className="module-navigation-label">{moduleNavigation.label}</span><ModuleTabs label={`Navegação de ${moduleNavigation.label}`} value={page} tabs={moduleNavigation.items.map(([name]) => ({ id: name, label: name.replace("Arquivo — ", "").replace("Compras e Stock — ", "") }))} onChange={next => { void navigatePage(next); }} /></div>}
+          {moduleNavigation && moduleNavigation.label !== "Tesouraria" && moduleNavigation.label !== "Contabilidade" && moduleNavigation.label !== "Tabelas" && moduleNavigation.label !== "Compras e Stock" && <div className="module-navigation"><span className="module-navigation-label">{moduleNavigation.label}</span><ModuleTabs label={`Navegação de ${moduleNavigation.label}`} value={page} tabs={moduleNavigation.items.map(([name]) => ({ id: name, label: name.replace("Arquivo — ", "").replace("Compras e Stock — ", "") }))} onChange={next => { void navigatePage(next); }} /></div>}
           {visiblePages.map(cachedPage => <div key={`${cacheScope}:${cachedPage}`} className="page-cache" hidden={cachedPage !== activePage} data-page={cachedPage}>
             <Suspense fallback={<LoadingState />}>{((page: string) => <>
           {page === "Dashboard" && (
@@ -884,8 +867,8 @@ export default function App() {
                       }
                     }}
                   >
-                    <summary aria-label="Informação sobre a folha de caixa" title="Informação sobre a folha de caixa">
-                      <Info size={22} aria-hidden="true" />
+                    <summary aria-label="Informação sobre a folha de caixa" title="Clicar para saber mais">
+                      <Info text="Fundo de maneio, movimentos e contagem com apuramento de diferenças. Clique para saber mais." size={22} aria-hidden="true" />
                     </summary>
                     <div className="cash-page-info-content">
                       <div className="ui-popover-heading"><strong>Informação</strong><CloseButton guard={false} onClick={dismissDisclosure} /></div>
@@ -1023,7 +1006,7 @@ export default function App() {
               <ActionButton onClick={() => navigatePage("Extratos")}>Consultar extratos</ActionButton>
             </>
           )}
-          {page === "Bancos" && <BanksCatalog manager={manager} onChanged={() => reload(["bootstrap"])} />}
+          {page === "Bancos" && <TablePage tableKey="banks" context={tableContext} active={activePage === page} onChanged={() => reload(["bootstrap"])} />}
           {page === "Extratos" && (
             <>
               <div className="page-intro"><div><h1>Extratos bancários</h1><p>Selecione uma conta para importar e consultar os movimentos do banco.</p></div><ActionButton onClick={() => navigatePage("Múltiplas contas")}>Gerir contas</ActionButton></div>
@@ -1153,35 +1136,8 @@ export default function App() {
               </div></>},{id:"erp",label:"Configuração ERP",content:<>{manager && <IntegrationSettings boot={boot} reload={reload} />}</>}]} />
             </>
           )}
-          {page === "Rubricas" && (
-            <Rubrics policy={boot.integration} manager={manager} admin={boot.user.role === "administrador"} reload={reload} />
-          )}
-          {page === "Caixas" && (
-            <>
-              <div className="page-intro">
-                <div>
-                  <h1>Caixas</h1>
-                  <p>Caixas configuradas por estabelecimento.</p>
-                </div>
-                {manager && (
-                  <ActionButton className="primary" onClick={() => openModal("register")}>
-                    <Plus size={18} /> Nova caixa
-                  </ActionButton>
-                )}
-              </div>
-              <section className="panel">
-                <DataTable<Row> label="caixas" rows={boot.registers.filter(r => !store || r.store_id === store)} rowKey={r=>r.id} searchText={r=>r.name+" "+registerStore(r.id)} columns={[
- {id:"caixa",label:"Caixa",sortValue:r=>r.name,render:r=><span className="cash-payment-label"><Wallet size={18} aria-hidden="true" />{r.name}</span>},
- {id:"loja",label:"Estabelecimento",sortValue:r=>registerStore(r.id),render:r=>boot.stores.find(s=>s.id===r.store_id)?.name || "—"},
- ...(manager ? [{id:"acoes",label:"Ações",render:(r:Row)=><div className="actions">
- <ActionButton disabled={!!registerBusy} aria-label={`Editar caixa ${r.name}`} onClick={()=>openModal("edit-register",r)}><Pencil size={16} />Editar</ActionButton>
- <ActionButton className="danger" disabled={!!registerBusy} aria-label={`Remover caixa ${r.name}`} onClick={()=>removeRegister(r)}><Trash2 size={16} />{registerBusy===r.id ? "A remover…" : "Remover"}</ActionButton>
- </div>}] : []),
- ]} />
-                {!boot.registers.some(r => !store || r.store_id === store) && <Empty text="Ainda não existem caixas nesta seleção" />}
-              </section>
-            </>
-          )}
+          {page === "Rubricas" && <TablePage tableKey="categories" context={tableContext} active={activePage === page} onChanged={() => reload(["bootstrap"])} />}
+          {page === "Caixas" && <TablePage tableKey="registers" context={tableContext} active={activePage === page} store={store} onChanged={() => reload(["bootstrap"])} />}
           {page === "Meios de pagamento" && (
             <PaymentMethods
               stores={boot.stores as { id: string; name: string }[]}
@@ -1271,7 +1227,7 @@ export default function App() {
           {page === "Depósitos" && <Deposits boot={boot} store={store} reload={reload} />}
           {page === "Previsão de liquidez" && <Liquidity boot={boot} store={store} />}
           {page === "Faturação e recebimentos" && <BillingConference stores={boot.stores} store={store} manager={manager} />}
-          {page === "Armazéns" && <Suspense fallback={<p role="status">A carregar armazéns…</p>}><Warehouses stores={boot.stores} /></Suspense>}
+          {page === "Armazéns" && <TablePage tableKey="warehouses" context={tableContext} active={activePage === page} store={store} />}
           {page === "Artigos e validades" && <Suspense fallback={<p role="status">A carregar artigos e stock…</p>}><Inventory stores={boot.stores} admin={boot.user.role === "administrador"} /></Suspense>}
           {page === "Encomendas de clientes" && <Suspense fallback={<LoadingState />}><CustomerOrders stores={boot.stores} store={store} company={boot.company} navigate={navigatePage} /></Suspense>}
           {page !== "Encomendas de clientes" && procurementMenu.some(([name]) => name === page) && <Suspense fallback={<p role="status">A carregar compras e stock…</p>}><Procurement key={page} section={page} store={store} stores={boot.stores} categories={boot.categories} navigate={navigatePage} /></Suspense>}
@@ -1294,7 +1250,8 @@ export default function App() {
               </ActionButton>
             </section>
           )}
-          {(page === "Clientes" || page === "Fornecedores") && <Entities kind={page} manager={manager} categories={boot.categories.map(c => ({ id: c.id, name: c.name }))} />}
+          {page === "Prazos de pagamento" && <TablePage tableKey="payment_terms" context={tableContext} active={activePage === page} />}
+          {(page === "Clientes" || page === "Fornecedores") && <TablePage tableKey={page === "Clientes" ? "customers" : "suppliers"} context={tableContext} active={activePage === page} />}
           {page === "Regime de IVA" && manager && <FiscalSettings />}
           {page === "Aparência" && <ThemeSettings />}
           {page === "Configuração inicial" && <CompanySetupPanel boot={boot} reload={reload} hasOpenSession={open.length > 0} onNavigate={navigatePage} onAction={openModal} standalone />}
@@ -1378,6 +1335,7 @@ export default function App() {
               <OpenCashForm
                 registers={boot.registers.filter(
                   (r) =>
+                    r.active !== false &&
                     !sessions.some(
                       (s) => s.register_id === r.id && !s.closed_at,
                     ),
@@ -1454,7 +1412,7 @@ export default function App() {
                     />
                   </Field>
                   <Field label="Categoria">
-                    <Select name="category_id" rows={boot.categories} />
+                    <Select name="category_id" rows={boot.categories.filter((c) => c.active !== false)} />
                   </Field>
                   <Field label="Cliente / fornecedor">
                     <input name="entity" maxLength={200} />
@@ -1553,7 +1511,7 @@ export default function App() {
                   <input name="amount" inputMode="decimal" required />
                 </Field>
                 <Field label="Categoria">
-                  <Select name="category_id" rows={boot.categories} />
+                  <Select name="category_id" rows={boot.categories.filter((c) => c.active !== false)} />
                 </Field>
                 <Field label="Motivo">
                   <textarea name="reason" required minLength={5} />

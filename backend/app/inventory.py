@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import Depends, HTTPException, Query
 from pydantic import Field, field_validator
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .db import db_session
@@ -118,6 +118,30 @@ def warehouse(db, user, identifier, authorize):
         fail("Armazém não encontrado nesta empresa.", 404)
     authorize(user, db, row.store_id)
     return row
+
+
+def warehouse_dependencies(db, row):
+    """Registos que impedem remover um armazém: (descrição, quantidade)."""
+    documents = sum(
+        1
+        for document in db.scalars(
+            select(ProcurementDocument).where(ProcurementDocument.store_id == row.store_id)
+        )
+        if any(line.get("warehouse_id") == row.id for line in json.loads(document.data).get("lines", []))
+    )
+    return [
+        (
+            "movimentos de stock no histórico",
+            db.scalar(select(func.count()).select_from(StockEntry).where(StockEntry.warehouse_id == row.id)),
+        ),
+        (
+            "inventários associados",
+            db.scalar(
+                select(func.count()).select_from(StockInventory).where(StockInventory.warehouse_id == row.id)
+            ),
+        ),
+        ("documentos de compra associados", documents),
+    ]
 
 
 def entries(db, article_id, warehouse_id=None):
@@ -310,6 +334,9 @@ def post(db, user, data, authorize, *, source="manual", bypass=False):
         fail("Ative o artigo antes de registar movimentos.", 409)
     origin = warehouse(db, user, data.warehouse_id, authorize)
     target = warehouse(db, user, data.target_id, authorize) if data.kind == "transfer" else None
+    for item in (origin, target):
+        if item is not None and not item.active:
+            fail(f"O armazém «{item.name}» está inativo e não aceita novos movimentos. Reative-o em Tabelas → Armazéns.", 409)
     if target and target.id == origin.id:
         fail("Selecione outro armazém de destino.")
     if data.occurred_on > date.today():
@@ -687,7 +714,7 @@ def register_routes(app, current, authorize, scope, audit):
                 for row in db.scalars(select(StockArticle).order_by(StockArticle.name))
             ],
             "warehouses": [
-                {"id": w.id, "store_id": w.store_id, "name": w.name}
+                {"id": w.id, "store_id": w.store_id, "name": w.name, "active": w.active}
                 for w in db.scalars(select(StockWarehouse).where(StockWarehouse.id.in_(allowed)))
             ],
             "suppliers": [
@@ -805,24 +832,7 @@ def register_routes(app, current, authorize, scope, audit):
         require(user, settings(db), "adjust_stock")
         lock(db)
         row = warehouse(db, user, warehouse_id, authorize)
-        reason = None
-        for model, label in (
-            (StockEntry, "movimentos de stock no histórico"),
-            (StockInventory, "inventários associados"),
-        ):
-            if db.scalar(select(model.id).where(model.warehouse_id == row.id).limit(1)):
-                reason = label
-                break
-        if not reason:
-            for document in db.scalars(
-                select(ProcurementDocument).where(ProcurementDocument.store_id == row.store_id)
-            ):
-                if any(
-                    line.get("warehouse_id") == row.id
-                    for line in json.loads(document.data).get("lines", [])
-                ):
-                    reason = "documentos de compra associados"
-                    break
+        reason = next((label for label, count in warehouse_dependencies(db, row) if count), None)
         if reason:
             fail(
                 f"Não é possível remover o armazém «{row.name}»: tem {reason}. "

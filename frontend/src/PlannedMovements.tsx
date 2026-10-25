@@ -167,7 +167,7 @@ export default function PlannedMovements({
             </Field>
             <Field label="Rubrica">
               <select name="category_id" defaultValue={editing?.category_id || ""} required disabled={editing?.allocations?.length > 1}>
-                {boot.categories.map((r: Row) => (
+                {boot.categories.filter((r: Row) => r.active !== false || r.id === editing?.category_id).map((r: Row) => (
                   <option key={r.id} value={r.id}>
                     {r.name}
                   </option>
@@ -267,7 +267,6 @@ export default function PlannedMovements({
       <section className="panel">
         <RecordList
           plannedFilters
-          startAtOldestPending
           totalField="remaining_cents"
           totalsTitle="Totais por liquidar no período"
           rows={allRows.filter((r) => !store || r.store_id === store)}

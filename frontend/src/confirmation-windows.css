@@ -1,0 +1,30 @@
+/* One confirmation layout throughout IAZELA, based on the cash close receipt. */
+.ui-dialog:is(.ui-confirmation, .settlement-confirmation) {
+  --confirmation-ink: var(--context-success);
+  --confirmation-bg: var(--context-success-bg);
+  width: 460px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 30px 28px 26px;
+  border: 1px solid var(--confirmation-ink);
+  border-radius: 16px;
+  background: var(--confirmation-bg);
+  color: var(--confirmation-ink);
+  text-align: center;
+  box-shadow: 0 20px 80px #0003;
+  overflow: auto;
+}
+.ui-dialog.ui-confirmation.confirmation-danger { --confirmation-ink: var(--action-danger); --confirmation-bg: var(--context-danger-bg); }
+.ui-dialog.ui-confirmation.confirmation-warning { --confirmation-ink: var(--context-warning); --confirmation-bg: var(--context-warning-bg); }
+.ui-dialog:is(.ui-confirmation, .settlement-confirmation)::backdrop { background: #001b227d; backdrop-filter: blur(4px); }
+.ui-dialog:is(.ui-confirmation, .settlement-confirmation) > :is(.confirmation-symbol, svg) { display: block; margin: 0 auto 14px; color: var(--confirmation-ink); }
+.ui-dialog:is(.ui-confirmation, .settlement-confirmation) > h2 { padding: 0; margin: 0 0 12px; font-size: 1.25rem; color: inherit; }
+.ui-dialog:is(.ui-confirmation, .settlement-confirmation) :is(.ui-confirmation-message, .ui-confirmation-message p),
+.ui-dialog:is(.ui-confirmation, .settlement-confirmation) > p { color: inherit; line-height: 1.6; overflow-wrap: anywhere; }
+.ui-dialog.ui-confirmation .ui-dialog-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.ui-dialog.ui-confirmation .ui-dialog-actions > button { min-width: 130px; }
+.ui-dialog:is(.ui-confirmation, .settlement-confirmation) > .ui-dialog-dismissbar { height: 0; align-self: stretch; }
+@media (max-width: 480px) {
+  .ui-dialog:is(.ui-confirmation, .settlement-confirmation) { padding: 26px 20px 22px; }
+  .ui-dialog.ui-confirmation .ui-dialog-actions > button { flex: 1 1 100%; }
+}

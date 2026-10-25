@@ -1,3 +1,4 @@
+import { currentMonthRange } from "./components/DatePresets";
 import DatePresets from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
 import { Mail, Eye, Send, RefreshCw, CheckCircle, Download } from "lucide-react";
@@ -36,7 +37,7 @@ export function AccountingEmailDialog({ company, stores, store = "", initial, pe
   company: Row; stores: Row[]; store?: string; initial?: Row; period?: Row; onClose: () => void; onChanged: () => void;
 }) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Lisbon", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const [start, setStart] = useState(period?.start || today.slice(0, 8) + "01"), [end, setEnd] = useState(period?.end || today);
+  const [start, setStart] = useState(period?.start || today.slice(0, 8) + "01"), [end, setEnd] = useState(period?.end || currentMonthRange().to);
   const [selectedStore, setSelectedStore] = useState(store), [selectedCategories, setSelectedCategories] = useState(categories.map(([key]) => key));
   const [row, setRow] = useState<Row | null>(initial || null), [draft, setDraft] = useState<Row>(initial?.draft || {});
   const [to, setTo] = useState(initial?.draft.to?.join("; ") || ""), [cc, setCc] = useState(initial?.draft.cc?.join("; ") || "");

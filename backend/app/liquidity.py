@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import db_session
+from .table_rules import ensure_usable
 from .models import (AccountBalanceReference, Audit, BankAccount, BankDeposit, BankTransaction, CashSession, Category, DocumentPayment, DocumentERPLink, DriveDocumentAttachment, ERPDocument, Purchase, PurchaseAttachment, LiquidityAdjustment,
                      LiquidityManual, LiquidityScenario, LiquiditySettings, LiquiditySettlement, Movement, PlannedMovement, Register, WintouchSaleRecord, WintouchSyncRun, now)
 from . import db as database
@@ -665,7 +666,7 @@ def register_routes(app, current, authorize, scope, audit, serial, planned_summa
         if item["currency"] != "EUR":
             raise HTTPException(422, "O registo atual de pagamentos reais suporta apenas EUR.")
         validate_target(db, user, data.target, item["currency"], item["store_id"])
-        category = db.get(Category, data.category_id)
+        category = ensure_usable(db, Category, data.category_id)
         if not category:
             raise HTTPException(404, "Rubrica indisponível.")
         from .deposits import unlocked

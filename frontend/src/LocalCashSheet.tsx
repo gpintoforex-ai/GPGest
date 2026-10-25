@@ -1,3 +1,5 @@
+import Info from "./components/InfoIcon";
+import CashConferenceWindow from "./CashConferenceWindow";
 import { ActionLink } from "./components/InteractionUI";
 import { ActionButton, AppDialog, ManagedForm, Notice, confirmAction } from "./components/InteractionUI";
 import { useEffect, useId, useRef, useState } from "react";
@@ -15,7 +17,7 @@ import {
   LockKeyholeOpen,
   CircleMinus,
   Calculator,
-  Info,
+
 } from "lucide-react";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
@@ -208,6 +210,7 @@ export default function LocalCashSheet({
   const [closeWarnings, setCloseWarnings] = useState<string[] | null>(null);
   const conferenceHelpId = useId();
   const [showConferenceHelp, setShowConferenceHelp] = useState(false);
+  const [showPhysicalHelp, setShowPhysicalHelp] = useState(false);
   const { preferences } = useCashPreferences();
   const stored = s.count_data || {};
   const countRequired = s.sheet.preferences?.count_required ?? true;
@@ -673,25 +676,17 @@ export default function LocalCashSheet({
         declaredSales={!legacyClose}
       />
       <SaftReference sessionId={s.id} selectedDay={s.sheet.day}/>
-      <details className="cash-sheet-details">
-        <summary>
-          {s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"}
-        </summary>
-        <div className="local-cash-conference-heading">
-          <h3>Conferência do faturado</h3>
-          <ActionButton
+      <CashConferenceWindow title={s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"} information={<div className="cash-conference-header-info">          <ActionButton
             type="button"
             className="local-cash-info"
             aria-label="Informação sobre a conferência do faturado"
-            title="Informação sobre a conferência do faturado"
+            title="Clicar para saber mais"
             aria-expanded={showConferenceHelp}
             aria-controls={conferenceHelpId}
             onClick={() => setShowConferenceHelp((shown) => !shown)}
           >
-            <Info size={20} aria-hidden="true" />
-          </ActionButton>
-        </div>
-        <div
+            <Info text="Compare o valor esperado com o contado. Clique para abrir a explicação." size={20} aria-hidden="true" />
+          </ActionButton>        <div
           id={conferenceHelpId}
           className="local-cash-conference-help"
           hidden={!showConferenceHelp}
@@ -725,6 +720,99 @@ export default function LocalCashSheet({
               restantes meios. Diferença = contado / conferido − esperado.
             </p>
           </ReadAloud>
+        </div>
+</div>} busy={busy} error={error} notice={notice} context={`Dia ${s.sheet.day.split("-").reverse().join("/")}`} footer={<div className="actions">
+          {editable && (
+            <>
+              <ActionButton disabled={busy} onClick={() => save("count")}>
+                Guardar rascunho
+              </ActionButton>
+              <ActionButton
+                disabled={
+                  busy ||
+                  !complete ||
+                  !debitsValid ||
+                  !creditsValid ||
+                  (countRequired && counted === null)
+                }
+                onClick={() => save("reconcile")}
+              >
+                Conferir
+              </ActionButton>
+              <ActionButton
+                className="primary"
+                disabled={busy}
+                onClick={() => save("close")}
+              >
+                Fechar caixa
+              </ActionButton>
+              <ActionButton disabled={busy} onClick={() => onAction("handover", s)}>
+                Passar caixa
+              </ActionButton>
+            </>
+          )}
+          {s.closed_at && (
+            <ActionLink className="download-link" href={`/api/sessions/${s.id}/report`}>
+              Relatório PDF
+            </ActionLink>
+          )}
+          {s.closed_at && manager && (
+            <ActionButton onClick={() => onAction("reopen", s)}>Reabrir</ActionButton>
+          )}
+        </div>}>
+        <div className="cash-conference-overview">
+        <div className="cash-conference-difference-group">
+        <div className="local-cash-context">
+          <div className={`local-cash-amount ${tone(cashDifference)}`}>
+            <small>Diferença de numerário (contado − esperado)</small>
+            <strong>
+              {cashDifference === null ? "Por conferir" : money(cashDifference)}
+            </strong>
+            {cashDifference !== null && cashDifference < 0 && (
+              <small>Falta de {money(-cashDifference)}</small>
+            )}
+            {cashDifference !== null && cashDifference > 0 && (
+              <small>Sobra de {money(cashDifference)}</small>
+            )}
+          </div>
+        </div>
+        <details className="local-cash-physical-info" onToggle={event => setShowPhysicalHelp(event.currentTarget.open)}>
+          <summary><Info text="Compare o valor esperado com o contado. Clique para abrir a explicação." size={18} aria-hidden="true" />Conferência do numerário físico</summary>
+          <div className="local-cash-conference-help">
+          <ReadAloud active={showPhysicalHelp}>
+        <p className="footnote">
+          {legacyClose
+            ? "Saldo esperado preservado do fecho anterior."
+            : "Esperado na gaveta = fundo de maneio + faturado em numerário + créditos − débitos. Inclui despesas, retiradas e depósitos efetivamente retirados da gaveta. Os recebimentos, créditos e débitos já registados não são somados novamente."}
+        </p>
+        <p className="footnote">
+          Fundo: {money(s.opening_cents)} · Faturado em numerário:{" "}
+          {amount(form.values.numerario || "") === null
+            ? "Por preencher"
+            : money(amount(form.values.numerario)!)}{" "}
+          · Outros movimentos:{" "}
+          {otherFor("numerario") === null
+            ? "Por preencher"
+            : money(otherFor("numerario")!)}
+        </p>
+          </ReadAloud>
+          </div>
+        </details>
+        </div>
+        <Field
+          label={
+            hasDifference
+              ? "Justificação das diferenças (obrigatória para fechar)"
+              : "Justificação / observações da conferência"
+          }
+        >
+          <textarea
+            disabled={!editable || busy}
+            maxLength={2000}
+            value={form.reason}
+            onChange={(e) => update({ reason: e.target.value })}
+          />
+        </Field>
         </div>
         {legacyClose && (
           <p className="footnote">
@@ -1093,36 +1181,7 @@ export default function LocalCashSheet({
             </div>
           </NumericKeypad>
         )}
-        <h3>Conferência do numerário físico</h3>
-        <p className="footnote">
-          {legacyClose
-            ? "Saldo esperado preservado do fecho anterior."
-            : "Esperado na gaveta = fundo de maneio + faturado em numerário + créditos − débitos. Inclui despesas, retiradas e depósitos efetivamente retirados da gaveta. Os recebimentos, créditos e débitos já registados não são somados novamente."}
-        </p>
-        <p className="footnote">
-          Fundo: {money(s.opening_cents)} · Faturado em numerário:{" "}
-          {amount(form.values.numerario || "") === null
-            ? "Por preencher"
-            : money(amount(form.values.numerario)!)}{" "}
-          · Outros movimentos:{" "}
-          {otherFor("numerario") === null
-            ? "Por preencher"
-            : money(otherFor("numerario")!)}
-        </p>
-        <div className="local-cash-context">
-          <div className={`local-cash-amount ${tone(cashDifference)}`}>
-            <small>Diferença de numerário (contado − esperado)</small>
-            <strong>
-              {cashDifference === null ? "Por conferir" : money(cashDifference)}
-            </strong>
-            {cashDifference !== null && cashDifference < 0 && (
-              <small>Falta de {money(-cashDifference)}</small>
-            )}
-            {cashDifference !== null && cashDifference > 0 && (
-              <small>Sobra de {money(cashDifference)}</small>
-            )}
-          </div>
-        </div>
+
         {editable && countDialog && (
           <CashCountDialog
             defaultMode={preferences.countMode}
@@ -1143,20 +1202,6 @@ export default function LocalCashSheet({
             }}
           />
         )}
-        <Field
-          label={
-            hasDifference
-              ? "Justificação das diferenças (obrigatória para fechar)"
-              : "Justificação / observações da conferência"
-          }
-        >
-          <textarea
-            disabled={!editable || busy}
-            maxLength={2000}
-            value={form.reason}
-            onChange={(e) => update({ reason: e.target.value })}
-          />
-        </Field>
         {stored.updated_at && (
           <p className="footnote">
             Última alteração: {stored.updated_by_name || "Utilizador registado"}{" "}
@@ -1190,46 +1235,8 @@ export default function LocalCashSheet({
           </p>
         )}
         {dirty && <p className="footnote">Há alterações por guardar.</p>}
-        <div className="actions">
-          {editable && (
-            <>
-              <ActionButton disabled={busy} onClick={() => save("count")}>
-                Guardar rascunho
-              </ActionButton>
-              <ActionButton
-                disabled={
-                  busy ||
-                  !complete ||
-                  !debitsValid ||
-                  !creditsValid ||
-                  (countRequired && counted === null)
-                }
-                onClick={() => save("reconcile")}
-              >
-                Conferir
-              </ActionButton>
-              <ActionButton
-                className="primary"
-                disabled={busy}
-                onClick={() => save("close")}
-              >
-                Fechar caixa
-              </ActionButton>
-              <ActionButton disabled={busy} onClick={() => onAction("handover", s)}>
-                Passar caixa
-              </ActionButton>
-            </>
-          )}
-          {s.closed_at && (
-            <ActionLink className="download-link" href={`/api/sessions/${s.id}/report`}>
-              Relatório PDF
-            </ActionLink>
-          )}
-          {s.closed_at && manager && (
-            <ActionButton onClick={() => onAction("reopen", s)}>Reabrir</ActionButton>
-          )}
-        </div>
-      </details>
+
+      </CashConferenceWindow>
       {closeWarnings && createPortal(
         <AppDialog busy={busy}
           ref={closeDialog}

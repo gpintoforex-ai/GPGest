@@ -1,0 +1,16 @@
+/* Payment identity colours apply equally to pages, reports and portal dialogs. */
+.payment-tone { --payment-fg: var(--payment-other); --payment-bg: var(--payment-other-bg); }
+.payment-tone-numerario { --payment-fg: var(--payment-cash); --payment-bg: var(--payment-cash-bg); }
+.payment-tone-cartao { --payment-fg: var(--payment-card); --payment-bg: var(--payment-card-bg); }
+.payment-tone-mbway { --payment-fg: var(--payment-mbway); --payment-bg: var(--payment-mbway-bg); }
+.payment-tone-transferencia { --payment-fg: var(--payment-transfer); --payment-bg: var(--payment-transfer-bg); }
+.payment-tone-cheque { --payment-fg: var(--payment-cheque); --payment-bg: var(--payment-cheque-bg); }
+:is(.workspace, dialog) :is(.payment-tone .cash-payment-label, .cash-payment-label.payment-tone, .record-payment-label.payment-tone) > svg {
+  box-sizing: content-box;
+  flex-shrink: 0;
+  padding: 6px;
+  border-radius: 8px;
+  color: var(--payment-fg);
+  background: var(--payment-bg);
+  border: 1px solid color-mix(in srgb, var(--payment-fg) 30%, transparent);
+}

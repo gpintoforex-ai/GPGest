@@ -49,6 +49,7 @@ from .models import (
     now,
 )
 from .operating_modes import policy
+from .payment_terms import due_date, term_rule
 from .schemas import Strict
 
 EFATURA_LIMIT = 5_000_000
@@ -571,7 +572,7 @@ def register_routes(app, current, authorize, scope, audit, workflow):
         rows = [row for row in db.scalars(select(BusinessEntity).where(BusinessEntity.removed.is_(False))) if nif_key(row.tax_number) == nif_key(nif)]
         ready = [row for row in rows if row.is_supplier and row.active]
         state = "exists" if len(ready) == 1 else "review" if rows else "not_found"
-        return state, [{"id": row.id, "name": row.name, "nif": row.tax_number, "is_supplier": row.is_supplier, "active": row.active, "email": row.email, "category_id": row.category_id, "payment_days": row.payment_days} for row in rows]
+        return state, [{"id": row.id, "name": row.name, "nif": row.tax_number, "is_supplier": row.is_supplier, "active": row.active, "email": row.email, "category_id": row.category_id, "payment_days": row.payment_days, "payment_term": term_rule(db, row.payment_term_id)} for row in rows]
 
     def duplicate_reason(db, purchase, document_type=None, document=None):
         key = invoice_key(purchase.supplier_nif, document_type or purchase.document_type, document or purchase.document)
@@ -766,6 +767,9 @@ def register_routes(app, current, authorize, scope, audit, workflow):
         due, due_source = overrides.get("due_date"), "indicado"
         if not due and len(dues) == 1:
             due, due_source = next(iter(dues)), "lido no anexo"
+        elif not due and supplier and (supplier.get("payment_term") or {}).get("term_type") in ("fim_mes", "fim_mes_seguinte"):
+            term = supplier["payment_term"]
+            due, due_source = due_date(date.fromisoformat(purchase.document_date), term["term_type"], None).isoformat(), f"prazo do fornecedor ({term['name']})"
         elif not due and supplier and supplier.get("payment_days") is not None:
             due, due_source = (date.fromisoformat(purchase.document_date) + timedelta(days=supplier["payment_days"])).isoformat(), f"prazo do fornecedor ({supplier['payment_days']} dias)"
         elif not due and purchase.document_type in ("FR", "FS"):

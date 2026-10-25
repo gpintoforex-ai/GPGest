@@ -61,6 +61,8 @@ class Register(Base):
     store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"))
     name: Mapped[str] = mapped_column(String(100))
     settings: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    # Caixa inativa: mantém o histórico, mas não abre novas folhas de caixa.
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
 
 class CompanyEmailSettings(Base):
@@ -490,6 +492,8 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True)
     # Percentagem estimada de IVA dedutível nas compras desta rubrica (vazio = 100%); só para o mapa indicativo.
     vat_deduction_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Rubrica inativa: mantém o histórico, mas não é proposta em novos registos.
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
 
 class LocalPaymentMethod(Base):
@@ -749,6 +753,12 @@ class WintouchSyncRun(Base):
     inserted_count: Mapped[int] = mapped_column(Integer, default=0)
     updated_count: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str] = mapped_column(Text, default="")
+    # Progresso das sincronizações de tabelas (executadas em segundo plano).
+    total_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    done_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    current_label: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    results: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         CheckConstraint(
             "status IN ('pendente', 'em_curso', 'concluida', 'falhou')", name="wt_run_status"
@@ -831,9 +841,20 @@ class WintouchEntity(WintouchRecord, Base):
     tax_number: Mapped[str | None] = mapped_column(String(40))
     email: Mapped[str | None] = mapped_column(String(200))
     phone: Mapped[str | None] = mapped_column(String(60))
+    # Morada principal (EntityAddresses com IsMainAddress), onde a Wintouch guarda também email e telefone.
+    address: Mapped[str | None] = mapped_column(String(500))
+    locality: Mapped[str | None] = mapped_column(String(120))
+    postal_code: Mapped[str | None] = mapped_column(String(20))
     is_customer: Mapped[bool | None] = mapped_column(Boolean)
     is_supplier: Mapped[bool | None] = mapped_column(Boolean)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Condições de pagamento na Wintouch (IDs externos; nomes em wt_payment_terms/methods).
+    payment_term_external_id: Mapped[str | None] = mapped_column(String(200))
+    payment_method_external_id: Mapped[str | None] = mapped_column(String(200))
+    supplier_payment_term_external_id: Mapped[str | None] = mapped_column(String(200))
+    supplier_payment_method_external_id: Mapped[str | None] = mapped_column(String(200))
+    # Eliminada na Wintouch a partir da IAZELA: o espelho fica para os documentos já importados.
+    erp_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __table_args__ = (
         UniqueConstraint("enterprise_id", "external_id"),
         Index("wt_entities_tax_number", "enterprise_id", "tax_number"),
@@ -916,6 +937,16 @@ class WintouchPaymentMethod(WintouchRecord, Base):
     )
 
 
+class WintouchPaymentTerm(WintouchRecord, Base):
+    """Prazos de pagamento da Wintouch; `days` fica vazio em prazos como «Fim do mês»."""
+
+    __tablename__ = "wt_payment_terms"
+    code: Mapped[str | None] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(String(200))
+    days: Mapped[int | None] = mapped_column(Integer)
+    term_type: Mapped[str | None] = mapped_column(String(20))
+
+
 class WintouchMovement(WintouchRecord, Base):
     __tablename__ = "wt_movements"
     resource: Mapped[str] = mapped_column(String(80))
@@ -956,8 +987,33 @@ class BusinessEntity(Base):
     is_customer: Mapped[bool] = mapped_column(Boolean, default=False)
     is_supplier: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Em entidades do ERP: Cliente/Fornecedor/Ativo definidos na IAZELA em vez de seguirem a Wintouch.
+    flags_local: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Em entidades do ERP: morada e contactos alterados na IAZELA, ainda por enviar.
+    contact_local: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Prazo de pagamento habitual (dias após a data do documento), usado nas propostas de lançamento.
     payment_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payment_term_id: Mapped[str | None] = mapped_column(
+        ForeignKey("payment_terms.id"), nullable=True
+    )
+    # Meio de pagamento habitual (identificador da tabela «Meios de pagamento»: base ou pm_…).
+    payment_method_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+
+class PaymentTerm(Base):
+    """Tabela de prazos de pagamento: criados na IAZELA ou importados da Wintouch."""
+
+    __tablename__ = "payment_terms"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    code: Mapped[str] = mapped_column(String(40), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
+    # apos (N dias após o documento), fim_mes, fim_mes_seguinte ou outro (tipo Wintouch não mapeado).
+    term_type: Mapped[str] = mapped_column(String(20), default="apos")
+    days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Desconto em centésimas de ponto percentual (250 = 2,5 %).
+    discount_basis_points: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
 class AttachmentIntegrationConfig(Base):
@@ -1300,6 +1356,9 @@ class StockWarehouse(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"), index=True)
     name: Mapped[str] = mapped_column(String(100))
+    # Código opcional, único por empresa; liga o armazém ao ERP sem depender do nome.
+    code: Mapped[str | None] = mapped_column(String(40), unique=True, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
 
 class StockLot(Base):
@@ -1625,3 +1684,47 @@ class ArchiveSettings(Base):
     include_drive: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_confirm_strong: Mapped[bool] = mapped_column(Boolean, default=False)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ErpLink(Base):
+    """Ligação estável entre um registo de uma tabela da IAZELA e o registo no ERP.
+
+    Isolada por empresa (esquema), ERP e empresa na API. `base_values` guarda os valores
+    acordados na última sincronização confirmada, para detetar alterações de cada lado.
+    """
+
+    __tablename__ = "erp_links"
+    __table_args__ = (
+        UniqueConstraint("provider", "enterprise_id", "table_key", "local_id"),
+        UniqueConstraint("provider", "enterprise_id", "table_key", "external_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    table_key: Mapped[str] = mapped_column(String(40))
+    local_id: Mapped[str] = mapped_column(String(100))
+    provider: Mapped[str] = mapped_column(String(40))
+    enterprise_id: Mapped[str] = mapped_column(String(100))
+    external_id: Mapped[str] = mapped_column(String(200))
+    external_code: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # Onde o registo nasceu: local (IAZELA) ou erp.
+    origin: Mapped[str] = mapped_column(String(10), default="local", server_default="local")
+    # sincronizado, conflito, erro ou a_enviar (escrita no ERP por confirmar).
+    state: Mapped[str] = mapped_column(String(20), default="sincronizado", server_default="sincronizado")
+    base_values: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    remote_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str] = mapped_column(Text, default="", server_default="")
+    error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Escrita em curso ou incerta: {"kind", "payload", "state"}; vazio quando não há nenhuma.
+    operation: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class TableSyncSetting(Base):
+    """Regra de prioridade em conflitos de sincronização, por tabela."""
+
+    __tablename__ = "table_sync_settings"
+    table_key: Mapped[str] = mapped_column(String(40), primary_key=True)
+    # perguntar, erp ou local.
+    conflict_policy: Mapped[str] = mapped_column(String(20), default="perguntar", server_default="perguntar")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)

@@ -467,3 +467,19 @@
     flex-wrap: wrap;
   }
 }
+.local-cash-physical-info { margin: 24px 0 16px; }
+.local-cash-physical-info > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 8px 0;
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+.local-cash-physical-info > summary::-webkit-details-marker { display: none; }
+.local-cash-physical-info > summary svg { flex-shrink: 0; color: var(--context-info); }
+.local-cash-physical-info > summary:focus-visible { outline: 3px solid var(--border-focus); outline-offset: 3px; border-radius: 4px; }
+.local-cash-physical-info > .local-cash-conference-help { margin-top: 8px; }

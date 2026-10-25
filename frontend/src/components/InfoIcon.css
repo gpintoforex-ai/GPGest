@@ -1,0 +1,8 @@
+.info-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; vertical-align: middle; padding: 4px; border: 1px solid #93b9eb; border-radius: 50%; background: #eaf3ff; color: #1556ad; }
+.info-icon svg { color: #1556ad !important; stroke-width: 2.5; }
+.ui-notice-info > svg.lucide-info { color: #1556ad; }
+[data-theme="dark"] .ui-notice-info > svg.lucide-info { color: #acd3ff; }
+[data-theme="dark"] .info-icon { background: #163c64; border-color: #73a9ec; color: #acd3ff; }
+[data-theme="dark"] .info-icon svg { color: #acd3ff !important; }
+.info-icon-note { display: none; position: absolute; z-index: 100; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: max-content; max-width: min(300px, 75vw); padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-control); background: var(--surface-elevated); color: var(--text-primary); box-shadow: 0 5px 18px #0003; font: 400 13px/1.5 system-ui, sans-serif; text-align: left; white-space: normal; pointer-events: none; }
+.info-icon:hover .info-icon-note, button:focus-visible .info-icon-note, summary:focus-visible .info-icon-note { display: block; }
