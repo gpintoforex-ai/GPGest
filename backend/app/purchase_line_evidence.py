@@ -30,6 +30,29 @@ def number(value):
 
 
 def extract_lines(text):
+    """Linhas de mercadoria: conferência aritmética (invoice_lines) e, em alternativa, colunas."""
+    from .invoice_lines import extract
+
+    found = extract(text or "")
+    if found["lines"]:
+        return {
+            "lines": [
+                {
+                    **line,
+                    "vat": line["vat"] or "0",
+                    "article_id": None,
+                    "confidence": "proposta",
+                    "source": "texto_ocr",
+                }
+                for line in found["lines"]
+            ],
+            "warnings": found["warnings"],
+            "review_required": True,
+        }
+    return header_lines(text)
+
+
+def header_lines(text):
     aliases = {
         "reference": {"ref", "referencia", "codigo", "artigo", "ean"},
         "description": {"descricao", "designacao", "produto"},

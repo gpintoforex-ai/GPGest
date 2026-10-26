@@ -16,10 +16,10 @@ from .db import db_session
 from .table_rules import ensure_usable
 from .schemas import Strict
 from . import inventory as stock
-from .models import (BusinessEntity, Category, DocumentERPLink, DocumentState,
+from .models import (ArchiveDocument, BusinessEntity, Category, DocumentERPLink, DocumentState,
     DriveDocumentAttachment, ERPDocument, ExpenseDraft, ProcurementDocument as Doc,
     ProcurementLink as Link, Purchase, PurchaseAttachment, PlannedAllocation, PlannedMovement, StockArticle, StockEntry,
-    StockLot, StockWarehouse, Store, User, now)
+    StockLot, StockWarehouse, Store, User, now, CustomerOrderReservation)
 from .document_identity import identity
 from .operating_modes import policy
 from .email_delivery import SendInput
@@ -82,6 +82,8 @@ class Draft(Strict):
     purchase_id: str | None = None
     erp_id: str | None = None
     category_id: str | None = None
+    # Fatura original no Arquivo digital (receção a partir de fatura e respetiva correção).
+    archive_document_id: str | None = Field(default=None, max_length=36)
     lines: list[Line] = Field(min_length=1, max_length=200)
     request_key: str = Field(min_length=8, max_length=100)
     revision: int = Field(default=0, ge=0)
@@ -107,6 +109,11 @@ class Confirm(Strict):
 class Cancel(Strict):
     revision: int
     reason: str = Field(min_length=3, max_length=2000)
+
+class EditConfirmed(Draft):
+    """Edição de uma receção confirmada: os mesmos campos do lançamento e as autorizações."""
+    allow_overdelivery: bool = False
+    acknowledge_differences: bool = True
 
 class EmailPreview(Strict):
     revision: int
@@ -144,7 +151,8 @@ def effective_quantity(doc, line):
 
 def used(db, doc_id, index, kind):
     return sum((row.quantity for row in db.scalars(select(Link).join(Doc, Doc.id == Link.document_id).where(
-        Link.source_id == doc_id, Link.source_line == index, Doc.kind == kind, Doc.confirmed_at.is_not(None)))), ZERO)
+        Link.source_id == doc_id, Link.source_line == index, Doc.kind == kind, Doc.confirmed_at.is_not(None),
+        Doc.status != 'cancelled'))), ZERO)
 
 def order_status(db, row, usage=None):
     if not row.confirmed_at or row.status == 'cancelled':
@@ -229,6 +237,8 @@ def validate(db, user, payload, authorize):
         erp=db.get(ERPDocument,payload.erp_id)
         if not erp or erp.store_id!=payload.store_id or erp.cancelled:
             fail('Documento ERP indisponível ou anulado neste estabelecimento.')
+    if payload.archive_document_id and not db.get(ArchiveDocument, payload.archive_document_id):
+        fail('A fatura original do arquivo já não existe.')
 
 def resolve_source(db, row, line, allowed):
     source = db.get(Doc, line['source_id'])
@@ -303,7 +313,7 @@ def confirm_document(db, user, row, options, authorize, audit):
             line['source_id']=receipt.id;line['source_line']=source_index
         payload['direct_receipt_id']=receipt.id
     if row.kind in ('receipt', 'return'):
-        for other in db.scalars(select(Doc).where(Doc.supplier_id == row.supplier_id, Doc.kind == row.kind, Doc.id != row.id, Doc.confirmed_at.is_not(None))):
+        for other in db.scalars(select(Doc).where(Doc.supplier_id == row.supplier_id, Doc.kind == row.kind, Doc.id != row.id, Doc.confirmed_at.is_not(None), Doc.status != 'cancelled')):
             if stock.document_key(json.loads(other.data)['document']) == stock.document_key(payload['document']):
                 fail('Este documento físico do fornecedor já foi confirmado.',409)
     for i, line in enumerate(payload['lines']):
@@ -343,7 +353,7 @@ def confirm_document(db, user, row, options, authorize, audit):
                 article_id=line['article_id'], warehouse_id=line['warehouse_id'], kind='supplier_return' if row.kind == 'return' else 'purchase',
                 quantity=q, unit_cost=entry_price.quantize(D('0.00000001')) if row.kind != 'return' else None,
                 occurred_on=payload['document_date'], document=payload['document'] or row.id,
-                reason=line['reason'] or LABELS[row.kind] + ' confirmada', request_key=f'procurement:{row.id}:{i}',
+                reason=line['reason'] or LABELS[row.kind] + ' confirmada', request_key=f'procurement:{row.id}:{i}' + (f":e{payload['edition']}" if payload.get('edition') else ''),
                 supplier_id=row.supplier_id, lot_id=line.get('lot_id'), lot_number=line.get('lot_number',''),
                 expiry=line.get('expiry'), original_id=original_entry, override_reason=line['reason'] if row.kind=='return' else ''), authorize, source='procurement')
             line['stock_entry_ids'] = [entry.id for entry in entries]
@@ -425,6 +435,81 @@ def confirm_document(db, user, row, options, authorize, audit):
     db.flush()
     return row
 
+def undo_entries(db, user, row, payload, authorize, keep=frozenset()):
+    """Retira as entradas de stock de uma receção que vai ser regravada.
+
+    Sem nada depois (vendas, saídas, outras entradas do artigo), a entrada é apagada, como se não
+    tivesse existido (as compras não têm obrigação fiscal). Com movimentos posteriores, apagar
+    desacertaria o custo médio e os lotes já consumidos: faz-se um movimento inverso ao custo original.
+    """
+    removed = reversed_ = 0
+    edition = payload.get('edition', 0) + 1
+    for index, line in enumerate(payload['lines']):
+        for number, entry_id in enumerate(line.get('stock_entry_ids', [])):
+            entry = db.get(StockEntry, entry_id)
+            if entry is None:
+                continue
+            later = db.scalar(select(StockEntry.id).where(
+                StockEntry.article_id == entry.article_id, StockEntry.id != entry.id,
+                StockEntry.id.not_in(keep or ['-']), StockEntry.created_at >= entry.created_at).limit(1))
+            if later is None:
+                lot_id = entry.lot_id
+                db.delete(entry)
+                db.flush()
+                if lot_id and not db.scalar(select(StockEntry.id).where(StockEntry.lot_id == lot_id).limit(1)) \
+                        and not db.scalar(select(CustomerOrderReservation.id).where(CustomerOrderReservation.lot_id == lot_id).limit(1)):
+                    db.delete(db.get(StockLot, lot_id))
+                removed += 1
+                continue
+            reversal = stock.post(db, user, stock.MovementInput(
+                article_id=entry.article_id, warehouse_id=entry.warehouse_id, kind='adjustment', adjustment_out=True,
+                quantity=entry.quantity, lot_id=entry.lot_id,
+                unit_cost=D(entry.unit_cost).quantize(D('0.00000001')) if entry.unit_cost is not None else None,
+                document=payload['document'] or row.id,
+                reason=f'Edição da receção {payload["document"] or row.id}: substitui a entrada anterior',
+                request_key=f'procurement-edit:{row.id}:{edition}:{index}:{number}'), authorize, source='procurement', bypass=True)
+            for item in reversal:
+                detail = json.loads(item.data)
+                detail.update(procurement_id=row.id, reversal_of=entry.id)
+                item.data = stock.dump(detail)
+            reversed_ += 1
+    return removed, reversed_
+
+
+def replace_confirmed(db, user, row, data, authorize, audit, extra=None):
+    """Regrava uma receção confirmada com os dados editados e volta a gerar os movimentos."""
+    if row.kind != 'receipt' or not row.confirmed_at or row.status == 'cancelled':
+        fail('Só uma receção confirmada pode ser editada desta forma.', 409)
+    if data.kind != 'receipt' or data.store_id != row.store_id:
+        fail('A edição tem de manter o tipo e o estabelecimento da receção.', 409)
+    old = json.loads(row.data)
+    for index in range(len(old['lines'])):
+        if used(db, row.id, index, 'invoice') or used(db, row.id, index, 'return'):
+            fail('Esta receção já tem fatura ou devolução associada: corrija com uma devolução ao fornecedor.', 409)
+    validate(db, user, data, authorize)
+    for link in db.scalars(select(Link).where(Link.document_id == row.id)):
+        db.delete(link)
+    raw = data.model_dump(mode='json', exclude={'allow_overdelivery', 'acknowledge_differences'})
+    raw.update(totals(raw['lines']))
+    raw['creation_digest'] = old.get('creation_digest')
+    raw['edition'] = old.get('edition', 0) + 1
+    raw['archive_document_id'] = data.archive_document_id or old.get('archive_document_id')
+    raw.update(extra or {})
+    row.supplier_id, row.data = data.supplier_id, stock.dump(raw)
+    row.status, row.confirmed_at = 'draft', None
+    row.revision += 1
+    db.flush()
+    confirm_document(db, user, row, Confirm(revision=row.revision, allow_overdelivery=data.allow_overdelivery,
+        acknowledge_differences=data.acknowledge_differences), authorize, audit)
+    # Só depois de gerar as entradas novas se retiram as antigas: o stock nunca fica negativo pelo caminho.
+    fresh = {entry_id for line in json.loads(row.data)['lines'] for entry_id in line.get('stock_entry_ids', [])}
+    removed, reversed_ = undo_entries(db, user, row, old, authorize, keep=fresh)
+    audit(db, user, 'compra_circuito_rececao_editada', row.id,
+        {'edicao': raw['edition'], 'entradas_apagadas': removed, 'entradas_estornadas': reversed_,
+         'linhas_anteriores': [{'artigo': line.get('article_id'), 'quantidade': line['quantity'], 'preco': line['price']} for line in old['lines']]},
+        row.store_id)
+    return row
+
 def register_routes(app, current, authorize, scope, audit):
     def get(db, user, identifier, write=False):
         row = db.get(Doc, identifier)
@@ -439,11 +524,11 @@ def register_routes(app, current, authorize, scope, audit):
         visible = stock.permissions(user,stock.settings(db))['view_cost']
         rows=list(db.scalars(select(Doc).where(Doc.store_id.in_(scope(user,db))).order_by(Doc.created_at.desc())))
         usage={(source,index,kind):quantity for source,index,kind,quantity in db.execute(select(Link.source_id,Link.source_line,Doc.kind,func.sum(Link.quantity))
-            .join(Doc,Doc.id==Link.document_id).where(Link.source_id.in_([r.id for r in rows]),Doc.confirmed_at.is_not(None))
+            .join(Doc,Doc.id==Link.document_id).where(Link.source_id.in_([r.id for r in rows]),Doc.confirmed_at.is_not(None),Doc.status!='cancelled')
             .group_by(Link.source_id,Link.source_line,Doc.kind))}
         docs = [document_view(db,r,visible,usage) for r in rows]
         return {'documents': docs, 'mode': policy(db), 'can_write': user.role in ('administrador','gestor') and visible,
-            'integration_note': 'Circuito local. Não envia encomendas, compras ou stock ao ERP. Artigos controlados pelo ERP permanecem apenas de leitura.'}
+            'integration_note': 'Circuito local. Não envia encomendas, compras ou stock ao ERP. Nos artigos do ERP, o stock é registado aqui; código, nome e preço vêm do ERP.'}
 
     @app.get('/api/procurement-ledger')
     def ledger(store_id:str='',start:date|None=None,end:date|None=None,article_id:str='',kind:str='',page:int=1,user=Depends(current),db:Session=Depends(db_session)):
@@ -524,6 +609,17 @@ def register_routes(app, current, authorize, scope, audit):
         row.status='cancelled';row.revision+=1
         audit(db,user,'compra_circuito_cancelada',row.id,{'reason':data.reason},row.store_id);db.commit()
         return document_view(db,row)
+
+    @app.put('/api/procurement/{identifier}/confirmed')
+    def edit_confirmed(identifier: str, data: EditConfirmed, user=Depends(current), db: Session=Depends(db_session)):
+        """Editar uma receção confirmada na janela de lançamento: grava e volta a gerar os movimentos."""
+        stock.lock(db)
+        row = get(db, user, identifier, True)
+        if row.revision != data.revision:
+            fail('A receção mudou entretanto. Atualize antes de gravar.', 409)
+        replace_confirmed(db, user, row, data, authorize, audit)
+        db.commit()
+        return document_view(db, row)
 
     @app.get('/api/procurement/{identifier}/pdf')
     def pdf(identifier:str,user=Depends(current),db:Session=Depends(db_session)):

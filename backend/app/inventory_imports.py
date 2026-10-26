@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal as D
 
@@ -25,6 +26,7 @@ from .inventory import (
     require,
     save_article,
     settings,
+    stock_from_erp,
     warehouse,
 )
 from .models import (
@@ -71,6 +73,47 @@ class SourceApply(Confirm):
 
 class ERPAttach(Strict):
     erp_id: str
+
+
+class ERPLinkByCode(Strict):
+    # Sem confirmação devolve só a pré-visualização; nada é alterado.
+    confirmed: bool = False
+    create_missing: bool = False
+
+
+def link_plan(db):
+    """Associação por código entre artigos do ERP e fichas locais (sem alterar nada)."""
+    company = request_company(db)
+    products = [
+        p
+        for p in db.scalars(select(WintouchProduct))
+        if not company or p.enterprise_id == company.api_enterprise
+    ]
+    articles = list(db.scalars(select(StockArticle)))
+    linked = {a.erp_id for a in articles if a.erp_id}
+    local = defaultdict(list)
+    for row in articles:
+        if not row.erp_id:
+            local[row.code.strip().casefold()].append(row)
+    codes = {row.code.strip().casefold() for row in articles}
+    remote = defaultdict(list)
+    for product in products:
+        if product.id not in linked and product.code.strip():
+            remote[product.code.strip().casefold()].append(product)
+    matched, missing, ambiguous = [], [], []
+    for code, group in remote.items():
+        mine = local.get(code, [])
+        if len(group) > 1 or len(mine) > 1:
+            ambiguous.append(group[0].code)
+        elif mine:
+            matched.append((mine[0], group[0]))
+        elif code in codes:
+            # Já existe uma ficha com este código, ligada a outro artigo do ERP.
+            ambiguous.append(group[0].code)
+        elif group[0].active and len(group[0].code) <= 100:
+            missing.append(group[0])
+    local_only = sum(len(rows) for code, rows in local.items() if code not in remote)
+    return products, matched, missing, ambiguous, local_only, len(linked)
 
 
 class SourceReview(Confirm):
@@ -256,7 +299,8 @@ def register_imports(app, current, authorize, scope, audit):
 
                 if not isinstance(error, HTTPException):
                     raise
-                errors.append({"line": index, "message": str(error.detail)})
+                message = "; ".join(item.get("msg", "Valor inválido.") for item in error.detail) if isinstance(error.detail, list) else str(error.detail)
+                errors.append({"line": index, "message": message})
         record = StockImport(user_id=user.id, data=dump({"rows": rows, "errors": errors}))
         db.add(record)
         db.flush()
@@ -294,6 +338,7 @@ def register_imports(app, current, authorize, scope, audit):
         ):
             fail("As colunas indicadas não existem no ficheiro.")
         articles = {a.code.casefold(): a for a in db.scalars(select(StockArticle))}
+        erp_stock = stock_from_erp(db)
         allowed = {
             w.id: w
             for w in db.scalars(
@@ -320,7 +365,7 @@ def register_imports(app, current, authorize, scope, audit):
                     raise ValueError(
                         f"Artigo «{values['code']}» sem ficha. Importe ou crie o artigo primeiro."
                     )
-                if article_row.erp_id:
+                if article_row.erp_id and erp_stock:
                     raise ValueError("Artigo controlado pelo ERP: o stock é gerido na origem.")
                 if not article_row.active:
                     raise ValueError("Artigo inativo.")
@@ -534,7 +579,7 @@ def register_imports(app, current, authorize, scope, audit):
                 for p in db.scalars(select(WintouchProduct).order_by(WintouchProduct.name))
                 if not company or p.enterprise_id == company.api_enterprise
             ],
-            "stock": "Indisponível: o conector Wintouch não fornece quantidades. Os artigos associados são apenas de leitura e não admitem movimentos locais.",
+            "stock": "O stock dos artigos do ERP é registado na IAZELA: o conector Wintouch não lê quantidades. Código, nome, estado e preço vêm do ERP.",
         }
 
     @app.post("/api/stock/erp-products")
@@ -556,6 +601,62 @@ def register_imports(app, current, authorize, scope, audit):
         db.commit()
         return {"id": row.id}
 
+    @app.post("/api/stock/erp-products/link-by-code")
+    def link_erp_by_code(
+        data: ERPLinkByCode, user=Depends(current), db: Session = Depends(db_session)
+    ):
+        """Liga as fichas locais aos artigos do ERP com o mesmo código (e cria as que faltam)."""
+        require(user, settings(db), "adjust_stock")
+        if data.confirmed:
+            lock(db)
+        products, matched, missing, ambiguous, local_only, already = link_plan(db)
+        if not products:
+            fail("Sincronize primeiro os artigos do ERP em Configurações → Integrações.", 409)
+        summary = {
+            "erp_products": len(products),
+            "already_linked": already,
+            "link": len(matched),
+            "create": len(missing),
+            "ambiguous": len(ambiguous),
+            "ambiguous_codes": sorted(ambiguous)[:20],
+            "local_only": local_only,
+        }
+        if not data.confirmed:
+            return summary
+        for row, product in matched:
+            # A ficha e o histórico de stock mantêm-se; código, nome e preço passam a vir do ERP.
+            row.erp_id = product.id
+            row.revision = (row.revision or 0) + 1
+        created = 0
+        if data.create_missing:
+            for product in missing:
+                unit = product.unit if product.unit and len(product.unit) <= 20 else "un"
+                values = ArticleInput(code=product.code, name=product.name[:300], unit=unit)
+                db.add(
+                    StockArticle(
+                        code=values.code,
+                        name=values.name,
+                        active=product.active,
+                        erp_id=product.id,
+                        revision=1,
+                        data=dump(
+                            values.model_dump(
+                                mode="json", exclude={"code", "name", "active", "revision"}
+                            )
+                        ),
+                    )
+                )
+                created += 1
+        audit(
+            db,
+            user,
+            "stock_erp_link_by_code",
+            "artigos",
+            {"ligados": len(matched), "criados": created, "ambiguos": len(ambiguous)},
+        )
+        db.commit()
+        return {**summary, "linked": len(matched), "created": created}
+
     @app.put("/api/stock/lots/{identifier}")
     def edit_lot(
         identifier: str, data: LotEdit, user=Depends(current), db: Session = Depends(db_session)
@@ -565,7 +666,7 @@ def register_imports(app, current, authorize, scope, audit):
         row = db.get(StockLot, identifier)
         if not row:
             fail("Lote não encontrado.", 404)
-        article(db, row.article_id, True)
+        article(db, row.article_id, True, stock=True)
         positions = list(db.scalars(select(StockEntry).where(StockEntry.lot_id == row.id)))
         for position in positions:
             warehouse(db, user, position.warehouse_id, authorize)
@@ -625,7 +726,7 @@ def register_imports(app, current, authorize, scope, audit):
             ):
                 skipped.append(source["key"])
                 continue
-            product = article(db, source["article_id"], True)
+            product = article(db, source["article_id"], True, stock=True)
             if json.loads(product.data).get("lots"):
                 skipped.append(source["key"])
                 continue

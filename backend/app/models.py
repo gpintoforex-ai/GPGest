@@ -1350,6 +1350,23 @@ class StockArticle(Base):
     revision: Mapped[int] = mapped_column(default=0)
 
 
+class PurchaseArticleAlias(Base):
+    """Correspondência aprendida ao receber uma fatura: referência/EAN/descrição do fornecedor → artigo."""
+
+    __tablename__ = "purchase_article_aliases"
+    __table_args__ = (
+        UniqueConstraint("supplier_key", "kind", "key", name="purchase_alias_unique"),
+        CheckConstraint("kind IN ('ref', 'ean', 'desc')", name="purchase_alias_kind"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    # Fornecedor (vazio nos códigos de barras, que valem para qualquer fornecedor).
+    supplier_key: Mapped[str] = mapped_column(String(36), default="", server_default="")
+    kind: Mapped[str] = mapped_column(String(10))
+    key: Mapped[str] = mapped_column(String(300))
+    article_id: Mapped[str] = mapped_column(ForeignKey("stock_articles.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class StockWarehouse(Base):
     __tablename__ = "stock_warehouses"
     __table_args__ = (UniqueConstraint("store_id", "name"),)

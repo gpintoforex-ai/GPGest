@@ -20,6 +20,7 @@ company = {
     "operating_mode": "local",
 }
 calls = []
+catalog_calls = []
 
 
 def api(route):
@@ -31,6 +32,21 @@ def api(route):
         result = [company]
     elif path.endswith("/users") or path == "/api/platform/audit":
         result = []
+    elif "/reset-catalog/" in path:
+        scope = path.rsplit("/", 1)[1]
+        labels = {"articles": "Artigos", "customers": "Clientes", "suppliers": "Fornecedores"}
+        if request.method == "GET":
+            result = {"scope": scope, "label": labels[scope], "total": 3, "removable": 2, "protected": 1,
+                      "shared": 0 if scope == "articles" else 1, "token": "a" * 64,
+                      "protected_examples": [{"id": "protected", "name": "Ficha com histórico"}]}
+        else:
+            body = request.post_data_json
+            catalog_calls.append((scope, body))
+            if body["confirmation"] != company["nif"]:
+                route.fulfill(status=422, json={"detail": "A confirmação não corresponde à empresa."})
+                return
+            assert body["acknowledged"] is True and body["preview_token"] == "a" * 64
+            result = {"ok": True, "removed": 2, "protected": 1, "shared": 0 if scope == "articles" else 1}
     elif path.endswith("/reset-movements") and request.method == "POST":
         body = request.post_data_json
         calls.append((path, body))
@@ -54,6 +70,24 @@ with sync_playwright() as playwright:
     page.goto("http://127.0.0.1:5174/plataforma")
     page.get_by_role("button", name="Configurar empresa", exact=True).click()
     dialog = page.get_by_role("dialog", name="Empresa fictícia de teste · Configuração", exact=True)
+    catalog = dialog.locator(".company-removal").filter(has=page.get_by_role("heading", name="Reinicializar uma tabela", exact=True))
+    for label, scope in [("artigos", "articles"), ("clientes", "customers"), ("fornecedores", "suppliers")]:
+        catalog.get_by_role("button", name="Reinicializar " + label, exact=True).click()
+        expect(catalog.get_by_text("Ficha com histórico", exact=False)).to_be_visible()
+        before = len(catalog_calls)
+        confirm_catalog = catalog.get_by_role("button", name="Confirmar reinicialização de " + label, exact=True)
+        confirm_catalog.click()
+        assert len(catalog_calls) == before
+        catalog.locator('input[name="confirmation"]').fill("errado")
+        catalog.locator('input[name="acknowledged"]').check()
+        confirm_catalog.click()
+        expect(catalog.get_by_role("alert")).to_contain_text("A confirmação não corresponde à empresa.")
+        expect(catalog.locator('input[name="confirmation"]')).to_have_value("errado")
+        catalog.locator('input[name="confirmation"]').fill(company["nif"])
+        confirm_catalog.click()
+        expect(confirm_catalog).to_have_count(0)
+        assert catalog_calls[-1][0] == scope
+    assert [scope for scope, _ in catalog_calls] == ["articles", "articles", "customers", "customers", "suppliers", "suppliers"]
     dialog.get_by_role("button", name="Reinicializar movimentos e documentos", exact=True).click()
     expect(dialog.get_by_text("Preserva tabelas e bancos:", exact=True)).to_be_visible()
     confirm = dialog.get_by_role(

@@ -32,18 +32,6 @@
 .cash-sheet-details[open] > summary {
   margin-bottom: 20px;
 }
-.supplier-picker { position: relative; display: grid; gap: 6px; }
-.supplier-picker-input { display: flex; border: 1px solid var(--color-border); border-radius: 6px; background: white; }
-.supplier-picker-input input { flex: 1; width: 100%; border: 0; }
-.supplier-picker-input button { border: 0; padding: 8px 12px; }
-.supplier-picker-dropdown { position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid var(--color-border); border-radius: 6px; box-shadow: 0 6px 18px #14263f22; z-index: 5; }
-.supplier-picker-dropdown ul { list-style: none; padding: 4px; margin: 0; max-height: 210px; overflow: auto; }
-.supplier-picker-dropdown li { padding: 9px 10px; cursor: pointer; border-radius: 4px; }
-.supplier-picker-dropdown li:hover, .supplier-picker-dropdown li[aria-selected="true"] { background: #edf2fa; }
-.supplier-picker-dropdown li[aria-disabled="true"] { color: var(--color-muted); cursor: default; }
-.supplier-picker-dropdown > button { width: 100%; justify-content: flex-start; border: 0; border-top: 1px solid var(--color-border); border-radius: 0; color: var(--color-primary); }
-.supplier-picker-create { margin-top: 10px; padding: 12px; border: 1px solid var(--color-border); border-radius: 6px; display: grid; gap: 12px; }
-.supplier-picker-create label { display: grid; gap: 6px; }
 .cash-reconciliation {
   padding: 18px;
   margin: 18px 0;

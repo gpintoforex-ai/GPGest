@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import db_session
-from .inventory import average, balances, permissions, settings, warehouse
+from .inventory import average, balances, permissions, settings, stock_from_erp, warehouse
 from .models import StockArticle, StockEntry, StockLot, StockWarehouse
 
 
@@ -73,6 +73,7 @@ def register_reports(app, current, authorize, scope):
             "loss_unknown": 0,
             "erp_stock_unavailable": 0,
         }
+        erp_stock = stock_from_erp(db)
         for product in db.scalars(select(StockArticle)):
             data = json.loads(product.data)
             if (
@@ -86,7 +87,9 @@ def register_reports(app, current, authorize, scope):
                 and data.get("supplier_id") != supplier_id
             ):
                 continue
-            if product.erp_id:
+            if data.get("service"):
+                continue  # Serviços não têm stock.
+            if product.erp_id and erp_stock:
                 coverage["erp_stock_unavailable"] += 1
                 continue
             history = grouped.get(product.id, [])

@@ -2191,6 +2191,8 @@ register_inventory_routes(app, current, authorize, scope, record)
 
 from .procurement import register_routes as register_procurement_routes
 register_procurement_routes(app, current, authorize, scope, record)
+from .purchase_receiving import register_routes as register_purchase_receiving_routes
+register_purchase_receiving_routes(app, current, authorize, scope, record)
 
 from .payment_terms import router as payment_terms_router
 app.include_router(payment_terms_router)

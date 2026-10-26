@@ -90,6 +90,10 @@ class CompanyDataReset(CompanyRemoval):
     acknowledged: Literal[True]
 
 
+class CompanyCatalogReset(CompanyDataReset):
+    preview_token: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 def cipher():
     value = os.getenv("PLATFORM_ENCRYPTION_KEY", "")
     if not value:
@@ -310,6 +314,65 @@ def reset_data(company_id, data, admin, db, *, movements_only):
     )
     db.commit()
     return {"ok": True, "scope": "movements" if movements_only else "all"}
+
+
+def catalog_reset_company(db, company_id, locked=False):
+    query = select(Company).where(Company.id == company_id)
+    company = db.scalar(query.with_for_update() if locked else query)
+    if not company or company.removed_at:
+        raise HTTPException(404, "Empresa não encontrada.")
+    if company.schema_name != "public" and not re.fullmatch(r"gpgest_c_[a-f0-9]{32}", company.schema_name):
+        raise HTTPException(409, "Esquema da empresa inválido.")
+    return company
+
+
+@router.get("/companies/{company_id}/reset-catalog/{scope}")
+def preview_catalog_reset(company_id: str, scope: Literal["articles", "customers", "suppliers"], admin=Depends(require_platform), db: Session = Depends(platform_db)):
+    from .catalog_reset import plan_catalog_reset
+
+    company = catalog_reset_company(db, company_id)
+    with Session(engine.execution_options(schema_translate_map={None: company.schema_name})) as tenant:
+        plan = plan_catalog_reset(tenant, scope)
+    return {k: v for k, v in plan.items() if k != "actions"}
+
+
+@router.post("/companies/{company_id}/reset-catalog/{scope}")
+def confirm_catalog_reset(company_id: str, scope: Literal["articles", "customers", "suppliers"], data: CompanyCatalogReset, admin=Depends(require_platform), db: Session = Depends(platform_db)):
+    from .catalog_reset import copy_and_reset_catalog, plan_catalog_reset
+
+    company = catalog_reset_company(db, company_id, locked=True)
+    if data.confirmation.strip() != (company.nif or company.name):
+        raise HTTPException(422, "A confirmação não corresponde à empresa.")
+    original = company.schema_name
+    replacement = "gpgest_c_" + uid().replace("-", "")
+    central_schema = db.info.get("platform_schema", "public")
+    connection = db.connection()
+    try:
+        connection.execute(text("SET LOCAL lock_timeout = '10s'"))
+        tables = ", ".join(f'"{original}"."{table.name}"' for table in Base.metadata.sorted_tables)
+        try:
+            connection.execute(text(f"LOCK TABLE {tables} IN SHARE MODE"))
+        except DBAPIError as error:
+            if getattr(error.orig, "sqlstate", None) in {"55P03", "40P01"}:
+                raise HTTPException(409, "Existem operações em curso. Termine-as e volte a pré-visualizar a tabela.") from None
+            raise
+        connection.execution_options(schema_translate_map={None: original})
+        with Session(bind=connection, join_transaction_mode="create_savepoint") as tenant:
+            plan = plan_catalog_reset(tenant, scope)
+        if not secrets.compare_digest(data.preview_token, plan["token"]):
+            raise HTTPException(409, "A tabela ou as suas associações mudaram. Volte a pré-visualizar antes de confirmar.")
+        if not plan["removable"]:
+            raise HTTPException(409, "Não existem fichas sem histórico ou associações para reinicializar.")
+        connection.execute(text(f'CREATE SCHEMA "{replacement}"'))
+        connection.execution_options(schema_translate_map={None: replacement})
+        Base.metadata.create_all(connection)
+        copy_and_reset_catalog(connection, original, replacement, plan)
+    finally:
+        connection.execution_options(schema_translate_map={None: central_schema})
+    company.schema_name = replacement
+    db.add(PlatformAudit(admin_id=admin.id, company_id=company.id, action=f"tabela_reinicializada:{scope}:{original}"))
+    db.commit()
+    return {"ok": True, "scope": scope, "removed": plan["removable"], "protected": plan["protected"], "shared": plan["shared"]}
 
 
 @router.get("/companies/{company_id}/users")

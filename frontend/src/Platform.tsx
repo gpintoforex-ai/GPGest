@@ -3,6 +3,7 @@ import { ActionLink } from "./components/InteractionUI";
 import Brand from "./components/Brand";
 import ThemeSettings from "./ThemeSettings";
 import LegalAdmin from "./LegalAdmin";
+import PlatformCatalogReset from "./PlatformCatalogReset";
 import { PrivacyNotice } from "./Legal";
 import { ActionButton, AppDialog, Notice, confirmFormExit } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
@@ -472,6 +473,10 @@ export default function Platform() {
             >
               {testing ? "A testar…" : "Testar ligação de leitura"}
             </ActionButton>
+            <PlatformCatalogReset key={selected.id} company={selected} onDone={message => {
+              setNotice(message);
+              void refresh().catch(() => setError("A reinicialização terminou, mas não foi possível atualizar a plataforma. Atualize a página; não repita a operação."));
+            }} />
             <div className="company-removal">
               <div className="actions">
                 <ActionButton type="button" onClick={async e => { if (resettingData && !(await confirmFormExit(e.currentTarget.closest(".company-removal")))) return; setResettingData(resettingData === "movements" ? null : "movements"); }}>

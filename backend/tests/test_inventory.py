@@ -3,6 +3,7 @@ import json
 from datetime import date, timedelta
 from decimal import Decimal as D
 from uuid import uuid4
+from types import SimpleNamespace
 
 import pytest
 from alembic.migration import MigrationContext
@@ -154,6 +155,81 @@ def login(client, role):
         "/api/auth/login", json={"email": f"{role}@test.pt", "password": "PasswordTest123!"}
     )
     assert response.status_code == 200, response.text
+
+
+def test_article_available_stock_deducts_reservations_expiry_and_respects_scope():
+    from app.inventory import availability
+
+    history = [
+        SimpleNamespace(warehouse_id="allowed", lot_id=None, quantity=D(10)),
+        SimpleNamespace(warehouse_id="allowed", lot_id="expired", quantity=D(5)),
+        SimpleNamespace(warehouse_id="other", lot_id=None, quantity=D(100)),
+        SimpleNamespace(warehouse_id="negative", lot_id=None, quantity=D(-2)),
+    ]
+    holds = [
+        SimpleNamespace(warehouse_id="allowed", lot_id=None, quantity=D(3)),
+        SimpleNamespace(warehouse_id="other", lot_id=None, quantity=D(20)),
+    ]
+    lots = {"expired": SimpleNamespace(expiry=(date.today() - timedelta(days=1)).isoformat())}
+    result = availability(history, ["allowed", "negative"], lots, holds)
+    assert result == {"reserved_quantity": "3", "available_quantity": "7"}
+    assert availability(history, ["allowed", "negative"], lots, holds, set())["available_quantity"] == "0"
+    assert availability([], ["allowed"], {}, []) == {"reserved_quantity": "0", "available_quantity": "0"}
+
+
+def test_article_details_ledger_warehouses_cost_permissions_and_history(stock_case):
+    c, _, _, warehouses, _ = stock_case
+    pid = product(stock_case)
+    move(stock_case, pid, quantity="10", unit_cost="2", document="FT TESTE/1")
+    move(stock_case, pid, "transfer", "3", target_id=warehouses[1])
+    details = c.get(f"/api/stock/articles/{pid}/details")
+    assert details.status_code == 200, details.text
+    body = details.json()
+    quantities = {w["id"]: w["quantity"] for w in body["warehouses"]}
+    assert D(quantities[warehouses[0]]) == 7
+    assert D(quantities[warehouses[1]]) == 3
+    assert body["last_purchase"]["document"] == "FT TESTE/1"
+    assert D(body["last_purchase"]["unit_cost"]) == 2
+    assert body["history"][0]["label"] == "Artigo criado"
+    assert body["history"][0]["user_name"]
+    assert D(body["available_quantity"]) == 10
+    assert body["reserved_quantity"] == "0"
+    assert "detail" not in body["history"][0]
+    login(c, "operator")
+    restricted = c.get(f"/api/stock/articles/{pid}/details").json()
+    assert warehouses[2] not in [w["id"] for w in restricted["warehouses"]]
+    assert restricted["last_purchase"]["unit_cost"] is None
+    assert c.get("/api/stock/articles/nonexistent/details").status_code == 404
+
+
+def test_article_validation_identifies_conflicting_fields(stock_case):
+    c = stock_case[0]
+    product(stock_case, code="DUPLICADO", barcodes=["001234"])
+    for data, field, status in [
+        ({"code": "duplicado", "name": "Outro"}, "code", 409),
+        ({"code": "OUTRO", "name": "Outro", "barcodes": ["001234"]}, "barcodes", 409),
+        ({"code": "MIN", "name": "Outro", "minimum": "5", "reorder": "2"}, "reorder", 422),
+        ({"code": "LOT", "name": "Outro", "expiry": True}, "expiry", 422),
+    ]:
+        result = c.post("/api/stock/articles", json=data)
+        assert result.status_code == status, result.text
+        assert result.json()["detail"][0]["loc"] == ["body", field]
+
+
+def test_article_notes_and_https_documents_round_trip(stock_case):
+    c = stock_case[0]
+    pid = product(stock_case, description="Descrição do artigo", internal_notes="Nota da equipa",
+                  additional_photos=["https://example.com/photo.png"],
+                  attachments=[{"name": "Ficha técnica", "url": "https://example.com/sheet.pdf"}])
+    data = view(stock_case, pid)
+    assert data["description"] == "Descrição do artigo"
+    assert data["internal_notes"] == "Nota da equipa"
+    assert data["attachments"][0]["name"] == "Ficha técnica"
+    assert data["additional_photos"] == ["https://example.com/photo.png"]
+    for field, value in [("photo", "https://"), ("additional_photos", ["http://example.com/photo.png"]),
+                         ("attachments", [{"name": "Inválido", "url": "javascript:alert(1)"}])]:
+        response = c.post("/api/stock/articles", json={"code": uuid4().hex, "name": "Inválido", field: value})
+        assert response.status_code == 422
 
 
 def test_moving_average_frozen_sales_return_loss_and_transfer(stock_case):
@@ -511,41 +587,98 @@ def test_lot_inventory_adjustment_is_not_a_fefo_sale(stock_case):
     assert D(next(lot["quantity"] for lot in lots if lot["number"] == "FIRST")) == 5
 
 
-def test_erp_articles_readonly_and_stock_unavailable(stock_case):
-    c, _, factory, warehouses, _ = stock_case
-    with factory.begin() as db:
+def erp_product(case, code, name="ERP produto", **extra):
+    with case[2].begin() as db:
         row = WintouchProduct(
             enterprise_id="ERP",
-            external_id="P1",
-            code="ERP1",
-            name="ERP produto",
+            external_id="X" + uuid4().hex[:8],
+            code=code,
+            name=name,
             sale_price=D(5),
             last_cost=D(2),
+            **extra,
         )
         db.add(row)
         db.flush()
-        erp_id = row.id
+        return row.id
+
+
+def test_erp_articles_keep_erp_catalogue_and_local_stock(stock_case, monkeypatch):
+    c, _, _, warehouses, _ = stock_case
+    erp_id = erp_product(stock_case, "ERP1")
     result = c.post("/api/stock/erp-products", json={"erp_id": erp_id})
     assert result.status_code == 200, result.text
     pid = result.json()["id"]
     detail = view(stock_case, pid)
-    assert detail["quantity"] is None and detail["sale_net"] is None
-    assert "indisponível" in detail["stock_state"]
-    assert (
-        c.post(
-            "/api/stock/movements",
-            json={
-                "article_id": pid,
-                "warehouse_id": warehouses[0],
-                "kind": "purchase",
-                "quantity": "1",
-                "reason": "Tentativa",
-                "request_key": str(uuid4()),
-            },
-        ).status_code
-        == 409
-    )
-    assert report(stock_case)["coverage"]["erp_stock_unavailable"] == 1
+    # O conector não lê quantidades: o stock dos artigos do ERP é registado na IAZELA.
+    assert detail["quantity"] == "0" and detail["sale_net"] is None and detail["origin"] == "ERP"
+    assert detail["stock_state"] == "movimentos locais"
+    movement = {
+        "article_id": pid,
+        "warehouse_id": warehouses[0],
+        "kind": "purchase",
+        "quantity": "3",
+        "unit_cost": "2",
+        "reason": "Receção",
+        "request_key": str(uuid4()),
+    }
+    assert c.post("/api/stock/movements", json=movement).status_code == 200
+    assert D(view(stock_case, pid)["quantity"]) == 3
+    assert report(stock_case)["coverage"]["erp_stock_unavailable"] == 0
+
+    # Ficha: só os dados de gestão local mudam; código, nome, estado e preço vêm do ERP.
+    current = view(stock_case, pid)
+    edit = {
+        "code": "OUTRO", "name": "Outro nome", "active": False, "sale_net": "99",
+        "category": "Chás", "minimum": "1", "reorder": "4", "location": "A1",
+        "revision": current["revision"],
+    }
+    assert c.put(f"/api/stock/articles/{pid}", json=edit).status_code == 200, "edição local"
+    after = view(stock_case, pid)
+    assert after["code"] == "ERP1" and after["name"] == "ERP produto" and after["active"] is True
+    assert after["category"] == "Chás" and after["location"] == "A1" and after["sale_net"] is None
+    price = c.post(f"/api/stock/articles/{pid}/price", json={"revision": after["revision"], "sale_net": "7"})
+    assert price.status_code == 409 and "vêm do ERP" in price.json()["detail"]
+
+    # Se a empresa declarar o stock como do ERP, os movimentos locais voltam a ser recusados.
+    monkeypatch.setattr("app.inventory.stock_from_erp", lambda db: True)
+    blocked = c.post("/api/stock/movements", json={**movement, "request_key": str(uuid4())})
+    assert blocked.status_code == 409
+    assert view(stock_case, pid)["quantity"] is None
+
+
+def test_link_erp_articles_by_code_with_preview(stock_case):
+    c, _, factory, warehouses, _ = stock_case
+    local = product(stock_case, code="A100", name="Nome local")
+    c.post("/api/stock/movements", json={
+        "article_id": local, "warehouse_id": warehouses[0], "kind": "opening", "quantity": "2",
+        "unit_cost": "1", "reason": "Abertura", "request_key": str(uuid4()),
+    })
+    product(stock_case, code="SO-LOCAL")
+    erp_product(stock_case, "a100", name="Nome ERP")
+    erp_product(stock_case, "B200", name="Só no ERP")
+    erp_product(stock_case, "DUP", name="Duplicado 1")
+    erp_product(stock_case, "dup", name="Duplicado 2")
+    erp_product(stock_case, "OFF", name="Inativo", active=False)
+
+    preview = c.post("/api/stock/erp-products/link-by-code", json={})
+    assert preview.status_code == 200, preview.text
+    plan = preview.json()
+    assert plan["link"] == 1 and plan["create"] == 1 and plan["ambiguous"] == 1
+    assert plan["ambiguous_codes"] == ["DUP"] or plan["ambiguous_codes"] == ["dup"]
+    assert view(stock_case, local)["origin"] == "Local"  # A pré-visualização não altera nada.
+
+    done = c.post("/api/stock/erp-products/link-by-code", json={"confirmed": True, "create_missing": True})
+    assert done.status_code == 200, done.text
+    assert done.json()["linked"] == 1 and done.json()["created"] == 1
+    linked = view(stock_case, local)
+    # Mantém a ficha e o histórico; nome e código passam a vir do ERP.
+    assert linked["origin"] == "ERP" and linked["name"] == "Nome ERP" and D(linked["quantity"]) == 2
+    codes = {a["code"]: a for a in c.get("/api/stock/catalog").json()["articles"]}
+    assert codes["B200"]["origin"] == "ERP" and "OFF" not in codes and codes["SO-LOCAL"]["origin"] == "Local"
+    # Repetir não volta a ligar nem a criar.
+    again = c.post("/api/stock/erp-products/link-by-code", json={"confirmed": True, "create_missing": True}).json()
+    assert again["linked"] == 0 and again["created"] == 0
 
 
 def test_movement_idempotency_atomicity_and_inventory_migration(stock_case, monkeypatch):
@@ -585,3 +718,22 @@ def test_movement_idempotency_atomicity_and_inventory_migration(stock_case, monk
             inspect(connection).get_table_names(schema=schema)
         )
         assert connection.scalar(text("SELECT count(*) FROM users")) == before
+
+
+def test_service_articles_never_move_stock(stock_case):
+    c, _, _, warehouses, _ = stock_case
+    service = product(stock_case, code="PORTES", name="Portes de envio", service=True)
+    assert view(stock_case, service)["stock_state"] == "serviço (sem stock)"
+    moved = c.post("/api/stock/movements", json={
+        "article_id": service, "warehouse_id": warehouses[0], "kind": "purchase", "quantity": "1",
+        "unit_cost": "3.99", "reason": "Portes", "request_key": str(uuid4())})
+    assert moved.status_code == 409 and "serviço" in moved.json()["detail"]
+    lots = c.post("/api/stock/articles", json={"code": "SRV2", "name": "Serviço com lotes", "service": True, "lots": True})
+    assert lots.status_code == 422
+    # Um artigo com movimentos não passa a serviço.
+    goods = product(stock_case, code="GOODS1")
+    c.post("/api/stock/movements", json={"article_id": goods, "warehouse_id": warehouses[0], "kind": "opening", "quantity": "2",
+                                         "unit_cost": "1", "reason": "Abertura", "request_key": str(uuid4())})
+    current = view(stock_case, goods)
+    changed = c.put(f"/api/stock/articles/{goods}", json={**{k: current[k] for k in ("code", "name", "revision")}, "service": True})
+    assert changed.status_code == 409

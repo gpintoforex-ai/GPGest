@@ -84,7 +84,8 @@ def normalize(resource, row):
                     "O custo recebido excede a precisão de quatro casas decimais."
                 ) from None
         if "IsBatchesEnabled" in row:
-            if not isinstance(row["IsBatchesEnabled"], bool):
+            # null = não definido na Wintouch (a maioria dos artigos); só sim/não ou vazio é válido.
+            if row["IsBatchesEnabled"] is not None and not isinstance(row["IsBatchesEnabled"], bool):
                 raise SyncError("O controlo de lotes recebido é inválido.")
             values["batches_enabled"] = row["IsBatchesEnabled"]
     elif resource == "entities":

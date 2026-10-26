@@ -158,3 +158,14 @@ def test_addresses_read_apart_are_joined_to_their_entities():
     values = normalize("entities", joined[0])
     assert values["address"] == "Rua A" and values["locality"] == "Braga" and values["postal_code"] == "4700-001"
     assert "address" not in normalize("entities", joined[1])
+
+
+def test_product_batches_flag_accepts_null_from_wintouch():
+    from app.wintouch_sync import SyncError, normalize
+
+    base = {"ID": "p1", "Code": "6162", "Name": "Cardo mariano", "Enabled": True}
+    # A Wintouch envia null na maioria dos artigos: «não definido», sem falhar a importação.
+    assert normalize("products", {**base, "IsBatchesEnabled": None})["batches_enabled"] is None
+    assert normalize("products", {**base, "IsBatchesEnabled": False})["batches_enabled"] is False
+    with pytest.raises(SyncError):
+        normalize("products", {**base, "IsBatchesEnabled": "false"})

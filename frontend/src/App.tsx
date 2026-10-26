@@ -3,6 +3,7 @@ import DocumentScanner, { ScanSettings } from "./DocumentScanner";
 import { DataTable } from "./components/DataTable";
 import { LoadingState, ModuleTabs, TaskWorkspace, useLocationSearch, updateLocationParam } from "./components/WorkspaceUI";
 import Brand from "./components/Brand";
+import MenuSearch from "./components/MenuSearch";
 import { PrivacyNotice } from "./Legal";
 import { ActionButton, AppDialog, Notice, confirmAction } from "./components/InteractionUI";
 import {
@@ -504,13 +505,18 @@ export default function App() {
     ["Prazos de pagamento", Clock],
     ["Operadores / funcionários", Users],
   ] as const;
-  const moduleNavigation = [
+  const navigationGroups = [
     { label: "Tesouraria", items: financeMenu }, { label: "Bancos", items: banksMenu },
     { label: "Contabilidade", items: accountingMenu.filter(([name]) => manager || !["Despesas por rubrica", "Mapas de gestão"].includes(name)) },
     { label: "Arquivo digital", items: archiveMenu }, { label: "Compras e Stock", items: procurementMenu },
     { label: "Tabelas", items: tablesMenu },
     { label: "Configurações", items: [...configurationMenu.filter(([name]) => name !== "Parâmetros"), ...parameterMenu.filter(([name]) => manager || name === "Aparência")] },
-  ].find(group => group.items.some(([name]) => name === page));
+  ];
+  const moduleNavigation = navigationGroups.find(group => group.items.some(([name]) => name === page));
+  const searchMenus = [...new Map([
+    ...navigationGroups.flatMap(group => group.items.map(([name]) => ({ id: name, label: name.replace("Arquivo — ", "").replace("Compras e Stock — ", ""), group: group.label }))),
+    ...menu.filter(([name]) => !navigationGroups.some(group => group.label === name)).map(([name]) => ({ id: name, label: name === "Dashboard" ? "Visão geral" : name, group: "Gestão" })),
+  ].filter(item => canViewPage(item.id, boot.user.role)).map(item => [item.id, item])).values()];
   const activePage = page;
   const openModal = async (kind: string, row: Row | null = null) => {
     if (kind === "movement") { setMovementPayment("numerario"); setMovementSession(""); }
@@ -722,6 +728,7 @@ export default function App() {
             <span className="active-company">{boot.company?.name || "IAZELA"}</span><small className="operating-mode-label">{boot.integration?.mode === "integrated" ? `Modo integrado · ${boot.integration.provider} · ${boot.integration.active ? boot.integration.writes ? "Ligação configurada" : "Apenas leitura" : "Ligação desativada"}` : "Modo local autónomo"}</small>
             <span className="header-page-context">{moduleNavigation?.label || "Gestão"} / {pageTitle}</span>
           </div>
+          <MenuSearch items={searchMenus} onNavigate={navigatePage} />
           <div className="header-tools">
             <ThemeSettings compact />
             <select

@@ -354,3 +354,45 @@ def test_lines_without_any_rubric_are_refused_in_local_mode(case):
     row = draft(case, 'invoice', category_id=None, lines=[{'description': 'Serviço', 'nature': 'service', 'unit': 'h', 'quantity': '1', 'price': '10', 'vat': '23'}])
     response = stock[0].post('/api/procurement/' + row['id'] + '/confirm', json={'revision': row['revision']})
     assert response.status_code == 422 and 'rubrica de cada linha' in response.json()['detail']
+
+
+def test_confirmed_receipt_is_edited_in_place_and_regenerates_stock(case):
+    stock, _ = case
+    c = stock[0]
+    order = confirm(case, draft(case))
+    aid = order['lines'][0]['article_id']
+    receipt = confirm(case, from_source(case, order, 'receipt', 12))
+    fields = __import__('app.procurement', fromlist=['Draft']).Draft.model_fields
+    line_fields = __import__('app.procurement', fromlist=['Line']).Line.model_fields
+
+    def edit(doc, quantity, price='10'):
+        body = {k: v for k, v in doc.items() if k in fields}
+        body['lines'] = [{**{k: v for k, v in doc['lines'][0].items() if k in line_fields}, 'quantity': quantity, 'price': price, 'rejected': '0'}]
+        return c.put(f"/api/procurement/{doc['id']}/confirmed", json=body)
+
+    # Sem movimentos posteriores: a entrada antiga é apagada e a nova gerada (mesma receção).
+    first = edit(receipt, '10')
+    assert first.status_code == 200, first.text
+    edited = first.json()
+    assert edited['id'] == receipt['id'] and edited['status'] == 'confirmed' and D(view(stock, aid)['quantity']) == 10
+    with stock[2]() as db:
+        assert len(list(db.scalars(select(StockEntry).where(StockEntry.article_id == aid)))) == 1
+    docs = c.get('/api/procurement').json()['documents']
+    assert next(d for d in docs if d['id'] == order['id'])['status'] == 'partial'
+    # Com uma saída posterior, a entrada não se apaga: movimento inverso ao custo original.
+    sale = c.post('/api/stock/movements', json={'article_id': aid, 'warehouse_id': stock[3][0], 'kind': 'sale', 'quantity': '2',
+                                                'reason': 'Venda de teste', 'request_key': str(uuid4())})
+    assert sale.status_code == 200, sale.text
+    second = edit(edited, '9', price='11')
+    assert second.status_code == 200, second.text
+    assert D(view(stock, aid)['quantity']) == 7
+    with stock[2]() as db:
+        kinds = sorted(e.kind for e in db.scalars(select(StockEntry).where(StockEntry.article_id == aid)))
+        assert kinds == ['adjustment', 'purchase', 'purchase', 'sale']
+    # Revisão desatualizada e receção já faturada não se editam.
+    assert edit(edited, '8').status_code == 409
+    current = second.json()
+    confirm(case, from_source(case, current, 'invoice', 9))
+    refreshed = next(d for d in c.get('/api/procurement').json()['documents'] if d['id'] == current['id'])
+    blocked = edit(refreshed, '8')
+    assert blocked.status_code == 409 and 'devolução' in blocked.json()['detail']

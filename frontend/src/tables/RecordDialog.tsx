@@ -96,7 +96,7 @@ function payload(table: TableInfo, values: Record<string, any>) {
   return result;
 }
 
-export default function RecordDialog({ table, context, mode: startMode, recordId, recordIds = [], onNavigate, onClose, onSaved }: {
+export default function RecordDialog({ table, context, mode: startMode, recordId, recordIds = [], onNavigate, onClose, onSaved, initialValues, onCreated }: {
   table: TableInfo;
   context: TableContext;
   mode: Mode;
@@ -106,12 +106,15 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
   onNavigate?: (id: string) => void;
   onClose: () => void;
   onSaved: (message: string, warning?: string) => void;
+  // Criar a partir de outro ecrã (ex.: fornecedor de uma fatura): valores já conhecidos.
+  initialValues?: Record<string, any>;
+  onCreated?: (id: string, values: Record<string, any>) => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const lastLookup = useRef("");
   const [mode, setMode] = useState<Mode>(startMode);
   const [details, setDetails] = useState<RecordDetails | null>(null);
-  const [values, setValues] = useState<Record<string, any>>(() => initial(table, null));
+  const [values, setValues] = useState<Record<string, any>>(() => ({ ...initial(table, null), ...(initialValues || {}) }));
   const [terms, setTerms] = useState<Term[]>([]);
   const [error, setError] = useState("");
   const [lookup, setLookup] = useState<NifState | null>(null);
@@ -140,6 +143,12 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
   useLayoutEffect(() => {
     if (details) markDialogSaved(dialogRef.current?.querySelector("form") || null);
   }, [details]);
+
+  useEffect(() => {
+    if (startMode === "create" && initialValues?.tax_number) void lookupNif(String(initialValues.tax_number));
+    // Só ao abrir: os valores iniciais não mudam durante a edição.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const position = recordId ? recordIds.indexOf(recordId) : -1;
   async function go(step: number) {
@@ -271,7 +280,8 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
           throw new Error(`Preencha o campo «${missing.label}» para criar o registo.`);
         }
         // Em modo integrado, o servidor grava logo no ERP e devolve o resultado.
-        const created = await api(`/tables/${table.key}/records`, body) as { erp?: { ok: boolean; message: string } | null };
+        const created = await api(`/tables/${table.key}/records`, body) as { id: string; erp?: { ok: boolean; message: string } | null };
+        onCreated?.(created.id, values);
         const saved = `${singular.charAt(0).toUpperCase() + singular.slice(1)} ${gendered(table, "criado")}.`;
         if (created.erp && !created.erp.ok) onSaved(saved, created.erp.message);
         else onSaved(created.erp ? `${saved} ${created.erp.message}` : saved);

@@ -23,6 +23,18 @@ A mudança é transacional: cria um novo conjunto de dados e conserva o anterior
 
 Esta funcionalidade não executa nenhuma reinicialização por si só: só atua após a confirmação do administrador da plataforma. A disponibilização da opção não necessita de nova migração.
 
+### Reinicialização individual de tabelas
+
+Em **Plataforma → Configurar empresa → Reinicializar uma tabela**, existem opções independentes para **Artigos**, **Clientes** e **Fornecedores**. A primeira ação apenas consulta uma pré-visualização: total de fichas, fichas a retirar e fichas preservadas por histórico ou associações, com exemplos.
+
+- São preservadas referências SQL, identificadores em texto/JSON e referências históricas por nome, código ou NIF. Referências ambíguas são tratadas de forma conservadora e podem impedir a retirada de uma ficha.
+- Numa entidade simultaneamente cliente e fornecedor, retira-se apenas a função selecionada quando não existem associações; a outra função é mantida.
+- A confirmação exige o NIF/nome da empresa, aceitação explícita e a versão da pré-visualização. Alterações entretanto ocorridas obrigam a consultar uma nova pré-visualização.
+- Na mesma transação, bloqueiam-se escritas, copiam-se os dados para um novo esquema, altera-se apenas a tabela selecionada e muda-se a empresa para esse esquema. O esquema original fica arquivado; falhas revertem a cópia e a mudança da empresa. As sessões da empresa terminam; a sessão de administração da plataforma mantém-se.
+- Não há escrita na Wintouch nem alteração de ficheiros externos. Uma sincronização posterior pode voltar a importar fichas do ERP. As outras empresas, tabelas e documentos mantêm-se.
+
+A cópia interna não tem recuperação automática nesta janela. Adicionar a funcionalidade não reinicializa dados reais e não exige migração. Testes: `backend/tests/test_catalog_reset.py`, regressão com `backend/tests/test_platform_data_reset.py` e `scripts/test-platform-reset-ui.py`, usando empresas de teste e APIs simuladas.
+
 Verificação: `backend/tests/test_platform_data_reset.py` cobre tabelas/bancos preservados, documentos e movimentos retirados, isolamento, confirmação, permissões, arquivo e reversão transacional de falhas. `scripts/test-platform-reset-ui.py` verifica a confirmação e a conservação dos campos após erro, em computador e telemóvel, com API simulada e sem reinicializar dados reais.
 
 ## Ligação Wintouch

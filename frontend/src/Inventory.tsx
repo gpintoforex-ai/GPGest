@@ -1,6 +1,9 @@
 import { currentMonthRange } from "./components/DatePresets";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import OpeningStockImport from "./OpeningStockImport";
+import InventorySync from "./InventorySync";
+import ArticleForm from "./ArticleForm";
+import { newArticle, articlePayload } from "./articleValues";
 import DatePresets from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -22,6 +25,7 @@ import {
   AppDialog,
   Notice,
   confirmAction,
+  confirmFormExit,
 } from "./components/InteractionUI";
 import "./Inventory.css";
 
@@ -78,31 +82,6 @@ const rightsNames: Row = {
   negative_stock: "Exceção de stock negativo",
   override_fefo: "Alterar FEFO com justificação",
 };
-const newArticle: Row = {
-  code: "",
-  name: "",
-  reference: "",
-  barcodes: [],
-  description: "",
-  photo: "",
-  family: "",
-  category: "",
-  brand: "",
-  supplier_id: null,
-  supplier_reference: "",
-  unit: "un",
-  precision: 0,
-  vat_rate: "23",
-  sale_net: "0",
-  minimum: "0",
-  reorder: "0",
-  location: "",
-  lots: false,
-  expiry: false,
-  active: true,
-  revision: 0,
-};
-const articleKeys = Object.keys(newArticle);
 const csvFields: Row = {
   code: "Código",
   name: "Designação",
@@ -185,9 +164,12 @@ export default function Inventory({
     [inventories, setInventories] = useState<Row[]>([]),
     [config, setConfig] = useState<Row | null>(null);
   const [dialog, setDialog] = useState<Row | null>(null),
+    [syncing, setSyncing] = useState(false),
     [busy, setBusy] = useState(false),
     [page, setPage] = useState(1),
     [lotState, setLotState] = useState("");
+  const [articleFilters, setArticleFilters] = useState<Row>({ family: "", brand: "", supplier_id: "", active: "", stock: "" });
+  const [showArticleCosts, setShowArticleCosts] = useState(false);
   const running = useRef(false),
     requestKey = useRef(crypto.randomUUID());
   const articles: Row[] = catalog?.articles || [],
@@ -199,6 +181,15 @@ export default function Inventory({
     warehouses.find((w) => w.id === id)?.name || id;
   const supplierName = (id: string) =>
     catalog?.suppliers.find((s: Row) => s.id === id)?.name || "—";
+  const visibleArticles = articles.filter(a => {
+    const search = [a.name, a.code, a.reference, ...(a.barcodes || []), a.brand, a.supplier_reference, supplierName(a.supplier_id)].join(" ").toLocaleLowerCase("pt-PT");
+    return search.includes(query.trim().toLocaleLowerCase("pt-PT"))
+      && (!articleFilters.family || a.family === articleFilters.family)
+      && (!articleFilters.brand || a.brand === articleFilters.brand)
+      && (!articleFilters.supplier_id || a.supplier_id === articleFilters.supplier_id)
+      && (!articleFilters.active || String(a.active) === articleFilters.active)
+      && (!articleFilters.stock || (articleFilters.stock === "unknown" ? a.available_quantity == null : a.available_quantity != null && (articleFilters.stock === "low" ? Number(a.available_quantity) < Number(a.minimum || 0) : articleFilters.stock === "zero" ? Number(a.available_quantity) <= 0 : Number(a.available_quantity) > 0)));
+  });
   async function load() {
     const value = await api("/stock/catalog");
     setCatalog(value);
@@ -329,6 +320,19 @@ export default function Inventory({
             <RefreshCw size={16} />
             Atualizar
           </ActionButton>
+          {catalog.policy.mode === "integrated" && (
+            <ActionButton
+              disabled={busy || !admin || !rights.adjust_stock}
+              title={
+                admin && rights.adjust_stock
+                  ? "Recebe o catálogo da Wintouch e liga-o às fichas, com pré-visualização."
+                  : "Só administradores com permissão de ajustar stock podem sincronizar com o ERP."
+              }
+              onClick={() => setSyncing(true)}
+            >
+              Sincronizar
+            </ActionButton>
+          )}
           {rights.adjust_stock && (
             <>
               <ActionButton
@@ -351,12 +355,24 @@ export default function Inventory({
       </div>
       {error && <Notice tone="error">{error}</Notice>}
       {success && <Notice tone="success">{success}</Notice>}
-      {catalog.policy.mode === "integrated" && (
-        <Notice tone="warning">
-          Artigos do ERP são apenas de leitura. O conector atual não fornece
-          stock: as quantidades ERP permanecem indisponíveis, mesmo após
-          sincronizar o catálogo. Os artigos locais mantêm um registo de stock
-          separado.
+      {syncing && (
+        <InventorySync
+          onClose={() => {
+            setSyncing(false);
+            void load().catch(() => undefined);
+          }}
+          onDone={async (message) => {
+            setSyncing(false);
+            await saved(message);
+          }}
+        />
+      )}
+      {(catalog.policy.mode === "integrated" || articles.some((a) => a.origin === "ERP")) && (
+        <Notice tone="info">
+          Artigos do ERP: código, nome, estado e preço vêm da Wintouch; o stock
+          é registado aqui (entradas, saídas, inventários e lotes), porque o
+          conector não lê quantidades. Para ligar as fichas aos artigos da
+          Wintouch, use «Associar por código» em Importações.
         </Notice>
       )}
       <ModuleTabs label="Artigos e stock" value={tab} tabs={([{"id": "Painel", "label": "Painel"}, {"id": "Artigos", "label": "Artigos"}, {"id": "Movimentos", "label": "Movimentos"}, {"id": "Lotes e validades", "label": "Lotes e validades"}, {"id": "Inventários", "label": "Inventários"}, {"id": "Importações", "label": "Importações"}, {"id": "Parâmetros", "label": "Parâmetros"}]).filter(item => admin || item.id !== "Parâmetros")} onChange={value => { setTab(value);  }} />
@@ -374,13 +390,19 @@ export default function Inventory({
       <section className="panel">
         <div className="form-grid stock-filters filter-bar">
           {tab === "Artigos" ? (
-            <Field label="Pesquisar nome, código, barras, marca ou fornecedor">
+            <>
+            <Field label="Pesquisar código, designação, barras ou referência do fornecedor">
               <input
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
             </Field>
+            {[["family", "Família"], ["brand", "Marca"]].map(([key, label]) => <Field key={key} label={label}><select value={articleFilters[key]} onChange={e => setArticleFilters({ ...articleFilters, [key]: e.target.value })}><option value="">Todas</option>{[...new Set(articles.map(a => a[key]).filter(Boolean))].sort().map(v => <option key={v} value={v}>{v}</option>)}</select></Field>)}
+            <Field label="Fornecedor"><select value={articleFilters.supplier_id} onChange={e => setArticleFilters({ ...articleFilters, supplier_id: e.target.value })}><option value="">Todos</option>{catalog.suppliers.map((s: Row) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
+            <Field label="Estado"><select value={articleFilters.active} onChange={e => setArticleFilters({ ...articleFilters, active: e.target.value })}><option value="">Todos</option><option value="true">Ativos</option><option value="false">Inativos</option></select></Field>
+            <Field label="Situação de stock"><select value={articleFilters.stock} onChange={e => setArticleFilters({ ...articleFilters, stock: e.target.value })}><option value="">Todas</option><option value="positive">Com stock</option><option value="zero">Sem stock / negativo</option><option value="low">Abaixo do mínimo</option><option value="unknown">Sem informação</option></select></Field>
+            </>
           ) : (
             <>
               <Field label="Armazém">
@@ -650,38 +672,28 @@ export default function Inventory({
       {tab === "Artigos" && (
         <section className="panel">
           <h2>Catálogo de artigos</h2>
+          <p className="footnote" role="status">{visibleArticles.length} de {articles.length} artigos · Quantidades dos movimentos nos armazéns autorizados.</p>
+          {rights.view_cost && <label className="stock-check"><input type="checkbox" checked={showArticleCosts} onChange={e => setShowArticleCosts(e.target.checked)} />Mostrar custos na tabela</label>}
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Artigo / referência</th>
-                  <th>Categoria / fornecedor</th>
-                  <th className="numeric">Preço sem / com IVA</th>
-                  {rights.view_cost && (
-                    <th className="numeric">Custo médio / última compra</th>
-                  )}
-                  <th className="numeric">Stock</th>
-                  <th>Origem / estado</th>
+                  <th>Código</th>
+                  <th>Designação</th>
+                  <th>Família</th>
+                  <th className="numeric">Preço de venda</th>
+                  {rights.view_cost && showArticleCosts && <th className="numeric">Custo médio / última compra</th>}
+                  <th className="numeric">Stock disponível</th>
+                  <th>Estado</th>
+                  <th>ERP</th>
                   <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
-                {articles
-                  .filter((a) =>
-                    [
-                      a.name,
-                      a.code,
-                      a.reference,
-                      ...(a.barcodes || []),
-                      a.brand,
-                      supplierName(a.supplier_id),
-                    ]
-                      .join(" ")
-                      .toLocaleLowerCase("pt-PT")
-                      .includes(query.toLocaleLowerCase("pt-PT")),
-                  )
+                {visibleArticles
                   .map((a) => (
                     <tr key={a.id}>
+                      <td><strong>{a.code}</strong></td>
                       <td>
                         {a.photo && (
                           <img
@@ -693,16 +705,13 @@ export default function Inventory({
                           />
                         )}
                         <strong>
-                          {a.code} · {a.name}
+                          {a.name}
                         </strong>
-                        <small>
-                          {a.reference} · {a.unit} · {a.brand}
-                        </small>
-                        {a.description && <small>{a.description}</small>}
+                        <small>{[a.reference, a.brand].filter(Boolean).join(" · ")}</small>
                       </td>
                       <td>
-                        {a.family} / {a.category}
-                        <small>{supplierName(a.supplier_id)}</small>
+                        {a.family || "Sem família"}
+                        {a.category && <small>{a.category}</small>}
                       </td>
                       <td className="numeric">
                         {a.origin === "ERP" ? (
@@ -712,29 +721,22 @@ export default function Inventory({
                           </>
                         ) : (
                           <>
-                            {money(a.sale_net)}
-                            <small>
-                              {money(
-                                Number(a.sale_net) *
-                                  (1 + Number(a.vat_rate) / 100),
-                              )}{" "}
-                              · IVA {qty(a.vat_rate)} %
-                            </small>
+                            {a.sale_net == null || a.vat_rate == null ? "Sem informação" : money(Number(a.sale_net) * (1 + Number(a.vat_rate) / 100))}
+                            <small>Com IVA{a.vat_rate == null ? "" : ` · ${qty(a.vat_rate)} %`}</small>
                           </>
                         )}
                       </td>
-                      {rights.view_cost && (
-                        <td className="numeric">
-                          {money(a.average_cost)}
-                          <small>{money(a.last_cost)}</small>
-                        </td>
-                      )}
+                      {rights.view_cost && showArticleCosts && <td className="numeric">{money(a.average_cost)}<small>{money(a.last_cost)}</small></td>}
                       <td className="numeric">
-                        {qty(a.quantity)}
+                        {qty(a.available_quantity)}
+                        <small>Atual: {qty(a.quantity)} · Reservado: {qty(a.reserved_quantity)}</small>
                         <small>{a.location}</small>
                       </td>
                       <td>
-                        {a.origin} · {a.active ? "Ativo" : "Inativo"}
+                        <span className="article-state">{a.active ? "Ativo" : "Inativo"}</span>
+                      </td>
+                      <td>
+                        {a.origin === "ERP" ? "Wintouch" : "Local"}
                         <small>
                           {a.stock_state}
                           {a.synced_at &&
@@ -743,15 +745,22 @@ export default function Inventory({
                       </td>
                       <td>
                         <div className="stock-actions">
+                          {rights.adjust_stock && (
+                            <ActionButton
+                              title="Editar artigo"
+                              aria-label={`Editar ${a.name}`}
+                              onClick={() => open("article", { article: a })}
+                            >
+                              <Pencil size={16} />
+                            </ActionButton>
+                          )}
                           {a.origin === "Local" && rights.adjust_stock && (
                             <>
-                              <ActionButton
-                                title="Editar artigo"
-                                aria-label={`Editar ${a.name}`}
-                                onClick={() => open("article", { article: a })}
-                              >
-                                <Pencil size={16} />
-                              </ActionButton>
+                              <ActionButton aria-label={`${a.active ? "Desativar" : "Ativar"} ${a.name}`} onClick={() => run(async () => {
+                                if (!await confirmAction({ title: a.active ? "Desativar artigo?" : "Ativar artigo?", message: `Pretende ${a.active ? "desativar" : "ativar"} «${a.name}»? O histórico é preservado.`, confirmLabel: a.active ? "Desativar" : "Ativar" })) return;
+                                await api(`/stock/articles/${a.id}`, { ...articlePayload(a), active: !a.active }, { method: "PUT" });
+                                await saved(a.active ? "Artigo desativado." : "Artigo ativado.");
+                              })}>{a.active ? "Desativar" : "Ativar"}</ActionButton>
                               <ActionButton
                                 className="danger"
                                 title="Eliminar artigo"
@@ -794,6 +803,7 @@ export default function Inventory({
               </tbody>
             </table>
           </div>
+          {!!articles.length && !visibleArticles.length && <p>Nenhum artigo corresponde à pesquisa e aos filtros.</p>}
           {!articles.length && (
             <p>
               O catálogo está vazio. Crie um artigo, importe um CSV ou associe
@@ -1193,7 +1203,7 @@ export default function Inventory({
       {dialog && (
         <AppDialog
           key={`${dialog.kind}-${dialog.article?.id || dialog.inventory?.id || dialog.lot?.id || "new"}`}
-          className="modal stock-dialog"
+          className={`modal stock-dialog ${dialog.kind === "article" ? "article-dialog" : ""}`}
           onRequestClose={() => setDialog(null)}
           aria-labelledby="stock-dialog-title"
         >
@@ -1216,8 +1226,18 @@ export default function Inventory({
           {dialog.kind === "article" && (
             <ArticleForm
               initial={dialog.article}
-              suppliers={catalog.suppliers}
-              rights={rights}
+              catalog={catalog}
+              onCancel={() => setDialog(null)}
+              canSync={admin && rights.adjust_stock && catalog.policy.mode === "integrated"}
+              onSync={async () => {
+                if (!await confirmFormExit(document.querySelector(".article-form"))) return;
+                setDialog(null); setSyncing(true);
+              }}
+              onNavigate={async (section, id) => {
+                if (!await confirmFormExit(document.querySelector(".article-form"))) return;
+                setFilters(current => ({ ...current, article_id: id }));
+                setPage(1); setTab(section); setDialog(null);
+              }}
               onSave={async (values) => {
                 await api(
                   `/stock/articles${dialog.article.id ? `/${dialog.article.id}` : ""}`,
@@ -1230,9 +1250,7 @@ export default function Inventory({
           )}
           {dialog.kind === "movement" && (
             <MovementForm
-              articles={articles.filter(
-                (a) => a.origin === "Local" && a.active,
-              )}
+              articles={articles.filter((a) => a.active && !a.service)}
               warehouses={warehouses}
               suppliers={catalog.suppliers}
               rights={rights}
@@ -1314,7 +1332,7 @@ export default function Inventory({
                   }
                 >
                   {articles
-                    .filter((a) => a.origin === "Local")
+                    .filter((a) => a.quantity !== null)
                     .map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.name}
@@ -1408,163 +1426,6 @@ export default function Inventory({
         </AppDialog>
       )}
     </div>
-  );
-}
-
-function ArticleForm({
-  initial,
-  suppliers,
-  rights,
-  onSave,
-}: {
-  initial: Row;
-  suppliers: Row[];
-  rights: Row;
-  onSave: (v: Row) => Promise<void>;
-}) {
-  const [value, setValue] = useState<Row>(
-    Object.fromEntries(
-      articleKeys.map((k) => [k, initial[k] ?? newArticle[k]]),
-    ),
-  );
-  const change = (key: string, v: any) => setValue({ ...value, [key]: v });
-  return (
-    <Form
-      onSubmit={async () =>
-        onSave({ ...value, precision: Number(value.precision) })
-      }
-    >
-      <div className="form-grid">
-        {[
-          ["code", "Código interno"],
-          ["name", "Designação"],
-          ["reference", "Referência"],
-          ["family", "Família"],
-          ["category", "Categoria"],
-          ["brand", "Marca"],
-          ["supplier_reference", "Referência do fornecedor"],
-          ["unit", "Unidade"],
-          ["location", "Localização"],
-          ["photo", "URL da fotografia (HTTPS)"],
-        ].map(([key, label]) => (
-          <Field key={key} label={label}>
-            <input
-              name={key}
-              required={["code", "name", "unit"].includes(key)}
-              value={value[key]}
-              onChange={(e) => change(key, e.target.value)}
-            />
-          </Field>
-        ))}
-        <Field label="Fornecedor principal">
-          <select
-            name="supplier_id"
-            value={value.supplier_id || ""}
-            onChange={(e) => change("supplier_id", e.target.value || null)}
-          >
-            <option value="">Sem fornecedor definido</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Códigos de barras (separados por |)">
-          <input
-            name="barcodes"
-            value={value.barcodes.join("|")}
-            onChange={(e) => change("barcodes", e.target.value.split("|"))}
-          />
-        </Field>
-        <Num
-          name="precision"
-          label="Casas decimais (0 a 6)"
-          value={value.precision}
-          step="1"
-          onChange={(v) => change("precision", v)}
-          required
-        />
-        <Num
-          name="vat_rate"
-          label="IVA (%)"
-          value={value.vat_rate}
-          onChange={(v) => change("vat_rate", v)}
-          required
-        />
-        {rights.change_price && (
-          <>
-            <Num
-              name="sale_net"
-              label="Preço sem IVA (€)"
-              value={value.sale_net}
-              onChange={(v) => change("sale_net", v)}
-              required
-            />
-            <Num
-              name="sale_gross"
-              label="Preço com IVA (€)"
-              value={
-                Number(value.sale_net) * (1 + Number(value.vat_rate) / 100)
-              }
-              onChange={(v) =>
-                change(
-                  "sale_net",
-                  String(
-                    Number(
-                      (Number(v) / (1 + Number(value.vat_rate) / 100)).toFixed(
-                        6,
-                      ),
-                    ),
-                  ),
-                )
-              }
-              required
-            />
-          </>
-        )}
-        <Num
-          name="minimum"
-          label="Stock mínimo"
-          value={value.minimum}
-          onChange={(v) => change("minimum", v)}
-          required
-        />
-        <Num
-          name="reorder"
-          label="Nível de reposição"
-          value={value.reorder}
-          onChange={(v) => change("reorder", v)}
-          required
-        />
-      </div>
-      <Field label="Descrição">
-        <textarea
-          name="description"
-          value={value.description}
-          onChange={(e) => change("description", e.target.value)}
-        />
-      </Field>
-      {[
-        ["lots", "Controlar lotes"],
-        ["expiry", "Controlar validades"],
-        ["active", "Artigo ativo"],
-      ].map(([key, label]) => (
-        <label className="stock-check" key={key}>
-          <input
-            name={key}
-            type="checkbox"
-            checked={value[key]}
-            onChange={(e) => change(key, e.target.checked)}
-          />
-          {label}
-        </label>
-      ))}
-      <p className="footnote">
-        O stock e os custos são calculados a partir de movimentos. Artigos com
-        histórico podem ser desativados.
-      </p>
-    </Form>
   );
 }
 
@@ -2103,6 +1964,8 @@ function StockImports({
     [preview, setPreview] = useState<Row | null>(null),
     [source, setSource] = useState<Row | null>(null),
     [erp, setErp] = useState<Row | null>(null),
+    [linkPlan, setLinkPlan] = useState<Row | null>(null),
+    [createMissing, setCreateMissing] = useState(true),
     [target, setTarget] = useState(
       filters.warehouse_id || catalog.warehouses[0]?.id || "",
     );
@@ -2392,7 +2255,7 @@ function StockImports({
                           >
                             <option value="">Sem associação</option>
                             {catalog.articles
-                              .filter((a: Row) => a.origin === "Local")
+                              .filter((a: Row) => a.quantity !== null)
                               .map((a: Row) => (
                                 <option key={a.id} value={a.id}>
                                   {a.code} · {a.name}
@@ -2527,10 +2390,87 @@ function StockImports({
       <section className="panel">
         <h2>Catálogo ERP existente</h2>
         <p>
-          Reutiliza a sincronização atual. Os campos e preços ERP mantêm-se sob
-          responsabilidade do ERP; quantidades de stock não disponíveis neste
-          conector.
+          Reutiliza a sincronização atual (Configurações → Integrações →
+          Artigos). Código, nome, estado e preço vêm do ERP; o stock dos artigos
+          associados é registado aqui.
         </p>
+        <div className="stock-actions">
+          <ActionButton
+            className="primary"
+            disabled={busy}
+            onClick={() =>
+              run(async () =>
+                setLinkPlan(await api("/stock/erp-products/link-by-code", {})),
+              )
+            }
+          >
+            <Package size={16} />
+            Associar por código
+          </ActionButton>
+        </div>
+        {linkPlan && (
+          <div className="stock-link-plan" role="region" aria-label="Associação por código">
+            <ul>
+              <li>
+                <b>{linkPlan.link}</b> fichas locais com o mesmo código serão
+                ligadas ao ERP (mantêm o stock e o histórico; código, nome e
+                preço passam a vir do ERP).
+              </li>
+              <li>
+                <b>{linkPlan.create}</b> artigos ativos do ERP sem ficha local.
+              </li>
+              {linkPlan.ambiguous > 0 && (
+                <li>
+                  <b>{linkPlan.ambiguous}</b> códigos repetidos ou já usados,
+                  ignorados: {linkPlan.ambiguous_codes.join(", ")}
+                  {linkPlan.ambiguous > linkPlan.ambiguous_codes.length && "…"}
+                </li>
+              )}
+              <li>
+                <b>{linkPlan.local_only}</b> fichas só locais (sem artigo no ERP)
+                ficam como estão; <b>{linkPlan.already_linked}</b> já estavam
+                associadas.
+              </li>
+            </ul>
+            {linkPlan.create > 0 && (
+              <label className="stock-check">
+                <input
+                  type="checkbox"
+                  checked={createMissing}
+                  onChange={(e) => setCreateMissing(e.target.checked)}
+                />
+                Criar fichas para os {linkPlan.create} artigos do ERP sem ficha
+                local
+              </label>
+            )}
+            <div className="stock-actions">
+              <ActionButton disabled={busy} onClick={() => setLinkPlan(null)}>
+                Cancelar
+              </ActionButton>
+              <ActionButton
+                className="primary"
+                disabled={
+                  busy || !(linkPlan.link || (createMissing && linkPlan.create))
+                }
+                onClick={() =>
+                  run(async () => {
+                    const r = await api("/stock/erp-products/link-by-code", {
+                      confirmed: true,
+                      create_missing: createMissing,
+                    });
+                    setLinkPlan(null);
+                    setErp(null);
+                    await saved(
+                      `${r.linked} fichas associadas ao ERP; ${r.created} fichas criadas.`,
+                    );
+                  })
+                }
+              >
+                Confirmar associação
+              </ActionButton>
+            </div>
+          </div>
+        )}
         <ActionButton
           disabled={busy}
           onClick={() =>
@@ -2571,7 +2511,7 @@ function StockImports({
                                     });
                                     setErp(null);
                                     await saved(
-                                      "Artigo ERP associado em modo de leitura.",
+                                      "Artigo ERP associado: o stock é registado aqui.",
                                     );
                                   })
                                 }

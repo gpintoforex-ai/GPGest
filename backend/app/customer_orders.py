@@ -707,7 +707,7 @@ def free_balances(db, article_id, warehouse_id):
 
 
 def reserve(db, user, line, warehouse_id, quantity, *, lot_id=None):
-    article = stock.article(db, line.article_id, True)
+    article = stock.article(db, line.article_id, True, stock=True)
     if buying.policy(db).get("authority", {}).get("stock") == "erp":
         fail(
             "O stock é controlado pelo ERP e o conector não disponibiliza reservas/receções por artigo.",

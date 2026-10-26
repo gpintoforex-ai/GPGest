@@ -1,5 +1,6 @@
 import { ActionButton } from "./InteractionUI";
 import { useEffect, useId, useState } from "react";
+import "./SupplierPicker.css";
 
 type Supplier = { id: string; name: string; tax_number?: string };
 const normalize = (text: string) => text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-PT").trim();
