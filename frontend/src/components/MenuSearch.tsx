@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Search, X, ArrowUpRight } from "lucide-react";
+import { Search, CircleX, ArrowUpRight } from "lucide-react";
+import { ActionButton } from "./InteractionUI";
 import "./MenuSearch.css";
 
 export type MenuSearchItem = { id: string; label: string; group: string };
@@ -53,7 +54,7 @@ export default function MenuSearch({ items, onNavigate }: {
           }
           if (event.key === "Enter" && open && results[selected]) { event.preventDefault(); void choose(results[selected]); }
         }} />
-      {query ? <button type="button" aria-label="Limpar pesquisa de menus" onClick={() => { setQuery(""); setActive(0); input.current?.focus(); }}><X size={15} /></button> : <kbd aria-hidden="true">Ctrl K</kbd>}
+      {query ? <ActionButton type="button" aria-label="Limpar pesquisa de menus" onClick={() => { setQuery(""); setActive(0); input.current?.focus(); }}><CircleX size={15} aria-hidden="true" /></ActionButton> : <kbd aria-hidden="true">Ctrl K</kbd>}
     </div>
     {open && <div className="menu-search-popover">
       <div id={`${id}-results`} role="listbox" aria-label="Menus encontrados">

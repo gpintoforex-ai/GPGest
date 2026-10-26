@@ -114,9 +114,9 @@ export default function ArticleForm({ initial, catalog, onSave, onCancel, onNavi
         const next = e.key === "Home" ? 0 : e.key === "End" ? sections.length - 1 : (tab + (e.key === "ArrowRight" ? 1 : -1) + sections.length) % sections.length;
         setTab(next); document.getElementById(`${id}-tab-${next}`)?.focus();
       }}>
-        {sections.map((label, index) => <button key={label} id={`${id}-tab-${index}`} type="button" role="tab" aria-selected={tab === index} aria-controls={`${id}-panel-${index}`} tabIndex={tab === index ? 0 : -1} onClick={() => setTab(index)}>
+        {sections.map((label, index) => <ActionButton key={label} id={`${id}-tab-${index}`} type="button" role="tab" aria-selected={tab === index} aria-controls={`${id}-panel-${index}`} tabIndex={tab === index ? 0 : -1} onClick={() => setTab(index)}>
           {label}{Object.keys(errors).some(key => (fieldSection[key] ?? 0) === index) && <span aria-label="Precisa de correção"> !</span>}
-        </button>)}
+        </ActionButton>)}
       </div>
       {sections.map((label, index) => <section key={label} role="tabpanel" id={`${id}-panel-${index}`} aria-labelledby={`${id}-tab-${index}`} hidden={tab !== index} className="article-panel">
         {index === 0 && <>
