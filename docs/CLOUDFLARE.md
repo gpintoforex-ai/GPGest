@@ -40,6 +40,12 @@ Se o erro persistir depois de atualizar o commit, desative a instalação autom�
 
 O comando `npm run deploy` já executa `npm ci` para instalar explicitamente o Wrangler da raiz antes de compilar e publicar. A variável precisa de estar guardada antes de iniciar a nova build, pois a falha acontece antes de executar qualquer comando do repositório.
 
+## Builds de pré-visualização
+
+O `wrangler.jsonc` inclui `"previews": {}` para permitir `wrangler preview` nas branches de teste. Os assets, o entrypoint e a compatibilidade mantêm-se no nível principal. Este bloco não publica a branch em produção.
+
+Na configuração de builds do Cloudflare, a produção usa `npm run deploy`. Se uma branch de teste usar `npx wrangler preview`, compile previamente os assets com `npm ci && npm run build`. Uma falha a pedir o bloco `previews` indica uma build de pré-visualização, não um erro do backend Python.
+
 ## Ligar a API
 
 Em **Configurações > Variáveis e segredos**, adicionar uma variável de execução:
