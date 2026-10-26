@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from app.models import CompanyEmailSettings, EmailDispatch, EmailDispatchPart
+from app.models import CompanyEmailSettings, CustomerOrderEvent, EmailDispatch, EmailDispatchPart
 from sqlalchemy import inspect, text
 from test_platform import create, enter
 from test_platform import platform as platform
@@ -56,6 +56,8 @@ def test_email_migration_is_additive_and_repeatable(setup, monkeypatch):
         schema = connection.scalar(text("SELECT current_schema()"))
         assert re.fullmatch(r"test_[0-9a-f]{32}", schema)
         before = connection.scalar(text("SELECT count(*) FROM users"))
+        # This later table references email history and did not exist before migration 0042.
+        CustomerOrderEvent.__table__.drop(connection)
         for model in (EmailDispatchPart, EmailDispatch, CompanyEmailSettings):
             model.__table__.drop(connection)
         monkeypatch.setattr(helper, "schemas", lambda _: [schema])
