@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import Field as PydanticField
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -194,6 +194,8 @@ class TableSpec:
     code_field: str | None = "code"
     description_field = "name"
     has_active = True
+    # Campos de escolha que a listagem oferece como filtro (ex.: natureza dos tipos de documento).
+    filter_fields: tuple[str, ...] = ()
     allow_create = True
     allow_remove = True
     remove_reason = ""
@@ -310,6 +312,7 @@ class TableSpec:
             "code_field": self.code_field,
             "description_field": self.description_field,
             "has_active": self.has_active,
+            "filters": list(self.filter_fields),
             "allow_create": self.allow_create,
             "allow_remove": self.allow_remove,
             "remove_reason": self.remove_reason,
@@ -703,6 +706,7 @@ def list_records(
     direction: Literal["asc", "desc"] = "asc",
     page: int = 1,
     size: int = 25,
+    request: Request = None,
     user=Depends(current),
     db: Session = Depends(db_session),
 ):
@@ -711,6 +715,10 @@ def list_records(
     spec.check(ctx, "view")
     rows = build_rows(ctx, spec)
     total_all = len(rows)
+    for name in spec.filter_fields:
+        wanted = request.query_params.get("f_" + name) if request is not None else None
+        if wanted:
+            rows = [r for r in rows if str(r["values"].get(name) or "") == wanted]
     if spec.has_active and status != "all":
         rows = [r for r in rows if r["active"] == (status == "active")]
     if origin != "all":

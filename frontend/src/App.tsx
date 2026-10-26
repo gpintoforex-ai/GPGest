@@ -114,7 +114,7 @@ const PaymentMethods = lazy(() => import("./PaymentMethods"));
 const TablePage = lazy(() => import("./tables/TablePage"));
 const InvoiceWorkflowSettings = lazy(() => import("./InvoiceWorkflow").then(module => ({ default: module.InvoiceWorkflowSettings })));
 const ARCHIVE_PAGES = ["Arquivo — Visão geral", "Caixa de entrada", "Todos os documentos", "Associações", "Pendências", "Dossiês contabilísticos", "Arquivo — Auditoria", "Arquivo — Configurações"];
-const APP_PAGES: readonly string[] = ["Encomendas de clientes", ...ARCHIVE_PAGES, ...["Dashboard", "Compras e Stock — Visão geral", "Meios de pagamento", "Prazos de pagamento", "Folha de caixa", "Movimentos previstos", "Movimentos reais", "Múltiplas contas", "Bancos", "Extratos", "Reconciliação automática", "Conferência documental", "Despesas por rubrica", "Mapas de gestão", "Entrega à contabilidade", "Email", "Importar SAF-T de vendas", "Digitalizar documento", "Relatórios", "Integrações", "Rubricas", "Caixas", "Operadores / funcionários", "Organização", "Depósitos", "Previsão de liquidez", "Faturação e recebimentos", "Armazéns", "Artigos e validades", "Clientes", "Fornecedores", "Regime de IVA", "Aparência", "Configuração inicial", "Anexos", "Digitalização", "Verificação automática e-Fatura", "Tesouraria", "Contabilidade", "Arquivo digital", "Compras e Stock", "Tabelas", "Receitas e despesas", "Configurações", "Parâmetros", "Arquivo — Visão geral", "Caixa de entrada", "Todos os documentos", "Associações", "Pendências", "Dossiês contabilísticos", "Arquivo — Auditoria", "Arquivo — Configurações", "Encomendas a fornecedores", "Receções de mercadoria", "Compras", "Devoluções a fornecedores", "Movimentos de stock"]];
+const APP_PAGES: readonly string[] = ["Encomendas de clientes", ...ARCHIVE_PAGES, ...["Dashboard", "Compras e Stock — Visão geral", "Meios de pagamento", "Prazos de pagamento", "Tipos de Documentos", "Folha de caixa", "Movimentos previstos", "Movimentos reais", "Múltiplas contas", "Bancos", "Extratos", "Reconciliação automática", "Conferência documental", "Despesas por rubrica", "Mapas de gestão", "Entrega à contabilidade", "Email", "Importar SAF-T de vendas", "Digitalizar documento", "Relatórios", "Integrações", "Rubricas", "Caixas", "Operadores / funcionários", "Organização", "Depósitos", "Previsão de liquidez", "Faturação e recebimentos", "Armazéns", "Artigos e validades", "Clientes", "Fornecedores", "Regime de IVA", "Aparência", "Configuração inicial", "Anexos", "Digitalização", "Verificação automática e-Fatura", "Tesouraria", "Contabilidade", "Arquivo digital", "Compras e Stock", "Tabelas", "Receitas e despesas", "Configurações", "Parâmetros", "Arquivo — Visão geral", "Caixa de entrada", "Todos os documentos", "Associações", "Pendências", "Dossiês contabilísticos", "Arquivo — Auditoria", "Arquivo — Configurações", "Encomendas a fornecedores", "Receções de mercadoria", "Compras", "Devoluções a fornecedores", "Movimentos de stock"]];
 const MANAGER_PAGES: readonly string[] = ["Despesas por rubrica", "Mapas de gestão", "Configuração inicial", "Regime de IVA", "Anexos", "Digitalização", "Verificação automática e-Fatura", "Arquivo — Auditoria", "Arquivo — Configurações"];
 const canViewPage = (name: string, role: string) => ["administrador", "gestor"].includes(role) || !MANAGER_PAGES.includes(name);
 const PAGE_ALIASES: Record<string, string> = { "Tesouraria": "Folha de caixa", "Contabilidade": "Conferência documental", "Arquivo digital": "Arquivo — Visão geral", "Compras e Stock": "Compras e Stock — Visão geral", "Tabelas": "Clientes", "Configurações": "Organização", "Parâmetros": "Configuração inicial" };
@@ -503,6 +503,7 @@ export default function App() {
     ["Caixas", Wallet],
     ["Meios de pagamento", CreditCard],
     ["Prazos de pagamento", Clock],
+    ["Tipos de Documentos", FileText],
     ["Operadores / funcionários", Users],
   ] as const;
   const navigationGroups = [
@@ -1258,6 +1259,7 @@ export default function App() {
             </section>
           )}
           {page === "Prazos de pagamento" && <TablePage tableKey="payment_terms" context={tableContext} active={activePage === page} />}
+          {page === "Tipos de Documentos" && <TablePage tableKey="document_types" context={tableContext} active={activePage === page} />}
           {(page === "Clientes" || page === "Fornecedores") && <TablePage tableKey={page === "Clientes" ? "customers" : "suppliers"} context={tableContext} active={activePage === page} />}
           {page === "Regime de IVA" && manager && <FiscalSettings />}
           {page === "Aparência" && <ThemeSettings />}

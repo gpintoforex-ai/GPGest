@@ -39,6 +39,8 @@ export type TableInfo = {
   code_field: string | null;
   description_field: string;
   has_active: boolean;
+  // Campos de escolha oferecidos como filtro na listagem.
+  filters?: string[];
   allow_create: boolean;
   allow_remove: boolean;
   remove_reason: string;

@@ -241,6 +241,8 @@ class Purchase(Base):
     import_id: Mapped[str | None] = mapped_column(ForeignKey("document_imports.id"), nullable=True)
     origin: Mapped[str] = mapped_column(String(20), default="manual")
     validated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Tipo de documento de compra quando a compra nasce de uma receção (rastreabilidade).
+    document_type_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
@@ -1013,6 +1015,31 @@ class PaymentTerm(Base):
     # Desconto em centésimas de ponto percentual (250 = 2,5 %).
     discount_basis_points: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class PurchaseDocumentType(Base):
+    """Tipo de documento de compra (FC, FCD, NCC, NCCD…): efeito financeiro das receções."""
+
+    __tablename__ = "purchase_document_types"
+    __table_args__ = (
+        CheckConstraint("nature IN ('compra', 'nota_credito_compra')", name="purchase_doc_type_nature"),
+        CheckConstraint("sign IN (-1, 1)", name="purchase_doc_type_sign"),
+        CheckConstraint("payment_condition IN ('dinheiro', 'credito')", name="purchase_doc_type_condition"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    code: Mapped[str] = mapped_column(String(20), unique=True)
+    description: Mapped[str] = mapped_column(String(100))
+    nature: Mapped[str] = mapped_column(String(30))
+    sign: Mapped[int] = mapped_column(Integer)
+    payment_condition: Mapped[str] = mapped_column(String(10))
+    default_payment_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    creates_cash_movement: Mapped[bool] = mapped_column(Boolean, default=False)
+    creates_debt: Mapped[bool] = mapped_column(Boolean, default=False)
+    default_due_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    series: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 

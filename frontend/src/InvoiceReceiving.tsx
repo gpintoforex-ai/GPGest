@@ -6,6 +6,7 @@ import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import Processing from "./tables/Processing";
 import RecordDialog from "./tables/RecordDialog";
 import SupplierPicker from "./components/SupplierPicker";
+import ReceiptFinance from "./ReceiptFinance";
 import type { TableInfo } from "./tables/types";
 import "./tables/TablePage.css";
 
@@ -143,6 +144,10 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           document_type: data.document.document_type,
           document_date: data.document.issue_date,
           warehouse_id: data.receipt.warehouse_id || data.warehouses[0]?.id || "",
+          document_type_id: data.receipt.document_type_id || "",
+          payment_method: data.receipt.payment_method || "",
+          due_date: data.receipt.due_date || data.document.issue_date,
+          credit_note_purchase_ids: data.receipt.credit_note_purchase_ids || [],
           global_discount: String(global),
         });
         setLines(data.lines.map((line: Row) => initialLine(line, global)));
@@ -179,6 +184,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
         document_type: data.document.document_type,
         document_date: data.document.issue_date,
         warehouse_id: data.warehouses.find((w: Row) => !data.document.store_id || w.store_id === data.document.store_id)?.id || data.warehouses[0]?.id || "",
+        document_type_id: "", payment_method: "", due_date: data.document.issue_date, credit_note_purchase_ids: [],
       });
       const global = documentDiscount(data.lines);
       setHeader(current => ({ ...current, global_discount: String(global) }));
@@ -224,6 +230,10 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
       const body = {
         ...header,
         global_discount: String(globalDiscount || 0),
+        document_type_id: header.document_type_id || null,
+        payment_method: header.payment_method || null,
+        due_date: header.due_date || null,
+        credit_note_purchase_ids: header.credit_note_purchase_ids || [],
         request_key: requestKey,
         lines: included.map(line => ({
           ...(line.choice === NEW ? { new_article: { ...line.newArticle, vat_rate: String(line.newArticle.vat_rate) } } : { article_id: line.choice }),
@@ -315,7 +325,9 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           const due = dueDate(header.document_date, term);
           return <>
             <Field label="Prazo de pagamento"><input readOnly value={header.supplier_id ? term?.name || "Sem prazo na ficha do fornecedor" : "—"} title="Definido na ficha do fornecedor (Tabelas → Fornecedores)." /></Field>
-            <Field label="Vencimento"><input readOnly value={due ? day(due) : "—"} title="Data do documento + prazo de pagamento do fornecedor." /></Field>
+            <ReceiptFinance supplierId={header.supplier_id} documentDate={header.document_date} defaultDueDate={due || undefined}
+              value={{ document_type_id: header.document_type_id || "", payment_method: header.payment_method || "", due_date: header.due_date || header.document_date, credit_note_purchase_ids: header.credit_note_purchase_ids || [] }}
+              onChange={patch => setHeader(current => ({ ...current, ...patch }))} />
           </>;
         })()}
       </div>
@@ -455,7 +467,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
       <div className="ui-dialog-actions">
         <span className="invoice-receiving-total">{plural(included.length, "linha", "linhas")} · {money(total)} sem IVA</span>
         {!editReceipt && <ActionButton type="button" disabled={busy} onClick={() => { setReading(null); setResult(null); }}><Search size={16} aria-hidden="true" />Outra fatura</ActionButton>}
-        <ActionButton type="button" className="primary" disabled={busy || !included.length || !header.supplier_id || !header.warehouse_id || unresolved.length > 0 || (!!editReceipt && !result.receipt?.editable)} onClick={confirm}>
+        <ActionButton type="button" className="primary" disabled={busy || !included.length || !header.supplier_id || !header.warehouse_id || !header.document_type_id || unresolved.length > 0 || (!!editReceipt && !result.receipt?.editable)} onClick={confirm}>
           {busy ? "A registar…" : editReceipt ? `Guardar alterações (${included.length})` : `Confirmar receção (${included.length})`}
         </ActionButton>
       </div>

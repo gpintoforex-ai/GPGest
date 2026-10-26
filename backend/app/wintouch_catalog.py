@@ -239,3 +239,53 @@ class WarehousesBinding(ErpBinding):
 
     def active_payload(self, raw, active):
         return {**raw, "IsDisabled": not active}
+
+
+# -- Tipos de documento de compra --------------------------------------------------------------
+
+# Classes Wintouch dos documentos de compra financeiros (verificado na API): natureza e pagamento.
+PURCHASE_CLASSES = {
+    32: ("compra", "dinheiro"),  # Fatura de compra a dinheiro
+    33: ("nota_credito_compra", "dinheiro"),  # Devolução de compra a dinheiro
+    34: ("compra", "credito"),  # Fatura de compra
+    35: ("nota_credito_compra", "credito"),  # Nota de crédito de fornecedor
+}
+
+
+class DocumentTypesBinding(ErpBinding):
+    """Importa os tipos de documento de compra da Wintouch (orçamentos, encomendas e guias ficam de fora)."""
+
+    resource = "document_types"
+    synced_fields = ["code", "description"]
+    capabilities = {"read": True, "create": False, "update": False, "delete": False, "activate": False, "deactivate": False}
+    reasons = {
+        "create": "Os tipos de documento são criados na Wintouch; na IAZELA ficam como «Apenas local».",
+        "update": "A natureza e o pagamento definem-se na IAZELA; a Wintouch não recebe alterações de tipos.",
+        "delete": "Os tipos de documento da Wintouch só se eliminam na Wintouch.",
+        "activate": "O estado ativo/inativo dos tipos é gerido na IAZELA.",
+        "deactivate": "O estado ativo/inativo dos tipos é gerido na IAZELA.",
+    }
+
+    def remote_rows(self, ctx, client):
+        return [row for row in client.list(self.resource) if row.get("Class") in PURCHASE_CLASSES]
+
+    def canonical(self, ctx, raw):
+        return {
+            "code": str(raw.get("Code") or "").strip().upper()[:20],
+            "description": str(raw.get("Name") or raw.get("Code") or "").strip()[:100],
+            # Interno (fora da comparação): a classe decide natureza e pagamento ao criar.
+            "_class": raw.get("Class"),
+        }
+
+    def create_values(self, ctx, canonical, options):
+        from .purchase_document_types import derived_flags, sign_of
+
+        nature, condition = PURCHASE_CLASSES.get(canonical.get("_class"), ("compra", "credito"))
+        cash, debt = derived_flags(condition)
+        return {
+            **{k: v for k, v in canonical.items() if not k.startswith("_")},
+            "nature": nature, "payment_condition": condition, "sign": sign_of(nature),
+            "creates_cash_movement": cash, "creates_debt": debt,
+            "default_payment_method": "numerario" if condition == "dinheiro" else None,
+            "default_due_days": 30 if condition == "credito" else None, "series": "", "active": True,
+        }

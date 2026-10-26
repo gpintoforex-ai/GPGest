@@ -46,7 +46,8 @@ EDIT_VIEW = {
     "document": {"id": "arq-1", "number": "REC-1", "document_type": "FT", "issue_date": "2026-10-20", "supplier_nif": "500000000",
                  "supplier_name": supplier["name"], "supplier_id": "supplier", "base_cents": 3088, "total_cents": 3798, "store_id": "demo",
                  "receipt_id": "rec-1"},
-    "receipt": {"id": "rec-1", "revision": 1, "status": "confirmed", "editable": True, "warehouse_id": "w1", "global_discount": "0"},
+    "receipt": {"id": "rec-1", "revision": 1, "status": "confirmed", "editable": True, "warehouse_id": "w1", "global_discount": "0",
+                "document_type_id": "t-fc", "payment_method": None, "due_date": "2026-11-19", "credit_note_purchase_ids": []},
     "source": "rececao",
     "lines": [{"reference": "PL1", "barcode": "", "lot": "", "expiry": "", "description": "Pastilhas", "quantity": "5", "bonus": "1",
                "price": "6.5", "discount": "5", "vat": "23", "global_discount": "0", "service": False, "evidence": "", "total": "0",
@@ -57,6 +58,9 @@ EDIT_VIEW = {
     "suppliers": [{"id": "supplier", "name": supplier["name"], "tax_number": "500000000", "payment_term": None}],
     "warehouses": [{"id": "w1", "name": "Principal", "store_id": "demo"}],
 }
+TYPES = {"types": [{"id": "t-fc", "code": "FC", "description": "Fatura de Compra", "nature": "compra", "sign": 1, "payment_condition": "credito",
+                    "default_payment_method": None, "default_due_days": 30, "creates_cash_movement": False, "creates_debt": True}],
+         "methods": [{"id": "numerario", "name": "Numerário"}], "open_invoices": []}
 calls = []
 
 
@@ -65,6 +69,8 @@ def intercept(route):
     method = route.request.method
     if path.startswith("/archive/documents/"):
         return route.fulfill(body=PDF, content_type="application/pdf")
+    if path == "/purchase-document-types/options":
+        return route.fulfill(json=TYPES)
     if path == "/purchase-receiving/receipts/rec-1" and method == "GET":
         result = EDIT_VIEW
     elif path == "/purchase-receiving/receipts/rec-1" and method == "PUT":
@@ -126,14 +132,17 @@ with sync_playwright() as p:
     expect(page.get_by_text("Receção atualizada: 1 linhas; os movimentos de stock foram gerados de novo.")).to_be_visible()
     kind, url, body = calls[-1]
     assert kind == "fatura" and url.endswith("revision=1") and body["lines"][0]["quantity"] == "8" and body["lines"][0]["bonus"] == "1"
+    assert body["document_type_id"] == "t-fc" and body["due_date"] == "2026-11-19"
     # Receção manual confirmada: o mesmo formulário do lançamento, em modo de edição.
     rows.filter(has_text="REC-4").get_by_role("button", name="Editar").click()
     manual = page.get_by_role("dialog", name="Receção — edição")
     expect(manual.get_by_label("Documento do fornecedor", exact=True)).to_have_value("REC-4")
+    # Receção antiga sem tipo de documento: passa a ser obrigatório escolher.
+    manual.get_by_label("Tipo de documento", exact=True).select_option("t-fc")
     manual.get_by_role("button", name="Guardar alterações").click()
     expect(page.get_by_text("Receção atualizada: os movimentos de stock foram gerados de novo.")).to_be_visible()
     kind, _, body = calls[-1]
-    assert kind == "manual" and body["revision"] == 1 and body["document"] == "REC-4"
+    assert kind == "manual" and body["revision"] == 1 and body["document"] == "REC-4" and body["document_type_id"] == "t-fc"
     assert not errors, errors
     browser.close()
 print("Procurement list UI passed: conference/attachment column, edit draft, edit confirmed receipts (invoice window and manual form). Fixtures only.")

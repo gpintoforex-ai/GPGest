@@ -21,6 +21,7 @@ from .models import (ArchiveDocument, BusinessEntity, Category, DocumentERPLink,
     ProcurementLink as Link, Purchase, PurchaseAttachment, PlannedAllocation, PlannedMovement, StockArticle, StockEntry,
     StockLot, StockWarehouse, Store, User, now, CustomerOrderReservation)
 from .document_identity import identity
+from . import purchase_financials as financials
 from .operating_modes import policy
 from .email_delivery import SendInput
 
@@ -84,6 +85,11 @@ class Draft(Strict):
     category_id: str | None = None
     # Fatura original no Arquivo digital (receção a partir de fatura e respetiva correção).
     archive_document_id: str | None = Field(default=None, max_length=36)
+    # Tipo de documento de compra (FC, FCD, NCC…): efeito financeiro ao confirmar a receção.
+    document_type_id: str | None = Field(default=None, max_length=36)
+    payment_method: str | None = Field(default=None, max_length=20)
+    # Nota de crédito: faturas em aberto do fornecedor que abate.
+    credit_note_purchase_ids: list[str] = Field(default_factory=list, max_length=50)
     lines: list[Line] = Field(min_length=1, max_length=200)
     request_key: str = Field(min_length=8, max_length=100)
     revision: int = Field(default=0, ge=0)
@@ -169,6 +175,8 @@ def document_view(db, row, cost_visible=True, usage=None):
             line[field] = str(usage.get((row.id,i,kind),ZERO) if usage is not None else used(db, row.id, i, kind))
         if row.kind=='order' and line['nature']!='goods':line['received']=line['invoiced']
         line['pending'] = str(max(ZERO, effective_quantity(row, line) - D(line['received'] if row.kind == 'order' else line['invoiced'] if row.kind == 'receipt' else line['credited'] if row.kind == 'return' else 0)))
+        if row.kind == 'receipt' and payload.get('document_type_id'):
+            line['pending'] = '0'  # O documento financeiro nasce da própria receção.
     supplier = db.get(BusinessEntity, row.supplier_id)
     paid_cents = paid_total(db, row.purchase_id) if row.purchase_id else 0
     purchase = db.get(Purchase, row.purchase_id) if row.purchase_id else None
@@ -209,7 +217,8 @@ def supplier(db, identifier):
 def validate(db, user, payload, authorize):
     authorize(user, db, payload.store_id, ['administrador', 'gestor'])
     stock.require(user, stock.settings(db), 'view_cost')
-    supplier(db, payload.supplier_id)
+    entity = supplier(db, payload.supplier_id)
+    typed = financials.validate_receipt(db, payload, entity) is not None
     if payload.category_id and not ensure_usable(db, Category, payload.category_id):
         fail('Rubrica inválida.')
     if any(line.category_id and not ensure_usable(db, Category, line.category_id) for line in payload.lines):
@@ -227,7 +236,7 @@ def validate(db, user, payload, authorize):
             wh = stock.warehouse(db, user, line.warehouse_id, authorize)
             if wh.store_id != payload.store_id:
                 fail('O armazém pertence a outro estabelecimento.')
-        elif line.source_id and payload.kind in ('receipt', 'return'):
+        elif line.source_id and payload.kind in ('receipt', 'return') and not typed:
             fail('Receções e devoluções físicas exigem mercadorias.')
     if payload.purchase_id:
         purchase = db.get(Purchase, payload.purchase_id)
@@ -312,6 +321,8 @@ def confirm_document(db, user, row, options, authorize, audit):
         for source_index,(i,line) in enumerate(direct):
             line['source_id']=receipt.id;line['source_line']=source_index
         payload['direct_receipt_id']=receipt.id
+    kind_of_document = financials.document_type(db, payload['document_type_id'], usable=False) if row.kind == 'receipt' and payload.get('document_type_id') else None
+    credit_note = bool(kind_of_document and kind_of_document.nature == 'nota_credito_compra')
     if row.kind in ('receipt', 'return'):
         for other in db.scalars(select(Doc).where(Doc.supplier_id == row.supplier_id, Doc.kind == row.kind, Doc.id != row.id, Doc.confirmed_at.is_not(None), Doc.status != 'cancelled')):
             if stock.document_key(json.loads(other.data)['document']) == stock.document_key(payload['document']):
@@ -335,8 +346,11 @@ def confirm_document(db, user, row, options, authorize, audit):
             db.add(Link(document_id=row.id, line_index=i, source_id=source.id, source_line=line['source_line'], quantity=q))
         if row.kind == 'return' and not source:
             fail('Associe cada devolução à receção original.')
-        if row.kind in ('receipt', 'return') and line['nature'] != 'goods':
+        if row.kind in ('receipt', 'return') and line['nature'] != 'goods' and not kind_of_document:
             fail('As receções e devoluções físicas só podem conter mercadorias.')
+        service_article = line['nature'] == 'goods' and line.get('article_id') and json.loads(db.get(StockArticle, line['article_id']).data).get('service')
+        if row.kind == 'receipt' and (line['nature'] != 'goods' or service_article):
+            continue  # Serviços contam no documento, mas não movimentam stock.
         if row.kind == 'return' and len(line['reason'].strip()) < 3:
             fail('Indique o motivo da devolução.')
         if row.kind == 'return' and original['warehouse_id'] != line['warehouse_id']:
@@ -349,9 +363,10 @@ def confirm_document(db, user, row, options, authorize, audit):
             if row.kind!='return' and not stock.settings(db)['recoverable_vat']:
                 meta=json.loads(db.get(StockArticle,line['article_id']).data)
                 entry_price=entry_price*(1+D(line['vat'])/100)/(1+D(meta.get('vat_rate',0))/100)
+            outgoing = row.kind == 'return' or credit_note  # Nota de crédito: saída de stock.
             entries = stock.post(db, user, stock.MovementInput(
-                article_id=line['article_id'], warehouse_id=line['warehouse_id'], kind='supplier_return' if row.kind == 'return' else 'purchase',
-                quantity=q, unit_cost=entry_price.quantize(D('0.00000001')) if row.kind != 'return' else None,
+                article_id=line['article_id'], warehouse_id=line['warehouse_id'], kind='supplier_return' if outgoing else 'purchase',
+                quantity=q, unit_cost=entry_price.quantize(D('0.00000001')) if not outgoing else None,
                 occurred_on=payload['document_date'], document=payload['document'] or row.id,
                 reason=line['reason'] or LABELS[row.kind] + ' confirmada', request_key=f'procurement:{row.id}:{i}' + (f":e{payload['edition']}" if payload.get('edition') else ''),
                 supplier_id=row.supplier_id, lot_id=line.get('lot_id'), lot_number=line.get('lot_number',''),
@@ -424,6 +439,9 @@ def confirm_document(db, user, row, options, authorize, audit):
                 'lines': [{'category': (lambda c: db.get(Category, c).name if c else 'Por classificar')(l.get('category_id') or payload.get('category_id')),
                     'description': l['description'], 'base': str(D(money(D(l['quantity'])*net_price(l)))/100), 'rate': str(l['vat']),
                     'tax': str(D(money(D(l['quantity'])*net_price(l)*D(l['vat'])/100))/100)} for l in payload['lines']]})))
+    if kind_of_document is not None:
+        # Só ao confirmar (nunca em rascunho): compra, dívida/previsto ou movimento real.
+        payload['financial'] = financials.process(db, user, row, payload, audit)
     row.status = 'confirmed'
     row.confirmed_at = now()
     row.revision += 1
@@ -435,7 +453,7 @@ def confirm_document(db, user, row, options, authorize, audit):
     db.flush()
     return row
 
-def undo_entries(db, user, row, payload, authorize, keep=frozenset()):
+def undo_entries(db, user, row, payload, authorize, keep=frozenset(), always_reverse=False):
     """Retira as entradas de stock de uma receção que vai ser regravada.
 
     Sem nada depois (vendas, saídas, outras entradas do artigo), a entrada é apagada, como se não
@@ -452,7 +470,7 @@ def undo_entries(db, user, row, payload, authorize, keep=frozenset()):
             later = db.scalar(select(StockEntry.id).where(
                 StockEntry.article_id == entry.article_id, StockEntry.id != entry.id,
                 StockEntry.id.not_in(keep or ['-']), StockEntry.created_at >= entry.created_at).limit(1))
-            if later is None:
+            if later is None and not always_reverse:
                 lot_id = entry.lot_id
                 db.delete(entry)
                 db.flush()
@@ -487,6 +505,7 @@ def replace_confirmed(db, user, row, data, authorize, audit, extra=None):
         if used(db, row.id, index, 'invoice') or used(db, row.id, index, 'return'):
             fail('Esta receção já tem fatura ou devolução associada: corrija com uma devolução ao fornecedor.', 409)
     validate(db, user, data, authorize)
+    financials.undo(db, user, row, old, audit, 'Edição da receção')
     for link in db.scalars(select(Link).where(Link.document_id == row.id)):
         db.delete(link)
     raw = data.model_dump(mode='json', exclude={'allow_overdelivery', 'acknowledge_differences'})
@@ -620,6 +639,45 @@ def register_routes(app, current, authorize, scope, audit):
         replace_confirmed(db, user, row, data, authorize, audit)
         db.commit()
         return document_view(db, row)
+
+    @app.post('/api/procurement/{identifier}/annul')
+    def annul(identifier: str, data: Cancel, user=Depends(current), db: Session=Depends(db_session)):
+        """Anula uma receção confirmada: estorno do stock e dos movimentos financeiros, com registo, sem apagar."""
+        stock.lock(db)
+        row = get(db, user, identifier, True)
+        if row.kind != 'receipt' or not row.confirmed_at or row.status == 'cancelled':
+            fail('Só uma receção confirmada pode ser anulada.', 409)
+        if row.revision != data.revision:
+            fail('A receção mudou entretanto. Atualize antes de anular.', 409)
+        payload = json.loads(row.data)
+        for index in range(len(payload['lines'])):
+            if used(db, row.id, index, 'invoice') or used(db, row.id, index, 'return'):
+                fail('Esta receção já tem fatura ou devolução associada: corrija com uma devolução ao fornecedor.', 409)
+        financials.undo(db, user, row, payload, audit, data.reason.strip())
+        removed, reversed_ = undo_entries(db, user, row, payload, authorize, always_reverse=True)
+        for link in db.scalars(select(Link).where(Link.document_id == row.id)):
+            db.delete(link)
+        payload['annulled'] = {'reason': data.reason.strip(), 'user_id': user.id, 'at': now().isoformat(), 'reversed_entries': reversed_}
+        row.status, row.revision, row.data = 'cancelled', row.revision + 1, stock.dump(payload)
+        audit(db, user, 'compra_circuito_rececao_anulada', row.id, {'motivo': data.reason.strip(), 'estornos': reversed_}, row.store_id)
+        db.commit()
+        return document_view(db, row)
+
+    @app.get('/api/purchase-document-types/options')
+    def document_type_options(supplier_id: str | None = None, user=Depends(current), db: Session=Depends(db_session)):
+        """Tipos ativos para as receções e, com fornecedor, as faturas em aberto (para notas de crédito)."""
+        financials.ensure_defaults(db)
+        db.commit()
+        types = [{'id': t.id, 'code': t.code, 'description': t.description, 'nature': t.nature, 'sign': t.sign,
+                  'payment_condition': t.payment_condition, 'default_payment_method': t.default_payment_method,
+                  'default_due_days': t.default_due_days, 'creates_cash_movement': t.creates_cash_movement, 'creates_debt': t.creates_debt}
+                 for t in db.scalars(select(financials.PurchaseDocumentType).where(financials.PurchaseDocumentType.active.is_(True))
+                                     .order_by(financials.PurchaseDocumentType.code))]
+        entity = db.get(BusinessEntity, supplier_id) if supplier_id else None
+        from .cash_local import method_catalog
+        methods = [{'id': m['id'], 'name': m['name']} for m in method_catalog(db) if m['active']]
+        return {'types': types, 'methods': methods,
+                'open_invoices': financials.open_invoices(db, entity) if entity and entity.tax_number else []}
 
     @app.get('/api/procurement/{identifier}/pdf')
     def pdf(identifier:str,user=Depends(current),db:Session=Depends(db_session)):

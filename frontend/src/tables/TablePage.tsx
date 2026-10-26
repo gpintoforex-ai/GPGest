@@ -36,6 +36,7 @@ export default function TablePage({ tableKey, context, active = true, store = ""
   const [listing, setListing] = useState<Listing | null>(null);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"active" | "inactive" | "all">("active");
+  const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
   const [origin, setOrigin] = useState("all");
   const [sync, setSync] = useState("all");
   const [sort, setSort] = useState<{ id: string; direction: "asc" | "desc" }>({ id: "description", direction: "asc" });
@@ -49,13 +50,14 @@ export default function TablePage({ tableKey, context, active = true, store = ""
 
   const load = useCallback(async () => {
     const params = new URLSearchParams({ q: query, status, origin, sync, store, sort: sort.id, direction: sort.direction, page: String(page), size: String(size) });
+    for (const [name, value] of Object.entries(fieldFilters)) if (value) params.set("f_" + name, value);
     const [info, data] = await Promise.all([api(`/tables/${tableKey}`), api(`/tables/${tableKey}/records?${params}`)]);
     if (!Array.isArray(info?.fields) || !info?.erp || !Array.isArray(data?.rows)) {
       throw new Error("O servidor devolveu a tabela num formato inesperado. Atualize a página; se persistir, contacte o suporte.");
     }
     setTable(info);
     setListing(data);
-  }, [tableKey, query, status, origin, sync, store, sort, page, size]);
+  }, [tableKey, query, status, fieldFilters, origin, sync, store, sort, page, size]);
 
   useEffect(() => { if (active) load().then(() => setError("")).catch(e => setError(e.message)); }, [active, load]);
   useEffect(() => { setPage(1); setDialog(null); }, [tableKey]);
@@ -155,6 +157,12 @@ export default function TablePage({ tableKey, context, active = true, store = ""
       <FilterBar label={`Filtros de ${table.title.toLowerCase()}`}>
         <SearchInput label="Pesquisar" value={query} onChange={e => { setQuery(e.target.value); setPage(1); }} />
         {table.has_active && <label>Estado<select aria-label="Estado" value={status} onChange={e => { setStatus(e.target.value as typeof status); setPage(1); }}><option value="active">Ativos</option><option value="inactive">Inativos</option><option value="all">Todos</option></select></label>}
+        {(table.filters || []).map(name => {
+          const field = table.fields.find(f => f.name === name);
+          return field && <label key={name}>{field.label}<select aria-label={field.label} value={fieldFilters[name] || ""} onChange={e => { setFieldFilters({ ...fieldFilters, [name]: e.target.value }); setPage(1); }}>
+            <option value="">Todas</option>{field.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select></label>;
+        })}
         {integrated && <label>Origem<select aria-label="Origem" value={origin} onChange={e => { setOrigin(e.target.value); setPage(1); }}><option value="all">Todas</option><option value="local">IAZELA</option><option value="erp">ERP</option></select></label>}
         {integrated && <label>Sincronização<select aria-label="Sincronização" value={sync} onChange={e => { setSync(e.target.value); setPage(1); }}>{SYNC_FILTERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>}
         <label>Por página<select aria-label="Registos por página" value={size} onChange={e => { setSize(Number(e.target.value)); setPage(1); }}><option>10</option><option>25</option><option>50</option><option>100</option></select></label>

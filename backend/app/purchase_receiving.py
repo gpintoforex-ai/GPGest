@@ -297,6 +297,11 @@ class ReceiveInput(Strict):
     document_date: date
     # Desconto global do documento (comercial), aplicado a todas as linhas.
     global_discount: D = Field(default=D(0), ge=0, le=100, decimal_places=4)
+    # Tipo de documento de compra (efeito financeiro ao confirmar) e respetivos dados.
+    document_type_id: str | None = Field(default=None, max_length=36)
+    payment_method: str | None = Field(default=None, max_length=20)
+    due_date: date | None = None
+    credit_note_purchase_ids: list[str] = Field(default_factory=list, max_length=50)
     lines: list[ReceiveLine] = Field(min_length=1, max_length=300)
     request_key: str = Field(min_length=8, max_length=100)
 
@@ -447,9 +452,17 @@ def register_routes(app, current, authorize, scope, audit):
             learned_here = learn(db, supplier.id, line, article.id)
             snapshot_line = {**line.model_dump(mode="json", exclude={"new_article"}), "article_id": article.id}
             if meta.get("service"):
-                # Serviço: fica no lançamento (valor, IVA, edição), mas não entra em stock.
+                # Serviço: fica no lançamento (valor, IVA, edição), mas não entra em stock; com tipo de
+                # documento conta no total do documento financeiro.
                 learned += learned_here
                 snapshot.append(snapshot_line)
+                if data.document_type_id:
+                    _, discount, _ = received_line(line, data.global_discount)
+                    lines.append(buying.Line(
+                        article_id=article.id, description=line.description, nature="service",
+                        supplier_reference=line.reference[:100], quantity=line.quantity, price=line.price,
+                        discount=discount, vat=line.vat,
+                    ))
                 continue
             if meta.get("lots") and not line.lot.strip():
                 fail(f"Linha {number}: «{article.name}» controla lotes; indique o lote.")
@@ -473,7 +486,7 @@ def register_routes(app, current, authorize, scope, audit):
             # O lançamento tal como foi feito (bónus, desconto da linha), para a edição reabrir igual.
             snapshot.append(snapshot_line)
         if not lines:
-            fail("Esta fatura só tem serviços: não há mercadoria para dar entrada em stock. Registe-a em Compras.")
+            fail("Esta fatura só tem serviços: indique o tipo de documento para a lançar, ou registe-a em Compras.")
         receiving = {"global_discount": str(data.global_discount), "warehouse_id": warehouse.id, "lines": snapshot}
         return lines, created, learned, receiving
 
@@ -487,6 +500,10 @@ def register_routes(app, current, authorize, scope, audit):
             document_date=data.document_date,
             notes=f"Receção a partir da fatura do Arquivo digital ({doc.original_name}).",
             archive_document_id=doc.id,
+            document_type_id=data.document_type_id,
+            payment_method=data.payment_method,
+            due_date=data.due_date or data.document_date,
+            credit_note_purchase_ids=data.credit_note_purchase_ids,
             lines=lines,
             request_key=request_key,
         )
@@ -578,7 +595,9 @@ def register_routes(app, current, authorize, scope, audit):
                 "store_id": row.store_id, "receipt_id": row.id,
             },
             "receipt": {"id": row.id, "revision": row.revision, "status": row.status, "editable": row.status == "confirmed" and not used_invoice,
-                        "warehouse_id": receiving.get("warehouse_id"), "global_discount": receiving.get("global_discount", "0")},
+                        "warehouse_id": receiving.get("warehouse_id"), "global_discount": receiving.get("global_discount", "0"),
+                        "document_type_id": payload.get("document_type_id"), "payment_method": payload.get("payment_method"),
+                        "due_date": payload.get("due_date"), "credit_note_purchase_ids": payload.get("credit_note_purchase_ids", [])},
             "source": "rececao",
             "lines": lines,
             "warnings": [] if not used_invoice else ["Esta receção já tem fatura ou devolução associada: corrija com uma devolução ao fornecedor."],

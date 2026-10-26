@@ -26,6 +26,7 @@ from .models import (
     PaymentTerm,
     PlannedAllocation,
     PlannedMovement,
+    PurchaseDocumentType,
     Register,
     StockWarehouse,
     Store,
@@ -34,6 +35,14 @@ from .models import (
     now,
 )
 from .payment_terms import TERM_TYPES, payment_days_for
+from .purchase_document_types import (
+    CONDITIONS,
+    NATURES,
+    derived_flags,
+    document_type_usage,
+    sign_of,
+)
+from .purchase_document_types import ensure_defaults as ensure_document_types
 from .register_management import register_dependencies
 from .rubrics import ERP_ADAPTERS, SendItem, set_cash_difference
 from .table_framework import (
@@ -47,7 +56,7 @@ from .table_framework import (
     enterprise_of,
     register,
 )
-from .wintouch_catalog import PaymentTermsBinding, WarehousesBinding
+from .wintouch_catalog import DocumentTypesBinding, PaymentTermsBinding, WarehousesBinding
 from .wintouch_sync import main_address
 
 # -- Prazos de pagamento -------------------------------------------------------------------
@@ -1335,6 +1344,87 @@ class EntitiesSpec(TableSpec):
         entity_routes.remove_entity(row["id"], ctx.user, ctx.db)
 
 
+# -- Tipos de documento de compra --------------------------------------------------------------
+
+
+class DocumentTypesSpec(TableSpec):
+    key = "document_types"
+    title = "Tipos de Documentos"
+    singular = "tipo de documento"
+    description = "Tipos de documento de compra usados nas receções: definem a dívida, os previstos e os movimentos de caixa."
+    model = PurchaseDocumentType
+    code_field = "code"
+    description_field = "description"
+    filter_fields = ("nature", "payment_condition")
+    fields = [
+        TableField("code", "Código", required=True, max_length=20, help="Ex.: FC, FCD, NCC, NCCD", span=2),
+        TableField("description", "Descrição", required=True, min_length=2, max_length=100, span=4),
+        TableField("nature", "Natureza", "select", required=True, options=list(NATURES.items()), span=3),
+        TableField("payment_condition", "Condição de pagamento", "select", required=True, options=list(CONDITIONS.items()), span=3),
+        TableField("default_payment_method", "Meio de pagamento por omissão", "payment_method", column=False, span=3),
+        TableField("default_due_days", "Dias de vencimento", "number", minimum=0, maximum=3650, column=False, span=3,
+                   help="Só a crédito: vencimento = data do documento + dias."),
+        TableField("series", "Série", max_length=40, column=False, span=2),
+        TableField("creates_cash_movement", "Gera movimento de caixa", "boolean", column=False,
+                   help="Por omissão, a dinheiro."),
+        TableField("creates_debt", "Gera dívida", "boolean", column=False, help="Por omissão, a crédito."),
+    ]
+    extra_columns = [("sign_label", "Sinal"), ("effect", "Efeito"), ("documents", "Documentos")]
+
+    def __init__(self):
+        super().__init__()
+        self.erp = DocumentTypesBinding(self)
+
+    def describe(self, ctx):
+        from .cash_local import method_catalog
+
+        result = super().describe(ctx)
+        options = [{"value": m["id"], "label": m["name"], "active": m["active"]} for m in method_catalog(ctx.db)]
+        for field in result["fields"]:
+            if field["type"] == "payment_method":
+                field["options"] = options
+        return result
+
+    def rows(self, ctx):
+        ensure_document_types(ctx.db)
+        return super().rows(ctx)
+
+    def labels(self, ctx, rows):
+        usage = document_type_usage(ctx.db)
+        result = {}
+        for row in rows:
+            effects = [label for flag, label in ((row.creates_debt, "dívida + previsto"), (row.creates_cash_movement, "movimento real")) if flag]
+            result[row.id] = {
+                "nature": NATURES.get(row.nature, row.nature),
+                "payment_condition": CONDITIONS.get(row.payment_condition, row.payment_condition),
+                "sign_label": "+1 (fatura)" if row.sign > 0 else "−1 (nota de crédito)",
+                "effect": " · ".join(effects) or "sem efeito financeiro",
+                "documents": str(usage.get(row.id, 0)),
+            }
+        return result
+
+    def clean(self, ctx, data, row=None):
+        values = super().clean(ctx, data, row)
+        values["code"] = values["code"].upper()
+        if any(c.isspace() for c in values["code"]):
+            raise HTTPException(422, "O código não pode ter espaços.")
+        values["sign"] = sign_of(values["nature"])
+        if values["payment_condition"] == "dinheiro":
+            values["default_due_days"] = None
+        elif values["default_due_days"] is None:
+            values["default_due_days"] = 30
+        # Sem exceções indicadas, os indicadores seguem a condição de pagamento.
+        if not values.get("creates_cash_movement") and not values.get("creates_debt"):
+            values["creates_cash_movement"], values["creates_debt"] = derived_flags(values["payment_condition"])
+        if values.get("default_payment_method") == "":
+            values["default_payment_method"] = None
+        values["series"] = values.get("series") or ""
+        return values
+
+    def dependencies(self, ctx, row):
+        return [("documentos de compra que o usam", document_type_usage(ctx.db).get(row.id, 0))]
+
+
 # -- Registo -------------------------------------------------------------------------------------
 
 for spec in (
@@ -1345,8 +1435,12 @@ for spec in (
     CategoriesSpec(),
     RegistersSpec(),
     PaymentTermsSpec(),
+    DocumentTypesSpec(),
 ):
     register(spec)
 
 # Inativos que não podem ser usados em novos registos (ver table_rules.py).
-INACTIVE_MODELS = {"categories": Category, "registers": Register, "warehouses": StockWarehouse, "payment_terms": PaymentTerm}
+INACTIVE_MODELS = {
+    "categories": Category, "registers": Register, "warehouses": StockWarehouse, "payment_terms": PaymentTerm,
+    "document_types": PurchaseDocumentType,
+}

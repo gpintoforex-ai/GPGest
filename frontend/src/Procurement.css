@@ -81,3 +81,7 @@
 .procurement-done { color: var(--color-success); font-weight: 600; }
 .procurement-inline-action { margin-top: 4px; padding: 2px 10px; min-height: 28px; font-size: .85rem; }
 .procurement-check-cell .ui-action { min-height: 32px; padding: 4px 10px; font-size: .85rem; }
+/* Tipo de documento na receção: efeito financeiro e faturas a abater. */
+.receipt-finance-effect { grid-column: 1 / -1; margin: 0; }
+.receipt-finance-invoices { grid-column: 1 / -1; display: grid; gap: 4px; margin: 0; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; }
+.receipt-finance-invoices legend { padding: 0 6px; font-weight: 600; }

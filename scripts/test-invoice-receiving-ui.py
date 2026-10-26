@@ -80,6 +80,15 @@ READ = {
     ],
     "warehouses": [{"id": "w1", "name": "Armazém principal", "store_id": "store-1"}],
 }
+TYPES = {"types": [
+    {"id": "t-fc", "code": "FC", "description": "Fatura de Compra", "nature": "compra", "sign": 1, "payment_condition": "credito",
+     "default_payment_method": None, "default_due_days": 30, "creates_cash_movement": False, "creates_debt": True},
+    {"id": "t-fcd", "code": "FCD", "description": "Fatura de Compra a Dinheiro", "nature": "compra", "sign": 1, "payment_condition": "dinheiro",
+     "default_payment_method": "numerario", "default_due_days": None, "creates_cash_movement": True, "creates_debt": False},
+    {"id": "t-ncc", "code": "NCC", "description": "Nota de Crédito de Compra", "nature": "nota_credito_compra", "sign": -1, "payment_condition": "credito",
+     "default_payment_method": None, "default_due_days": 30, "creates_cash_movement": False, "creates_debt": True},
+], "methods": [{"id": "numerario", "name": "Numerário"}, {"id": "transferencia", "name": "Transferência"}],
+   "open_invoices": [{"id": "pur-1", "document": "FT 1/9", "document_date": "2026-10-01", "amount_cents": 10000, "remaining_cents": 10000}]}
 sent = []
 
 
@@ -93,6 +102,8 @@ def intercept(route):
         return route.fulfill(json=[])
     if path == "/procurement-ledger":
         return route.fulfill(json={"rows": [], "more": False})
+    if path == "/purchase-document-types/options":
+        return route.fulfill(json=TYPES)
     if path == "/purchase-receiving/documents":
         return route.fulfill(json={"rows": DOCS})
     if path.startswith("/archive/documents/") and path.endswith("/file"):
@@ -175,7 +186,6 @@ with sync_playwright() as p:
     page.screenshot(path=str(OUT / "summary.png"))
     # Cabeçalho: prazo da ficha do fornecedor e vencimento (20/10/2026 + 30 dias).
     expect(dialog.get_by_label("Prazo de pagamento", exact=True)).to_have_value("30 dias")
-    expect(dialog.get_by_label("Vencimento", exact=True)).to_have_value("19/11/2026")
     # Fornecedor: pesquisa a escrever (nome ou NIF), como na folha de caixa.
     picker = dialog.get_by_role("combobox", name="Fornecedor")
     expect(picker).to_have_value("Fornecedor Natural")
@@ -184,7 +194,6 @@ with sync_playwright() as p:
     expect(dialog.get_by_role("option", name="Fornecedor Natural", exact=False)).to_have_count(0)
     dialog.get_by_role("option", name="Ervas do Monte, Lda", exact=False).click()
     expect(dialog.get_by_label("Prazo de pagamento", exact=True)).to_have_value("Fim do mês")
-    expect(dialog.get_by_label("Vencimento", exact=True)).to_have_value("31/10/2026")
     picker.fill("507475")
     dialog.get_by_role("option", name="Fornecedor Natural", exact=False).click()
     # Linhas que precisam de artigo (criar/associar) a vermelho, com texto.
@@ -199,11 +208,17 @@ with sync_playwright() as p:
     dialog.get_by_label("Procurar artigo", exact=True).fill("1847 · ARTHRON 250mL")
     expect(arthron).to_have_value("a2")
     arthron.select_option("a1")
+    # Tipo de documento obrigatório: FC (crédito) propõe o vencimento pelo prazo do fornecedor (30 dias).
+    expect(dialog.get_by_role("button", name="Confirmar receção (2)")).to_be_disabled()
+    dialog.get_by_label("Tipo de documento", exact=True).select_option("t-fc")
+    expect(dialog.get_by_label("Vencimento", exact=True)).to_have_value("2026-11-19")
+    expect(dialog.get_by_text("dívida ao fornecedor e movimento previsto no vencimento", exact=False)).to_be_visible()
     dialog.get_by_role("button", name="Confirmar receção (2)").click()
     expect(page.get_by_text("Receção registada: 2 linhas em stock, 1 artigos novos criados.")).to_be_visible()
     body = sent[0]
     assert body["supplier_id"] == "s1" and body["warehouse_id"] == "w1" and len(body["lines"]) == 2
     assert body["global_discount"] == "20" and body["lines"][0]["price"] == "29.08" and body["lines"][0]["discount"] == "0"
+    assert body["document_type_id"] == "t-fc" and body["due_date"] == "2026-11-19" and body["payment_method"] is None
     assert body["lines"][1]["quantity"] == "1" and body["lines"][1]["bonus"] == "1"
     assert body["lines"][0]["article_id"] == "a1" and body["lines"][0]["lot"] == "20113" and body["lines"][0]["expiry"] == "2029-07-16"
     assert body["lines"][1]["new_article"]["code"] == "5600493200595" and body["lines"][1]["new_article"]["lots"] is True
@@ -240,6 +255,9 @@ with sync_playwright() as p:
     manual.get_by_label("Descrição", exact=True).fill("Chá verde 100 g")
     manual.get_by_label("Preço unitário (€)", exact=True).fill("27.73")
     manual.get_by_label("IVA (%)").first.select_option("6")
+    # Nota de crédito a crédito: pode abater faturas em aberto do fornecedor.
+    dialog.get_by_label("Tipo de documento", exact=True).select_option("t-ncc")
+    dialog.get_by_label("FT 1/9 · 01/10/2026 · em aberto 100,00 €", exact=False).check()
     dialog.get_by_role("button", name="Confirmar receção (1)").click()
     expect(dialog.get_by_text("Linha 1: indique o código e a designação do artigo novo.")).to_be_visible()
     expect(manual.get_by_label("Designação", exact=True)).to_have_value("Chá verde 100 g")
@@ -253,6 +271,7 @@ with sync_playwright() as p:
     manual_body = sent[-1]
     assert manual_body["lines"][0]["new_article"]["code"] == "CHA100" and manual_body["lines"][0]["new_article"]["name"] == "Chá verde 100 g"
     assert manual_body["lines"][0]["price"] == "27.73" and manual_body["lines"][0]["vat"] == "6"
+    assert manual_body["document_type_id"] == "t-ncc" and manual_body["credit_note_purchase_ids"] == ["pur-1"]
     # Telemóvel: sem deslocação horizontal.
     page.set_viewport_size({"width": 390, "height": 844})
     page.get_by_role("button", name="Receção a partir de fatura", exact=True).click()
