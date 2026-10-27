@@ -8,10 +8,12 @@ export default function AttachmentSettings({ nif }: { nif?: string }) {
   const [config, setConfig] = useState<Record<string, string> | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [google, setGoogle] = useState<{configured: boolean; connected: boolean; email: string} | null>(null);
+  const [google, setGoogle] = useState<{configured: boolean; connected: boolean; email: string; origins?: string[]} | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => { api("/integrations/attachments/google/status").then(setGoogle).catch(e => setError(e.message)); }, []);
   useEffect(() => { api("/settings/attachments").then(r => setConfig(r.config)).catch(e => setError(e.message)); }, []);
+  const authorizableHere = !!google?.origins?.includes(window.location.origin);
+  const localOrigin = google?.origins?.find(o => o.startsWith("http://localhost:"));
   const defaults = nif === "510774318" ? { outlook_email: "desafiosalutar@hotmail.com", google_email: "desafiosalutar@gmail.com", drive_folder: "1OV1fH8lEFrvlTa7P7-OzgkVxgFmMZ5pJ" } : {};
   return <section className="panel">
     <h3>Anexos de faturas · Gmail e Google Drive</h3>
@@ -21,8 +23,8 @@ export default function AttachmentSettings({ nif }: { nif?: string }) {
     <p>Consulte os emails, guarde os anexos selecionados no Drive e confirme a associação às faturas abaixo ou na Conferência documental.</p>
     <p>Para usar a pasta Drive existente, poderá ser necessário desligar e voltar a ligar a conta. A nova autorização solicita acesso de leitura e gestão ao Drive; a IAZELA usa a pasta configurada e não apaga ficheiros.</p>
     {google?.configured && <>
-      {window.location.hostname !== "localhost" && <p>Para autorizar, <ActionLink href={"http://localhost:5174/?nif=" + encodeURIComponent(nif || "")}>abre a IAZELA em localhost</ActionLink>, entra na empresa e volta a Configurações.</p>}
-      <ActionButton disabled={busy || window.location.hostname !== "localhost" && !google.connected} onClick={async () => {
+      {!authorizableHere && !google.connected && <p>Este endereço ({window.location.origin}) ainda não está registado como retorno no cliente Google, pelo que a autorização não pode ser feita aqui.{localOrigin && <> Para autorizar, <ActionLink href={localOrigin + "/?nif=" + encodeURIComponent(nif || "")}>abre a IAZELA em localhost</ActionLink>, entra na empresa e volta a Configurações.</>}</p>}
+      <ActionButton disabled={busy || !authorizableHere && !google.connected} onClick={async () => {
         setBusy(true); setError("");
         try {
           if (google.connected) {

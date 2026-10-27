@@ -66,7 +66,7 @@ Para passar apenas a API para outro computador, mantendo os dados no Neon e pres
 
 `127.0.0.1:8001` é apenas local e não é um endereço que o Worker consiga alcançar. Para um teste, é necessário disponibilizar a API através de um túnel HTTPS autorizado e manter o PC, a API e o túnel ligados. Configurar `BACKEND_ORIGIN` com esse endereço e acrescentar a origem pública da interface a `ALLOWED_ORIGINS`.
 
-Para produção, usar um servidor persistente para FastAPI e PostgreSQL conforme a secção **Dados reais e alojamento** do README. A publicação da interface no Cloudflare não migra a base de demonstração do PC. As integrações Google também têm de ter o callback e as credenciais adequados ao servidor público; a configuração local atual usa um callback em localhost.
+Para produção, usar um servidor persistente para FastAPI e PostgreSQL conforme a secção **Dados reais e alojamento** do README. A publicação da interface no Cloudflare não migra a base de demonstração do PC. As integrações Google também precisam das credenciais no servidor e do retorno OAuth da origem pública registado (ver [Gmail e Drive](GMAIL-DRIVE-ANEXOS.md)).
 
 ## Validar sem publicar
 

@@ -1063,7 +1063,11 @@ def test_google_authorization_is_scoped_expiring_and_browser_bound(platform, mon
     )
     monkeypatch.setattr(
         "app.google_integration.credentials",
-        lambda: {"client_id": "test-client", "client_secret": "private-test-secret"},
+        lambda: {
+            "client_id": "test-client",
+            "client_secret": "private-test-secret",
+            "redirect_uris": ["http://localhost:5174/api/integrations/attachments/google/callback"],
+        },
     )
     url = "/api/integrations/attachments/google"
     assert c.post(url + "/connect", json={}).status_code == 422
@@ -1090,3 +1094,71 @@ def test_google_authorization_is_scoped_expiring_and_browser_bound(platform, mon
         == 400
     )
     assert not c.get(url + "/status").json()["connected"]
+
+
+def test_google_authorization_from_registered_public_origin(platform, monkeypatch):
+    from types import SimpleNamespace
+    from urllib.parse import parse_qs, urlsplit
+
+    from app import google_integration
+
+    c, _ = platform
+    a = create(c, "google-public")
+    enter(c, a["slug"])
+    c.post(
+        "/api/settings/attachments",
+        json={
+            "outlook_email": "",
+            "google_email": "mail@gmail.com",
+            "drive_folder": "123456789012345",
+            "mail_folder": "inbox",
+        },
+    )
+    public = "https://gpgest.example.pt"
+    callback = public + "/api/integrations/attachments/google/callback"
+    monkeypatch.setenv("ALLOWED_ORIGINS", public + ",https://outra.example.pt")
+    monkeypatch.setattr(
+        "app.google_integration.credentials",
+        lambda: {"client_id": "test-client", "client_secret": "s", "redirect_uris": [callback]},
+    )
+    url = "/api/integrations/attachments/google"
+    status = c.get(url + "/status").json()
+    assert status["configured"] and status["origins"] == [public]
+    denied = c.post(url + "/connect", json={}, headers={"origin": "https://outra.example.pt"})
+    assert denied.status_code == 422 and "outra.example.pt" in denied.json()["detail"]
+    r = c.post(url + "/connect", json={}, headers={"origin": public})
+    assert r.status_code == 200, r.text
+    query = parse_qs(urlsplit(r.json()["url"]).query)
+    assert query["redirect_uri"] == [callback]
+    exchanged = []
+
+    def google(request):
+        if request.url.path == "/token":
+            exchanged.append(parse_qs(request.content.decode()))
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "a",
+                    "refresh_token": "r",
+                    "scope": google_integration.SCOPES,
+                },
+            )
+        return httpx.Response(200, json={"email": "mail@gmail.com"})
+
+    monkeypatch.setattr(
+        google_integration,
+        "httpx",
+        SimpleNamespace(
+            Client=lambda timeout: httpx.Client(transport=httpx.MockTransport(google)),
+            HTTPError=httpx.HTTPError,
+        ),
+    )
+    done = c.get(
+        url + "/callback",
+        params={"state": query["state"][0], "code": "ok"},
+        headers={"cookie": "gpgest_google_nonce=" + c.cookies.get("gpgest_google_nonce")},
+    )
+    assert done.status_code == 200, done.text
+    assert exchanged[0]["redirect_uri"] == [callback]
+    assert "href='https://gpgest.example.pt/'" in done.text
+    assert c.get(url + "/status").json()["connected"]

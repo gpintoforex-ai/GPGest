@@ -1,9 +1,10 @@
 import hashlib
+import html
 import json
 import os
 import secrets
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from cryptography.fernet import InvalidToken
@@ -17,8 +18,19 @@ from .models import AttachmentIntegrationConfig, GoogleConnection, User
 from .platform import cipher
 from .platform_models import Company
 
-CALLBACK = "http://localhost:5174/api/integrations/attachments/google/callback"
+CALLBACK_PATH = "/api/integrations/attachments/google/callback"
+LOCAL_ORIGIN = "http://localhost:5174"
 SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email"
+
+
+def callback_origins(creds) -> set[str]:
+    """Origens cujo retorno OAuth está registado no cliente Google (redirect_uris)."""
+    origins = set()
+    for uri in creds.get("redirect_uris", []):
+        parts = urlsplit(uri)
+        if parts.scheme in {"http", "https"} and parts.path == CALLBACK_PATH and not parts.query:
+            origins.add(f"{parts.scheme}://{parts.netloc}")
+    return origins
 
 
 def credentials():
@@ -28,11 +40,7 @@ def credentials():
                 encoding="utf-8-sig"
             )
         )["web"]
-        if (
-            not data.get("client_id")
-            or not data.get("client_secret")
-            or CALLBACK not in data.get("redirect_uris", [])
-        ):
+        if not data.get("client_id") or not data.get("client_secret") or not callback_origins(data):
             raise ValueError()
         return data
     except (OSError, ValueError, KeyError):
@@ -45,12 +53,12 @@ def register_routes(app, current, authorize, record):
         authorize(user, db, roles=["administrador", "gestor"])
         connection = db.get(GoogleConnection, "default")
         try:
-            credentials()
-            configured = True
+            origins = sorted(callback_origins(credentials()))
         except HTTPException:
-            configured = False
+            origins = []
         return {
-            "configured": configured,
+            "configured": bool(origins),
+            "origins": origins,
             "connected": bool(connection and connection.token_ciphertext),
             "email": connection.email if connection else "",
             "sync_available": True,
@@ -64,23 +72,34 @@ def register_routes(app, current, authorize, record):
         db: Session = Depends(db_session),
     ):
         authorize(user, db, roles=["administrador", "gestor"])
+        creds = credentials()
         browser_origin = request.headers.get("origin")
-        if browser_origin != "http://localhost:5174" and not (
-            browser_origin is None and request.url.hostname == "localhost"
-        ):
+        if browser_origin is None and request.url.hostname == "localhost":
+            browser_origin = LOCAL_ORIGIN
+        if browser_origin not in callback_origins(creds):
             raise HTTPException(
-                422, "Abra http://localhost:5174 e entre na empresa antes de ligar a conta Google."
+                422,
+                "Este endereço não está autorizado no cliente Google. Registe "
+                + (browser_origin or "a origem da IAZELA")
+                + CALLBACK_PATH
+                + " nos URIs de redirecionamento ou ligue a conta a partir de "
+                + LOCAL_ORIGIN
+                + ".",
             )
         config = db.get(AttachmentIntegrationConfig, "default")
         if not config or not config.google_email or not config.drive_folder:
             raise HTTPException(422, "Guarde a conta Google e a pasta de destino primeiro.")
-        creds = credentials()
         nonce = secrets.token_urlsafe(32)
         state = (
             cipher()
             .encrypt(
                 json.dumps(
-                    {"company": db.info["company"]["id"], "user": user.id, "nonce": nonce}
+                    {
+                        "company": db.info["company"]["id"],
+                        "user": user.id,
+                        "nonce": nonce,
+                        "origin": browser_origin,
+                    }
                 ).encode()
             )
             .decode()
@@ -105,7 +124,7 @@ def register_routes(app, current, authorize, record):
             + urlencode(
                 {
                     "client_id": creds["client_id"],
-                    "redirect_uri": CALLBACK,
+                    "redirect_uri": browser_origin + CALLBACK_PATH,
                     "response_type": "code",
                     "scope": SCOPES,
                     "access_type": "offline",
@@ -133,7 +152,8 @@ def register_routes(app, current, authorize, record):
         if not secrets.compare_digest(
             request.cookies.get("gpgest_google_nonce", ""), payload.get("nonce", "")
         ):
-            raise HTTPException(400, "Conclua a ligacao no mesmo navegador onde iniciou.")
+            raise HTTPException(400, "Conclua a ligação no mesmo navegador onde iniciou.")
+        origin = payload.get("origin") or LOCAL_ORIGIN
         company = core.get(Company, payload.get("company"))
         if not company or company.removed_at or not company.active:
             raise HTTPException(400, "Empresa indisponível.")
@@ -161,6 +181,8 @@ def register_routes(app, current, authorize, record):
                     400, "A autorização Google foi cancelada. Pode tentar novamente na IAZELA."
                 )
             creds = credentials()
+            if origin not in callback_origins(creds):
+                raise HTTPException(400, "Autorização inválida ou já utilizada.")
             try:
                 with httpx.Client(timeout=30) as client:
                     response = client.post(
@@ -168,7 +190,7 @@ def register_routes(app, current, authorize, record):
                         data={
                             "client_id": creds["client_id"],
                             "client_secret": creds["client_secret"],
-                            "redirect_uri": CALLBACK,
+                            "redirect_uri": origin + CALLBACK_PATH,
                             "code": code,
                             "grant_type": "authorization_code",
                         },
@@ -190,7 +212,7 @@ def register_routes(app, current, authorize, record):
                     if not config or email != config.google_email.lower():
                         raise HTTPException(
                             422,
-                            "A conta autorizada não corresponde ? conta Google configurada na empresa.",
+                            "A conta autorizada não corresponde à conta Google configurada na empresa.",
                         )
             except (httpx.HTTPError, ValueError, KeyError):
                 raise HTTPException(
@@ -202,7 +224,9 @@ def register_routes(app, current, authorize, record):
             record(db, user, "google_conta_ligada", "default", {"email": email})
             db.commit()
         return HTMLResponse(
-            "<html><meta name='referrer' content='no-referrer'><title>IAZELA</title><h1>Conta Google ligada</h1><p>Autorização guardada. Volte à IAZELA para consultar emails e importar anexos.</p><a href='http://127.0.0.1:5174'>Voltar à IAZELA</a></html>",
+            "<html><meta name='referrer' content='no-referrer'><title>IAZELA</title><h1>Conta Google ligada</h1><p>Autorização guardada. Volte à IAZELA para consultar emails e importar anexos.</p><a href='"
+            + html.escape(origin + "/", quote=True)
+            + "'>Voltar à IAZELA</a></html>",
             headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
         )
 
