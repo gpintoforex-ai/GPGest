@@ -74,6 +74,11 @@
 .invoice-receiving-result.is-equal { background: var(--color-success-bg); color: var(--color-success); }
 .invoice-receiving-result.is-rounding { background: var(--color-warning-bg); color: var(--color-warning); }
 .invoice-receiving-result.is-different { background: var(--color-danger-bg); color: var(--color-danger); }
+/* Resultado com ação de acerto ao total da fatura (arredondamentos). */
+div.invoice-receiving-result { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+div.invoice-receiving-result p { margin: 0; flex: 1 1 280px; }
+.invoice-receiving-summary p > svg { flex-shrink: 0; }
+.invoice-receiving-summary .invoice-receiving-adjustment th, .invoice-receiving-summary .invoice-receiving-adjustment td { color: var(--color-muted); font-style: italic; }
 /* Coluna «Conferência / anexo»: estado com cor e texto, e o anexo como ação. */
 .procurement-check-cell { display: grid; gap: 6px; justify-items: start; }
 .procurement-check-cell > span { display: grid; gap: 2px; }

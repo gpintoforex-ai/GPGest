@@ -24,6 +24,8 @@ const METHODS: Row = {
   lancado: "Lançado",
 };
 const NEW = "__novo__";
+// Acerto máximo de arredondamento por componente (base e IVA), em cêntimos (como no servidor).
+const ROUNDING_LIMIT = 10;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** Vencimento pelo prazo da ficha do fornecedor (mesma regra do servidor, payment_terms.due_date). */
@@ -149,6 +151,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           due_date: data.receipt.due_date || data.document.issue_date,
           credit_note_purchase_ids: data.receipt.credit_note_purchase_ids || [],
           global_discount: String(global),
+          match_document_totals: !!data.receipt.match_document_totals,
         });
         setLines(data.lines.map((line: Row) => initialLine(line, global)));
       }).catch(e => setError(e.message)).finally(() => setBusy(false));
@@ -185,6 +188,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
         document_date: data.document.issue_date,
         warehouse_id: data.warehouses.find((w: Row) => !data.document.store_id || w.store_id === data.document.store_id)?.id || data.warehouses[0]?.id || "",
         document_type_id: "", payment_method: "", due_date: data.document.issue_date, credit_note_purchase_ids: [],
+        match_document_totals: false,
       });
       const global = documentDiscount(data.lines);
       setHeader(current => ({ ...current, global_discount: String(global) }));
@@ -216,6 +220,17 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
     return { rows, base, vat, total: base + vat };
   }, [lines, globalDiscount]);
   const unresolved = included.filter(line => line.choice === OTHER);
+  // Diferença para a fatura do arquivo, por componente; o acerto iguala-a (só arredondamentos).
+  const gap = useMemo(() => {
+    const doc = result?.document;
+    if (!doc || doc.total_cents == null) return null;
+    return doc.base_cents != null
+      ? { base: doc.base_cents - summary.base, vat: doc.total_cents - doc.base_cents - summary.vat }
+      : { base: 0, vat: doc.total_cents - summary.total };
+  }, [result, summary]);
+  const canAdjust = !!gap && (gap.base !== 0 || gap.vat !== 0) && Math.abs(gap.base) <= ROUNDING_LIMIT && Math.abs(gap.vat) <= ROUNDING_LIMIT;
+  const adjusting = canAdjust && !!header.match_document_totals;
+  const adjustment = adjusting && gap ? { base: gap.base, vat: gap.vat, total: gap.base + gap.vat } : { base: 0, vat: 0, total: 0 };
 
   async function confirm() {
     const missing = included.findIndex(line => !line.description.trim() || Number(line.qty) <= 0
@@ -234,6 +249,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
         payment_method: header.payment_method || null,
         due_date: header.due_date || null,
         credit_note_purchase_ids: header.credit_note_purchase_ids || [],
+        match_document_totals: adjusting,
         request_key: requestKey,
         lines: included.map(line => ({
           ...(line.choice === NEW ? { new_article: { ...line.newArticle, vat_rate: String(line.newArticle.vat_rate) } } : { article_id: line.choice }),
@@ -326,6 +342,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           return <>
             <Field label="Prazo de pagamento"><input readOnly value={header.supplier_id ? term?.name || "Sem prazo na ficha do fornecedor" : "—"} title="Definido na ficha do fornecedor (Tabelas → Fornecedores)." /></Field>
             <ReceiptFinance supplierId={header.supplier_id} documentDate={header.document_date} defaultDueDate={due || undefined}
+              suggestedTypeId={editReceipt ? null : result.document.suggested_document_type_id}
               value={{ document_type_id: header.document_type_id || "", payment_method: header.payment_method || "", due_date: header.due_date || header.document_date, credit_note_purchase_ids: header.credit_note_purchase_ids || [] }}
               onChange={patch => setHeader(current => ({ ...current, ...patch }))} />
           </>;
@@ -437,9 +454,9 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
               const known = doc.total_cents != null;
               // Calculado vs. fatura, coluna a coluna: igual, arredondamento (≤ 2 cêntimos) ou diferente.
               const columns = [
-                { calc: summary.base, doc: doc.base_cents },
-                { calc: summary.vat, doc: doc.base_cents != null && known ? doc.total_cents - doc.base_cents : null },
-                { calc: summary.total, doc: known ? doc.total_cents : null },
+                { calc: summary.base + adjustment.base, doc: doc.base_cents },
+                { calc: summary.vat + adjustment.vat, doc: doc.base_cents != null && known ? doc.total_cents - doc.base_cents : null },
+                { calc: summary.total + adjustment.total, doc: known ? doc.total_cents : null },
               ].map(c => {
                 const diff = c.doc == null ? null : c.calc - c.doc;
                 const state = diff == null ? "" : diff === 0 ? "is-equal" : Math.abs(diff) <= 2 ? "is-rounding" : "is-different";
@@ -447,7 +464,8 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
               });
               const label = (state: string) => state === "is-equal" ? "igual" : state === "is-rounding" ? "arredondamento" : state === "is-different" ? "diferente" : "";
               return <>
-                <tr className="invoice-receiving-calculated"><th>Total calculado</th>{columns.map((c, i) => <td key={i} className={`numeric ${c.state}`}>{i === 2 ? <b>{euro(c.calc)}</b> : euro(c.calc)}</td>)}</tr>
+                {adjusting && <tr className="invoice-receiving-adjustment"><th>Acerto de arredondamento</th>{[adjustment.base, adjustment.vat, adjustment.total].map((value, i) => <td key={i} className="numeric">{value > 0 ? "+" : ""}{euro(value)}</td>)}</tr>}
+                <tr className="invoice-receiving-calculated"><th>{adjusting ? "Total com acerto" : "Total calculado"}</th>{columns.map((c, i) => <td key={i} className={`numeric ${c.state}`}>{i === 2 ? <b>{euro(c.calc)}</b> : euro(c.calc)}</td>)}</tr>
                 {known && <tr className="invoice-receiving-document"><th>Fatura (arquivo)</th>{columns.map((c, i) => <td key={i} className={`numeric ${c.state}`}>{c.doc == null ? "—" : i === 2 ? <b>{euro(c.doc)}</b> : euro(c.doc)}</td>)}</tr>}
                 {known && <tr className="invoice-receiving-difference"><th>Diferença</th>{columns.map((c, i) => <td key={i} className={`numeric ${c.state}`}>
                   {c.diff == null ? "—" : <><span className="invoice-receiving-diff-value">{c.diff > 0 ? "+" : ""}{euro(c.diff)}</span><small>{label(c.state)}</small></>}
@@ -458,9 +476,13 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
         </table></div>
         {result.document.total_cents != null && (() => {
           const diff = summary.total - result.document.total_cents;
+          const toggle = <ActionButton type="button" disabled={busy} onClick={() => setHeader(current => ({ ...current, match_document_totals: !adjusting }))}>
+            {adjusting ? "Retirar acerto" : "Acertar ao total da fatura"}
+          </ActionButton>;
+          if (adjusting) return <div className="invoice-receiving-result is-equal"><p><CheckCircle2 size={16} aria-hidden="true" /> Com o acerto de arredondamento de {euro(adjustment.total)}, a base e o IVA ficam iguais aos da fatura. O acerto entra no documento financeiro; o custo dos artigos em stock não muda.</p>{toggle}</div>;
           if (diff === 0) return <p className="invoice-receiving-result is-equal"><CheckCircle2 size={16} aria-hidden="true" /> O total calculado coincide com o total da fatura.</p>;
-          if (Math.abs(diff) <= 2) return <p className="invoice-receiving-result is-rounding"><CircleAlert size={16} aria-hidden="true" /> Diferença de arredondamento de {euro(Math.abs(diff))} no total: o IVA é arredondado por taxa e pode diferir do fornecedor. Pode confirmar.</p>;
-          return <p className="invoice-receiving-result is-different"><CircleAlert size={16} aria-hidden="true" /> Diferença de {euro(diff)} para o total da fatura: confira quantidades, descontos, taxas de IVA, portes ou linhas em falta.</p>;
+          if (Math.abs(diff) <= 2) return <div className="invoice-receiving-result is-rounding"><p><CircleAlert size={16} aria-hidden="true" /> Diferença de arredondamento de {euro(Math.abs(diff))} no total: o IVA é arredondado por taxa e pode diferir do fornecedor. Pode confirmar assim ou acertar ao total da fatura.</p>{canAdjust && toggle}</div>;
+          return <div className="invoice-receiving-result is-different"><p><CircleAlert size={16} aria-hidden="true" /> Diferença de {euro(diff)} para o total da fatura: confira quantidades, descontos, taxas de IVA, portes ou linhas em falta.{canAdjust ? " Se for só arredondamento, pode acertar ao total da fatura." : ""}</p>{canAdjust && toggle}</div>;
         })()}
         {lines.some(line => !line.include) && <p className="footnote">Inclui as linhas desmarcadas (por exemplo, portes): fazem parte da fatura, mas não entram em stock.</p>}
       </section>}

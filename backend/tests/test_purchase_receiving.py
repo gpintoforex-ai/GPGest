@@ -210,3 +210,97 @@ def test_service_lines_count_in_the_invoice_but_not_in_stock(receiving):
     opened = c.get(f"/api/purchase-receiving/receipts/{done.json()['receipt_id']}").json()
     assert [line["description"] for line in opened["lines"]] == ["Chá verde", "Portes de envio"]
     assert opened["lines"][1]["selected"]["service"] is True
+
+
+def receipt_body(sid, warehouse, case, **extra):
+    article = product(case, code="CURC" + uuid4().hex[:4], name="Cápsulas de cúrcuma")
+    other = product(case, code="OMEGA" + uuid4().hex[:4], name="Ómega 3")
+    return {
+        "supplier_id": sid, "warehouse_id": warehouse, "document": "FA.2026/3208", "document_date": "2026-10-20",
+        "request_key": str(uuid4()), "global_discount": "20",
+        "lines": [
+            {"article_id": article, "description": "Cápsulas de cúrcuma", "quantity": "3", "price": "29.08", "vat": "23"},
+            {"article_id": other, "description": "Ómega 3", "quantity": "1", "price": "13.93", "vat": "23"},
+        ],
+        **extra,
+    }
+
+
+def procurement_row(c, receipt_id):
+    return next(d for d in c.get("/api/procurement").json()["documents"] if d["id"] == receipt_id)
+
+
+def test_erp_supplier_is_listed_suggests_type_and_gets_a_local_record(receiving, monkeypatch):
+    from types import SimpleNamespace
+
+    from app import entities
+    from app.models import WintouchEntity
+
+    c, _, _, warehouse, case = receiving
+    factory, store = case[2], case[4]
+    with factory.begin() as db:
+        imported = WintouchEntity(enterprise_id="erp-rececao", external_id="F1", name="Fornecedor só no ERP",
+                                  tax_number="509999990", is_supplier=True, active=True)
+        doc = ArchiveDocument(
+            source_key="teste:" + uuid4().hex, origin="digitalizacao", doc_type="fatura_recibo", mime="application/pdf",
+            storage="base_dados", storage_ref="archive_blobs:y", entity_nif="509999990", entity_name="Fornecedor só no ERP",
+            document_code="FR", document_number="FR 2026/7", issue_date="2026-10-20", base_cents=8093,
+            total_cents=9954, original_name="fr.pdf", store_id=store,
+        )
+        db.add_all([imported, doc])
+        db.flush()
+        erp_id, doc_id = imported.id, doc.id
+    original = entities.list_entities
+    erp_row = {"id": "wt:" + erp_id, "name": "Fornecedor só no ERP", "tax_number": "509999990", "is_supplier": True,
+               "active": True, "payment_term_id": None, "erp_supplier_payment_term_id": None}
+    # A tabela de fornecedores junta as fichas locais e as do ERP (ver entities.list_entities).
+    monkeypatch.setattr(entities, "list_entities", lambda user, db: [*original(user, db), erp_row])
+    monkeypatch.setattr("app.db.request_company", lambda db: SimpleNamespace(api_enterprise="erp-rececao"))
+    listed = next(r for r in c.get("/api/purchase-receiving/documents").json()["rows"] if r["id"] == doc_id)
+    assert listed["supplier_id"] == "wt:" + erp_id and listed["supplier_name"] == "Fornecedor só no ERP"
+    read = c.post(f"/api/purchase-receiving/{doc_id}/read").json()
+    assert read["document"]["supplier_id"] == "wt:" + erp_id
+    assert any(s["id"] == "wt:" + erp_id for s in read["suppliers"])
+    types = {t["code"]: t["id"] for t in c.get("/api/purchase-document-types/options").json()["types"]}
+    # FR (fatura-recibo) → compra a dinheiro.
+    assert read["document"]["suggested_document_type_id"] == types["FCD"]
+    done = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=receipt_body("wt:" + erp_id, warehouse, case,
+                                                                                document="FR 2026/7"))
+    assert done.status_code == 200, done.text
+    with factory() as db:
+        local = db.scalar(select(BusinessEntity).where(BusinessEntity.wintouch_id == erp_id))
+        assert local is not None and local.is_supplier and local.tax_number == "509999990"
+    assert procurement_row(c, done.json()["receipt_id"])["supplier_id"] == local.id
+    # Com a ficha local criada, a lista passa a usar o identificador dela.
+    again = c.post(f"/api/purchase-receiving/{doc_id}/read").json()
+    assert again["document"]["supplier_id"] == local.id
+
+
+def test_rounding_adjustment_matches_the_invoice_total(receiving):
+    c, sid, doc_id, warehouse, case = receiving
+    factory = case[2]
+    # A fatura tem mais 1 cêntimo de IVA do que o cálculo por linha (99,54 €).
+    with factory.begin() as db:
+        db.get(ArchiveDocument, doc_id).total_cents = 9955
+    read = c.post(f"/api/purchase-receiving/{doc_id}/read").json()
+    types = {t["code"]: t["id"] for t in c.get("/api/purchase-document-types/options").json()["types"]}
+    assert read["document"]["suggested_document_type_id"] == types["FC"]
+    plain = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=receipt_body(sid, warehouse, case))
+    assert plain.status_code == 200, plain.text
+    row = procurement_row(c, plain.json()["receipt_id"])
+    assert (row["base_cents"], row["tax_cents"], row["total_cents"]) == (8093, 1861, 9954) and not row["rounding_adjustment"]
+    # Editar com acerto: base e IVA ficam iguais aos da fatura; o acerto fica registado.
+    opened = c.get(f"/api/purchase-receiving/receipts/{row['id']}").json()
+    body = receipt_body(sid, warehouse, case, match_document_totals=True)
+    saved = c.put(f"/api/purchase-receiving/receipts/{row['id']}?revision={opened['receipt']['revision']}", json=body)
+    assert saved.status_code == 200, saved.text
+    row = procurement_row(c, row["id"])
+    assert (row["base_cents"], row["tax_cents"], row["total_cents"]) == (8093, 1862, 9955)
+    assert row["rounding_adjustment"] == {"base_cents": 0, "tax_cents": 1}
+    reopened = c.get(f"/api/purchase-receiving/receipts/{row['id']}").json()["receipt"]
+    assert reopened["match_document_totals"] and reopened["rounding_adjustment"] == {"base_cents": 0, "tax_cents": 1}
+    # Uma diferença maior do que um arredondamento não é acertada.
+    with factory.begin() as db:
+        db.get(ArchiveDocument, doc_id).total_cents = 10054
+    refused = c.put(f"/api/purchase-receiving/receipts/{row['id']}?revision={reopened['revision']}", json=body)
+    assert refused.status_code == 422 and "excede o acerto" in refused.json()["detail"]

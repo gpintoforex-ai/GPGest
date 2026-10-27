@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from . import inventory as stock
 from . import procurement as buying
+from . import purchase_financials as financials
 from .db import db_session
 from .invoice_evidence import nif_key, ocr_command, ocr_image
 from .invoice_lines import ean_valid, extract, plain
@@ -38,6 +39,10 @@ from .models import ProcurementDocument as Doc
 from .payment_terms import term_rule
 from .schemas import Strict
 
+# Acerto máximo, por componente (base e IVA), para igualar o total ao da fatura do fornecedor.
+ROUNDING_LIMIT_CENTS = 10
+# Tipo de documento do fornecedor (QR/arquivo) → condição de pagamento do tipo de compra proposto.
+CONDITION_BY_CODE = {"FT": "credito", "ND": "credito", "FR": "dinheiro", "FS": "dinheiro"}
 INVOICE_TYPES = ("fatura", "fatura_recibo", "fatura_simplificada", "nota_debito", "por_classificar")
 READABLE = ("application/pdf", "image/jpeg", "image/png")
 ROLES = ["administrador", "gestor"]
@@ -302,6 +307,8 @@ class ReceiveInput(Strict):
     payment_method: str | None = Field(default=None, max_length=20)
     due_date: date | None = None
     credit_note_purchase_ids: list[str] = Field(default_factory=list, max_length=50)
+    # Acerta a base e o IVA aos da fatura do arquivo (diferenças de arredondamento, ver ROUNDING_LIMIT_CENTS).
+    match_document_totals: bool = False
     lines: list[ReceiveLine] = Field(min_length=1, max_length=300)
     request_key: str = Field(min_length=8, max_length=100)
 
@@ -320,6 +327,55 @@ def received_line(line, global_discount):
     return received, min(D(100), max(D(0), equivalent)).quantize(D("0.0001")), net
 
 
+def document_totals(lines, data, doc):
+    """Totais da receção; com acerto, a base e o IVA ficam iguais aos da fatura do arquivo.
+
+    O acerto só cobre arredondamentos (até ROUNDING_LIMIT_CENTS por componente) e não altera o
+    custo em stock: fica no documento financeiro (dívida ou movimento) e no registo da receção.
+    """
+    result = buying.totals(lines)
+    if not data.match_document_totals:
+        return result, None
+    if doc.total_cents is None:
+        fail("A fatura do arquivo não tem total: não é possível acertar o arredondamento.")
+    if doc.base_cents is not None:
+        base = doc.base_cents - result["base_cents"]
+        tax = (doc.total_cents - doc.base_cents) - result["tax_cents"]
+    else:
+        base, tax = 0, doc.total_cents - result["total_cents"]
+    if abs(base) > ROUNDING_LIMIT_CENTS or abs(tax) > ROUNDING_LIMIT_CENTS:
+        gap = f"{(base + tax) / 100:+.2f}".replace(".", ",")
+        limit = f"{ROUNDING_LIMIT_CENTS / 100:.2f}".replace(".", ",")
+        fail(
+            f"A diferença para a fatura ({gap} €) excede o acerto de arredondamento permitido "
+            f"({limit} € na base e no IVA). Reveja as linhas, os descontos e o IVA."
+        )
+    if not base and not tax:
+        return result, None
+    result = {"base_cents": result["base_cents"] + base, "tax_cents": result["tax_cents"] + tax}
+    result["total_cents"] = result["base_cents"] + result["tax_cents"]
+    return result, {"base_cents": base, "tax_cents": tax}
+
+
+def suggested_document_type(db, code):
+    """Tipo de compra ativo para o tipo da fatura (FT → a crédito, FR/FS → a dinheiro)."""
+    condition = CONDITION_BY_CODE.get((code or "").upper())
+    if not condition:
+        return None
+    kinds = list(db.scalars(
+        select(financials.PurchaseDocumentType)
+        .where(
+            financials.PurchaseDocumentType.active.is_(True),
+            financials.PurchaseDocumentType.nature == "compra",
+            financials.PurchaseDocumentType.payment_condition == condition,
+        )
+        .order_by(financials.PurchaseDocumentType.code)
+    ))
+    preferred = "FC" if condition == "credito" else "FCD"
+    kind = next((k for k in kinds if k.code == preferred), kinds[0] if kinds else None)
+    return kind.id if kind else None
+
+
 def register_routes(app, current, authorize, scope, audit):
     def document(db, user, identifier):
         doc = db.get(ArchiveDocument, identifier)
@@ -329,12 +385,39 @@ def register_routes(app, current, authorize, scope, audit):
         stock.require(user, stock.settings(db), "view_cost")
         return doc
 
-    def suppliers(db):
-        return [
-            row
-            for row in db.scalars(select(BusinessEntity).where(BusinessEntity.is_supplier.is_(True)))
-            if row.active and not row.removed
-        ]
+    def suppliers(user, db):
+        """Fornecedores ativos da tabela (fichas locais e do ERP), com o prazo de pagamento.
+
+        Um fornecedor do ERP já com ficha local usa o identificador dessa ficha; sem ela, fica
+        «wt:…» e a ficha local é criada ao confirmar a receção (procurement.supplier).
+        """
+        from .entities import list_entities
+
+        rows = [r for r in list_entities(user, db) if r["is_supplier"] and r["active"]]
+        erp_ids = [r["id"].removeprefix("wt:") for r in rows if r["id"].startswith("wt:")]
+        linked = (
+            dict(db.execute(
+                select(BusinessEntity.wintouch_id, BusinessEntity.id).where(BusinessEntity.wintouch_id.in_(erp_ids))
+            ).all())
+            if erp_ids
+            else {}
+        )
+        rules = {}
+        result = []
+        for row in rows:
+            key = row["id"]
+            if key.startswith("local:"):
+                identifier = key.removeprefix("local:")
+            else:
+                identifier = linked.get(key.removeprefix("wt:"), key)
+            term = row.get("payment_term_id") or row.get("erp_supplier_payment_term_id")
+            if term not in rules:
+                rules[term] = term_rule(db, term)
+            result.append({
+                "id": identifier, "name": row["name"], "tax_number": row["tax_number"] or "",
+                "payment_term": rules[term],
+            })
+        return result
 
     def received(db):
         result = {}
@@ -349,7 +432,7 @@ def register_routes(app, current, authorize, scope, audit):
         authorize(user, db, roles=ROLES)
         stock.require(user, stock.settings(db), "view_cost")
         allowed = set(scope(user, db))
-        by_nif = {nif_key(s.tax_number): s for s in suppliers(db) if s.tax_number}
+        by_nif = {nif_key(s["tax_number"]): s for s in suppliers(user, db) if s["tax_number"]}
         done = received(db)
         rows = []
         for doc in db.scalars(
@@ -365,9 +448,9 @@ def register_routes(app, current, authorize, scope, audit):
                 "id": doc.id,
                 "issue_date": doc.issue_date,
                 "document": " ".join(p for p in (doc.document_code, doc.document_number) if p).strip(),
-                "supplier_name": supplier.name if supplier else doc.entity_name,
+                "supplier_name": supplier["name"] if supplier else doc.entity_name,
                 "supplier_nif": doc.entity_nif,
-                "supplier_id": supplier.id if supplier else None,
+                "supplier_id": supplier["id"] if supplier else None,
                 "total_cents": doc.total_cents,
                 "file": doc.original_name,
                 "receipt_id": done.get(doc.id),
@@ -383,24 +466,33 @@ def register_routes(app, current, authorize, scope, audit):
         if mime not in READABLE:
             fail("Formato sem leitura de linhas (use PDF, JPG ou PNG).", 415)
         result, source = read_lines(raw, mime, doc.base_cents)
-        candidates = suppliers(db)
+        candidates = suppliers(user, db)
         supplier = next(
-            (s for s in candidates if doc.entity_nif and s.tax_number and nif_key(s.tax_number) == nif_key(doc.entity_nif)),
+            (
+                s for s in candidates
+                if doc.entity_nif and s["tax_number"] and nif_key(s["tax_number"]) == nif_key(doc.entity_nif)
+            ),
             None,
         )
-        index = Catalogue(db, supplier.id if supplier else "")
+        # As correspondências aprendidas são da ficha local; um fornecedor só do ERP ainda não as tem.
+        index = Catalogue(db, supplier["id"] if supplier and not supplier["id"].startswith("wt:") else "")
         lines = [{**line, **index.match(line), "proposal": index.proposal(line)} for line in result["lines"]]
         stores = set(scope(user, db))
         kinds = {"FT": "FT", "FR": "FR", "FS": "FS", "ND": "ND"}
+        code = (doc.document_code or "").upper()
+        # Os tipos pré-carregados têm de existir (e ficar gravados) para o identificador proposto valer.
+        financials.ensure_defaults(db)
+        db.commit()
         return {
             "document": {
                 "id": doc.id,
                 "number": doc.document_number,
-                "document_type": kinds.get((doc.document_code or "").upper(), "FT"),
+                "document_type": kinds.get(code, "FT"),
+                "suggested_document_type_id": suggested_document_type(db, code),
                 "issue_date": doc.issue_date or date.today().isoformat(),
                 "supplier_nif": doc.entity_nif,
                 "supplier_name": doc.entity_name,
-                "supplier_id": supplier.id if supplier else None,
+                "supplier_id": supplier["id"] if supplier else None,
                 "base_cents": doc.base_cents,
                 "total_cents": doc.total_cents,
                 "store_id": doc.store_id,
@@ -411,10 +503,7 @@ def register_routes(app, current, authorize, scope, audit):
             "warnings": result["warnings"],
             "check": result["check"],
             # Prazo de pagamento da ficha de cada fornecedor (para o vencimento no cabeçalho).
-            "suppliers": [
-                {"id": s.id, "name": s.name, "tax_number": s.tax_number, "payment_term": term_rule(db, s.payment_term_id)}
-                for s in candidates
-            ],
+            "suppliers": candidates,
             "warehouses": [
                 {"id": w.id, "name": w.name, "store_id": w.store_id}
                 for w in db.scalars(select(StockWarehouse).where(StockWarehouse.store_id.in_(stores)))
@@ -487,7 +576,10 @@ def register_routes(app, current, authorize, scope, audit):
             snapshot.append(snapshot_line)
         if not lines:
             fail("Esta fatura só tem serviços: indique o tipo de documento para a lançar, ou registe-a em Compras.")
-        receiving = {"global_discount": str(data.global_discount), "warehouse_id": warehouse.id, "lines": snapshot}
+        receiving = {
+            "global_discount": str(data.global_discount), "warehouse_id": warehouse.id, "lines": snapshot,
+            "match_document_totals": data.match_document_totals,
+        }
         return lines, created, learned, receiving
 
     def draft_for(data, doc, warehouse, supplier, lines, request_key):
@@ -523,7 +615,9 @@ def register_routes(app, current, authorize, scope, audit):
         draft = draft_for(data, doc, warehouse, supplier, lines, data.request_key)
         buying.validate(db, user, draft, authorize)
         raw = draft.model_dump(mode="json")
-        raw.update(buying.totals(raw["lines"]))
+        amounts, adjustment = document_totals(raw["lines"], data, doc)
+        raw.update(amounts)
+        raw["rounding_adjustment"] = adjustment
         raw["receiving"] = receiving
         raw["creation_digest"] = hashlib.sha256(stock.dump(draft.model_dump(mode="json")).encode()).hexdigest()
         row = Doc(
@@ -535,7 +629,8 @@ def register_routes(app, current, authorize, scope, audit):
         buying.confirm_document(db, user, row, buying.Confirm(revision=0, acknowledge_differences=True), authorize, audit)
         audit(
             db, user, "rececao_a_partir_de_fatura", row.id,
-            {"arquivo": doc.id, "linhas": len(lines), "artigos_criados": len(created), "correspondencias": learned},
+            {"arquivo": doc.id, "linhas": len(lines), "artigos_criados": len(created), "correspondencias": learned,
+             "acerto_arredondamento": adjustment},
             warehouse.store_id,
         )
         db.commit()
@@ -567,7 +662,7 @@ def register_routes(app, current, authorize, scope, audit):
                 for line in payload["lines"]
             ],
         }
-        candidates = suppliers(db)
+        candidates = suppliers(user, db)
         index = Catalogue(db, row.supplier_id)
         lines = []
         for line in receiving["lines"]:
@@ -597,15 +692,14 @@ def register_routes(app, current, authorize, scope, audit):
             "receipt": {"id": row.id, "revision": row.revision, "status": row.status, "editable": row.status == "confirmed" and not used_invoice,
                         "warehouse_id": receiving.get("warehouse_id"), "global_discount": receiving.get("global_discount", "0"),
                         "document_type_id": payload.get("document_type_id"), "payment_method": payload.get("payment_method"),
-                        "due_date": payload.get("due_date"), "credit_note_purchase_ids": payload.get("credit_note_purchase_ids", [])},
+                        "due_date": payload.get("due_date"), "credit_note_purchase_ids": payload.get("credit_note_purchase_ids", []),
+                        "match_document_totals": bool(receiving.get("match_document_totals")),
+                        "rounding_adjustment": payload.get("rounding_adjustment")},
             "source": "rececao",
             "lines": lines,
             "warnings": [] if not used_invoice else ["Esta receção já tem fatura ou devolução associada: corrija com uma devolução ao fornecedor."],
             "check": {"lines_total_cents": 0, "document_base_cents": doc.base_cents, "matches": None},
-            "suppliers": [
-                {"id": s.id, "name": s.name, "tax_number": s.tax_number, "payment_term": term_rule(db, s.payment_term_id)}
-                for s in candidates
-            ],
+            "suppliers": candidates,
             "warehouses": [
                 {"id": w.id, "name": w.name, "store_id": w.store_id}
                 for w in db.scalars(select(StockWarehouse).where(StockWarehouse.store_id.in_(stores)))
@@ -627,6 +721,8 @@ def register_routes(app, current, authorize, scope, audit):
         lines, created, learned, receiving = prepare(db, user, doc, data, supplier, warehouse)
         draft = draft_for(data, doc, warehouse, supplier, lines, row.request_key)
         edited = buying.EditConfirmed(**{**draft.model_dump(), "revision": row.revision})
-        buying.replace_confirmed(db, user, row, edited, authorize, audit, {"receiving": receiving})
+        amounts, adjustment = document_totals(draft.model_dump(mode="json")["lines"], data, doc)
+        extra = {"receiving": receiving, **amounts, "rounding_adjustment": adjustment}
+        buying.replace_confirmed(db, user, row, edited, authorize, audit, extra)
         db.commit()
         return {"receipt_id": row.id, "lines": len(lines), "created_articles": len(created), "learned": learned}

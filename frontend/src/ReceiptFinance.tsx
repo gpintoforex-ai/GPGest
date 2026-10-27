@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
 import { Notice } from "./components/InteractionUI";
@@ -21,8 +21,10 @@ const addDays = (day: string, days: number) => {
  * vencimento (a crédito) e faturas em aberto que uma nota de crédito abate. O efeito financeiro só
  * acontece ao confirmar a receção.
  */
-export default function ReceiptFinance({ supplierId, documentDate, value, onChange, defaultDueDate }: {
+export default function ReceiptFinance({ supplierId, documentDate, value, onChange, defaultDueDate, suggestedTypeId }: {
   supplierId: string;
+  // Tipo proposto pelo documento do fornecedor (FT → a crédito, FR/FS → a dinheiro); aplicado uma vez.
+  suggestedTypeId?: string | null;
   documentDate: string;
   // Vencimento proposto pelo prazo da ficha do fornecedor (senão, pelos dias do tipo).
   defaultDueDate?: string;
@@ -39,6 +41,7 @@ export default function ReceiptFinance({ supplierId, documentDate, value, onChan
     return () => { alive = false; };
   }, [supplierId]);
   const kind = options?.types.find((t: Row) => t.id === value.document_type_id);
+  const suggested = useRef(false);
 
   function choose(id: string) {
     const next = options?.types.find((t: Row) => t.id === id);
@@ -50,6 +53,12 @@ export default function ReceiptFinance({ supplierId, documentDate, value, onChan
       credit_note_purchase_ids: [],
     });
   }
+
+  useEffect(() => {
+    if (suggested.current || !options || !suggestedTypeId || value.document_type_id) return;
+    suggested.current = true;
+    if (options.types.some((t: Row) => t.id === suggestedTypeId)) choose(suggestedTypeId);
+  }, [options, suggestedTypeId, value.document_type_id]);
 
   if (error) return <Notice tone="error">{error}</Notice>;
   return <>

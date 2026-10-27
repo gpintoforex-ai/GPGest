@@ -111,7 +111,9 @@ def intercept(route):
     if path == "/purchase-receiving/d1/read":
         return route.fulfill(json=READ)
     if path == "/purchase-receiving/d4/read":
-        empty = {**READ["document"], "id": "d4", "number": "FR 2026/0049", "base_cents": 2773, "total_cents": 2842}
+        # FR (fatura-recibo): propõe a compra a dinheiro; o IVA da fatura tem mais 1 cêntimo (arredondamento).
+        empty = {**READ["document"], "id": "d4", "number": "FR 2026/0049", "document_type": "FR", "base_cents": 2773,
+                 "total_cents": 2940, "suggested_document_type_id": "t-fcd"}
         return route.fulfill(json={**READ, "document": empty, "lines": [], "source": "ocr",
                                    "warnings": ["Não foi possível ler linhas de artigos com segurança. Preencha-as a partir do original."],
                                    "check": {"lines_total_cents": 0, "document_base_cents": 2773, "matches": None}})
@@ -181,7 +183,9 @@ with sync_playwright() as p:
     expect(difference).to_have_count(3)
     expect(difference.nth(2)).to_have_class(__import__("re").compile("is-different"))
     expect(difference.nth(2)).to_contain_text("diferente")
-    expect(summary.locator("p.invoice-receiving-result.is-different")).to_be_visible()
+    expect(summary.locator(".invoice-receiving-result.is-different")).to_be_visible()
+    # Diferença real (portes, linhas): não há acerto de arredondamento.
+    expect(summary.get_by_role("button", name="Acertar ao total da fatura")).to_have_count(0)
     summary.scroll_into_view_if_needed()
     page.screenshot(path=str(OUT / "summary.png"))
     # Cabeçalho: prazo da ficha do fornecedor e vencimento (20/10/2026 + 30 dias).
@@ -255,6 +259,15 @@ with sync_playwright() as p:
     manual.get_by_label("Descrição", exact=True).fill("Chá verde 100 g")
     manual.get_by_label("Preço unitário (€)", exact=True).fill("27.73")
     manual.get_by_label("IVA (%)").first.select_option("6")
+    # Tipo proposto pelo documento (FR → compra a dinheiro), com o meio de pagamento por omissão.
+    expect(dialog.get_by_label("Tipo de documento", exact=True)).to_have_value("t-fcd")
+    expect(dialog.get_by_label("Meio de pagamento", exact=True)).to_have_value("numerario")
+    # Acerto de arredondamento: 1 cêntimo de IVA, a base e o IVA ficam iguais aos da fatura.
+    region = dialog.get_by_role("region", name="Resumo do documento")
+    region.get_by_role("button", name="Acertar ao total da fatura").click()
+    expect(region.locator("tr.invoice-receiving-adjustment")).to_contain_text("0,01")
+    expect(region).to_contain_text("ficam iguais aos da fatura")
+    page.screenshot(path=str(OUT / "rounding.png"))
     # Nota de crédito a crédito: pode abater faturas em aberto do fornecedor.
     dialog.get_by_label("Tipo de documento", exact=True).select_option("t-ncc")
     dialog.get_by_label("FT 1/9 · 01/10/2026 · em aberto 100,00 €", exact=False).check()
@@ -262,7 +275,7 @@ with sync_playwright() as p:
     expect(dialog.get_by_text("Linha 1: indique o código e a designação do artigo novo.")).to_be_visible()
     expect(manual.get_by_label("Designação", exact=True)).to_have_value("Chá verde 100 g")
     manual.get_by_label("Código", exact=True).fill("CHA100")
-    expect(dialog.get_by_role("region", name="Resumo do documento")).to_contain_text("29,39")
+    expect(dialog.get_by_role("region", name="Resumo do documento")).to_contain_text("29,40")
     dialog.get_by_role("button", name="Adicionar linha").click()
     dialog.get_by_role("button", name="Remover linha 2").click()
     expect(dialog.locator("fieldset.invoice-receiving-line")).to_have_count(1)
@@ -272,6 +285,7 @@ with sync_playwright() as p:
     assert manual_body["lines"][0]["new_article"]["code"] == "CHA100" and manual_body["lines"][0]["new_article"]["name"] == "Chá verde 100 g"
     assert manual_body["lines"][0]["price"] == "27.73" and manual_body["lines"][0]["vat"] == "6"
     assert manual_body["document_type_id"] == "t-ncc" and manual_body["credit_note_purchase_ids"] == ["pur-1"]
+    assert manual_body["match_document_totals"] is True and body["match_document_totals"] is False
     # Telemóvel: sem deslocação horizontal.
     page.set_viewport_size({"width": 390, "height": 844})
     page.get_by_role("button", name="Receção a partir de fatura", exact=True).click()

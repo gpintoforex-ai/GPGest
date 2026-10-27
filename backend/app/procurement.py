@@ -209,6 +209,10 @@ def paid_total(db, purchase_id):
     return paid(db, purchase_id)
 
 def supplier(db, identifier):
+    if identifier and identifier.startswith(('local:', 'wt:')):
+        # Identificador da tabela de entidades: um fornecedor do ERP sem ficha local ganha uma.
+        from .customer_orders import entity_reference
+        return entity_reference(db, identifier, 'supplier', True)
     row = db.get(BusinessEntity, identifier)
     if not row or not row.is_supplier or row.removed or not row.active:
         fail('Selecione um fornecedor ativo desta empresa.')
@@ -218,6 +222,7 @@ def validate(db, user, payload, authorize):
     authorize(user, db, payload.store_id, ['administrador', 'gestor'])
     stock.require(user, stock.settings(db), 'view_cost')
     entity = supplier(db, payload.supplier_id)
+    payload.supplier_id = entity.id
     typed = financials.validate_receipt(db, payload, entity) is not None
     if payload.category_id and not ensure_usable(db, Category, payload.category_id):
         fail('Rubrica inválida.')
@@ -673,7 +678,11 @@ def register_routes(app, current, authorize, scope, audit):
                   'default_due_days': t.default_due_days, 'creates_cash_movement': t.creates_cash_movement, 'creates_debt': t.creates_debt}
                  for t in db.scalars(select(financials.PurchaseDocumentType).where(financials.PurchaseDocumentType.active.is_(True))
                                      .order_by(financials.PurchaseDocumentType.code))]
-        entity = db.get(BusinessEntity, supplier_id) if supplier_id else None
+        if supplier_id and supplier_id.startswith(('local:', 'wt:')):
+            from .customer_orders import entity_reference
+            entity = entity_reference(db, supplier_id, 'supplier')
+        else:
+            entity = db.get(BusinessEntity, supplier_id) if supplier_id else None
         from .cash_local import method_catalog
         methods = [{'id': m['id'], 'name': m['name']} for m in method_catalog(db) if m['active']]
         return {'types': types, 'methods': methods,
