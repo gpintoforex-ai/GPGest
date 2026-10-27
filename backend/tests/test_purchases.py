@@ -50,6 +50,33 @@ def test_independent_states_partial_grouped_and_overallocation(setup):
     assert next(t for t in available if t["id"] == link["transaction_id"])["available_cents"] == 5000
 
 
+def test_list_matches_single_projection_with_constant_queries(setup):
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+    c, _, store, transactions = prepare(setup)
+    expected = {}
+    for i in range(3):
+        row = create(c, store, f"FT L/{i}", "30").json()
+        c.post(f"/api/purchases/{row['id']}/attachments", files={"file": ("fatura.pdf", b"%PDF-1.7\ntest", "application/pdf")})
+        expected[row["id"]] = c.post(f"/api/purchases/{row['id']}/allocate", json={"transaction_id": transactions[0], "amount": "10"}).json()
+    listed = {row["id"]: row for row in c.get("/api/purchases").json()}
+    for purchase_id, single in expected.items():
+        assert listed[purchase_id] == single
+    assert all(row["payment_status"] == "parcial" and row["attachments"] and row["allocations"] for row in expected.values())
+    queries = []
+    count = lambda *args: queries.append(1)
+    event.listen(Engine, "before_cursor_execute", count)
+    try:
+        c.get("/api/purchases"); few = len(queries); queries.clear()
+        for i in range(5):
+            create(c, store, f"FT M/{i}", "20")
+        queries.clear()
+        c.get("/api/purchases"); many = len(queries)
+    finally:
+        event.remove(Engine, "before_cursor_execute", count)
+    assert few and many == few
+
+
 def test_document_validation_download_and_access(setup):
     c, _, store, _ = prepare(setup)
     row = create(c, store).json()

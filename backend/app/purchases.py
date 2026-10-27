@@ -79,20 +79,39 @@ def register_routes(app, current, authorize, scope, record, serial, cents):
         authorize(user, db, row.store_id, ["administrador", "gestor"] if write else None)
         return row
 
-    def projection(db, row):
-        linked = paid(db, row.id)
+    def related(db, ids):
+        # Carrega de uma vez os dados de várias compras: uma consulta por tipo, não por compra.
+        from .models import DocumentScan, DriveDocumentAttachment, PaymentDocumentLine, Reconciliation, ReconciliationLine
+        found = {"paid": {}, "groups": {}, "attachments": {}, "allocations": {}}
+        for start in range(0, len(ids), 1000):
+            chunk = ids[start:start + 1000]
+            for line, group in db.execute(select(ReconciliationLine, Reconciliation).join(Reconciliation).where(ReconciliationLine.source == "purchase", ReconciliationLine.source_id.in_(chunk), Reconciliation.undone_at.is_(None))):
+                found["groups"].setdefault(line.source_id, []).append({"id": group.id, "amount_cents": line.amount_cents, "reason": group.reason})
+                found["paid"][line.source_id] = found["paid"].get(line.source_id, 0) + line.amount_cents
+            for a in db.scalars(select(PurchaseAllocation).where(PurchaseAllocation.purchase_id.in_(chunk))):
+                found["allocations"].setdefault(a.purchase_id, []).append(serial(a))
+                found["paid"][a.purchase_id] = found["paid"].get(a.purchase_id, 0) + a.amount_cents
+            for purchase_id, amount in db.execute(select(PaymentDocumentLine.purchase_id, func.sum(PaymentDocumentLine.amount_cents)).where(PaymentDocumentLine.purchase_id.in_(chunk)).group_by(PaymentDocumentLine.purchase_id)):
+                found["paid"][purchase_id] = found["paid"].get(purchase_id, 0) + int(amount or 0)
+            scans = {(r.purchase_id, r.attachment_id): r for r in db.scalars(select(DocumentScan).where(DocumentScan.purchase_id.in_(chunk), DocumentScan.status == "cloud_saved"))}
+            for a in db.scalars(select(PurchaseAttachment).where(PurchaseAttachment.purchase_id.in_(chunk))):
+                found["attachments"].setdefault(a.purchase_id, []).append({"id": a.id, "name": a.name})
+            for a in db.scalars(select(DriveDocumentAttachment).where(DriveDocumentAttachment.purchase_id.in_(chunk))):
+                scan = scans.get((a.purchase_id, a.id))
+                found["attachments"].setdefault(a.purchase_id, []).append({"id": "drive:"+a.id, "name": a.name, "view_url": "/api/scans/"+scan.id+"/pdf" if scan else "/api/drive-attachments/"+a.id+"/view", "validation_status": scan.validation_status if scan else "", "scan_id": scan.id if scan else None})
+        return found
+
+    def projection(db, row, found=None):
+        found = found or related(db, [row.id])
+        linked = found["paid"].get(row.id, 0)
         total = abs(row.amount_cents)
-        from .models import Reconciliation, ReconciliationLine
-        groups = [{"id": group.id, "amount_cents": line.amount_cents, "reason": group.reason} for line, group in db.execute(select(ReconciliationLine, Reconciliation).join(Reconciliation).where(ReconciliationLine.source == "purchase", ReconciliationLine.source_id == row.id, Reconciliation.undone_at.is_(None)))]
-        from .models import DriveDocumentAttachment, DocumentScan
-        scans = {r.attachment_id: r for r in db.scalars(select(DocumentScan).where(DocumentScan.purchase_id == row.id, DocumentScan.status == "cloud_saved"))}
-        attachments = [{"id": a.id, "name": a.name} for a in db.scalars(select(PurchaseAttachment).where(PurchaseAttachment.purchase_id == row.id))]
-        attachments += [{"id": "drive:"+a.id, "name": a.name, "view_url": "/api/scans/"+scans[a.id].id+"/pdf" if a.id in scans else "/api/drive-attachments/"+a.id+"/view", "validation_status": scans[a.id].validation_status if a.id in scans else "", "scan_id": scans[a.id].id if a.id in scans else None} for a in db.scalars(select(DriveDocumentAttachment).where(DriveDocumentAttachment.purchase_id == row.id))]
-        return {**serial(row), "paid_cents": linked, "remaining_cents": max(0, total - linked), "payment_status": "reconciliado" if linked >= total else "parcial" if linked else "por_reconciliar", "attachments": attachments, "allocations": [serial(a) for a in db.scalars(select(PurchaseAllocation).where(PurchaseAllocation.purchase_id == row.id))], "reconciliations": groups}
+        return {**serial(row), "paid_cents": linked, "remaining_cents": max(0, total - linked), "payment_status": "reconciliado" if linked >= total else "parcial" if linked else "por_reconciliar", "attachments": found["attachments"].get(row.id, []), "allocations": found["allocations"].get(row.id, []), "reconciliations": found["groups"].get(row.id, [])}
 
     @app.get("/api/purchases")
     def purchases(user=Depends(current), db: Session = Depends(db_session)):
-        return [projection(db, row) for row in db.scalars(select(Purchase).where(Purchase.store_id.in_(scope(user, db))).order_by(Purchase.document_date.desc(), Purchase.created_at.desc()))]
+        rows = db.scalars(select(Purchase).where(Purchase.store_id.in_(scope(user, db))).order_by(Purchase.document_date.desc(), Purchase.created_at.desc())).all()
+        found = related(db, [row.id for row in rows])
+        return [projection(db, row, found) for row in rows]
 
     @app.post("/api/purchases")
     def create(data: PurchaseCreate, user=Depends(current), db: Session = Depends(db_session)):
