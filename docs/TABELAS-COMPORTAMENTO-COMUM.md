@@ -116,6 +116,15 @@ Resultado e recuperação:
 - Registos ainda não ligados ligam-se apenas por uma chave da tabela: código nos prazos e armazéns, NIF
   nas entidades. Se só a descrição coincidir, o registo aparece como conflito e só é ligado por decisão explícita.
 - Repetir uma importação não volta a criar registos já ligados.
+- **Código do ERP único nas entidades:** se a Wintouch devolver, para um código que já existe na IAZELA,
+  outro identificador (entidade recriada ou identificador mudado), não nasce uma segunda entidade.
+  Com o mesmo NIF, ou sem NIF num dos lados, a entidade existente é atualizada com os dados do ERP,
+  incluindo o identificador novo, e mantém a ficha local (rubrica, prazo, histórico). Com outro NIF, o
+  código foi reutilizado: a antiga fica marcada como eliminada no ERP e a nova é importada. Se as duas
+  existirem na Wintouch, a importação é recusada («código repetido na Wintouch») até se corrigir lá.
+  A sincronização completa das entidades aplica a mesma regra às repetições já existentes: fica a
+  entidade que veio do ERP, a ficha local passa para ela e a outra fica marcada como eliminada; os
+  códigos repetidos na própria Wintouch aparecem no aviso da sincronização.
 - `base_values` guarda os valores acordados na última sincronização. Alterado só de um lado, a alteração
   segue para o outro; alterado nos dois lados, é **conflito**.
 - A regra **Em conflito** (por tabela, só administrador) pode ser **Perguntar em cada registo**

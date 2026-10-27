@@ -4,6 +4,7 @@ import json
 import re
 from collections import Counter
 from decimal import Decimal
+from types import SimpleNamespace
 
 import httpx
 from fastapi import HTTPException
@@ -1036,7 +1037,7 @@ class EntitiesBinding(ErpBinding):
             if not any(a.get("IsMainAddress") for a in addresses):
                 note = " A morada não foi confirmada: verifique-a na Wintouch."
             created = {**created, "EntityAddresses": addresses}
-        mirror = self._upsert_mirror(ctx, created)
+        mirror = self._upsert_mirror(ctx, created, client)
         entity = ctx.db.get(BusinessEntity, local_id[6:])
         entity.wintouch_id = mirror.id
         entity.flags_local = False
@@ -1094,8 +1095,14 @@ class EntitiesBinding(ErpBinding):
         ctx.db.flush()
         return not keep_local
 
-    def _upsert_mirror(self, ctx, raw):
-        from .wintouch_sync import SyncError, normalize
+    def _upsert_mirror(self, ctx, raw, client=None):
+        from .wintouch_sync import (
+            SyncError,
+            entity_code_twin,
+            normalize,
+            retire_entity,
+            same_company,
+        )
 
         try:
             values = normalize("entities", raw)
@@ -1106,6 +1113,18 @@ class EntitiesBinding(ErpBinding):
                 WintouchEntity.enterprise_id == enterprise_of(ctx), WintouchEntity.external_id == values["external_id"]
             )
         )
+        if mirror is None:
+            # O código do ERP não se repete: a entidade com o mesmo código é atualizada em vez de duplicada.
+            twin = entity_code_twin(ctx.db, enterprise_of(ctx), values.get("code"), values["external_id"])
+            if twin is not None and client is not None and client.get(self.resource, twin.external_id) is not None:
+                raise ErpRejected(
+                    f"O código {values.get('code')} está repetido na Wintouch («{twin.name}» e «{values['name']}»). "
+                    "Corrija o código na Wintouch antes de importar."
+                )
+            if twin is not None and same_company(twin, SimpleNamespace(tax_number=values.get("tax_number"))):
+                mirror = twin
+            elif twin is not None:
+                retire_entity(ctx.db, twin, None)
         if mirror is None:
             mirror = WintouchEntity(enterprise_id=enterprise_of(ctx), **values)
             ctx.db.add(mirror)
@@ -1121,7 +1140,7 @@ class EntitiesBinding(ErpBinding):
         if action in ("criar_erp", "verificar") and (entry["local_id"] or "").startswith("local:"):
             return self.create_in_erp(ctx, client, entry, action)
         if action in ("criar_local", "atualizar_local", "ligar"):
-            mirror = self._upsert_mirror(ctx, raw)
+            mirror = self._upsert_mirror(ctx, raw, client)
             local_id = entry["local_id"]
             if local_id and local_id.startswith("local:"):
                 entity = ctx.db.get(BusinessEntity, local_id[6:])

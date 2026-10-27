@@ -698,3 +698,69 @@ def test_sync_runs_in_background_with_progress_and_releases_interrupted_runs(pla
         statuses = sorted(r.status for r in db.scalars(select(WintouchSyncRun)))
     assert statuses == ["concluida", "falhou"]
     assert client.get("/api/tables/payment_terms/sync/runs/desconhecida").status_code == 404
+
+
+def test_erp_code_is_unique_and_a_recreated_entity_updates_the_existing(platform, erp):  # noqa: F811
+    client, _ = platform
+    company, _ = company_with_erp(client, "tabelas-codigo-unico", writes=True)
+    erp.add("entities", ID="e1", Code="F7", Name="Fornecedor Antigo", VATNumber="500000000", IsSupplier=True, IsClient=False, Enabled=True)
+    assert execute(client, "suppliers", plan(client, "suppliers", "import")).json()["ok"] == 1
+    with tenant(company) as db:
+        original = db.scalar(select(WintouchEntity)).id
+    # Na Wintouch a entidade foi recriada: mesmo código e NIF, outro identificador e outro nome.
+    del erp.data["entities"]["e1"]
+    erp.add("entities", ID="e2", Code="f7", Name="Fornecedor Renovado", VATNumber="PT500000000", IsSupplier=True, IsClient=False, Enabled=True)
+    planned = plan(client, "suppliers", "import")
+    keys = [i["key"] for i in planned["items"] if i["action"] == "criar_local"]
+    assert execute(client, "suppliers", planned, keys=keys).json()["ok"] == 1
+    with tenant(company) as db:
+        active = list(db.scalars(select(WintouchEntity).where(WintouchEntity.erp_deleted_at.is_(None))))
+        # Não nasce outra entidade: a existente fica com o identificador e os dados atuais do ERP.
+        assert [(m.id, m.external_id, m.name) for m in active] == [(original, "e2", "Fornecedor Renovado")]
+    assert [r["values"]["name"] for r in records(client, "suppliers")] == ["Fornecedor Renovado"]
+    # O mesmo código em duas entidades que existem na Wintouch: recusado, sem duplicar na IAZELA.
+    erp.add("entities", ID="e3", Code="F7", Name="Outro com o mesmo código", VATNumber="500000001", IsSupplier=True, IsClient=False, Enabled=True)
+    planned = plan(client, "suppliers", "import")
+    keys = [i["key"] for i in planned["items"] if i["action"] == "criar_local"]
+    outcome = execute(client, "suppliers", planned, keys=keys).json()
+    assert outcome["ok"] == 0 and "repetido na Wintouch" in str(outcome)
+    with tenant(company) as db:
+        assert len(list(db.scalars(select(WintouchEntity).where(WintouchEntity.erp_deleted_at.is_(None))))) == 1
+
+
+def test_full_entity_sync_keeps_one_entity_per_erp_code(platform, erp):  # noqa: F811
+    from app.models import BusinessEntity
+    from app.wintouch_sync import reconcile_entity_codes
+
+    client, _ = platform
+    company, _ = company_with_erp(client, "sync-codigo-unico", writes=False)
+    with tenant(company) as db:
+        enterprise = "demo-erp"
+        rows = {
+            # F1: a existente (com ficha local) e a importada agora com outro identificador.
+            "old1": WintouchEntity(enterprise_id=enterprise, external_id="x1", code="F1", name="Antigo", tax_number="500000000", is_supplier=True),
+            "new1": WintouchEntity(enterprise_id=enterprise, external_id="y1", code="F1", name="Atual", tax_number="500000000", is_supplier=True),
+            # F2: as duas já existiam (repetição anterior); só a «y2» continua na Wintouch.
+            "old2": WintouchEntity(enterprise_id=enterprise, external_id="x2", code="F2", name="Dois", tax_number="500000001", is_supplier=True),
+            "new2": WintouchEntity(enterprise_id=enterprise, external_id="y2", code="F2", name="Dois", tax_number="500000001", is_supplier=True),
+            # F3: repetido na própria Wintouch (as duas vieram na leitura).
+            "a3": WintouchEntity(enterprise_id=enterprise, external_id="a3", code="F3", name="Três A", is_supplier=True),
+            "b3": WintouchEntity(enterprise_id=enterprise, external_id="b3", code="F3", name="Três B", is_supplier=True),
+        }
+        db.add_all(rows.values())
+        db.flush()
+        ids = {key: row.id for key, row in rows.items()}
+        db.add_all([BusinessEntity(name="Antigo", wintouch_id=ids["old1"], is_supplier=True),
+                    BusinessEntity(name="Dois", wintouch_id=ids["old2"], is_supplier=True)])
+        db.flush()
+        repeated = reconcile_entity_codes(db, enterprise, {"y1", "y2", "a3", "b3"}, {"y1"})
+        db.commit()
+    assert repeated == ["F3"]
+    with tenant(company) as db:
+        active = {m.code: m for m in db.scalars(select(WintouchEntity).where(WintouchEntity.erp_deleted_at.is_(None))) if m.code != "F3"}
+        # F1: a entidade existente fica, com o identificador e o nome atuais da Wintouch.
+        assert (active["F1"].id, active["F1"].external_id, active["F1"].name) == (ids["old1"], "y1", "Atual")
+        # F2: a que já não existe no ERP é retirada e a ficha local passa para a atual.
+        assert active["F2"].id == ids["new2"] and db.get(WintouchEntity, ids["old2"]).erp_deleted_at is not None
+        assert db.scalar(select(BusinessEntity).where(BusinessEntity.name == "Dois")).wintouch_id == ids["new2"]
+        assert len([m for m in db.scalars(select(WintouchEntity)) if m.code == "F3" and m.erp_deleted_at is None]) == 2

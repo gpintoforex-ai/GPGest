@@ -11,6 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import (
+    BusinessEntity,
+    ErpLink,
     WintouchCashAccount,
     WintouchEntity,
     WintouchPaymentMethod,
@@ -30,6 +32,102 @@ RESOURCES = {
 
 class SyncError(Exception):
     pass
+
+
+# -- Código do ERP único nas entidades -------------------------------------------------------------
+# A Wintouch pode devolver, para o mesmo código, um identificador diferente do que já estava
+# importado (entidade recriada ou com o identificador mudado). Sem esta regra nascia uma segunda
+# entidade com o mesmo código; com ela, a existente é atualizada com os dados do ERP e mantém a
+# ficha local (rubrica, prazo, histórico).
+
+ENTITY_COLUMNS = [c.key for c in WintouchEntity.__table__.columns if c.key not in ("id", "enterprise_id")]
+
+
+def code_key(value):
+    return (value or "").strip().upper()
+
+
+def nif_of(value):
+    text = "".join(ch for ch in (value or "").upper() if ch.isalnum())
+    return text[2:] if text.startswith("PT") else text
+
+
+def same_company(a, b):
+    """Mesmo código e o mesmo NIF (ou um deles sem NIF): é a mesma entidade."""
+    return not nif_of(a.tax_number) or not nif_of(b.tax_number) or nif_of(a.tax_number) == nif_of(b.tax_number)
+
+
+def entity_code_twin(db, enterprise, code, external_id):
+    """Entidade ativa já importada com o mesmo código e outro identificador da Wintouch."""
+    if not code_key(code):
+        return None
+    return next(
+        (
+            row
+            for row in db.scalars(
+                select(WintouchEntity).where(
+                    WintouchEntity.enterprise_id == enterprise,
+                    WintouchEntity.erp_deleted_at.is_(None),
+                    WintouchEntity.external_id != external_id,
+                )
+            )
+            if code_key(row.code) == code_key(code)
+        ),
+        None,
+    )
+
+
+def retire_entity(db, old, new):
+    """`old` deixou de existir no ERP: as ligações locais passam para `new` e `old` fica eliminada."""
+    if new is not None:
+        override = db.scalar(select(BusinessEntity).where(BusinessEntity.wintouch_id == old.id))
+        taken = db.scalar(select(BusinessEntity.id).where(BusinessEntity.wintouch_id == new.id))
+        if override is not None and taken is None and same_company(old, new):
+            override.wintouch_id = new.id
+    # erp_links das entidades só guardam erros de envio: os da entidade retirada deixam de valer.
+    for link in db.scalars(select(ErpLink).where(ErpLink.local_id == "wt:" + old.id)):
+        db.delete(link)
+    old.erp_deleted_at = now()
+    db.flush()
+
+
+def reconcile_entity_codes(db, enterprise, seen, inserted):
+    """Depois de uma leitura completa das entidades: um só registo por código do ERP.
+
+    `seen` são os identificadores devolvidos pela Wintouch nesta execução e `inserted` os que
+    foram importados pela primeira vez. Devolve os códigos repetidos na própria Wintouch.
+    """
+    groups = {}
+    for row in db.scalars(
+        select(WintouchEntity).where(WintouchEntity.enterprise_id == enterprise, WintouchEntity.erp_deleted_at.is_(None))
+    ):
+        if code_key(row.code):
+            groups.setdefault(code_key(row.code), []).append(row)
+    repeated = []
+    for code, rows in sorted(groups.items()):
+        if len(rows) < 2:
+            continue
+        current = [r for r in rows if r.external_id in seen]
+        if len(current) != 1:
+            # Ou o código está repetido na Wintouch (corrige-se lá), ou nenhum veio nesta leitura.
+            if len(current) > 1:
+                repeated.append(code)
+            continue
+        fresh = current[0]
+        for old in sorted((r for r in rows if r is not fresh), key=lambda r: r.synced_at or now()):
+            if fresh.external_id in inserted and same_company(old, fresh):
+                # Importada agora (sem ligações): os dados do ERP passam para a entidade existente.
+                values = {name: getattr(fresh, name) for name in ENTITY_COLUMNS}
+                db.delete(fresh)
+                db.flush()
+                for name, value in values.items():
+                    setattr(old, name, value)
+                inserted.discard(values["external_id"])
+                fresh = old
+            else:
+                retire_entity(db, old, fresh)
+    db.flush()
+    return repeated
 
 
 def string(value, maximum, required=False):
@@ -262,6 +360,7 @@ def synchronize(bind, enterprise, resource, url, key):
         run_id = run.id
         seen = set()
         inserted = updated = 0
+        new_ids = set()
         reported_total = None
         deadline = monotonic() + 180
         try:
@@ -354,6 +453,7 @@ def synchronize(bind, enterprise, resource, url, key):
                             item = model(enterprise_id=enterprise, **values)
                             db.add(item)
                             inserted += 1
+                            new_ids.add(values["external_id"])
                         else:
                             for field, value in values.items():
                                 setattr(item, field, value)
@@ -363,7 +463,14 @@ def synchronize(bind, enterprise, resource, url, key):
                     db.flush()
                     seen.update(ids)
                 if resource == "entities":
+                    repeated = reconcile_entity_codes(db, enterprise, seen, new_ids)
                     warning = sync_payment_catalogs(db, client, url, key, enterprise, run_id)
+                    if repeated:
+                        note = (
+                            "Códigos repetidos na Wintouch (corrija-os lá): " + ", ".join(repeated[:20])
+                            + ("…" if len(repeated) > 20 else "") + "."
+                        )
+                        warning = f"{warning} {note}" if warning else note
             state = db.scalar(
                 select(WintouchSyncState).where(
                     WintouchSyncState.enterprise_id == enterprise,
