@@ -59,6 +59,14 @@ PLATFORM_ENCRYPTION_KEY=MESMA_CHAVE_ATUAL
 
 Substitua os exemplos pelos valores privados. O perfil atualmente utilizado para o Neon está em `.local\neon-runtime.env`; transfira as definições por um meio privado. `COOKIE_SECURE=true` destina-se ao acesso HTTPS pelo Cloudflare. O ficheiro selecionado por `GPGEST_ENV_FILE` tem precedência sobre a ligação herdada do terminal.
 
+O ficheiro selecionado substitui o `.env`, que deixa de ser lido. Por isso, as definições opcionais também têm de estar nele. É o caso do OCR: sem `GPGEST_OCR_*`, a receção a partir de fatura e o assistente e-Fatura indicam «OCR indisponível no servidor». Instale o Tesseract no novo PC e copie `.local\tessdata` com `por.traineddata` e `eng.traineddata`. Depois acrescente as variáveis com os caminhos desse PC:
+
+```dotenv
+GPGEST_OCR_COMMAND=C:/Program Files/Tesseract-OCR/tesseract.exe
+GPGEST_OCR_TESSDATA=C:/GPGest-API/.local/tessdata
+GPGEST_OCR_LANG=por+eng
+```
+
 Conserve a mesma `PLATFORM_ENCRYPTION_KEY`. Gerar outra chave impede a leitura das credenciais e dos documentos cifrados existentes. Essa chave e os URLs PostgreSQL não devem ir para o GitHub ou para o Worker.
 
 A simples mudança da API para outro PC não requer instalar, restaurar ou reinicializar a base. Não execute `Instalar.ps1`, inicializadores, seeds ou migrações de esquema como parte desta transferência da mesma versão.
