@@ -407,7 +407,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
             <select aria-label={`Artigo de ${line.description}`} value={line.choice} disabled={!line.include} onChange={e => change(index, { choice: e.target.value })}>
               {line.selected && <option value={line.selected.article_id}>{line.selected.code} · {line.selected.name} ({METHODS[line.selected.method]})</option>}
               {line.suggestions.filter((s: Row) => s.article_id !== line.selected?.article_id).map((s: Row) => <option key={s.article_id} value={s.article_id}>{s.code} · {s.name} (semelhante {Math.round(s.score * 100)} %)</option>)}
-              {line.choice !== NEW && line.choice !== OTHER && !line.selected && !line.suggestions.some((s: Row) => s.article_id === line.choice) && <option value={line.choice}>{active.find(a => a.id === line.choice)?.name || "Artigo escolhido"}</option>}
+              {line.choice !== NEW && line.choice !== OTHER && line.choice !== line.selected?.article_id && !line.suggestions.some((s: Row) => s.article_id === line.choice) && <option value={line.choice}>{(() => { const chosen = active.find(a => a.id === line.choice); return chosen ? `${chosen.code} · ${chosen.name}` : "Artigo escolhido"; })()}</option>}
               <option value={NEW}>Criar artigo novo</option>
               <option value={OTHER}>Procurar outro artigo…</option>
             </select>

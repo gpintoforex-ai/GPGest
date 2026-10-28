@@ -89,6 +89,7 @@ TYPES = {"types": [
      "default_payment_method": None, "default_due_days": 30, "creates_cash_movement": False, "creates_debt": True},
 ], "methods": [{"id": "numerario", "name": "Numerário"}, {"id": "transferencia", "name": "Transferência"}],
    "open_invoices": [{"id": "pur-1", "document": "FT 1/9", "document_date": "2026-10-01", "amount_cents": 10000, "remaining_cents": 10000}]}
+DOCS.append({**DOCS[0], "id": "d5", "document": "FT REPETIDO/1", "supplier_name": "Fornecedor de ofertas"})
 sent = []
 
 
@@ -108,6 +109,15 @@ def intercept(route):
         return route.fulfill(json={"rows": DOCS})
     if path.startswith("/archive/documents/") and path.endswith("/file"):
         return route.fulfill(body=PDF, content_type="application/pdf")
+    if path == "/purchase-receiving/d5/read":
+        return route.fulfill(json={**READ, "document": {**READ["document"], "id": "d5"},
+            "lines": [
+                line("Artigo oferecido", "2", "10", discount="100", selected={"article_id": "a1", "code": "1801", "name": "ARTHRON 500", "method": "codigo"}),
+                line("Artigo pago", "3", "10", selected={"article_id": "a2", "code": "1847", "name": "ARTHRON 250mL", "method": "codigo"}),
+            ]})
+    if path == "/purchase-receiving/d5/confirm":
+        sent.append(route.request.post_data_json)
+        return route.fulfill(json={"receipt_id": "r5", "lines": 2, "created_articles": 0})
     if path == "/purchase-receiving/d1/read":
         return route.fulfill(json=READ)
     if path == "/purchase-receiving/d4/read":
@@ -286,6 +296,25 @@ with sync_playwright() as p:
     assert manual_body["lines"][0]["price"] == "27.73" and manual_body["lines"][0]["vat"] == "6"
     assert manual_body["document_type_id"] == "t-ncc" and manual_body["credit_note_purchase_ids"] == ["pur-1"]
     assert manual_body["match_document_totals"] is True and body["match_document_totals"] is False
+    # Duas linhas já associadas: procurar o mesmo artigo fora das sugestões,
+    # preservando a oferta a 100 % separada da linha paga.
+    page.get_by_role("button", name="Receção a partir de fatura", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Receção a partir de fatura")
+    dialog.get_by_role("row").filter(has_text="FT REPETIDO/1").get_by_role("button", name="Ler fatura").click()
+    for description in ("Artigo oferecido", "Artigo pago"):
+        article = dialog.get_by_label(f"Artigo de {description}", exact=True)
+        article.select_option("__outro__")
+        dialog.get_by_label("Procurar artigo", exact=True).fill("1478 · OMEGA 3 ULTRA 60CAPS")
+        expect(article).to_have_value("a3")
+        expect(article.locator("option:checked")).to_have_text("1478 · OMEGA 3 ULTRA 60CAPS")
+    expect(dialog.get_by_label("Desconto (%)", exact=True).nth(0)).to_have_value("100")
+    expect(dialog.get_by_label("Desconto (%)", exact=True).nth(1)).to_have_value("0")
+    dialog.get_by_label("Tipo de documento", exact=True).select_option("t-fc")
+    dialog.get_by_role("button", name="Confirmar receção (2)").click()
+    expect(dialog).to_have_count(0)
+    repeated = sent[-1]["lines"]
+    assert [row["article_id"] for row in repeated] == ["a3", "a3"]
+    assert [row["discount"] for row in repeated] == ["100", "0"]
     # Telemóvel: sem deslocação horizontal.
     page.set_viewport_size({"width": 390, "height": 844})
     page.get_by_role("button", name="Receção a partir de fatura", exact=True).click()

@@ -304,3 +304,32 @@ def test_rounding_adjustment_matches_the_invoice_total(receiving):
         db.get(ArchiveDocument, doc_id).total_cents = 10054
     refused = c.put(f"/api/purchase-receiving/receipts/{row['id']}?revision={reopened['revision']}", json=body)
     assert refused.status_code == 422 and "excede o acerto" in refused.json()["detail"]
+
+
+@pytest.mark.parametrize("discounts", [("100", "0"), ("0", "100")])
+def test_same_article_on_separate_paid_and_free_lines(receiving, discounts):
+    c, sid, doc_id, warehouse, case = receiving
+    article = product(case, code="REPETIDO", name="Artigo com oferta")
+    body = {
+        "supplier_id": sid, "warehouse_id": warehouse, "document": "FA.2026/3208",
+        "document_date": "2026-10-20", "request_key": str(uuid4()),
+        "lines": [
+            {"article_id": article, "description": "Artigo com oferta", "quantity": str(qty),
+             "price": "10", "discount": discount, "vat": "23"}
+            for qty, discount in zip((2, 3), discounts)
+        ],
+    }
+    response = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert response.status_code == 200, response.text
+    receipt_id = response.json()["receipt_id"]
+    assert response.json()["lines"] == 2
+    assert D(view(case, article)["quantity"]) == 5
+    with case[2]() as db:
+        entries = list(db.scalars(select(StockEntry).where(StockEntry.article_id == article)))
+        assert len(entries) == 2
+        assert sorted(D(entry.unit_cost) for entry in entries) == [D(0), D(10)]
+    reopened = c.get(f"/api/purchase-receiving/receipts/{receipt_id}").json()
+    assert [line["selected"]["article_id"] for line in reopened["lines"]] == [article, article]
+    assert [D(line["discount"]) for line in reopened["lines"]] == list(map(D, discounts))
+    assert c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body).json()["receipt_id"] == receipt_id
+    assert D(view(case, article)["quantity"]) == 5
