@@ -339,8 +339,13 @@ def register_routes(app, current, authorize, scope, audit, serial, planned_summa
             events[-1]["origin_fingerprint"] = digest(events[-1])
 
         ids = [s for s in scope(user, db) if not store_id or s == store_id]
-        for row in db.scalars(select(PlannedMovement).where(PlannedMovement.store_id.in_(ids))):
-            data = planned_summary(db, row)
+        from .purchase_financials import erp_covered
+        planned_rows = list(db.scalars(select(PlannedMovement).where(PlannedMovement.store_id.in_(ids))))
+        covered = erp_covered(db, [row.purchase_id for row in planned_rows if row.purchase_id])
+        for row in planned_rows:
+            if row.purchase_id in covered:
+                continue  # O ERP já tem o documento: conta o valor em aberto da Wintouch.
+            data = planned_summary(db, row, covered)
             event("planned:" + row.id, row.store_id, row.entity + " · " + row.document, max(0, data["remaining_cents"]), row.direction, row.due_date, entity=row.entity, document=row.document, source_url="?page=Movimentos%20previstos", updated_at=row.created_at.isoformat())
             events[-1]["paid_cents"] = data["paid_cents"]
             events[-1]["paid_source"] = "Liquidações locais registadas"

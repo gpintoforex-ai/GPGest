@@ -306,7 +306,9 @@ export default function PlannedMovements({
                       </td>
                       <td className="numeric">{money(r.remaining_cents)}</td>
                       <td>
-                        <StatusBadge tone={r.status === "Liquidado" ? "success" : "warning"}>{r.status}</StatusBadge>
+                        {r.erp_covered
+                          ? <span title="O ERP já tem este documento: conta o valor em aberto da Wintouch, para não duplicar."><StatusBadge>{r.status}</StatusBadge></span>
+                          : <StatusBadge tone={r.status === "Liquidado" ? "success" : "warning"}>{r.status}</StatusBadge>}
                       </td>
                       <td>
                         <span className="pill neutral">

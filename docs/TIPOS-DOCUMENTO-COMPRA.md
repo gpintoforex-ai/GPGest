@@ -37,10 +37,20 @@ Ao confirmar (valor = total do documento × sinal), em `app/purchase_financials.
 - **Rastreabilidade:** movimentos com origem `rececao`, referência à receção e documento «código + número»; a receção guarda o resumo (`financial`: compra, previsto, movimento, pagamentos/compensações).
 - **Editar** uma receção confirmada desfaz e volta a gerar o efeito financeiro (bloqueado se a compra já tiver pagamentos de terceiros ou o previsto estiver liquidado). **Anular** estorna o stock e os movimentos reais (movimentos inversos, com motivo, sem apagar) e retira a compra e o previsto gerados pela receção.
 
+### Receções confirmadas sem tipo
+
+Receções confirmadas antes de existirem tipos de documento têm o stock mas nenhum efeito financeiro. Em **Compras → Receções**, a ação **Definir tipo** (administrador ou gestor) pede o tipo, o meio de pagamento ou o vencimento e gera a compra e o previsto ou o movimento real, como na confirmação. **O stock não muda.** Só aceita tipos de fatura (FC, FCD…): o stock dessas receções entrou como compra, e uma nota de crédito poria o stock e o dinheiro em sentidos opostos. Fica bloqueada se a receção já tiver tipo, compra ou fatura associada (o efeito financeiro vem dessa fatura). Fica registada na auditoria (`rececao_tipo_documento_definido`).
+
 ## Modos e sincronização
 
-No **modo local** aplica-se tudo o que está acima. No **modo integrado** a tesouraria é da Wintouch: a receção cria a compra (associada ao documento da Wintouch quando já importado) e não cria previstos nem movimentos de caixa, para não contar duas vezes. A aplicação funciona no servidor (sem modo offline no navegador) e não existe envio de movimentos financeiros para a Wintouch: o conector não grava caixa nem tesouraria. Todas as operações são idempotentes (chaves por receção/edição), por isso repetir um pedido não duplica movimentos.
+O efeito financeiro é **o mesmo nos dois modos**: no **modo integrado** a receção também cria o previsto (a crédito) ou o movimento real (a dinheiro), além da compra (associada ao documento da Wintouch quando já importado).
+
+Para não contar duas vezes, o **previsto local de uma receção deixa de contar** quando o ERP já tem o documento: há associação ativa ao documento ERP, o documento de compra importado tem a mesma identidade (NIF, tipo, número) e total, ou a Wintouch lista um valor em aberto do mesmo fornecedor com o mesmo número (com ou sem o código do tipo à frente: «FT 2026A/12» = «2026A/12»). Em **Movimentos previstos** fica com o estado **No ERP** e 0 € por liquidar, e a liquidez passa a contar o valor em aberto da Wintouch. O pagamento faz-se a partir desse valor em aberto (liquidar o previsto local é recusado). Se a associação ao ERP for desfeita, o previsto local volta a contar.
+
+O **movimento real** de um documento a dinheiro não se duplica: a sincronização da Wintouch não importa os pagamentos de documentos de compra como movimentos de caixa (só vendas e entradas/saídas de caixa). Se o pagamento ao fornecedor também for registado na Wintouch como saída de caixa, fica nas duas origens e tem de ser estornado num dos lados.
+
+A aplicação funciona no servidor (sem modo offline no navegador) e não existe envio de movimentos financeiros para a Wintouch: o conector não grava caixa nem tesouraria. Todas as operações são idempotentes (chaves por receção/edição), por isso repetir um pedido não duplica movimentos.
 
 ## Testes
 
-`backend/tests/test_purchase_document_types.py` (critérios de aceitação: tipos pré-carregados, regras da tabela e filtros; FCD 100 € → saída real; FC 100 € a 30 dias → dívida e previsto; NCC 20 € associada → dívida 80 €; NCCD 20 € → entrada real; pagar a FC → dívida a zero; caixa fechada/numerário insuficiente; anular; editar; importação sem duplicados; importação indisponível em modo local) e `scripts/test-document-types-ui.py`, `scripts/test-invoice-receiving-ui.py`, `scripts/test-procurement-correction-ui.py`.
+`backend/tests/test_purchase_document_types.py` (critérios de aceitação: tipos pré-carregados, regras da tabela e filtros; FCD 100 € → saída real; FC 100 € a 30 dias → dívida e previsto; NCC 20 € associada → dívida 80 €; NCCD 20 € → entrada real; pagar a FC → dívida a zero; caixa fechada/numerário insuficiente; anular; editar; previsto que deixa de contar quando o ERP tem o documento; tipo definido numa receção antiga sem mexer no stock; importação sem duplicados; importação indisponível em modo local) e `scripts/test-document-types-ui.py`, `scripts/test-invoice-receiving-ui.py`, `scripts/test-procurement-correction-ui.py`.

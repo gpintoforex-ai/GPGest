@@ -4,12 +4,21 @@ FCD 100 € → saída de caixa real; FC 100 € a 30 dias → dívida e previst
 NCCD 20 € → entrada de caixa; pagar a FC → previsto em real e dívida a zero; anular/editar → estorno.
 """
 
+import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal as D
 from uuid import uuid4
 
 import pytest
-from app.models import Movement, PlannedMovement, Purchase, PurchaseDocumentType, StockEntry
+from app.models import (
+    ERPDocument,
+    Movement,
+    PlannedMovement,
+    Purchase,
+    PurchaseDocumentType,
+    StockEntry,
+    WintouchSaleRecord,
+)
 from conftest import open_cash
 from sqlalchemy import select
 from test_inventory import product, stock_case, view  # noqa: F401
@@ -21,8 +30,8 @@ from test_tables import execute as run_sync
 
 
 @pytest.fixture
-def money(case, monkeypatch):  # noqa: F811
-    monkeypatch.setattr("app.purchase_financials.policy", lambda _: {"mode": "local", "provider": "none"})
+def money(case):  # noqa: F811
+    # O efeito financeiro é o mesmo nos dois modos (estes testes correm com a política integrada por omissão).
     stock, supplier = case
     c = stock[0]
     types = {t["code"]: t for t in c.get("/api/purchase-document-types/options").json()["types"]}
@@ -220,3 +229,64 @@ def test_import_disabled_in_local_mode(money, monkeypatch):
     monkeypatch.setattr("app.operating_modes.policy", lambda db: {"mode": "local", "provider": "none"})
     info = stock[0].get("/api/tables/document_types").json()
     assert info["erp"]["available"] is False and "modo local" in info["erp"]["reason"]
+
+
+def planned_of(c, purchase_id):
+    return next(p for p in c.get("/api/planned-movements").json() if p["purchase_id"] == purchase_id)
+
+
+def test_planned_stops_counting_once_the_erp_has_the_document(money):
+    stock, _, _, session = money
+    c = stock[0]
+    first, _ = receipt(money, "FC", "100", document="FT 2026A/11")
+    second, _ = receipt(money, "FC", "60", document="FT 2026A/12")
+    assert first.status_code == 200 and second.status_code == 200, first.text + second.text
+    a, b = first.json(), second.json()
+    assert planned_of(c, a["purchase_id"])["status"] == "Pendente"
+    with stock[2].begin() as db:
+        purchase = db.get(Purchase, a["purchase_id"])
+        # Documento de compra importado da Wintouch com a mesma identidade e total.
+        db.add(ERPDocument(store_id=purchase.store_id, enterprise_id="demo", external_id="erp-11",
+                           supplier_nif=purchase.supplier_nif, supplier_name=purchase.supplier_name, document="FT 2026A/11",
+                           internal_document="VFC 2026/11", document_type="FT", document_date=purchase.document_date,
+                           amount_cents=10000))
+        # Valor em aberto da Wintouch com o número do fornecedor sem o código do tipo.
+        db.add(WintouchSaleRecord(enterprise_id="demo", external_id="pending-12", store_id=purchase.store_id, kind="previsto",
+                                  active=True, document_date=purchase.document_date, data=json.dumps({
+                                      "document": "VFC 2026/12", "document_reference": "2026A/12", "document_group": "compras",
+                                      "entity_nif": purchase.supplier_nif, "amount_cents": 6000, "direction": -1}, ensure_ascii=False)))
+    for doc in (a, b):
+        planned = planned_of(c, doc["purchase_id"])
+        assert planned["erp_covered"] and planned["status"] == "No ERP" and planned["remaining_cents"] == 0
+    refused = c.post(f"/api/planned-movements/{planned_of(c, a['purchase_id'])['id']}/settle", json={
+        "session_id": session, "amount": "10", "payment": "numerario",
+        "occurred_at": datetime.now(timezone.utc).isoformat(), "request_key": str(uuid4())})
+    assert refused.status_code == 409 and "já está no ERP" in refused.json()["detail"]
+
+
+def test_old_receipt_gets_document_type_without_touching_stock(money):
+    stock, supplier, types, _ = money
+    c = stock[0]
+    aid = product(stock)
+    created = c.post("/api/procurement", json={
+        "kind": "receipt", "store_id": stock[4], "supplier_id": supplier, "document": "FT ANTIGA/1",
+        "document_date": date.today().isoformat(), "request_key": str(uuid4()),
+        "lines": [{"article_id": aid, "description": "Artigo", "quantity": "2", "price": "25", "vat": "0",
+                   "warehouse_id": stock[3][0]}]}).json()
+    doc = c.post(f"/api/procurement/{created['id']}/confirm", json={"revision": created["revision"]}).json()
+    assert not doc.get("financial") and D(view(stock, aid)["quantity"]) == 2
+    with stock[2]() as db:
+        entries = {e.id for e in db.scalars(select(StockEntry).where(StockEntry.article_id == aid))}
+    stale = c.post(f"/api/procurement/{doc['id']}/document-type", json={"revision": doc["revision"] - 1, "document_type_id": types["FC"]["id"]})
+    assert stale.status_code == 409
+    note = c.post(f"/api/procurement/{doc['id']}/document-type", json={"revision": doc["revision"], "document_type_id": types["NCC"]["id"]})
+    assert note.status_code == 422 and "tipo de fatura" in note.json()["detail"]
+    assigned = c.post(f"/api/procurement/{doc['id']}/document-type", json={"revision": doc["revision"], "document_type_id": types["FC"]["id"]})
+    assert assigned.status_code == 200, assigned.text
+    result = assigned.json()
+    assert result["financial"]["document_type_code"] == "FC" and result["remaining_cents"] == 5000
+    assert planned_of(c, result["purchase_id"])["amount_cents"] == 5000
+    with stock[2]() as db:
+        assert {e.id for e in db.scalars(select(StockEntry).where(StockEntry.article_id == aid))} == entries
+    again = c.post(f"/api/procurement/{doc['id']}/document-type", json={"revision": result["revision"], "document_type_id": types["FCD"]["id"]})
+    assert again.status_code == 409 and "já tem tipo" in again.json()["detail"]

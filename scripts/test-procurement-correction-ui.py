@@ -76,6 +76,9 @@ def intercept(route):
     elif path == "/purchase-receiving/receipts/rec-1" and method == "PUT":
         calls.append(("fatura", route.request.url, route.request.post_data_json))
         result = {"receipt_id": "rec-1", "lines": 1, "created_articles": 0, "learned": 3}
+    elif path == "/procurement/rec-4/document-type":
+        calls.append(("tipo", route.request.url, route.request.post_data_json))
+        result = {**DOCUMENTS[3], "revision": 2, "document_type_id": "t-fc", "purchase_id": "compra-4"}
     elif path == "/procurement/rec-4/confirmed":
         calls.append(("manual", route.request.url, route.request.post_data_json))
         result = {**DOCUMENTS[3], "revision": 3}
@@ -133,6 +136,17 @@ with sync_playwright() as p:
     kind, url, body = calls[-1]
     assert kind == "fatura" and url.endswith("revision=1") and body["lines"][0]["quantity"] == "8" and body["lines"][0]["bonus"] == "1"
     assert body["document_type_id"] == "t-fc" and body["due_date"] == "2026-11-19"
+    # Receção confirmada sem tipo: «Definir tipo» gera só o efeito financeiro (só tipos de fatura).
+    expect(rows.filter(has_text="REC-3").get_by_role("button", name="Definir tipo")).to_have_count(0)
+    rows.filter(has_text="REC-4").get_by_role("button", name="Definir tipo").click()
+    typing = page.get_by_role("dialog", name="Tipo de documento da receção")
+    typing.get_by_label("Tipo de documento", exact=True).select_option("t-fc")
+    expect(typing.get_by_text("O stock já registado não muda.", exact=False)).to_be_visible()
+    page.screenshot(path=str(OUT / "assign-type.png"))
+    typing.get_by_role("button", name="Gravar tipo de documento").click()
+    expect(page.get_by_text("Tipo de documento registado", exact=False)).to_be_visible()
+    kind, _, body = calls[-1]
+    assert kind == "tipo" and body == {"revision": 1, "document_type_id": "t-fc", "payment_method": None, "due_date": "2026-11-19"}, body
     # Receção manual confirmada: o mesmo formulário do lançamento, em modo de edição.
     rows.filter(has_text="REC-4").get_by_role("button", name="Editar").click()
     manual = page.get_by_role("dialog", name="Receção — edição")
@@ -145,4 +159,4 @@ with sync_playwright() as p:
     assert kind == "manual" and body["revision"] == 1 and body["document"] == "REC-4" and body["document_type_id"] == "t-fc"
     assert not errors, errors
     browser.close()
-print("Procurement list UI passed: conference/attachment column, edit draft, edit confirmed receipts (invoice window and manual form). Fixtures only.")
+print("Procurement list UI passed: conference/attachment column, edit draft, assign a document type, edit confirmed receipts (invoice window and manual form). Fixtures only.")

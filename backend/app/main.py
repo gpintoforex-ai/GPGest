@@ -1207,7 +1207,7 @@ def add_movement(data, user, db):
     return m
 
 
-def planned_summary(db, planned):
+def planned_summary(db, planned, covered=None):
     movements = list(
         db.scalars(
             select(Movement)
@@ -1231,11 +1231,17 @@ def planned_summary(db, planned):
             .order_by(PlannedAllocation.amount_cents.desc())
         )
     ]
+    if covered is None and planned.purchase_id:
+        from .purchase_financials import erp_covered
+        covered = erp_covered(db, [planned.purchase_id])
+    in_erp = bool(planned.purchase_id and planned.purchase_id in (covered or ()))
     result.update(
         allocations=split,
         paid_cents=paid,
-        remaining_cents=planned.amount_cents - paid,
-        status="Liquidado" if paid == planned.amount_cents else "Parcial" if paid else "Pendente",
+        # Documento já no ERP: o valor em aberto passa a vir da Wintouch (não conta duas vezes).
+        remaining_cents=0 if in_erp else planned.amount_cents - paid,
+        erp_covered=in_erp,
+        status="No ERP" if in_erp else "Liquidado" if paid == planned.amount_cents else "Parcial" if paid else "Pendente",
         settlements=[serial(m) for m in movements],
     )
     return result
@@ -1243,12 +1249,14 @@ def planned_summary(db, planned):
 
 @app.get("/api/planned-movements")
 def planned_list(user=Depends(current), db: Session = Depends(db_session)):
-    rows = db.scalars(
+    from .purchase_financials import erp_covered
+    rows = list(db.scalars(
         select(PlannedMovement)
         .where(PlannedMovement.store_id.in_(scope(user, db)))
         .order_by(PlannedMovement.due_date, PlannedMovement.created_at)
-    )
-    return [planned_summary(db, row) for row in rows]
+    ))
+    covered = erp_covered(db, [row.purchase_id for row in rows if row.purchase_id])
+    return [planned_summary(db, row, covered) for row in rows]
 
 
 @app.post("/api/planned-movements")
@@ -1326,7 +1334,10 @@ def planned_settle(
     _, register = cash(db, user, data.session_id, True)
     if register.store_id != row.store_id:
         raise HTTPException(422, "Selecione uma caixa da loja deste movimento.")
-    if cents(data.amount) > planned_summary(db, row)["remaining_cents"]:
+    summary = planned_summary(db, row)
+    if summary["erp_covered"]:
+        raise HTTPException(409, "Este documento já está no ERP: registe o pagamento a partir do valor em aberto da Wintouch.")
+    if cents(data.amount) > summary["remaining_cents"]:
         raise HTTPException(409, "O valor excede o saldo por liquidar.")
     movement = add_movement(
         MovementCreate(

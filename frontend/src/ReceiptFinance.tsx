@@ -21,8 +21,10 @@ const addDays = (day: string, days: number) => {
  * vencimento (a crédito) e faturas em aberto que uma nota de crédito abate. O efeito financeiro só
  * acontece ao confirmar a receção.
  */
-export default function ReceiptFinance({ supplierId, documentDate, value, onChange, defaultDueDate, suggestedTypeId }: {
+export default function ReceiptFinance({ supplierId, documentDate, value, onChange, defaultDueDate, suggestedTypeId, confirmedReceipt }: {
   supplierId: string;
+  // Receção já confirmada (sem tipo): o stock já entrou como compra, por isso só tipos de fatura.
+  confirmedReceipt?: boolean;
   // Tipo proposto pelo documento do fornecedor (FT → a crédito, FR/FS → a dinheiro); aplicado uma vez.
   suggestedTypeId?: string | null;
   documentDate: string;
@@ -40,11 +42,13 @@ export default function ReceiptFinance({ supplierId, documentDate, value, onChan
       .catch(e => { if (alive) setError((e as Error).message); });
     return () => { alive = false; };
   }, [supplierId]);
-  const kind = options?.types.find((t: Row) => t.id === value.document_type_id);
+  const types = (options?.types || []).filter((t: Row) => !confirmedReceipt || t.nature === "compra");
+  const kind = types.find((t: Row) => t.id === value.document_type_id);
   const suggested = useRef(false);
+  const when = confirmedReceipt ? "Ao gravar" : "Ao confirmar";
 
   function choose(id: string) {
-    const next = options?.types.find((t: Row) => t.id === id);
+    const next = types.find((t: Row) => t.id === id);
     onChange({
       document_type_id: id,
       // Pré-preenche com o que o tipo define; continua editável.
@@ -57,7 +61,7 @@ export default function ReceiptFinance({ supplierId, documentDate, value, onChan
   useEffect(() => {
     if (suggested.current || !options || !suggestedTypeId || value.document_type_id) return;
     suggested.current = true;
-    if (options.types.some((t: Row) => t.id === suggestedTypeId)) choose(suggestedTypeId);
+    if (types.some((t: Row) => t.id === suggestedTypeId)) choose(suggestedTypeId);
   }, [options, suggestedTypeId, value.document_type_id]);
 
   if (error) return <Notice tone="error">{error}</Notice>;
@@ -65,7 +69,7 @@ export default function ReceiptFinance({ supplierId, documentDate, value, onChan
     <Field label="Tipo de documento">
       <select required value={value.document_type_id} onChange={e => choose(e.target.value)} title="Define o efeito financeiro ao confirmar a receção.">
         <option value="">Selecionar tipo de documento</option>
-        {options?.types.map((t: Row) => <option key={t.id} value={t.id}>{t.code} · {t.description}</option>)}
+        {types.map((t: Row) => <option key={t.id} value={t.id}>{t.code} · {t.description}</option>)}
       </select>
     </Field>
     {kind?.creates_cash_movement && <Field label="Meio de pagamento">
@@ -78,11 +82,11 @@ export default function ReceiptFinance({ supplierId, documentDate, value, onChan
     </Field>}
     {kind && <p className="footnote receipt-finance-effect">
       {kind.creates_cash_movement
-        ? `Ao confirmar: movimento real de ${kind.sign > 0 ? "saída" : "entrada"} na data do documento (sem dívida).`
+        ? `${when}: movimento real de ${kind.sign > 0 ? "saída" : "entrada"} na data do documento (sem dívida).`
         : kind.creates_debt
-          ? `Ao confirmar: ${kind.sign > 0 ? "dívida ao fornecedor" : "crédito do fornecedor"} e movimento previsto no vencimento.`
+          ? `${when}: ${kind.sign > 0 ? "dívida ao fornecedor" : "crédito do fornecedor"} e movimento previsto no vencimento.`
           : "Este tipo não gera movimentos financeiros."}
-      {kind.sign < 0 ? " Os artigos (não serviços) saem do stock." : ""}
+      {confirmedReceipt ? " O stock já registado não muda." : kind.sign < 0 ? " Os artigos (não serviços) saem do stock." : ""}
     </p>}
     {kind?.nature === "nota_credito_compra" && kind.creates_debt && <fieldset className="receipt-finance-invoices">
       <legend>Faturas em aberto a abater (opcional)</legend>

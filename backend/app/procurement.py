@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 from datetime import date
+from types import SimpleNamespace
 from decimal import Decimal as D, ROUND_HALF_UP
 from typing import Literal
 from uuid import uuid4
@@ -120,6 +121,13 @@ class EditConfirmed(Draft):
     """Edição de uma receção confirmada: os mesmos campos do lançamento e as autorizações."""
     allow_overdelivery: bool = False
     acknowledge_differences: bool = True
+
+class AssignDocumentType(Strict):
+    """Tipo de documento numa receção confirmada sem tipo: gera só o efeito financeiro."""
+    revision: int = Field(ge=0)
+    document_type_id: str = Field(min_length=1, max_length=36)
+    payment_method: str | None = Field(default=None, max_length=20)
+    due_date: date | None = None
 
 class EmailPreview(Strict):
     revision: int
@@ -665,6 +673,40 @@ def register_routes(app, current, authorize, scope, audit):
         payload['annulled'] = {'reason': data.reason.strip(), 'user_id': user.id, 'at': now().isoformat(), 'reversed_entries': reversed_}
         row.status, row.revision, row.data = 'cancelled', row.revision + 1, stock.dump(payload)
         audit(db, user, 'compra_circuito_rececao_anulada', row.id, {'motivo': data.reason.strip(), 'estornos': reversed_}, row.store_id)
+        db.commit()
+        return document_view(db, row)
+
+    @app.post('/api/procurement/{identifier}/document-type')
+    def assign_document_type(identifier: str, data: AssignDocumentType, user=Depends(current), db: Session=Depends(db_session)):
+        """Receções confirmadas antes dos tipos de documento: gera a compra e o previsto/real, sem tocar no stock."""
+        stock.lock(db)
+        row = get(db, user, identifier, True)
+        if row.kind != 'receipt' or not row.confirmed_at or row.status == 'cancelled':
+            fail('Só uma receção confirmada pode receber o tipo de documento.', 409)
+        if row.revision != data.revision:
+            fail('A receção mudou entretanto. Atualize antes de gravar.', 409)
+        payload = json.loads(row.data)
+        if payload.get('document_type_id') or payload.get('financial') or row.purchase_id:
+            fail('Esta receção já tem tipo de documento ou documento financeiro.', 409)
+        if any(used(db, row.id, index, 'invoice') for index in range(len(payload['lines']))):
+            fail('Esta receção já tem fatura associada: o efeito financeiro vem dessa fatura.', 409)
+        supplier_row = supplier(db, row.supplier_id)
+        document_date = date.fromisoformat(payload['document_date'])
+        due = data.due_date or document_date
+        kind = financials.validate_receipt(db, SimpleNamespace(
+            kind='receipt', document_type_id=data.document_type_id, payment_method=data.payment_method,
+            due_date=due, document_date=document_date, credit_note_purchase_ids=[],
+        ), supplier_row)
+        if kind.nature != 'compra':
+            # O stock desta receção entrou como compra: uma nota de crédito poria stock e dinheiro em sentidos opostos.
+            fail('Uma receção já confirmada só pode receber um tipo de fatura (o stock entrou como compra).')
+        payload.update(document_type_id=data.document_type_id, payment_method=data.payment_method,
+                       due_date=due.isoformat(), credit_note_purchase_ids=[])
+        payload['financial'] = financials.process(db, user, row, payload, audit)
+        row.revision += 1
+        row.data = stock.dump(payload)
+        audit(db, user, 'rececao_tipo_documento_definido', row.id,
+              {'document_type_code': payload['financial']['document_type_code'], 'purchase_id': row.purchase_id}, row.store_id)
         db.commit()
         return document_view(db, row)
 

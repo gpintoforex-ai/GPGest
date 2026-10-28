@@ -6,12 +6,15 @@ Ao confirmar a receção (nunca em rascunho), valor = total do documento × sina
 - dinheiro (FCD/NCCD): movimento real na data do documento — numerário na folha de caixa aberta da
   loja, outros meios na conta bancária do meio — e a compra fica paga (sem dívida).
 Reutiliza a estrutura existente: Compra = documento em dívida, pagamentos de documentos = abates,
-previsto → real pela liquidação de previstos. No modo integrado a tesouraria é do ERP: cria-se só a
-compra (associada ao documento da Wintouch quando já importado), como nas compras do circuito.
+previsto → real pela liquidação de previstos. O efeito é o mesmo no modo integrado: o previsto local
+vale até o ERP ter o documento (ver erp_covered); depois o valor em aberto vem da Wintouch. A
+sincronização não importa pagamentos de compras como movimentos de caixa, por isso o movimento real
+de um documento a dinheiro não se duplica.
 Cada registo guarda a referência à receção, ao documento e ao tipo (rastreabilidade nos dois sentidos).
 """
 
 import json
+import re
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -19,7 +22,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
-from .document_identity import identity
+from .document_identity import identity, number_key
 from .models import (
     BusinessEntity,
     CashSession,
@@ -37,10 +40,10 @@ from .models import (
     Purchase,
     PurchaseDocumentType,
     Register,
+    WintouchSaleRecord,
     now,
     uid,
 )
-from .operating_modes import policy
 from .purchase_document_types import ensure_defaults, purchase_code
 
 LISBON = ZoneInfo("Europe/Lisbon")
@@ -153,9 +156,6 @@ def process(db, user, row, payload, audit):
                 if identity(e.supplier_nif, e.document_type, e.document) == target and e.amount_cents == signed), None)
     if erp and not db.scalar(select(DocumentERPLink).where(DocumentERPLink.erp_id == erp.id, DocumentERPLink.undone_at.is_(None))):
         db.add(DocumentERPLink(purchase_id=purchase.id, erp_id=erp.id, reason=f"Receção confirmada ({kind.code}): identidade e total coincidem"))
-    if policy(db).get("mode") != "local":
-        summary["treasury"] = "erp"
-        return summary
     category = default_category(db, supplier, payload)
     remaining = total
     if kind.creates_debt and payload.get("credit_note_purchase_ids"):
@@ -205,6 +205,42 @@ def process(db, user, row, payload, audit):
         summary["payment_ids"].append(payment.id)
     audit(db, user, "rececao_movimentos_financeiros", row.id, summary, row.store_id)
     return summary
+
+
+def loose_number(value):
+    """Número do documento sem o código do tipo à frente («FT 2026A/12» e «2026A/12» coincidem)."""
+    return re.sub(r"^[A-Z]{1,4}\s+(?=\S*\d)", "", number_key(value or ""))
+
+
+def erp_covered(db, purchase_ids):
+    """Compras nascidas de receções que o ERP já tem: o previsto local deixa de contar.
+
+    Coberta quando há associação ativa ao documento ERP, quando o documento de compra importado tem a
+    mesma identidade e total, ou quando a Wintouch lista um valor em aberto do mesmo fornecedor com o
+    mesmo número. Desfeita a associação (ou sem documento no ERP), o previsto local volta a contar.
+    """
+    purchases = [p for p in db.scalars(select(Purchase).where(Purchase.id.in_(set(purchase_ids) or [""])))
+                 if p.origin == "rececao"]
+    covered = set(db.scalars(select(DocumentERPLink.purchase_id).where(
+        DocumentERPLink.purchase_id.in_([p.id for p in purchases] or [""]), DocumentERPLink.undone_at.is_(None))))
+    pending = [p for p in purchases if p.id not in covered]
+    if not pending:
+        return covered
+    nifs = {p.supplier_nif for p in pending}
+    erp = {(identity(e.supplier_nif, e.document_type, e.document), e.amount_cents)
+           for e in db.scalars(select(ERPDocument).where(ERPDocument.supplier_nif.in_(nifs), ERPDocument.cancelled.is_(False)))}
+    open_items = set()
+    for record in db.scalars(select(WintouchSaleRecord).where(
+            WintouchSaleRecord.kind == "previsto", WintouchSaleRecord.active.is_(True),
+            WintouchSaleRecord.data.contains('"document_group": "compras"'))):
+        data = json.loads(record.data)
+        if data.get("entity_nif") in nifs and data.get("document_reference"):
+            open_items.add((data["entity_nif"], loose_number(data["document_reference"])))
+    for p in pending:
+        if (identity(p.supplier_nif, p.document_type, p.document), p.amount_cents) in erp \
+                or (p.supplier_nif, loose_number(p.document)) in open_items:
+            covered.add(p.id)
+    return covered
 
 
 def real_movement(db, user, row, payload, kind, supplier, category, amount):
