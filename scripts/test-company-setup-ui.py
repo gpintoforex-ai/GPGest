@@ -170,7 +170,9 @@ try:
             wizard.get_by_role("button", name="Guardar e continuar", exact=True).click()
         else:
             wizard.get_by_role("button", name="Guardar e continuar", exact=True).click()
-        wizard.get_by_role("button", name="Guardar e continuar", exact=True).click()
+        wizard.get_by_role("button", name="Guardar e continuar", exact=True).click()  # Preferências
+        expect(wizard.locator(".setup-step-nav [aria-current=step]")).to_contain_text("Faturação SAF-T")
+        wizard.get_by_role("button", name="Guardar e continuar", exact=True).click()  # Faturação SAF-T
         expect(wizard.get_by_role("heading", name="Resumo", exact=True)).to_be_visible()
         expect(wizard.get_by_role("button", name="Guardar e começar", exact=True)).to_be_enabled()
         output = root / ".local/company-setup-ui"
@@ -183,14 +185,20 @@ try:
         page.screenshot(path=str(output / ("erp-summary-mobile.png" if erp else "local-summary-mobile.png")), full_page=True)
         wizard.get_by_role("button", name="Guardar e começar", exact=True).click()
         expect(wizard.get_by_role("heading", name="A sua IAZELA está pronta", exact=True)).to_be_visible()
+        expect(wizard).not_to_have_attribute("aria-busy", "true")
         saft_button = page.get_by_role("button", name="Importar SAF-T de vendas", exact=True)
         if erp:
             expect(saft_button).to_have_count(0)
+            # Com a ligação ativa, as tabelas do ERP ficam por sincronizar, pela ordem das dependências.
+            table_sync = wizard.get_by_role("region", name="Sincronizar tabelas com o ERP", exact=True)
+            expect(table_sync.locator("li").first).to_contain_text("Prazos de pagamento")
+            expect(table_sync.get_by_text("Por sincronizar", exact=True).first).to_be_visible()
+            expect(table_sync.get_by_role("button", name="Sincronizar", exact=True).first).to_be_enabled()
+            page.screenshot(path=str(output / "erp-table-sync.png"), full_page=True)
         else:
             expect(saft_button).to_be_visible()
-            saft_button.click()
+            saft_button.click()  # Fecha o assistente e abre a importação.
             expect(page.get_by_role("heading", name="Importar SAF-T de vendas", exact=True)).to_be_visible()
-        expect(wizard).not_to_have_attribute("aria-busy", "true")
         assert not errors, errors
         page.wait_for_load_state("networkidle")
         page.unroute_all(behavior="ignoreErrors")

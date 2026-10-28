@@ -221,11 +221,17 @@ def table_sync(db, company):
 
     Conta como sincronizada a tabela com uma sincronização concluída ou comparada sem diferenças.
     """
+    from types import SimpleNamespace
+
+    from .operating_modes import company_policy
     from .table_framework import TABLES, Context, erp_status
 
     enterprise = (company.get("api_enterprise") or "").strip()
     if company.get("operating_mode") != "integrated" or not company.get("api_active") or not enterprise:
         return []
+    # A política vem da empresa recebida (lida de novo), não da guardada no início do pedido:
+    # ao concluir a configuração, a ligação é ativada no próprio pedido.
+    integration = company_policy(SimpleNamespace(**company))
     keys = [key for key in TABLE_SYNC_ORDER if key in TABLES and TABLES[key].erp is not None]
     last = dict(db.execute(
         select(WintouchSyncRun.resource, func.max(WintouchSyncRun.finished_at))
@@ -239,7 +245,7 @@ def table_sync(db, company):
     result = []
     for key in keys:
         spec = TABLES[key]
-        status = erp_status(Context(db=db, user=None, spec=spec), spec)
+        status = erp_status(Context(db=db, user=None, spec=spec, _integration=integration), spec)
         if not status["available"] or not status["operations"]["read"]["supported"]:
             continue  # Recurso desligado nas opções da integração: não é exigido.
         synced = last.get("tabela:" + key)
@@ -385,7 +391,8 @@ def preview_result(db, raw, row, company):
             "registers": [r.model_dump(mode="json") for r in data.registers],
             "accounts": [{k: v for k, v in a.model_dump(mode="json").items() if k != "iban"} for a in data.accounts],
             "payments": [p.model_dump() for p in data.payments if p.selected],
-            "terminals": [t.model_dump() for t in data.terminals], "pending": pending(db, raw, row, company)}
+            "terminals": [t.model_dump() for t in data.terminals], "pending": pending(db, raw, row, company),
+            "table_sync": table_sync(db, company)}
 
 
 def stable(company, kind, key):
