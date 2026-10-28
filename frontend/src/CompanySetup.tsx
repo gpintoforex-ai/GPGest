@@ -1,10 +1,12 @@
 import InfoIcon from "./components/InfoIcon";
 import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Building2, CheckCircle, CreditCard, FileUp, Landmark, Plus, Save, Settings, Trash2, Wallet, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, CheckCircle, CircleAlert, CreditCard, FileUp, Landmark, Plus, RefreshCw, Save, Settings, Trash2, Wallet, X } from "lucide-react";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
 import { VatRegimeFields, vatLabel } from "./FiscalSettings";
+import SyncDialog from "./tables/SyncDialog";
+import type { TableInfo } from "./tables/types";
 import "./CompanySetup.css";
 
 type Row = Record<string, any>;
@@ -19,6 +21,29 @@ const money = (text: string | null, currency = "EUR") => text?.trim() ? new Intl
 
 function Hint({ children }: { children: React.ReactNode }) {
   return <details className="setup-help"><summary><InfoIcon text="Clicar para saber mais" size={17} aria-hidden="true" />Como funciona</summary><div>{children}</div></details>;
+}
+
+/**
+ * Com a ligação ao ERP ativa, cada tabela ligada (prazos, rubricas, tipos de documento, armazéns,
+ * clientes, fornecedores) tem de ser sincronizada uma vez; a ordem segue as dependências.
+ */
+function TableSync({ boot, tables, onChanged }: { boot: Row; tables: Row[]; onChanged: () => void }) {
+  const [table, setTable] = useState<TableInfo | null>(null);
+  const [error, setError] = useState("");
+  if (!tables.length) return null;
+  const missing = tables.filter(t => !t.synced_at).length;
+  const when = (value: string) => new Date(value).toLocaleString("pt-PT", { timeZone: "Europe/Lisbon", dateStyle: "short", timeStyle: "short" });
+  return <section className="setup-table-sync" aria-label="Sincronizar tabelas com o ERP">
+    <h3><RefreshCw size={18} aria-hidden="true" />Sincronizar tabelas com o ERP</h3>
+    <p>{missing ? `Falta${missing === 1 ? "" : "m"} ${missing} de ${tables.length}. ` : "Todas as tabelas foram sincronizadas. "}Sincronize pela ordem indicada: cada uma mostra primeiro o que muda e só altera depois de confirmar.</p>
+    {error && <Notice className="error" role="alert">{error}</Notice>}
+    <ol>{tables.map(t => <li key={t.key} className={t.synced_at ? "is-synced" : ""}>
+      <span>{t.synced_at ? <CheckCircle size={17} aria-hidden="true" /> : <CircleAlert size={17} aria-hidden="true" />}<b>{t.title}</b><small>{t.synced_at ? `Sincronizada em ${when(t.synced_at)}` : "Por sincronizar"}</small></span>
+      <ActionButton type="button" className={t.synced_at ? "" : "primary"} onClick={() => { setError(""); api(`/tables/${t.key}`).then(setTable).catch(e => setError((e as Error).message)); }}>{t.synced_at ? "Sincronizar de novo" : "Sincronizar"}</ActionButton>
+    </li>)}</ol>
+    {table && <SyncDialog table={table} context={{ stores: boot.stores || [], categories: boot.categories || [] }} direction="sync" ids={[]}
+      onClose={() => { setTable(null); onChanged(); }} onDone={onChanged} />}
+  </section>;
 }
 
 export default function CompanySetupPanel(props: Props) {
@@ -47,6 +72,7 @@ export default function CompanySetupPanel(props: Props) {
         <p>{completed ? "A empresa está pronta a utilizar. Pode completar as integrações e os restantes parâmetros quando precisar." : "Escolha como pretende trabalhar e prepare as caixas, contas bancárias e meios de pagamento da empresa."}</p>
         {!completed && <div className="setup-widget-progress"><progress value={status?.progress || 0} max={100} aria-label="Progresso da configuração" /><span>{status?.progress || 0}%</span></div>}
         {completed && !!status?.pending?.length && <ul>{status.pending.map((item: string) => <li key={item}>{item}</li>)}</ul>}
+        {admin && completed && <TableSync boot={props.boot} tables={status?.table_sync || []} onChanged={() => { loadStatus().catch(() => {}); }} />}
         {!!status?.unclosed_count && <p className="setup-note">Há {status.unclosed_count} caixa(s) de dias anteriores por fechar. <ActionButton type="button" onClick={() => props.onNavigate("Folha de caixa")}>Conferir caixas</ActionButton></p>}
         {!admin && <small>A configuração é partilhada pela empresa. Peça a um administrador para a concluir.</small>}
       </div>
@@ -137,6 +163,7 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
     {!data || !state ? <div className="setup-content">{error ? <Notice className="error" role="alert">{error}</Notice> : <p role="status">A carregar os dados existentes…</p>}</div> : done ? <div className="setup-content setup-completed">
       <CheckCircle size={52} aria-hidden="true" /><h2>A sua IAZELA está pronta</h2><p>A configuração foi guardada para toda a empresa.</p>
       {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
+      <TableSync boot={boot} tables={state.table_sync || []} onChanged={() => { api("/setup").then(hydrate).catch(() => {}); }} />
       {!!state.pending?.length && <div className="setup-note"><b>Pode completar mais tarde</b><ul>{state.pending.map((item: string) => <li key={item}>{item}</li>)}</ul></div>}
       <div className="setup-next-actions"><ActionButton type="button" className="primary" onClick={() => { onClose(); onNavigate("Folha de caixa", "open"); }}><Wallet size={19} />Abrir primeira folha de caixa</ActionButton>
         <ActionButton type="button" disabled={!hasOpenSession} onClick={() => { onClose(); onNavigate("Movimentos reais", "movement"); }}>Registar primeiro movimento</ActionButton>
@@ -177,6 +204,7 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
               <div className="setup-mode-options">{[["local", "Modo local autónomo", "Caixas, bancos, recebimentos e pagamentos na IAZELA. Introduza manualmente o faturado diário para conferir."], ["integrated", "Ligação a ERP", "Ligue um conector disponível e escolha os dados que pretende importar."]].map(([value, label, explanation]) => <label className={data.mode.mode === value ? "selected" : ""} key={value}><input type="radio" name="setup-mode" value={value} checked={data.mode.mode === value} onChange={() => change("mode", "mode", value)} /><strong>{label}</strong><span>{explanation}</span></label>)}</div>
               <p className="setup-note">Autónomo significa independente de ERP. O acesso à IAZELA e à base de dados pode continuar a precisar de Internet.</p>
               {data.mode.mode === "integrated" && <>
+                <p className="setup-note">Com a ligação ao ERP, as tabelas (prazos de pagamento, rubricas, tipos de documento, armazéns, clientes e fornecedores) têm de ser sincronizadas. Isso faz-se no fim da configuração, quando a ligação fica ativa, e fica como pendente até estar feito.</p>
                 <div className="setup-grid"><Field label="Conector ERP"><select value={data.mode.provider} onChange={e => change("mode", "provider", e.target.value)}>{state.connectors.map((c: Row) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
                   <Field label="Empresa no ERP"><input value={data.mode.enterprise} maxLength={100} placeholder="Identificador da empresa na ligação ERP" onChange={e => change("mode", "enterprise", e.target.value)} /></Field>
                   <Field label="Chave de acesso ERP"><input type="password" autoComplete="new-password" value={data.mode.api_key || ""} placeholder={state.has_api_key ? "Chave já guardada; preencha apenas para substituir" : "Introduza a chave da ligação"} onChange={e => change("mode", "api_key", e.target.value)} /></Field></div>

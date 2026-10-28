@@ -1231,6 +1231,13 @@ def sync_plan(key: str, data: SyncInput, user=Depends(current), db: Session = De
     summary = {name: 0 for name in ("criar", "atualizar", "desativar", "remover", "ignorar", "conflito")}
     for entry in items:
         summary[entry["summary"]] += 1
+    if data.direction != "export" and not data.ids and all(entry["action"] == "ignorar" for entry in items):
+        # Comparada sem diferenças: conta como sincronizada (ex.: configuração inicial com o ERP).
+        db.add(WintouchSyncRun(
+            enterprise_id=enterprise_of(ctx), resource="tabela:" + spec.key, status="concluida",
+            finished_at=now(), read_count=len(items), current_label="", results="[]",
+        ))
+        db.commit()
     return {
         "direction": data.direction,
         # A execução tem de repetir a mesma seleção e as mesmas opções.

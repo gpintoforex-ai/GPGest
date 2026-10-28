@@ -764,3 +764,32 @@ def test_full_entity_sync_keeps_one_entity_per_erp_code(platform, erp):  # noqa:
         assert active["F2"].id == ids["new2"] and db.get(WintouchEntity, ids["old2"]).erp_deleted_at is not None
         assert db.scalar(select(BusinessEntity).where(BusinessEntity.name == "Dois")).wintouch_id == ids["new2"]
         assert len([m for m in db.scalars(select(WintouchEntity)) if m.code == "F3" and m.erp_deleted_at is None]) == 2
+
+
+def test_setup_requires_syncing_erp_tables_and_counts_a_clean_comparison(platform, erp):  # noqa: F811
+    from app.models import CompanySetup, now
+
+    client, _ = platform
+    company, _ = company_with_erp(client, "setup-tabelas-erp", writes=False)
+    with tenant(company) as db:
+        db.add(CompanySetup(id="default", step="summary", completed_at=now()))
+        db.commit()
+    status = client.get("/api/setup/status").json()
+    tables = {t["key"]: t for t in status["table_sync"]}
+    # Pela ordem das dependências: prazos antes das entidades.
+    keys = list(tables)
+    assert keys.index("payment_terms") < keys.index("suppliers") and all(not t["synced_at"] for t in tables.values())
+    assert any(p.startswith("Sincronizar as tabelas com o ERP:") and "Prazos de pagamento" in p for p in status["pending"])
+    # Prazos com alterações: só contam depois de executar.
+    erp.add("payment_terms", ID="t30", Code="30DIAS", Name="30 Dias", Days=30, TermType=0, Discount=None)
+    execute(client, "payment_terms", plan(client, "payment_terms", "sync"))
+    for _ in range(50):
+        synced = {t["key"]: t for t in client.get("/api/setup/status").json()["table_sync"]}
+        if synced["payment_terms"]["synced_at"]:
+            break
+        time.sleep(0.1)
+    assert synced["payment_terms"]["synced_at"]
+    # Armazéns sem diferenças: a comparação basta para ficar sincronizada.
+    assert all(i["action"] == "ignorar" for i in plan(client, "warehouses", "sync")["items"])
+    synced = {t["key"]: t for t in client.get("/api/setup/status").json()["table_sync"]}
+    assert synced["warehouses"]["synced_at"] and not synced["suppliers"]["synced_at"]

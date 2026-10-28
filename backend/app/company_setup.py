@@ -211,11 +211,50 @@ def touch(row, user):
     row.updated_at, row.updated_by = now(), user.id
 
 
+# Tabelas a sincronizar depois de ligar a empresa ao ERP, pela ordem das dependências
+# (os prazos e as rubricas são usados pelas entidades; os tipos de documento pelas compras).
+TABLE_SYNC_ORDER = ("payment_terms", "categories", "document_types", "warehouses", "customers", "suppliers")
+
+
+def table_sync(db, company):
+    """Estado da primeira sincronização de cada tabela ligada ao ERP (só com a ligação ativa).
+
+    Conta como sincronizada a tabela com uma sincronização concluída ou comparada sem diferenças.
+    """
+    from .table_framework import TABLES, Context, erp_status
+
+    enterprise = (company.get("api_enterprise") or "").strip()
+    if company.get("operating_mode") != "integrated" or not company.get("api_active") or not enterprise:
+        return []
+    keys = [key for key in TABLE_SYNC_ORDER if key in TABLES and TABLES[key].erp is not None]
+    last = dict(db.execute(
+        select(WintouchSyncRun.resource, func.max(WintouchSyncRun.finished_at))
+        .where(
+            WintouchSyncRun.enterprise_id == enterprise,
+            WintouchSyncRun.status == "concluida",
+            WintouchSyncRun.resource.in_(["tabela:" + key for key in keys]),
+        )
+        .group_by(WintouchSyncRun.resource)
+    ).all())
+    result = []
+    for key in keys:
+        spec = TABLES[key]
+        status = erp_status(Context(db=db, user=None, spec=spec), spec)
+        if not status["available"] or not status["operations"]["read"]["supported"]:
+            continue  # Recurso desligado nas opções da integração: não é exigido.
+        synced = last.get("tabela:" + key)
+        result.append({"key": key, "title": spec.title, "synced_at": synced.isoformat() if synced else None})
+    return result
+
+
 def pending(db, raw, row, company):
     data = SetupData(**public_draft(raw))
     result = []
     if data.mode.mode == "integrated" and (data.mode.defer or not tested(row, raw, company)):
         result.append("Configurar e testar a ligação ao ERP")
+    unsynced = [t["title"] for t in table_sync(db, company) if not t["synced_at"]]
+    if unsynced:
+        result.append("Sincronizar as tabelas com o ERP: " + ", ".join(unsynced))
     terminals = [t for t in data.terminals if "terminals" not in data.skipped or t.id]
     accounts = [a for a in data.accounts if "banks" not in data.skipped or a.id]
     if any(p.selected and p.key == "cartao" for p in data.payments) and not terminals:
@@ -246,7 +285,8 @@ def overview(db, company=None):
     raw = unpack(row.draft) if row and row.draft != "{}" else initial(db, company)
     return {"started": bool(row), "completed": bool(row and row.completed_at), "revision": row.revision if row else 0,
             "step": row.step if row else "company", "progress": 100 if row and row.completed_at else round(STEPS.index(row.step) / len(STEPS) * 100) if row else 0,
-            "pending": pending(db, raw, row, company), "updated_at": row.updated_at.isoformat() if row else None}
+            "pending": pending(db, raw, row, company), "updated_at": row.updated_at.isoformat() if row else None,
+            "table_sync": table_sync(db, company)}
 
 
 def view(db, company, serial):

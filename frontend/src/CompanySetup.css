@@ -10,3 +10,14 @@
 @media(max-width:540px) { .setup-widget { padding:20px; gap:14px; }.setup-widget-icon { width:43px; height:43px; border-radius:12px; }.setup-widget h2 { font-size:1.1rem; }.setup-widget p { font-size:.86rem; }.setup-widget-copy { flex-basis:calc(100% - 60px); }.setup-widget > button { width:100%; margin:0; justify-content:center; }.setup-dialog { width:100vw; height:100dvh; max-height:100dvh; border-radius:0; border:0; }.setup-dialog-header { padding:14px 16px; }.setup-dialog-header h2 { font-size:1.12rem; }.setup-dialog-header small { font-size:.63rem; }.setup-content { padding:20px 16px; }.setup-grid,.setup-check-grid,.setup-mode-options { grid-template-columns:1fr; }.setup-record { padding:16px; }.setup-record-title { align-items:flex-start; flex-direction:column; gap:6px; }.setup-remove { align-self:flex-end; }.setup-payment-title { flex-wrap:wrap; }.setup-footer { padding:10px 12px; }.setup-footer-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }.setup-footer button { font-size:.72rem; justify-content:center; padding:8px; }.setup-next-actions { grid-template-columns:1fr; }.setup-completed { padding:30px 20px; } }
 .setup-vat > .footnote { grid-column:1/-1; }
 @media(max-width:540px) { .setup-footer-actions > .primary { grid-column:1/-1; } }
+/* Sincronização das tabelas com o ERP (depois de ligar a empresa). */
+.setup-table-sync { margin:18px 0; padding:16px 18px; border:1px solid #d2deed; border-radius:12px; background:#f8faff; text-align:left; display:flex; flex-direction:column; gap:10px; }
+.setup-table-sync h3 { display:flex; align-items:center; gap:8px; margin:0; font-size:1rem; }
+.setup-table-sync p { margin:0; font-size:.87rem; line-height:1.6; }
+.setup-table-sync ol { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.setup-table-sync li { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:10px 12px; border:1px solid #e8d19c; border-radius:9px; background:#fff8e8; }
+.setup-table-sync li.is-synced { border-color:#afd3c2; background:#f4faf7; }
+.setup-table-sync li > span { display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; }
+.setup-table-sync li > span svg { flex:none; color:#9a6419; }
+.setup-table-sync li.is-synced > span svg { color:#147153; }
+.setup-table-sync li small { color:#56708a; font-size:.8rem; }
