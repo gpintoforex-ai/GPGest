@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, CircleAlert, ExternalLink, Eye, EyeOff, FileText, PackagePlus, Plus, Search, Trash2 } from "lucide-react";
+import { CheckCircle2, CircleAlert, ExternalLink, Eye, EyeOff, FileText, PackagePlus, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
@@ -115,6 +115,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
   onDone: (message: string) => void;
 }) {
   const [supplierTable, setSupplierTable] = useState<TableInfo | null>(null);
+  const [supplierRecordId, setSupplierRecordId] = useState("");
   const [supplierName, setSupplierName] = useState("");
   const [documents, setDocuments] = useState<Row[] | null>(null);
   const [filter, setFilter] = useState("");
@@ -198,6 +199,35 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
     } finally {
       setBusy(false);
     }
+  }
+
+  async function editSupplier() {
+    const supplier = result?.suppliers.find((s: Row) => s.id === header.supplier_id);
+    if (!supplier) return;
+    setError("");
+    try {
+      const table: TableInfo = await api("/tables/suppliers");
+      if (!table.permissions.edit) throw new Error("Sem autorização para editar fornecedores.");
+      setSupplierRecordId(supplier.record_id || (supplier.id.startsWith("wt:") ? supplier.id : `local:${supplier.id}`));
+      setSupplierTable(table);
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function supplierSaved() {
+    setSupplierTable(null);
+    if (!supplierRecordId) return;
+    try {
+      const suppliers: Row[] = await api("/purchase-receiving/suppliers");
+      setResult(current => current && { ...current, suppliers });
+      const updated = suppliers.find(s => s.record_id === supplierRecordId);
+      const previous = result?.suppliers.find((s: Row) => s.id === header.supplier_id);
+      if (updated) setHeader(current => ({
+        ...current, supplier_id: updated.id,
+        ...(current.due_date === dueDate(current.document_date, previous?.payment_term) || current.due_date === current.document_date
+          ? { due_date: dueDate(current.document_date, updated.payment_term) || current.document_date } : {}),
+      }));
+      else setHeader(current => ({ ...current, supplier_id: "" }));
+    } catch (e) { setError(`Fornecedor guardado, mas não foi possível atualizar os dados: ${(e as Error).message}`); }
   }
 
   const change = (index: number, patch: Row) => setLines(current => current.map((line, i) => (i === index ? { ...line, ...patch } : line)));
@@ -320,14 +350,19 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
     {reading && !result && busy && <Processing label="A ler a fatura (nas digitalizações o OCR pode demorar alguns segundos)" />}
     {reading && result && <>
       <div className="procurement-grid">
+        <div>
         <SupplierPicker
           items={result.suppliers}
           selectedName={result.suppliers.find((s: Row) => s.id === header.supplier_id)?.name || ""}
           loading={false}
           canCreate
           onSelect={supplier => setHeader(current => ({ ...current, supplier_id: supplier?.id || "" }))}
-          onRequestCreate={name => { setSupplierName(name); api("/tables/suppliers").then(setSupplierTable).catch(e => setError(e.message)); }}
+          onRequestCreate={name => { setSupplierRecordId(""); setSupplierName(name); api("/tables/suppliers").then(setSupplierTable).catch(e => setError(e.message)); }}
         />
+        <ActionButton type="button" disabled={busy || !header.supplier_id} onClick={editSupplier}>
+          <Pencil size={16} aria-hidden="true" />Editar fornecedor
+        </ActionButton>
+        </div>
         <Field label="Documento do fornecedor"><input required value={header.document} onChange={e => setHeader({ ...header, document: e.target.value })} /></Field>
         <Field label="Data do documento"><input required type="date" value={header.document_date} onChange={e => setHeader({ ...header, document_date: e.target.value })} /></Field>
         <Field label="Armazém de entrada"><select required value={header.warehouse_id} onChange={e => setHeader({ ...header, warehouse_id: e.target.value })}>
@@ -350,14 +385,15 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
       </div>
       {!header.supplier_id && <Notice tone="warning">
         {result.document.supplier_nif ? `O NIF ${result.document.supplier_nif} não corresponde a nenhum fornecedor.` : "Não foi possível identificar o fornecedor."} Escolha-o na lista ou crie-o agora.
-        <ActionButton type="button" disabled={busy} onClick={() => { setSupplierName(""); api("/tables/suppliers").then(setSupplierTable).catch(e => setError(e.message)); }}>
+        <ActionButton type="button" disabled={busy} onClick={() => { setSupplierRecordId(""); setSupplierName(""); api("/tables/suppliers").then(setSupplierTable).catch(e => setError(e.message)); }}>
           <PackagePlus size={16} aria-hidden="true" />Criar fornecedor
         </ActionButton>
       </Notice>}
       {supplierTable && <RecordDialog
         table={supplierTable}
         context={{ stores: stores.map(s => ({ id: s.id, name: s.name })), categories: categories.map(c => ({ id: c.id, name: c.name, active: c.active })) }}
-        mode="create"
+        mode={supplierRecordId ? "edit" : "create"}
+        recordId={supplierRecordId || undefined}
         initialValues={{ tax_number: result.document.supplier_nif || "", name: supplierName || result.document.supplier_name || "" }}
         onClose={() => setSupplierTable(null)}
         onCreated={(id, values) => {
@@ -371,7 +407,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
             if (term) setResult(current => current && { ...current, suppliers: current.suppliers.map((s: Row) => s.id === supplierId ? { ...s, payment_term: { name: term.name, term_type: term.term_type, days: term.days } } : s) });
           }).catch(() => undefined);
         }}
-        onSaved={() => setSupplierTable(null)}
+        onSaved={supplierSaved}
       />}
       <ul className="table-sync-summary" aria-label="Leitura da fatura">
         <li className="has-items"><FileText size={16} aria-hidden="true" />{result.source === "rececao" ? "Lançamento gravado" : result.source === "ocr" ? "Lida por OCR" : "Lida do texto do PDF"}</li>

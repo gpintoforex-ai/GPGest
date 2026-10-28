@@ -414,10 +414,16 @@ def register_routes(app, current, authorize, scope, audit):
             if term not in rules:
                 rules[term] = term_rule(db, term)
             result.append({
-                "id": identifier, "name": row["name"], "tax_number": row["tax_number"] or "",
+                "id": identifier, "record_id": key, "name": row["name"], "tax_number": row["tax_number"] or "",
                 "payment_term": rules[term],
             })
         return result
+
+    @app.get("/api/purchase-receiving/suppliers")
+    def supplier_options(user=Depends(current), db: Session = Depends(db_session)):
+        authorize(user, db, roles=ROLES)
+        stock.require(user, stock.settings(db), "view_cost")
+        return suppliers(user, db)
 
     def received(db):
         result = {}
