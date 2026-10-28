@@ -9,7 +9,13 @@ from uuid import uuid4
 
 import pytest
 from app.invoice_lines import extract
-from app.models import ArchiveDocument, BusinessEntity, PurchaseArticleAlias, StockEntry
+from app.models import (
+    ArchiveDocument,
+    BusinessEntity,
+    PaymentTerm,
+    PurchaseArticleAlias,
+    StockEntry,
+)
 from sqlalchemy import select
 from test_inventory import product, stock_case, view  # noqa: F401
 
@@ -76,7 +82,11 @@ def test_unreadable_text_proposes_nothing():
 def receiving(stock_case, monkeypatch):  # noqa: F811
     c, ids, factory, warehouses, store = stock_case
     with factory.begin() as db:
-        supplier = BusinessEntity(name="Fornecedor Natural", tax_number="507475500", is_supplier=True, category_id=ids["category"])
+        term = PaymentTerm(code="30D" + uuid4().hex[:4], name="30 dias", term_type="apos", days=30, discount_basis_points=0, active=True)
+        db.add(term)
+        db.flush()
+        supplier = BusinessEntity(name="Fornecedor Natural", tax_number="507475500", is_supplier=True, category_id=ids["category"],
+                                  payment_term_id=term.id, payment_method_id="transferencia")
         doc = ArchiveDocument(
             source_key="teste:" + uuid4().hex, origin="digitalizacao", doc_type="fatura", mime="application/pdf",
             storage="base_dados", storage_ref="archive_blobs:x", entity_nif="507475500", entity_name="Fornecedor Natural",
@@ -252,7 +262,9 @@ def test_erp_supplier_is_listed_suggests_type_and_gets_a_local_record(receiving,
         erp_id, doc_id = imported.id, doc.id
     original = entities.list_entities
     erp_row = {"id": "wt:" + erp_id, "name": "Fornecedor só no ERP", "tax_number": "509999990", "is_supplier": True,
-               "active": True, "payment_term_id": None, "erp_supplier_payment_term_id": None}
+               "active": True, "payment_term_id": None, "erp_supplier_payment_term_id": None,
+               "erp_supplier_payment_term": "30 dias", "erp_supplier_payment_method": "Transferência",
+               "category_id": case[1]["category"]}
     # A tabela de fornecedores junta as fichas locais e as do ERP (ver entities.list_entities).
     monkeypatch.setattr(entities, "list_entities", lambda user, db: [*original(user, db), erp_row])
     monkeypatch.setattr("app.db.request_company", lambda db: SimpleNamespace(api_enterprise="erp-rececao"))
@@ -304,3 +316,21 @@ def test_rounding_adjustment_matches_the_invoice_total(receiving):
         db.get(ArchiveDocument, doc_id).total_cents = 10054
     refused = c.put(f"/api/purchase-receiving/receipts/{row['id']}?revision={reopened['revision']}", json=body)
     assert refused.status_code == 422 and "excede o acerto" in refused.json()["detail"]
+
+
+def test_document_is_not_posted_without_the_supplier_required_data(receiving):
+    c, sid, doc_id, warehouse, case = receiving
+    with case[2].begin() as db:
+        supplier = db.get(BusinessEntity, sid)
+        supplier.category_id, supplier.payment_method_id = None, None
+    listed = next(s for s in c.get("/api/purchase-receiving/suppliers").json() if s["id"] == sid)
+    assert listed["missing"] == ["Rubrica", "Meio de pagamento"] and listed["payment_term_name"] == "30 dias"
+    assert listed["record_id"] == "local:" + sid
+    refused = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=receipt_body(sid, warehouse, case))
+    assert refused.status_code == 422 and "falta Rubrica, Meio de pagamento" in refused.json()["detail"]
+    with case[2].begin() as db:
+        supplier = db.get(BusinessEntity, sid)
+        supplier.category_id, supplier.payment_method_id = case[1]["category"], "transferencia"
+    complete = next(s for s in c.get("/api/purchase-receiving/suppliers").json() if s["id"] == sid)
+    assert complete["missing"] == [] and complete["payment_method_name"] == "Transferência" and complete["category_name"]
+    assert c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=receipt_body(sid, warehouse, case)).status_code == 200

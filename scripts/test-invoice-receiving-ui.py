@@ -75,8 +75,10 @@ READ = {
     "warnings": [],
     "check": {"lines_total_cents": 8093, "document_base_cents": 8093, "matches": True},
     "suppliers": [
-        {"id": "s1", "name": "Fornecedor Natural", "tax_number": "507475500", "payment_term": {"name": "30 dias", "term_type": "apos", "days": 30}},
-        {"id": "s2", "name": "Ervas do Monte, Lda", "tax_number": "509999990", "payment_term": {"name": "Fim do mês", "term_type": "fim_mes", "days": None}},
+        {"id": "s1", "record_id": "local:s1", "name": "Fornecedor Natural", "tax_number": "507475500", "payment_term": {"name": "30 dias", "term_type": "apos", "days": 30},
+         "payment_term_name": "30 dias", "category_name": "Mercadorias", "payment_method_name": "Transferência", "missing": []},
+        {"id": "s2", "record_id": "wt:e2", "name": "Ervas do Monte, Lda", "tax_number": "509999990", "payment_term": {"name": "Fim do mês", "term_type": "fim_mes", "days": None},
+         "payment_term_name": "Fim do mês", "category_name": "Mercadorias", "payment_method_name": "", "missing": ["Meio de pagamento"]},
     ],
     "warehouses": [{"id": "w1", "name": "Armazém principal", "store_id": "store-1"}],
 }
@@ -198,8 +200,16 @@ with sync_playwright() as p:
     expect(dialog.get_by_role("option", name="Fornecedor Natural", exact=False)).to_have_count(0)
     dialog.get_by_role("option", name="Ervas do Monte, Lda", exact=False).click()
     expect(dialog.get_by_label("Prazo de pagamento", exact=True)).to_have_value("Fim do mês")
+    # Ficha incompleta (sem meio de pagamento): aviso com «Editar fornecedor» e documento por lançar.
+    expect(dialog.get_by_label("Meio de pagamento do fornecedor", exact=True)).to_have_value("Sem meio na ficha do fornecedor")
+    expect(dialog.get_by_text("está incompleta: falta Meio de pagamento", exact=False)).to_be_visible()
+    expect(dialog.get_by_role("button", name="Editar fornecedor")).to_have_count(2)
+    page.screenshot(path=str(OUT / "supplier-incomplete.png"))
     picker.fill("507475")
     dialog.get_by_role("option", name="Fornecedor Natural", exact=False).click()
+    expect(dialog.get_by_label("Rubrica", exact=True)).to_have_value("Mercadorias")
+    expect(dialog.get_by_label("Meio de pagamento do fornecedor", exact=True)).to_have_value("Transferência")
+    expect(dialog.get_by_role("button", name="Editar fornecedor")).to_have_count(1)
     # Linhas que precisam de artigo (criar/associar) a vermelho, com texto.
     expect(dialog.get_by_text("1 linha precisa de artigo", exact=False)).to_be_visible()
     omega_line = dialog.locator("fieldset.invoice-receiving-line.needs-article")

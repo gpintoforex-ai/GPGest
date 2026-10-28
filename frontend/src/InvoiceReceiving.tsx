@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, CircleAlert, ExternalLink, Eye, EyeOff, FileText, PackagePlus, Plus, Search, Trash2 } from "lucide-react";
+import { CheckCircle2, CircleAlert, ExternalLink, Eye, EyeOff, FileText, PackagePlus, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
@@ -116,6 +116,8 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
 }) {
   const [supplierTable, setSupplierTable] = useState<TableInfo | null>(null);
   const [supplierName, setSupplierName] = useState("");
+  // Ficha do fornecedor aberta para editar (rubrica, prazo, meio de pagamento…) sem sair da receção.
+  const [editingSupplier, setEditingSupplier] = useState<{ table: TableInfo; recordId: string } | null>(null);
   const [documents, setDocuments] = useState<Row[] | null>(null);
   const [filter, setFilter] = useState("");
   const [reading, setReading] = useState<Row | null>(null);
@@ -220,6 +222,21 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
     return { rows, base, vat, total: base + vat };
   }, [lines, globalDiscount]);
   const unresolved = included.filter(line => line.choice === OTHER);
+  const chosenSupplier: Row | undefined = result?.suppliers.find((s: Row) => s.id === header.supplier_id);
+  const supplierMissing: string[] = chosenSupplier?.missing || [];
+
+  /** Depois de editar a ficha: lista atualizada; o fornecedor escolhido mantém-se (pela ficha da tabela). */
+  async function refreshSuppliers(recordId: string) {
+    const list: Row[] = await api("/purchase-receiving/suppliers");
+    const same = list.find(s => s.record_id === recordId);
+    setResult(current => current && { ...current, suppliers: list });
+    if (same) setHeader(current => ({ ...current, supplier_id: same.id }));
+  }
+  function editSupplier() {
+    if (!chosenSupplier?.record_id) return;
+    setError("");
+    api("/tables/suppliers").then((table: TableInfo) => setEditingSupplier({ table, recordId: chosenSupplier.record_id })).catch(e => setError((e as Error).message));
+  }
   // Diferença para a fatura do arquivo, por componente; o acerto iguala-a (só arredondamentos).
   const gap = useMemo(() => {
     const doc = result?.document;
@@ -320,14 +337,17 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
     {reading && !result && busy && <Processing label="A ler a fatura (nas digitalizações o OCR pode demorar alguns segundos)" />}
     {reading && result && <>
       <div className="procurement-grid">
-        <SupplierPicker
-          items={result.suppliers}
-          selectedName={result.suppliers.find((s: Row) => s.id === header.supplier_id)?.name || ""}
-          loading={false}
-          canCreate
-          onSelect={supplier => setHeader(current => ({ ...current, supplier_id: supplier?.id || "" }))}
-          onRequestCreate={name => { setSupplierName(name); api("/tables/suppliers").then(setSupplierTable).catch(e => setError(e.message)); }}
-        />
+        <div className="invoice-receiving-supplier">
+          <SupplierPicker
+            items={result.suppliers}
+            selectedName={chosenSupplier?.name || ""}
+            loading={false}
+            canCreate
+            onSelect={supplier => setHeader(current => ({ ...current, supplier_id: supplier?.id || "" }))}
+            onRequestCreate={name => { setSupplierName(name); api("/tables/suppliers").then(setSupplierTable).catch(e => setError(e.message)); }}
+          />
+          {chosenSupplier && <ActionButton type="button" className="invoice-receiving-supplier-edit" aria-label="Editar fornecedor" title="Editar a ficha do fornecedor (rubrica, prazo, meio de pagamento)" disabled={busy} onClick={editSupplier}><Pencil size={16} aria-hidden="true" /></ActionButton>}
+        </div>
         <Field label="Documento do fornecedor"><input required value={header.document} onChange={e => setHeader({ ...header, document: e.target.value })} /></Field>
         <Field label="Data do documento"><input required type="date" value={header.document_date} onChange={e => setHeader({ ...header, document_date: e.target.value })} /></Field>
         <Field label="Armazém de entrada"><select required value={header.warehouse_id} onChange={e => setHeader({ ...header, warehouse_id: e.target.value })}>
@@ -340,7 +360,9 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           const term = result.suppliers.find((s: Row) => s.id === header.supplier_id)?.payment_term;
           const due = dueDate(header.document_date, term);
           return <>
-            <Field label="Prazo de pagamento"><input readOnly value={header.supplier_id ? term?.name || "Sem prazo na ficha do fornecedor" : "—"} title="Definido na ficha do fornecedor (Tabelas → Fornecedores)." /></Field>
+            <Field label="Prazo de pagamento"><input readOnly value={header.supplier_id ? term?.name || chosenSupplier?.payment_term_name || "Sem prazo na ficha do fornecedor" : "—"} title="Definido na ficha do fornecedor (Tabelas → Fornecedores)." /></Field>
+            <Field label="Rubrica"><input readOnly value={header.supplier_id ? chosenSupplier?.category_name || "Sem rubrica na ficha do fornecedor" : "—"} title="Definida na ficha do fornecedor (Tabelas → Fornecedores)." /></Field>
+            <Field label="Meio de pagamento do fornecedor"><input readOnly value={header.supplier_id ? chosenSupplier?.payment_method_name || "Sem meio na ficha do fornecedor" : "—"} title="Definido na ficha do fornecedor (Tabelas → Fornecedores)." /></Field>
             <ReceiptFinance supplierId={header.supplier_id} documentDate={header.document_date} defaultDueDate={due || undefined}
               suggestedTypeId={editReceipt ? null : result.document.suggested_document_type_id}
               value={{ document_type_id: header.document_type_id || "", payment_method: header.payment_method || "", due_date: header.due_date || header.document_date, credit_note_purchase_ids: header.credit_note_purchase_ids || [] }}
@@ -354,6 +376,18 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           <PackagePlus size={16} aria-hidden="true" />Criar fornecedor
         </ActionButton>
       </Notice>}
+      {chosenSupplier && supplierMissing.length > 0 && <Notice tone="warning">
+        A ficha de «{chosenSupplier.name}» está incompleta: falta {supplierMissing.join(", ")}. Complete-a para poder lançar o documento.
+        <ActionButton type="button" disabled={busy} onClick={editSupplier}><Pencil size={16} aria-hidden="true" />Editar fornecedor</ActionButton>
+      </Notice>}
+      {editingSupplier && <RecordDialog
+        table={editingSupplier.table}
+        context={{ stores: stores.map(s => ({ id: s.id, name: s.name })), categories: categories.map(c => ({ id: c.id, name: c.name, active: c.active })) }}
+        mode="edit"
+        recordId={editingSupplier.recordId}
+        onClose={() => setEditingSupplier(null)}
+        onSaved={() => { const recordId = editingSupplier.recordId; setEditingSupplier(null); refreshSuppliers(recordId).catch(e => setError((e as Error).message)); }}
+      />}
       {supplierTable && <RecordDialog
         table={supplierTable}
         context={{ stores: stores.map(s => ({ id: s.id, name: s.name })), categories: categories.map(c => ({ id: c.id, name: c.name, active: c.active })) }}
@@ -363,8 +397,10 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
         onCreated={(id, values) => {
           // A ficha devolve o identificador da tabela («local:…»); a receção usa o da entidade.
           const supplierId = id.replace(/^local:/, "");
-          setResult(current => current && { ...current, suppliers: [...current.suppliers, { id: supplierId, name: values.name, tax_number: values.tax_number, payment_term: null }] });
+          setResult(current => current && { ...current, suppliers: [...current.suppliers, { id: supplierId, record_id: id, name: values.name, tax_number: values.tax_number, payment_term: null, missing: [] }] });
           setHeader(current => ({ ...current, supplier_id: supplierId }));
+          // Rubrica, prazo e meio da ficha nova (e o que ainda falte) vêm da lista atualizada.
+          refreshSuppliers(id).catch(() => undefined);
           // O prazo escolhido na ficha nova passa logo para o cabeçalho (vencimento).
           if (values.payment_term_id) api("/payment-terms").then((terms: Row[]) => {
             const term = terms.find(t => t.id === values.payment_term_id);
@@ -489,7 +525,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
       <div className="ui-dialog-actions">
         <span className="invoice-receiving-total">{plural(included.length, "linha", "linhas")} · {money(total)} sem IVA</span>
         {!editReceipt && <ActionButton type="button" disabled={busy} onClick={() => { setReading(null); setResult(null); }}><Search size={16} aria-hidden="true" />Outra fatura</ActionButton>}
-        <ActionButton type="button" className="primary" disabled={busy || !included.length || !header.supplier_id || !header.warehouse_id || !header.document_type_id || unresolved.length > 0 || (!!editReceipt && !result.receipt?.editable)} onClick={confirm}>
+        <ActionButton type="button" className="primary" disabled={busy || !included.length || !header.supplier_id || supplierMissing.length > 0 || !header.warehouse_id || !header.document_type_id || unresolved.length > 0 || (!!editReceipt && !result.receipt?.editable)} onClick={confirm}>
           {busy ? "A registar…" : editReceipt ? `Guardar alterações (${included.length})` : `Confirmar receção (${included.length})`}
         </ActionButton>
       </div>

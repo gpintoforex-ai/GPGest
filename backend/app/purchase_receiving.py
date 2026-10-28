@@ -386,12 +386,19 @@ def register_routes(app, current, authorize, scope, audit):
         return doc
 
     def suppliers(user, db):
-        """Fornecedores ativos da tabela (fichas locais e do ERP), com o prazo de pagamento.
+        """Fornecedores ativos da tabela (fichas locais e do ERP), com rubrica, prazo e meio de pagamento.
 
         Um fornecedor do ERP já com ficha local usa o identificador dessa ficha; sem ela, fica
-        «wt:…» e a ficha local é criada ao confirmar a receção (procurement.supplier).
+        «wt:…» e a ficha local é criada ao confirmar a receção (procurement.supplier). `record_id`
+        é o identificador na tabela de Fornecedores (para abrir e editar a ficha) e `missing` os
+        dados obrigatórios em falta, sem os quais o documento não é lançado.
         """
+        from .cash_local import method_catalog
         from .entities import list_entities
+        from .models import Category
+
+        categories = dict(db.execute(select(Category.id, Category.name)).all())
+        methods = {m["id"]: m["name"] for m in method_catalog(db)}
 
         rows = [r for r in list_entities(user, db) if r["is_supplier"] and r["active"]]
         erp_ids = [r["id"].removeprefix("wt:") for r in rows if r["id"].startswith("wt:")]
@@ -413,11 +420,36 @@ def register_routes(app, current, authorize, scope, audit):
             term = row.get("payment_term_id") or row.get("erp_supplier_payment_term_id")
             if term not in rules:
                 rules[term] = term_rule(db, term)
+            term_name = (rules[term] or {}).get("name") or row.get("erp_supplier_payment_term") or ""
+            category = categories.get(row.get("category_id")) or ""
+            method = methods.get(row.get("payment_method_id")) or row.get("erp_supplier_payment_method") or ""
+            nif = (row["tax_number"] or "").strip()
+            missing = [label for label, value in (
+                ("NIF", nif), ("Rubrica", category), ("Prazo de pagamento", term_name), ("Meio de pagamento", method),
+            ) if not value]
             result.append({
-                "id": identifier, "name": row["name"], "tax_number": row["tax_number"] or "",
-                "payment_term": rules[term],
+                "id": identifier, "record_id": key, "name": row["name"], "tax_number": nif,
+                "payment_term": rules[term], "payment_term_name": term_name,
+                "category_id": row.get("category_id"), "category_name": category, "payment_method_name": method,
+                "missing": missing,
             })
         return result
+
+    def require_complete(user, db, supplier_id):
+        """Não lança o documento sem os dados obrigatórios da ficha do fornecedor."""
+        chosen = next((s for s in suppliers(user, db) if s["id"] == supplier_id), None)
+        if chosen and chosen["missing"]:
+            fail(
+                f"Complete a ficha do fornecedor «{chosen['name']}» antes de lançar o documento: "
+                f"falta {', '.join(chosen['missing'])}. Use «Editar fornecedor»."
+            )
+
+    @app.get("/api/purchase-receiving/suppliers")
+    def supplier_list(user=Depends(current), db: Session = Depends(db_session)):
+        """Lista atualizada (por exemplo, depois de editar a ficha do fornecedor na receção)."""
+        authorize(user, db, roles=ROLES)
+        stock.require(user, stock.settings(db), "view_cost")
+        return suppliers(user, db)
 
     def received(db):
         result = {}
@@ -610,6 +642,7 @@ def register_routes(app, current, authorize, scope, audit):
         if received(db).get(doc.id):
             fail("Esta fatura já tem uma receção de mercadoria registada.", 409)
         warehouse = stock.warehouse(db, user, data.warehouse_id, authorize)
+        require_complete(user, db, data.supplier_id)
         supplier = buying.supplier(db, data.supplier_id)
         lines, created, learned, receiving = prepare(db, user, doc, data, supplier, warehouse)
         draft = draft_for(data, doc, warehouse, supplier, lines, data.request_key)
@@ -717,6 +750,7 @@ def register_routes(app, current, authorize, scope, audit):
         warehouse = stock.warehouse(db, user, data.warehouse_id, authorize)
         if warehouse.store_id != row.store_id:
             fail("A edição tem de manter o estabelecimento da receção.", 409)
+        require_complete(user, db, data.supplier_id)
         supplier = buying.supplier(db, data.supplier_id)
         lines, created, learned, receiving = prepare(db, user, doc, data, supplier, warehouse)
         draft = draft_for(data, doc, warehouse, supplier, lines, row.request_key)

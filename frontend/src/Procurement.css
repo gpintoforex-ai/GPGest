@@ -90,3 +90,7 @@ div.invoice-receiving-result p { margin: 0; flex: 1 1 280px; }
 .receipt-finance-effect { grid-column: 1 / -1; margin: 0; }
 .receipt-finance-invoices { grid-column: 1 / -1; display: grid; gap: 4px; margin: 0; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; }
 .receipt-finance-invoices legend { padding: 0 6px; font-weight: 600; }
+/* Fornecedor da receção: pesquisa e «Editar fornecedor» lado a lado. */
+.invoice-receiving-supplier { display: flex; align-items: flex-end; gap: 8px; min-width: 0; }
+.invoice-receiving-supplier > :first-child { flex: 1 1 auto; min-width: 0; }
+.invoice-receiving-supplier > .invoice-receiving-supplier-edit { flex: none; min-width: 44px; min-height: 44px; padding: 0; justify-content: center; }
