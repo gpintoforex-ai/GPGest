@@ -272,7 +272,7 @@ def test_erp_supplier_is_listed_suggests_type_and_gets_a_local_record(receiving,
     assert listed["supplier_id"] == "wt:" + erp_id and listed["supplier_name"] == "Fornecedor só no ERP"
     read = c.post(f"/api/purchase-receiving/{doc_id}/read").json()
     assert read["document"]["supplier_id"] == "wt:" + erp_id
-    assert any(s["id"] == "wt:" + erp_id for s in read["suppliers"])
+    assert any(s["id"] == "wt:" + erp_id and s["record_id"] == "wt:" + erp_id for s in read["suppliers"])
     types = {t["code"]: t["id"] for t in c.get("/api/purchase-document-types/options").json()["types"]}
     # FR (fatura-recibo) → compra a dinheiro.
     assert read["document"]["suggested_document_type_id"] == types["FCD"]
@@ -334,3 +334,62 @@ def test_document_is_not_posted_without_the_supplier_required_data(receiving):
     complete = next(s for s in c.get("/api/purchase-receiving/suppliers").json() if s["id"] == sid)
     assert complete["missing"] == [] and complete["payment_method_name"] == "Transferência" and complete["category_name"]
     assert c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=receipt_body(sid, warehouse, case)).status_code == 200
+
+
+@pytest.mark.parametrize("discounts", [("100", "0"), ("0", "100")])
+def test_same_article_on_separate_paid_and_free_lines(receiving, discounts):
+    c, sid, doc_id, warehouse, case = receiving
+    article = product(case, code="REPETIDO", name="Artigo com oferta")
+    body = {
+        "supplier_id": sid, "warehouse_id": warehouse, "document": "FA.2026/3208",
+        "document_date": "2026-10-20", "request_key": str(uuid4()),
+        "lines": [
+            {"article_id": article, "description": "Artigo com oferta", "quantity": str(qty),
+             "price": "10", "discount": discount, "vat": "23"}
+            for qty, discount in zip((2, 3), discounts)
+        ],
+    }
+    response = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert response.status_code == 200, response.text
+    receipt_id = response.json()["receipt_id"]
+    assert response.json()["lines"] == 2
+    assert D(view(case, article)["quantity"]) == 5
+    with case[2]() as db:
+        entries = list(db.scalars(select(StockEntry).where(StockEntry.article_id == article)))
+        assert len(entries) == 2
+        assert sorted(D(entry.unit_cost) for entry in entries) == [D(0), D(10)]
+    reopened = c.get(f"/api/purchase-receiving/receipts/{receipt_id}").json()
+    assert [line["selected"]["article_id"] for line in reopened["lines"]] == [article, article]
+    assert [D(line["discount"]) for line in reopened["lines"]] == list(map(D, discounts))
+    assert c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body).json()["receipt_id"] == receipt_id
+    assert D(view(case, article)["quantity"]) == 5
+
+
+def test_supplier_can_be_edited_and_refreshed_from_receiving(receiving):
+    from app.models import PaymentTerm
+
+    c, sid, _, _, case = receiving
+    with case[2].begin() as db:
+        term = PaymentTerm(code="45DIAS", name="45 dias", term_type="apos", days=45)
+        db.add(term)
+        db.flush()
+        term_id = term.id
+    options = c.get("/api/purchase-receiving/suppliers")
+    assert options.status_code == 200, options.text
+    supplier = next(s for s in options.json() if s["id"] == sid)
+    assert supplier["record_id"] == "local:" + sid
+    path = "/api/tables/suppliers/records/" + supplier["record_id"]
+    details = c.get(path + "/details").json()
+    values = {**details["values"], "name": "Fornecedor atualizado", "payment_term_id": term_id}
+    saved = c.post(path, json={"values": values})
+    assert saved.status_code == 200, saved.text
+    refreshed = next(s for s in c.get("/api/purchase-receiving/suppliers").json() if s["id"] == sid)
+    assert refreshed["name"] == "Fornecedor atualizado"
+    assert refreshed["payment_term"] == {"name": "45 dias", "term_type": "apos", "days": 45}
+
+
+def test_supplier_refresh_requires_receiving_permissions(receiving):
+    c, _, _, _, _ = receiving
+    login = c.post("/api/auth/login", json={"email": "reader@test.pt", "password": "PasswordTest123!"})
+    assert login.status_code == 200
+    assert c.get("/api/purchase-receiving/suppliers").status_code == 403

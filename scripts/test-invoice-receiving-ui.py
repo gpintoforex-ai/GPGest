@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -91,11 +91,14 @@ TYPES = {"types": [
      "default_payment_method": None, "default_due_days": 30, "creates_cash_movement": False, "creates_debt": True},
 ], "methods": [{"id": "numerario", "name": "Numerário"}, {"id": "transferencia", "name": "Transferência"}],
    "open_invoices": [{"id": "pur-1", "document": "FT 1/9", "document_date": "2026-10-01", "amount_cents": 10000, "remaining_cents": 10000}]}
+DOCS.append({**DOCS[0], "id": "d5", "document": "FT REPETIDO/1", "supplier_name": "Fornecedor de ofertas"})
+supplier_updated = False
 sent = []
 
 
 def intercept(route):
-    path = urlsplit(route.request.url).path.removeprefix("/api")
+    global supplier_updated
+    path = unquote(urlsplit(route.request.url).path).removeprefix("/api")
     if path == "/procurement":
         return route.fulfill(json={"documents": [], "can_write": True, "integration_note": ""})
     if path == "/stock/catalog":
@@ -110,6 +113,15 @@ def intercept(route):
         return route.fulfill(json={"rows": DOCS})
     if path.startswith("/archive/documents/") and path.endswith("/file"):
         return route.fulfill(body=PDF, content_type="application/pdf")
+    if path == "/purchase-receiving/d5/read":
+        return route.fulfill(json={**READ, "document": {**READ["document"], "id": "d5"},
+            "lines": [
+                line("Artigo oferecido", "2", "10", discount="100", selected={"article_id": "a1", "code": "1801", "name": "ARTHRON 500", "method": "codigo"}),
+                line("Artigo pago", "3", "10", selected={"article_id": "a2", "code": "1847", "name": "ARTHRON 250mL", "method": "codigo"}),
+            ]})
+    if path == "/purchase-receiving/d5/confirm":
+        sent.append(route.request.post_data_json)
+        return route.fulfill(json={"receipt_id": "r5", "lines": 2, "created_articles": 0})
     if path == "/purchase-receiving/d1/read":
         return route.fulfill(json=READ)
     if path == "/purchase-receiving/d4/read":
@@ -125,6 +137,17 @@ def intercept(route):
     if path == "/purchase-receiving/d3/read":
         unknown = {**READ["document"], "supplier_id": None, "supplier_nif": "503916099", "supplier_name": "Fornecedor Novo"}
         return route.fulfill(json={**READ, "document": unknown})
+    if path == "/purchase-receiving/suppliers":
+        return route.fulfill(json=[{**row, "record_id": "local:" + row["id"],
+            **({"name": "Fornecedor Natural atualizado", "payment_term": {"name": "45 dias", "term_type": "apos", "days": 45}} if row["id"] == "s1" and supplier_updated else {})}
+            for row in READ["suppliers"]])
+    if path == "/tables/suppliers/records/local:s1/details":
+        return route.fulfill(json={"id": "local:s1", "values": {"name": "Fornecedor Natural", "tax_number": "507475500", "active": True},
+            "labels": {}, "active": True, "dependencies": [], "managed_fields": []})
+    if path == "/tables/suppliers/records/local:s1" and route.request.method == "POST":
+        assert route.request.post_data_json["values"]["name"] == "Fornecedor Natural atualizado"
+        supplier_updated = True
+        return route.fulfill(json={"id": "local:s1"})
     if path == "/tables/suppliers":
         return route.fulfill(json=SUPPLIERS)
     if path == "/payment-terms":
@@ -210,6 +233,19 @@ with sync_playwright() as p:
     expect(dialog.get_by_label("Rubrica", exact=True)).to_have_value("Mercadorias")
     expect(dialog.get_by_label("Meio de pagamento do fornecedor", exact=True)).to_have_value("Transferência")
     expect(dialog.get_by_role("button", name="Editar fornecedor")).to_have_count(1)
+
+
+    # Editar a ficha sem sair da receção: preserva linhas e atualiza nome e prazo.
+    dialog.get_by_role("button", name="Editar fornecedor", exact=True).click()
+    supplier_editor = page.get_by_role("dialog", name="Editar fornecedor", exact=True)
+    # Espera pela ficha carregada; escrever antes seria substituído pelos dados lidos.
+    expect(supplier_editor.get_by_role("textbox", name="Nome", exact=False)).to_have_value("Fornecedor Natural")
+    supplier_editor.get_by_role("textbox", name="Nome", exact=False).fill("Fornecedor Natural atualizado")
+    supplier_editor.get_by_role("button", name="Guardar alterações", exact=True).click()
+    expect(supplier_editor).to_have_count(0)
+    expect(picker).to_have_value("Fornecedor Natural atualizado")
+    expect(dialog.get_by_label("Prazo de pagamento", exact=True)).to_have_value("45 dias")
+    expect(arthron).to_have_value("a1")
     # Linhas que precisam de artigo (criar/associar) a vermelho, com texto.
     expect(dialog.get_by_text("1 linha precisa de artigo", exact=False)).to_be_visible()
     omega_line = dialog.locator("fieldset.invoice-receiving-line.needs-article")
@@ -222,17 +258,27 @@ with sync_playwright() as p:
     dialog.get_by_label("Procurar artigo", exact=True).fill("1847 · ARTHRON 250mL")
     expect(arthron).to_have_value("a2")
     arthron.select_option("a1")
-    # Tipo de documento obrigatório: FC (crédito) propõe o vencimento pelo prazo do fornecedor (30 dias).
+    # Tipo de documento obrigatório: FC (crédito) propõe o vencimento pelo prazo do fornecedor (45 dias, após editar a ficha).
     expect(dialog.get_by_role("button", name="Confirmar receção (2)")).to_be_disabled()
     dialog.get_by_label("Tipo de documento", exact=True).select_option("t-fc")
-    expect(dialog.get_by_label("Vencimento", exact=True)).to_have_value("2026-11-19")
+    expect(dialog.get_by_label("Vencimento", exact=True)).to_have_value("2026-12-04")
     expect(dialog.get_by_text("dívida ao fornecedor e movimento previsto no vencimento", exact=False)).to_be_visible()
+    # Uma data de vencimento ajustada à mão não é substituída ao guardar a entidade.
+    dialog.get_by_label("Vencimento", exact=True).fill("2026-12-10")
+    dialog.get_by_role("button", name="Editar fornecedor", exact=True).click()
+    supplier_editor = page.get_by_role("dialog", name="Editar fornecedor", exact=True)
+    # Espera pela ficha carregada; escrever antes seria substituído pelos dados lidos.
+    expect(supplier_editor.get_by_role("textbox", name="Nome", exact=False)).to_have_value("Fornecedor Natural")
+    supplier_editor.get_by_role("textbox", name="Nome", exact=False).fill("Fornecedor Natural atualizado")
+    supplier_editor.get_by_role("button", name="Guardar alterações", exact=True).click()
+    expect(supplier_editor).to_have_count(0)
+    expect(dialog.get_by_label("Vencimento", exact=True)).to_have_value("2026-12-10")
     dialog.get_by_role("button", name="Confirmar receção (2)").click()
     expect(page.get_by_text("Receção registada: 2 linhas em stock, 1 artigos novos criados.")).to_be_visible()
     body = sent[0]
     assert body["supplier_id"] == "s1" and body["warehouse_id"] == "w1" and len(body["lines"]) == 2
     assert body["global_discount"] == "20" and body["lines"][0]["price"] == "29.08" and body["lines"][0]["discount"] == "0"
-    assert body["document_type_id"] == "t-fc" and body["due_date"] == "2026-11-19" and body["payment_method"] is None
+    assert body["document_type_id"] == "t-fc" and body["due_date"] == "2026-12-10" and body["payment_method"] is None
     assert body["lines"][1]["quantity"] == "1" and body["lines"][1]["bonus"] == "1"
     assert body["lines"][0]["article_id"] == "a1" and body["lines"][0]["lot"] == "20113" and body["lines"][0]["expiry"] == "2029-07-16"
     assert body["lines"][1]["new_article"]["code"] == "5600493200595" and body["lines"][1]["new_article"]["lots"] is True
@@ -296,6 +342,25 @@ with sync_playwright() as p:
     assert manual_body["lines"][0]["price"] == "27.73" and manual_body["lines"][0]["vat"] == "6"
     assert manual_body["document_type_id"] == "t-ncc" and manual_body["credit_note_purchase_ids"] == ["pur-1"]
     assert manual_body["match_document_totals"] is True and body["match_document_totals"] is False
+    # Duas linhas já associadas: procurar o mesmo artigo fora das sugestões,
+    # preservando a oferta a 100 % separada da linha paga.
+    page.get_by_role("button", name="Receção a partir de fatura", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Receção a partir de fatura")
+    dialog.get_by_role("row").filter(has_text="FT REPETIDO/1").get_by_role("button", name="Ler fatura").click()
+    for description in ("Artigo oferecido", "Artigo pago"):
+        article = dialog.get_by_label(f"Artigo de {description}", exact=True)
+        article.select_option("__outro__")
+        dialog.get_by_label("Procurar artigo", exact=True).fill("1478 · OMEGA 3 ULTRA 60CAPS")
+        expect(article).to_have_value("a3")
+        expect(article.locator("option:checked")).to_have_text("1478 · OMEGA 3 ULTRA 60CAPS")
+    expect(dialog.get_by_label("Desconto (%)", exact=True).nth(0)).to_have_value("100")
+    expect(dialog.get_by_label("Desconto (%)", exact=True).nth(1)).to_have_value("0")
+    dialog.get_by_label("Tipo de documento", exact=True).select_option("t-fc")
+    dialog.get_by_role("button", name="Confirmar receção (2)").click()
+    expect(dialog).to_have_count(0)
+    repeated = sent[-1]["lines"]
+    assert [row["article_id"] for row in repeated] == ["a3", "a3"]
+    assert [row["discount"] for row in repeated] == ["100", "0"]
     # Telemóvel: sem deslocação horizontal.
     page.set_viewport_size({"width": 390, "height": 844})
     page.get_by_role("button", name="Receção a partir de fatura", exact=True).click()

@@ -229,13 +229,23 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
   async function refreshSuppliers(recordId: string) {
     const list: Row[] = await api("/purchase-receiving/suppliers");
     const same = list.find(s => s.record_id === recordId);
+    const previous = result?.suppliers.find((s: Row) => s.id === header.supplier_id);
     setResult(current => current && { ...current, suppliers: list });
-    if (same) setHeader(current => ({ ...current, supplier_id: same.id }));
+    if (same) setHeader(current => ({
+      ...current, supplier_id: same.id,
+      // O vencimento ainda proposto (não alterado à mão) acompanha o prazo atual da ficha.
+      ...(current.due_date === dueDate(current.document_date, previous?.payment_term) || current.due_date === current.document_date
+        ? { due_date: dueDate(current.document_date, same.payment_term) || current.document_date } : {}),
+    }));
   }
   function editSupplier() {
-    if (!chosenSupplier?.record_id) return;
+    if (!chosenSupplier) return;
     setError("");
-    api("/tables/suppliers").then((table: TableInfo) => setEditingSupplier({ table, recordId: chosenSupplier.record_id })).catch(e => setError((e as Error).message));
+    const recordId = chosenSupplier.record_id || (chosenSupplier.id.startsWith("wt:") ? chosenSupplier.id : `local:${chosenSupplier.id}`);
+    api("/tables/suppliers").then((table: TableInfo) => {
+      if (!table.permissions.edit) throw new Error("Sem autorização para editar fornecedores.");
+      setEditingSupplier({ table, recordId });
+    }).catch(e => setError((e as Error).message));
   }
   // Diferença para a fatura do arquivo, por componente; o acerto iguala-a (só arredondamentos).
   const gap = useMemo(() => {
@@ -443,7 +453,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
             <select aria-label={`Artigo de ${line.description}`} value={line.choice} disabled={!line.include} onChange={e => change(index, { choice: e.target.value })}>
               {line.selected && <option value={line.selected.article_id}>{line.selected.code} · {line.selected.name} ({METHODS[line.selected.method]})</option>}
               {line.suggestions.filter((s: Row) => s.article_id !== line.selected?.article_id).map((s: Row) => <option key={s.article_id} value={s.article_id}>{s.code} · {s.name} (semelhante {Math.round(s.score * 100)} %)</option>)}
-              {line.choice !== NEW && line.choice !== OTHER && !line.selected && !line.suggestions.some((s: Row) => s.article_id === line.choice) && <option value={line.choice}>{active.find(a => a.id === line.choice)?.name || "Artigo escolhido"}</option>}
+              {line.choice !== NEW && line.choice !== OTHER && line.choice !== line.selected?.article_id && !line.suggestions.some((s: Row) => s.article_id === line.choice) && <option value={line.choice}>{(() => { const chosen = active.find(a => a.id === line.choice); return chosen ? `${chosen.code} · ${chosen.name}` : "Artigo escolhido"; })()}</option>}
               <option value={NEW}>Criar artigo novo</option>
               <option value={OTHER}>Procurar outro artigo…</option>
             </select>
