@@ -14,6 +14,7 @@ from . import db as database
 from .access import authorize, current, record
 from .db import db_session
 from .models import (
+    ArticleSupplierTerms,
     BusinessEntity,
     CashSession,
     Category,
@@ -134,6 +135,7 @@ def annotate_entity_movement_history(entities, db):
     )
     order_entities.update(db.scalars(select(CustomerPurchaseSimulation.supplier_id)))
     order_entities.update(db.scalars(select(SupplierOrderTerms.supplier_id)))
+    order_entities.update(db.scalars(select(ArticleSupplierTerms.supplier_id)))
     for entity in db.scalars(select(BusinessEntity).where(BusinessEntity.id.in_(order_entities))):
         referenced_ids.update([entity.id, "local:" + entity.id])
         if entity.wintouch_id:

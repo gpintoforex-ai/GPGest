@@ -1394,6 +1394,40 @@ class PurchaseArticleAlias(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class ArticleSupplierTerms(Base):
+    """Condições negociadas com um fornecedor para um artigo: referência, preço, prazo, quantidades.
+
+    O preço acordado é um custo unitário sem IVA, com a mesma precisão dos custos de stock
+    (stock_entries.unit_cost), e não um movimento de dinheiro.
+    """
+
+    __tablename__ = "article_supplier_terms"
+    __table_args__ = (
+        UniqueConstraint("article_id", "supplier_id", name="article_supplier_unique"),
+        CheckConstraint("agreed_cost IS NULL OR agreed_cost >= 0", name="article_supplier_cost"),
+        CheckConstraint("lead_days IS NULL OR lead_days >= 0", name="article_supplier_lead"),
+        CheckConstraint(
+            "(min_quantity IS NULL OR min_quantity > 0) AND (pack_quantity IS NULL OR pack_quantity > 0)",
+            name="article_supplier_quantities",
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    article_id: Mapped[str] = mapped_column(
+        ForeignKey("stock_articles.id", ondelete="CASCADE"), index=True
+    )
+    supplier_id: Mapped[str] = mapped_column(ForeignKey("business_entities.id"), index=True)
+    supplier_reference: Mapped[str] = mapped_column(String(100), default="")
+    agreed_cost: Mapped[Decimal | None] = mapped_column(Numeric(24, 6), nullable=True)
+    valid_until: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    lead_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_quantity: Mapped[Decimal | None] = mapped_column(Numeric(24, 6), nullable=True)
+    pack_quantity: Mapped[Decimal | None] = mapped_column(Numeric(24, 6), nullable=True)
+    notes: Mapped[str] = mapped_column(String(300), default="")
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    updated_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
 class ArticleMarketPrice(Base):
     """Preço visto no mercado (KuantoKusta ou outra loja), registado à mão para comparar."""
 

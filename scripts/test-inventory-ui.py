@@ -69,7 +69,7 @@ erp_article = {
 catalog = {
     "articles": [article, erp_article],
     "warehouses": [{"id": "w1", "store_id": "store-a", "name": "Principal"}],
-    "suppliers": [],
+    "suppliers": [{"id": "s1", "name": "Fornecedor fictício"}],
     "permissions": {
         key: True
         for key in [
@@ -132,6 +132,7 @@ lot = {
 errors, writes = [], []
 fail_save = True
 market = []
+terms = []
 
 
 def market_view():
@@ -202,6 +203,17 @@ def mock(route):
             assert saved["internal_notes"] == "Nota interna fictícia"
             assert saved["attachments"][0]["url"] == "https://example.com/ficha.pdf"
             result = {"id": "p1"}
+        elif path == "/api/stock/articles/p1/supplier-terms/s1" and method == "PUT":
+            body = route.request.post_data_json
+            assert body["revision"] == 0 and body["agreed_cost"] == "4.5", body
+            assert body["supplier_reference"] == "REF-S1" and body["lead_days"] == 3, body
+            terms[:] = [{
+                "supplier_id": "s1", "supplier_name": "Fornecedor fictício", "main": False,
+                "supplier_reference": "REF-S1", "agreed_cost": "4.5", "valid_until": None,
+                "lead_days": 3, "min_quantity": None, "pack_quantity": None, "notes": "",
+                "revision": 1, "updated_at": "2026-10-29T10:00:00Z", "updated_by": "Utilizador fictício",
+            }]
+            result = {"terms": terms, "can_edit": True, "cost_visible": True}
         elif path.endswith("/market-prices"):
             body = route.request.post_data_json
             assert body["store_name"] == "Loja fictícia" and body["price"] == "11.90", body
@@ -315,6 +327,8 @@ def mock(route):
         result = {"rows": [lot]}
     elif path.endswith("/market-prices"):
         result = market_view()
+    elif path.endswith("/supplier-terms"):
+        result = {"terms": terms, "can_edit": True, "cost_visible": True}
     elif path.endswith("/details"):
         result = {
             "company_name": "Empresa fictícia",
@@ -476,6 +490,17 @@ with sync_playwright() as p:
     suppliers_table = local_dialog.get_by_role("table", name="Compras por fornecedor")
     expect(suppliers_table).to_contain_text("Fornecedor fictício")
     expect(suppliers_table).to_contain_text("4,67 €")
+    # Condições por fornecedor: Enter grava as condições, não a ficha.
+    local_dialog.get_by_label("Fornecedor", exact=True).select_option("s1")
+    local_dialog.get_by_label("Referência neste fornecedor", exact=True).fill("REF-S1")
+    local_dialog.get_by_label("Prazo de entrega (dias)", exact=True).fill("3")
+    local_dialog.get_by_label("Preço acordado sem IVA (€ / un.)", exact=True).fill("4.5")
+    local_dialog.get_by_label("Preço acordado sem IVA (€ / un.)", exact=True).press("Enter")
+    terms_table = local_dialog.get_by_role("table", name="Condições por fornecedor")
+    expect(terms_table).to_contain_text("REF-S1")
+    expect(terms_table).to_contain_text("+11,1 % face ao acordado")  # pago 5 € vs 4,50 €
+    assert "/api/stock/articles/p1" not in writes, writes
+    local_dialog.get_by_role("tab", name="Compras e fornecedores", exact=True).scroll_into_view_if_needed()
     page.screenshot(path=str(output / "article-suppliers.png"), animations="disabled")
     local_dialog.get_by_role("tab", name="Geral", exact=True).click()
     local_dialog.get_by_label("Código interno", exact=True).fill("W100")
@@ -577,6 +602,7 @@ with sync_playwright() as p:
         "/api/stock/articles",
         "/api/stock/articles",
         "/api/stock/articles/p1/market-prices",  # Enter regista o preço, não grava a ficha.
+        "/api/stock/articles/p1/supplier-terms/s1",
         "/api/stock/articles/p1",  # Duplicate code rejected by the paginated catalogue API.
         "/api/stock/articles/p1",
         "/api/stock/movements",

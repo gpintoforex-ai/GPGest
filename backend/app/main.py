@@ -2239,3 +2239,5 @@ from .order_cycle import router as order_cycle_router
 app.include_router(order_cycle_router)
 from .market_prices import router as market_prices_router
 app.include_router(market_prices_router)
+from .article_suppliers import router as article_suppliers_router
+app.include_router(article_suppliers_router)

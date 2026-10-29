@@ -5,6 +5,7 @@ import { ActionButton, ApiError, ManagedForm, Notice, markDialogSaved, reportFor
 import { api } from "./lib/api";
 import { articlePayload, articlePrices, validateArticle, type ArticleRow as Row } from "./articleValues";
 import MarketPrices from "./MarketPrices";
+import ArticleSupplierTerms from "./ArticleSupplierTerms";
 
 const sections = ["Geral", "Preços e rentabilidade", "Stock", "Compras e fornecedores", "Validades e lotes", "Integração ERP", "Histórico", "Descrição e anexos"];
 const fieldSection: Record<string, number> = { sale_net: 1, sale_gross: 1, vat_rate: 1, minimum: 2, reorder: 2, maximum: 2, location: 2, lots: 4, expiry: 4, supplier_id: 3, supplier_reference: 3, description: 7, internal_notes: 7, additional_photos: 7, attachments: 7 };
@@ -208,6 +209,12 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
               </table></div>
               : details ? <p>Ainda não há compras registadas deste artigo nos armazéns a que tem acesso.</p> : null}
           </section>}
+          <section className="article-subsection" aria-labelledby={`${id}-terms`}>
+            <h4 id={`${id}-terms`}>Condições por fornecedor</h4>
+            {initial.id
+              ? <ArticleSupplierTerms articleId={initial.id} suppliers={suppliers} purchases={details?.purchase_suppliers || []} unit={value.unit} readOnly={readOnly} />
+              : <p>Guarde o artigo para registar condições por fornecedor.</p>}
+          </section>
           <p className="footnote">A referência e o fornecedor principal pertencem a este artigo. As compras por fornecedor vêm das receções e dos movimentos de compra; entradas substituídas ou anuladas não contam. Custos sem IVA, por unidade.</p>
           {initial.id && <ActionButton type="button" onClick={() => navigate("Movimentos")}>Consultar histórico de compras e movimentos</ActionButton>}
         </>}
