@@ -98,15 +98,21 @@ const columns: Column[] = [
   {
     id: "stock",
     label: "Stock disponível",
-    render: (r) => (
-      <>
-        {number(r.available_quantity)}
-        <small>
-          Atual: {number(r.quantity)} · Reservado: {number(r.reserved_quantity)}
-        </small>
-        <small>{r.location}</small>
-      </>
-    ),
+    render: (r) =>
+      r.service ? (
+        <>
+          Serviço
+          <small>Não movimenta stock</small>
+        </>
+      ) : (
+        <>
+          {number(r.available_quantity)}
+          <small>
+            Atual: {number(r.quantity)} · Reservado: {number(r.reserved_quantity)}
+          </small>
+          <small>{r.location}</small>
+        </>
+      ),
   },
   {
     id: "active",
@@ -155,6 +161,15 @@ const columns: Column[] = [
     ),
   },
 ];
+// Serviços e stock controlado pelo ERP não têm alerta de stock.
+const stockAlert = (r: Row) =>
+  r.service || r.available_quantity == null
+    ? null
+    : Number(r.available_quantity) <= 0
+      ? "none"
+      : Number(r.available_quantity) < Number(r.minimum || 0)
+        ? "low"
+        : null;
 const defaults = { hidden: ["cost", "expiry"], density: "normal", size: 25 };
 export default function ArticleGrid({
   catalog,
@@ -680,11 +695,9 @@ export default function ArticleGrid({
               <tr
                 key={r.id}
                 className={
-                  r.available_quantity != null &&
-                  Number(r.available_quantity) <= 0
+                  stockAlert(r) === "none"
                     ? "article-no-stock"
-                    : r.available_quantity != null &&
-                        Number(r.available_quantity) < Number(r.minimum || 0)
+                    : stockAlert(r) === "low"
                       ? "article-low-stock"
                       : ""
                 }
@@ -717,16 +730,11 @@ export default function ArticleGrid({
                     ) : (
                       c.render(r)
                     )}
-                    {c.id === "stock" &&
-                      r.available_quantity != null &&
-                      (Number(r.available_quantity) <= 0 ? (
-                        <span className="article-badge warning">Sem stock</span>
-                      ) : Number(r.available_quantity) <
-                        Number(r.minimum || 0) ? (
-                        <span className="article-badge warning">
-                          Stock baixo
-                        </span>
-                      ) : null)}
+                    {c.id === "stock" && stockAlert(r) && (
+                      <span className="article-badge warning">
+                        {stockAlert(r) === "none" ? "Sem stock" : "Stock baixo"}
+                      </span>
+                    )}
                   </td>
                 ))}
                 <td>

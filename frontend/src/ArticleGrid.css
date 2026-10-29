@@ -88,12 +88,14 @@
 }
 .article-badge.warning {
   color: var(--color-warning);
+  background: var(--color-warning-bg);
 }
 .article-badge.muted {
   color: var(--color-muted);
 }
 .article-badge.success {
-  color: var(--color-accent-ink);
+  color: var(--color-success);
+  background: var(--color-success-bg);
 }
 .article-selection {
   padding: 12px;
@@ -133,12 +135,23 @@
   border: 1px solid var(--color-border);
   border-radius: 6px;
 }
+.article-columns {
+  position: relative;
+}
 .article-columns > div {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
   display: grid;
   gap: 8px;
+  min-width: 255px;
+  max-height: 350px;
+  overflow: auto;
   padding: 12px;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
 }
 .article-columns label {
   display: flex;
@@ -181,19 +194,6 @@
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 12px;
   margin: 12px 0;
-}
-.article-columns {
-  position: relative;
-}
-.article-columns > div {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 10;
-  min-width: 255px;
-  max-height: 350px;
-  overflow: auto;
-  box-shadow: 0 8px 24px #0002;
 }
 .workspace .article-grid input[type="checkbox"] {
   appearance: auto;

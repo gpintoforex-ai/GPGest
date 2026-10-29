@@ -128,3 +128,17 @@ def test_catalogue_expiry_filters_respect_store_access(stock_case):
     result = client.get("/api/stock/catalog?page=1&expiry=near").json()
     assert result["total"] == 1
     assert float(result["articles"][0]["available_quantity"]) == 10
+
+
+def test_catalogue_stock_filters_leave_out_services(stock_case):
+    from test_inventory import product
+
+    client = stock_case[0]
+    product(stock_case, code="PORTES", name="Portes de envio", service=True, minimum="0", reorder="0")
+    goods = product(stock_case, code="SEMSTOCK", name="Artigo sem stock")
+    for state in ("zero", "low", "positive", "unknown"):
+        codes = [a["code"] for a in client.get(f"/api/stock/catalog?page=1&stock={state}").json()["articles"]]
+        assert "PORTES" not in codes, state
+    zero = client.get("/api/stock/catalog?page=1&stock=zero").json()["articles"]
+    assert [a["id"] for a in zero] == [goods]
+    assert client.get("/api/stock/catalog?page=1&q=PORTES").json()["total"] == 1

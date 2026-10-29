@@ -214,6 +214,17 @@ def test_article_validation_identifies_conflicting_fields(stock_case):
         result = c.post("/api/stock/articles", json=data)
         assert result.status_code == status, result.text
         assert result.json()["detail"][0]["loc"] == ["body", field]
+    # Maiúsculas acentuadas contam como o mesmo código, independentemente do locale da base.
+    product(stock_case, code="ÁGUA", barcodes=["0099", "0100"])
+    assert c.post("/api/stock/articles", json={"code": "água", "name": "X"}).status_code == 409
+    clash = c.post("/api/stock/articles", json={"code": "B2", "name": "X", "barcodes": ["7", "0100"]})
+    assert clash.status_code == 409 and "ÁGUA" not in clash.text  # nome do artigo, não o código
+    # Gravar o próprio artigo com os mesmos códigos de barras não é conflito.
+    own = view(stock_case, product(stock_case, code="PROPRIO", barcodes=["0555"]))
+    saved = c.put(f"/api/stock/articles/{own['id']}", json={
+        "code": "PROPRIO", "name": "Artigo de teste", "barcodes": ["0555"], "sale_net": "5",
+        "minimum": "2", "reorder": "8", "revision": own["revision"]})
+    assert saved.status_code == 200, saved.text
 
 
 def test_article_notes_and_https_documents_round_trip(stock_case):

@@ -30,6 +30,8 @@ O histórico mostra as últimas 30 alterações suportadas, com utilizador e dat
 
 Na consulta paginada, pesquisa, filtros de identificação, contagem e ordenação são aplicados em PostgreSQL antes de carregar o histórico da página. As validades consideram apenas lotes com saldo positivo em armazéns ativos autorizados e a data de Lisboa.
 
+Os serviços (portes, mão de obra…) não movimentam stock: na grelha aparecem como «Serviço», sem alertas de stock, e ficam fora dos filtros de situação de stock. A verificação de código e códigos de barras repetidos ao gravar não lê as fichas de todos os artigos: o código compara-se sem distinguir maiúsculas (incluindo acentuadas) e os códigos de barras são procurados no PostgreSQL.
+
 Filtros de saldo ou validade precisam de avaliar os movimentos de todos os candidatos antes de paginar. Para catálogos com histórico muito extenso, a evolução seguinte é estudar agregações e índices com medições, preservando o custo médio histórico. Não foram introduzidas migrações nem substituídas regras do stock.
 
 A origem ERP e a data de receção do catálogo não garantem que não tenham ocorrido alterações posteriores na origem. Os estados apresentados não inventam uma sincronização individual bidirecional.

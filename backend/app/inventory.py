@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from fastapi import Depends, HTTPException, Query
 from pydantic import Field, field_validator
 from sqlalchemy import case, cast, func, select, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.orm import Session
 
 from .db import db_session
@@ -414,7 +414,26 @@ def save_article(
         supplier = db.get(BusinessEntity, data.supplier_id)
         if not supplier or not supplier.is_supplier or supplier.removed:
             field_fail("supplier_id", "Selecione um fornecedor desta empresa.")
-    for other in db.scalars(select(StockArticle)) if catalogue is None else catalogue:
+    if catalogue is None:
+        # Sem ler nem descodificar a ficha de todos os artigos: o código compara-se em Python
+        # (casefold, independente do locale da base) e os códigos de barras no PostgreSQL.
+        others = select(StockArticle.id, StockArticle.code, StockArticle.name)
+        if existing:
+            others = others.where(StockArticle.id != existing.id)
+        for _, code, name in db.execute(others):
+            if code.casefold() == data.code.casefold():
+                field_fail("code", f"Código já utilizado pelo artigo «{name}».", 409)
+        if data.barcodes:
+            name = db.scalar(
+                others.with_only_columns(StockArticle.name)
+                .where(cast(StockArticle.data, JSONB)["barcodes"].has_any(array(data.barcodes)))
+                .limit(1)
+            )
+            if name:
+                field_fail(
+                    "barcodes", f"Código de barras já utilizado pelo artigo «{name}».", 409
+                )
+    for other in catalogue or []:
         if existing and other.id == existing.id:
             continue
         if other.code.casefold() == data.code.casefold():
@@ -1011,6 +1030,9 @@ def register_routes(app, current, authorize, scope, audit):
             )
             value["nearest_expiry"] = nearest
             quantity = value["available_quantity"]
+            # Serviços não movimentam stock: ficam fora dos filtros de situação de stock.
+            if stock and value.get("service"):
+                continue
             if stock and not (
                 stock == "unknown"
                 and quantity is None
