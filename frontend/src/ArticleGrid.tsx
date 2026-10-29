@@ -41,7 +41,10 @@ const stockAlert = (r: Row) =>
       ? "none"
       : Number(r.available_quantity) < Number(r.minimum || 0)
         ? "low"
-        : null;
+        : Number(r.maximum || 0) > 0 && Number(r.available_quantity) > Number(r.maximum)
+          ? "over"
+          : null;
+const alertLabels: Row = { none: "Sem stock", low: "Stock baixo", over: "Acima do máximo" };
 const columns: Column[] = [
   {
     id: "code",
@@ -140,8 +143,8 @@ const columns: Column[] = [
           )}
           {r.location && <small>{r.location}</small>}
           {alert && (
-            <span className="article-badge warning">
-              {alert === "none" ? "Sem stock" : "Stock baixo"}
+            <span className={`article-badge ${alert === "over" ? "info" : "warning"}`}>
+              {alertLabels[alert]}
             </span>
           )}
         </>
@@ -629,6 +632,7 @@ export default function ArticleGrid({
                       ["positive", "Com stock"],
                       ["zero", "Sem stock / negativo"],
                       ["low", "Abaixo do mínimo"],
+                      ["over", "Acima do máximo"],
                       ["unknown", "Sem informação"],
                     ],
                   ],

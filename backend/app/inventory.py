@@ -272,6 +272,8 @@ class ArticleInput(Strict):
     sale_net: Decimal = Field(default=ZERO, ge=0, le=10**9, max_digits=18, decimal_places=6)
     minimum: Decimal = Field(default=ZERO, ge=0, le=10**12, max_digits=18, decimal_places=6)
     reorder: Decimal = Field(default=ZERO, ge=0, le=10**12, max_digits=18, decimal_places=6)
+    # Stock máximo (0 = sem máximo); só informativo: assinala excesso de stock na grelha.
+    maximum: Decimal = Field(default=ZERO, ge=0, le=10**12, max_digits=18, decimal_places=6)
     location: str = Field(default="", max_length=200)
     lots: bool = False
     expiry: bool = False
@@ -410,6 +412,10 @@ def save_article(
         field_fail("service", "Um serviço não controla lotes nem validades.")
     if data.reorder < data.minimum:
         field_fail("reorder", "O nível de reposição deve ser igual ou superior ao mínimo.")
+    if data.maximum and data.maximum < max(data.reorder, data.minimum):
+        field_fail(
+            "maximum", "O stock máximo deve ser igual ou superior ao nível de reposição e ao mínimo."
+        )
     if data.supplier_id:
         supplier = db.get(BusinessEntity, data.supplier_id)
         if not supplier or not supplier.is_supplier or supplier.removed:
@@ -866,7 +872,7 @@ def register_routes(app, current, authorize, scope, audit):
         supplier_id: str = "",
         active: Literal["", "true", "false"] = "",
         origin: Literal["", "Local", "ERP"] = "",
-        stock: Literal["", "positive", "zero", "low", "unknown"] = "",
+        stock: Literal["", "positive", "zero", "low", "over", "unknown"] = "",
         expiry: Literal["", "near", "expired", "valid", "missing"] = "",
         sort: str = "name",
         direction: Literal["asc", "desc"] = "asc",
@@ -1040,6 +1046,9 @@ def register_routes(app, current, authorize, scope, audit):
                 and (
                     stock == "low"
                     and D(quantity) < D(str(value.get("minimum", 0)))
+                    or stock == "over"
+                    and D(str(value.get("maximum") or 0)) > 0
+                    and D(quantity) > D(str(value.get("maximum")))
                     or stock == "zero"
                     and D(quantity) <= 0
                     or stock == "positive"
@@ -1178,6 +1187,101 @@ def register_routes(app, current, authorize, scope, audit):
                 else None
             )
 
+        # Histórico do preço de venda, reconstituído da auditoria (edições da ficha e do preço).
+        # Só o preço e o IVA saem da auditoria; o resto do registo fica privado.
+        price_history = []
+        if not product.erp_id:
+            known = None
+            for item in db.scalars(
+                select(Audit)
+                .where(
+                    Audit.target_id == product.id,
+                    Audit.action.in_(
+                        ("stock_article_create", "stock_article_edit", "stock_article_price")
+                    ),
+                    (Audit.store_id.is_(None)) | (Audit.store_id.in_(scope(user, db))),
+                )
+                .order_by(Audit.created_at, Audit.id)
+            ):
+                detail = json.loads(item.detail or "{}")
+                net = detail.get("after") if item.action == "stock_article_price" else detail.get("sale_net")
+                if net is None:
+                    continue
+                vat = detail.get("vat_rate", known[1] if known else json.loads(product.data).get("vat_rate", 23))
+                value = (D(str(net)), D(str(vat)))
+                if value != known:
+                    price_history.append((item, value))
+                    known = value
+            price_names = {
+                u.id: u.name
+                for u in db.scalars(
+                    select(User).where(User.id.in_({i.user_id for i, _ in price_history}))
+                )
+            }
+            price_history = [
+                {
+                    "created_at": item.created_at,
+                    "user_name": price_names.get(item.user_id),
+                    "sale_net": str(net),
+                    "vat_rate": str(vat),
+                }
+                for item, (net, vat) in reversed(price_history[-20:])
+            ]
+
+        # Compras por fornecedor, a partir das entradas de compra (receções e movimentos manuais);
+        # entradas substituídas ou anuladas por estorno (reversal_of) ficam de fora.
+        replaced = {json.loads(e.data or "{}").get("reversal_of") for e in visible} - {None}
+        by_supplier = {}
+        for entry in visible:
+            if entry.kind != "purchase" or entry.quantity <= 0 or entry.id in replaced:
+                continue
+            detail = json.loads(entry.data or "{}")
+            group = by_supplier.setdefault(
+                detail.get("supplier_id") or "",
+                {"purchases": 0, "quantity": ZERO, "costs": [], "last": None},
+            )
+            group["purchases"] += 1
+            group["quantity"] += entry.quantity
+            if entry.unit_cost is not None:
+                group["costs"].append((entry.quantity, entry.unit_cost))
+            if group["last"] is None or entry.occurred_on >= group["last"][0].occurred_on:
+                group["last"] = (entry, detail.get("document"))
+        supplier_names = {
+            e.id: e.name
+            for e in db.scalars(
+                select(BusinessEntity).where(BusinessEntity.id.in_([k for k in by_supplier if k]))
+            )
+        }
+        main_supplier = json.loads(product.data).get("supplier_id")
+
+        def supplier_view(supplier_id, group):
+            last, document = group["last"]
+            costs = group["costs"] if rights["view_cost"] else []
+            weighted = sum((q for q, _ in costs), ZERO)
+            return {
+                "supplier_id": supplier_id or None,
+                "supplier_name": supplier_names.get(supplier_id) or ("Sem fornecedor" if not supplier_id else "Fornecedor removido"),
+                "main": bool(supplier_id) and supplier_id == main_supplier,
+                "purchases": group["purchases"],
+                "quantity": str(group["quantity"]),
+                "last_date": last.occurred_on,
+                "last_document": document,
+                "last_cost": str(last.unit_cost)
+                if rights["view_cost"] and last.unit_cost is not None
+                else None,
+                "min_cost": str(min(c for _, c in costs)) if costs else None,
+                "max_cost": str(max(c for _, c in costs)) if costs else None,
+                "average_cost": str((sum(q * c for q, c in costs) / weighted).quantize(D("0.000001")))
+                if costs and weighted
+                else None,
+            }
+
+        purchase_suppliers = sorted(
+            (supplier_view(k, g) for k, g in by_supplier.items()),
+            key=lambda s: s["last_date"],
+            reverse=True,
+        )
+
         return {
             "company_name": db.info.get("company", {}).get("name"),
             "reserved_quantity": None if unavailable else available["reserved_quantity"],
@@ -1222,6 +1326,8 @@ def register_routes(app, current, authorize, scope, audit):
             "updated": history_view(history[0]) if history else None,
             # Only labels and authors: audit payloads may include costs and private data.
             "history": [history_view(h) for h in history],
+            "price_history": price_history,
+            "purchase_suppliers": purchase_suppliers,
         }
 
     @app.post("/api/stock/settings")
@@ -1343,7 +1449,13 @@ def register_routes(app, current, authorize, scope, audit):
     ):
         lock(db)
         row = save_article(db, user, data)
-        audit(db, user, "stock_article_create", row.id, {"code": row.code})
+        audit(
+            db,
+            user,
+            "stock_article_create",
+            row.id,
+            {"code": row.code, "sale_net": str(data.sale_net), "vat_rate": str(data.vat_rate)},
+        )
         db.commit()
         return {"id": row.id}
 

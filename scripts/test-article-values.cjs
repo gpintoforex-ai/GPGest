@@ -22,6 +22,9 @@ assert.ok(validateArticle(valid, [{ id: "other", code: "P002", name: "Duplicado"
 assert.deepEqual(validateArticle(valid, [{ ...valid, id: "same" }], "same"), {});
 for (const value of ["", "-1", "NaN", "1000000001"]) assert.ok(validateArticle({ ...valid, sale_net: value }, []).sale_net);
 assert.ok(validateArticle({ ...valid, minimum: "5", reorder: "2" }, []).reorder);
+assert.ok(validateArticle({ ...valid, minimum: "2", reorder: "8", maximum: "5" }, []).maximum);
+assert.ok(!validateArticle({ ...valid, minimum: "2", reorder: "8", maximum: "0" }, []).maximum);
+assert.ok(!validateArticle({ ...valid, minimum: "2", reorder: "8", maximum: "8" }, []).maximum);
 assert.ok(validateArticle({ ...valid, lots: false, expiry: true }, []).expiry);
 assert.ok(validateArticle({ ...valid, photo: "http://example.com/image.png" }, []).photo);
 assert.ok(validateArticle({ ...valid, attachments: [{ name: "Ficha", url: "javascript:alert(1)" }] }, []).attachments);

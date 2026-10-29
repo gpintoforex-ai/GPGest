@@ -160,7 +160,13 @@
 .article-fact { display: grid; align-content: start; gap: 7px; min-width: 0; overflow-wrap: anywhere; }
 .article-fact > span { color: var(--color-muted); font-size: 12px; }
 .article-fact strong { font-size: 16px; font-variant-numeric: tabular-nums; }
-.article-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 0; border-bottom: 1px solid var(--color-border); margin-bottom: 18px; }
+/* Separadores numa só linha; deslizam na horizontal quando não cabem. */
+.article-tabs { display: flex; flex-wrap: nowrap; gap: 6px; padding: 14px 0; border-bottom: 1px solid var(--color-border); margin-bottom: 18px; overflow-x: auto; scrollbar-width: thin; }
+.article-tabs button { flex: 0 0 auto; white-space: nowrap; }
+.article-subsection { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--color-border); }
+.article-subsection h4 { margin: 0 0 12px; font-size: 15px; }
+.article-compact-table td, .article-compact-table th { padding: 8px 10px; }
+.article-compact-table td small { color: var(--color-muted); }
 .article-tabs button { border: 1px solid var(--color-border); border-radius: 8px; padding: 10px 12px; background: var(--color-surface); color: var(--color-text); font: inherit; font-size: 13px; cursor: pointer; }
 .article-tabs button[aria-selected="true"] { border-color: var(--color-accent-ink); box-shadow: inset 0 -2px var(--color-accent-ink); font-weight: 650; }
 .article-tabs button:focus-visible { outline: 2px solid var(--color-accent-ink); outline-offset: 2px; }

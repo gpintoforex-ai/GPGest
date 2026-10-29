@@ -4,7 +4,7 @@ export const newArticle: ArticleRow = {
   internal_notes: "", additional_photos: [], attachments: [],
   family: "", category: "", brand: "", supplier_id: null, supplier_reference: "",
   unit: "un", precision: 0, vat_rate: "23", sale_net: "0", minimum: "0",
-  reorder: "0", location: "", lots: false, expiry: false, service: false, active: true, revision: 0,
+  reorder: "0", maximum: "0", location: "", lots: false, expiry: false, service: false, active: true, revision: 0,
 };
 export const articlePayload = (article: ArticleRow) => Object.fromEntries(
   Object.keys(newArticle).map(key => [key, article[key] ?? newArticle[key]]),
@@ -22,11 +22,12 @@ export function validateArticle(value: ArticleRow, articles: ArticleRow[], id?: 
   for (const [key, max] of Object.entries({ code: 100, name: 300, reference: 100, family: 100, category: 100, brand: 100, supplier_reference: 100, unit: 20, location: 200, description: 4000, internal_notes: 4000, photo: 2000 })) {
     if (String(value[key] || "").length > max) errors[key] = `Utilize até ${max} caracteres.`;
   }
-  for (const [key, max] of Object.entries({ vat_rate: 100, sale_net: 1e9, minimum: 1e12, reorder: 1e12, precision: 6 })) {
+  for (const [key, max] of Object.entries({ vat_rate: 100, sale_net: 1e9, minimum: 1e12, reorder: 1e12, maximum: 1e12, precision: 6 })) {
     if (value[key] === "" || !Number.isFinite(Number(value[key])) || Number(value[key]) < 0 || Number(value[key]) > max) errors[key] = `Indique um valor entre 0 e ${max}.`;
   }
   if (!Number.isInteger(Number(value.precision))) errors.precision = "Indique um número inteiro de 0 a 6.";
   if (Number(value.reorder) < Number(value.minimum)) errors.reorder = "A reposição deve ser igual ou superior ao mínimo.";
+  if (Number(value.maximum) > 0 && Number(value.maximum) < Math.max(Number(value.reorder), Number(value.minimum))) errors.maximum = "O máximo deve ser igual ou superior à reposição e ao mínimo (0 = sem máximo).";
   if (value.expiry && !value.lots) errors.expiry = "O controlo de validade exige lotes.";
   if (value.service && (value.lots || value.expiry)) errors.service = "Um serviço não controla lotes nem validades.";
   const validUrl = (value: string) => {

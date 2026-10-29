@@ -16,11 +16,18 @@ A ativação/desativação em lote só admite artigos locais, exige confirmaçã
 
 ## Ficha
 
-Separadores: Geral; Preços e rentabilidade; Stock; Compras e fornecedores; Validades e lotes; Integração ERP; Histórico; Descrição e anexos; Preços de mercado ([PRECOS-MERCADO.md](PRECOS-MERCADO.md)).
+Separadores (numa só linha; deslizam na horizontal quando não cabem): Geral; Preços e rentabilidade; Stock; Compras e fornecedores; Validades e lotes; Integração ERP; Histórico; Descrição e anexos.
 
-O preço e IVA são editados em Preços e rentabilidade. Margem e markup são calculados quando existem preço e custo válidos; a base de IVA desconhecida dos preços ERP continua a impedir cálculos indevidos. Stock permanece calculado por movimentos. Os anexos e imagens existentes são preservados.
+**Preços e rentabilidade:** o preço e o IVA editam-se nos campos (nos artigos locais não se repetem por baixo); custo médio, último custo, margem e markup são calculados quando existem preço e custo válidos; a base de IVA desconhecida dos preços ERP continua a impedir cálculos indevidos. Inclui:
 
-O histórico mostra as últimas 30 alterações suportadas, com utilizador e data. Não foi criada uma tabela de histórico de preços, stock máximo nem condições comerciais por múltiplos fornecedores.
+- **Histórico do preço de venda** (artigos locais): as últimas 20 mudanças de preço ou IVA, com data e utilizador, reconstituídas da auditoria (criação, edição da ficha e «Alterar preço»). Gravar a ficha sem mudar o preço não cria entrada. Artigos criados antes desta versão só têm histórico a partir da primeira edição. Só o preço e o IVA saem da auditoria.
+- **Preços de mercado** (KuantoKusta e outras lojas): [PRECOS-MERCADO.md](PRECOS-MERCADO.md).
+
+**Stock:** stock atual, reservado e disponível (calculados por movimentos), mínimo, nível de reposição e **stock máximo** (0 = sem máximo; tem de ser igual ou superior à reposição e ao mínimo). O máximo é informativo: na grelha, o selo «Acima do máximo» e o filtro de situação de stock com o mesmo nome; não altera encomendas nem reposições automáticas. Fica guardado na ficha do artigo (sem migração).
+
+**Compras e fornecedores:** fornecedor principal e referência; **compras por fornecedor**, a partir das entradas de compra (receções e movimentos de compra) nos armazéns autorizados: número de compras, quantidade, último custo, mínimo/máximo e custo médio ponderado (sem IVA, por unidade), data e documento da última compra. Entradas substituídas por edição de uma receção ou anuladas (estorno) não contam. Sem permissão de consultar custos, aparecem os fornecedores e as quantidades, sem custos. Não existem condições comerciais negociadas por fornecedor (referência, prazo, preço acordado): exigiriam uma tabela própria.
+
+O histórico mostra as últimas 30 alterações suportadas, com utilizador e data. Stock permanece calculado por movimentos. Os anexos e imagens existentes são preservados.
 
 ## API e desempenho
 

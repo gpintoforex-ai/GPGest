@@ -329,6 +329,18 @@ def mock(route):
                 }
             ],
             "erp": {"external_id": "100", "enterprise_id": "TESTE"},
+            "price_history": [
+                {"created_at": "2026-10-20T10:00:00Z", "user_name": "Utilizador fictício",
+                 "sale_net": "10", "vat_rate": "23"},
+                {"created_at": "2026-10-01T10:00:00Z", "user_name": "Utilizador fictício",
+                 "sale_net": "9", "vat_rate": "23"},
+            ],
+            "purchase_suppliers": [
+                {"supplier_id": "s1", "supplier_name": "Fornecedor fictício", "main": True,
+                 "purchases": 2, "quantity": "15", "last_date": "2026-10-01",
+                 "last_document": "FT TESTE/1", "last_cost": "5", "min_cost": "4",
+                 "max_cost": "5", "average_cost": "4.666667"},
+            ],
         }
     elif path == "/api/stock/movements":
         result = {"rows": [], "more": False}
@@ -444,7 +456,11 @@ with sync_playwright() as p:
     local_dialog.get_by_role("tab", name="Histórico", exact=True).click()
     expect(local_dialog.get_by_text("Artigo criado", exact=True)).to_be_visible()
     # Preços de mercado: Enter regista o preço sem guardar a ficha do artigo.
-    local_dialog.get_by_role("tab", name="Preços de mercado", exact=True).click()
+    # Ficam em «Preços e rentabilidade», com o histórico do preço de venda.
+    local_dialog.get_by_role("tab", name="Preços e rentabilidade", exact=True).click()
+    history_table = local_dialog.get_by_role("table", name="Histórico do preço de venda")
+    expect(history_table).to_contain_text("11,07 €")  # 9 € + 23 % de IVA
+    expect(local_dialog.get_by_role("tab", name="Preços de mercado")).to_have_count(0)
     expect(local_dialog.get_by_role("link", name="Pesquisar no KuantoKusta")).to_have_attribute(
         "href", "https://www.kuantokusta.pt/search?q=5601234567890"
     )
@@ -456,6 +472,11 @@ with sync_playwright() as p:
     expect(prices_table).to_contain_text("−0,40 €")
     assert "/api/stock/articles/p1" not in writes, writes
     page.screenshot(path=str(output / "article-market-prices.png"), animations="disabled")
+    local_dialog.get_by_role("tab", name="Compras e fornecedores", exact=True).click()
+    suppliers_table = local_dialog.get_by_role("table", name="Compras por fornecedor")
+    expect(suppliers_table).to_contain_text("Fornecedor fictício")
+    expect(suppliers_table).to_contain_text("4,67 €")
+    page.screenshot(path=str(output / "article-suppliers.png"), animations="disabled")
     local_dialog.get_by_role("tab", name="Geral", exact=True).click()
     local_dialog.get_by_label("Código interno", exact=True).fill("W100")
     local_dialog.get_by_role("button", name="Guardar", exact=True).click()

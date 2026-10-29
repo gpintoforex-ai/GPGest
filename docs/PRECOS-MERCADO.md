@@ -1,6 +1,6 @@
 # Preços de mercado (KuantoKusta)
 
-Na ficha do artigo, o separador **Preços de mercado** compara o preço de venda com o que o artigo custa noutras lojas. É também acessível pelo botão **Comparar com o mercado (KuantoKusta)** em «Preços e rentabilidade».
+Na ficha do artigo, em **Preços e rentabilidade**, a secção **Preços de mercado** compara o preço de venda com o que o artigo custa noutras lojas.
 
 ## Porque é manual
 

@@ -6,8 +6,8 @@ import { api } from "./lib/api";
 import { articlePayload, articlePrices, validateArticle, type ArticleRow as Row } from "./articleValues";
 import MarketPrices from "./MarketPrices";
 
-const sections = ["Geral", "Preços e rentabilidade", "Stock", "Compras e fornecedores", "Validades e lotes", "Integração ERP", "Histórico", "Descrição e anexos", "Preços de mercado"];
-const fieldSection: Record<string, number> = { sale_net: 1, sale_gross: 1, vat_rate: 1, minimum: 2, reorder: 2, location: 2, lots: 4, expiry: 4, supplier_id: 3, supplier_reference: 3, description: 7, internal_notes: 7, additional_photos: 7, attachments: 7 };
+const sections = ["Geral", "Preços e rentabilidade", "Stock", "Compras e fornecedores", "Validades e lotes", "Integração ERP", "Histórico", "Descrição e anexos"];
+const fieldSection: Record<string, number> = { sale_net: 1, sale_gross: 1, vat_rate: 1, minimum: 2, reorder: 2, maximum: 2, location: 2, lots: 4, expiry: 4, supplier_id: 3, supplier_reference: 3, description: 7, internal_notes: 7, additional_photos: 7, attachments: 7 };
 const money = (v: any) => v === null || v === undefined ? "Sem informação" : new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(Number(v));
 const quantity = (v: any) => v === null || v === undefined ? "Sem informação" : new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 6 }).format(Number(v));
 const date = (v: any) => v ? new Intl.DateTimeFormat("pt-PT", { dateStyle: "short", timeZone: "Europe/Lisbon" }).format(new Date(v)) : "Sem informação";
@@ -138,25 +138,39 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
           <h3>Preço de venda e margem bruta</h3>
           <p>A margem utiliza o preço sem IVA e o custo médio ponderado dos movimentos. Os valores da venda são editáveis quando o seu perfil o permite; os custos e as margens são calculados.</p>
           {!erp && <div className="form-grid">{numeric("sale_net", "Venda sem IVA (€)", !rights.change_price, 1e9)}{gross("Venda com IVA (€)")}{numeric("vat_rate", "Taxa de IVA (%)", !rights.change_price, 100)}</div>}
-          <div className="article-facts">{readonly("Venda sem IVA", money(prices.net))}{readonly("Venda com IVA", money(prices.gross))}{readonly("IVA", erp ? "Não identificado para o preço do ERP" : `${quantity(value.vat_rate)} %`)}
+          {/* Nos artigos locais o preço já está nos campos acima: aqui só o que é calculado. */}
+          <div className="article-facts">{erp && <>{readonly("Preço no ERP", money(initial.erp_price))}{readonly("IVA", "Não identificado para o preço do ERP")}</>}
             {rights.view_cost && <>{readonly("Custo médio ponderado", money(initial.average_cost))}{readonly("Último custo de compra", money(initial.last_cost))}{readonly("Margem bruta por unidade", money(prices.margin))}{readonly("Margem sobre a venda sem IVA", prices.marginPct === null ? "Não calculável" : `${quantity(prices.marginPct)} %`)}{readonly("Markup sobre o custo", prices.cost && prices.cost > 0 && prices.net !== null ? `${quantity((prices.net - prices.cost) / prices.cost * 100)} %` : "Não calculável")}</>}
           </div>
-
           {!rights.view_cost && <p>O seu perfil não permite consultar custos e margens.</p>}
           {erp && <p>O conector não identifica a base de IVA do preço do ERP; a margem de venda não pode ser calculada.</p>}
-          <ActionButton type="button" onClick={() => setTab(8)}>Comparar com o mercado (KuantoKusta)</ActionButton>
-        </>}
-        {index === 8 && <>
-          <h3>Preços de mercado</h3>
-          {initial.id
-            ? <MarketPrices articleId={initial.id} vatRate={Number(value.vat_rate) || 0} cost={rights.view_cost && !erp ? prices.cost : null} readOnly={readOnly} />
-            : <p>Guarde o artigo para registar e comparar preços de mercado.</p>}
+          {!erp && initial.id && <section className="article-subsection" aria-labelledby={`${id}-price-history`}>
+            <h4 id={`${id}-price-history`}>Histórico do preço de venda</h4>
+            {details?.price_history?.length > 0
+              ? <div className="table-wrap"><table className="responsive-data-table article-compact-table" aria-label="Histórico do preço de venda">
+                <thead><tr><th>Data</th><th>Sem IVA</th><th>IVA</th><th>Com IVA</th><th>Alterado por</th></tr></thead>
+                <tbody>{details!.price_history.map((p: Row, i: number) => <tr key={`${p.created_at}-${i}`}>
+                  <td data-label="Data"><div>{date(p.created_at)}</div></td>
+                  <td data-label="Sem IVA"><div>{money(p.sale_net)}</div></td>
+                  <td data-label="IVA"><div>{quantity(p.vat_rate)} %</div></td>
+                  <td data-label="Com IVA"><div>{money(Number(p.sale_net) * (1 + Number(p.vat_rate) / 100))}</div></td>
+                  <td data-label="Alterado por"><div>{p.user_name || "Sem informação"}</div></td>
+                </tr>)}</tbody>
+              </table></div>
+              : details ? <p>Sem alterações de preço registadas.</p> : null}
+          </section>}
+          <section className="article-subsection" aria-labelledby={`${id}-market`}>
+            <h4 id={`${id}-market`}>Preços de mercado (KuantoKusta e outras lojas)</h4>
+            {initial.id
+              ? <MarketPrices articleId={initial.id} vatRate={Number(value.vat_rate) || 0} cost={rights.view_cost && !erp ? prices.cost : null} readOnly={readOnly} />
+              : <p>Guarde o artigo para registar e comparar preços de mercado.</p>}
+          </section>
         </>}
         {index === 2 && <>
           <h3>Quantidades e controlo</h3>
           <p>O stock atual é a soma dos movimentos nos armazéns a que tem acesso. O reservado corresponde aos pedidos de clientes; o disponível considera armazéns ativos e exclui essas reservas e os lotes expirados, sem compensar faltas entre armazéns.</p>
           <div className="article-facts">{readonly("Stock atual", initial.id ? quantity(initial.quantity) : "Sem movimentos")}{readonly("Stock reservado", quantity(initial.reserved_quantity))}{readonly("Disponível para saída", quantity(initial.available_quantity))}</div>
-          <div className="form-grid">{numeric("minimum", "Stock mínimo")}{numeric("reorder", "Nível de reposição")}{text("location", "Localização")}</div>
+          <div className="form-grid">{numeric("minimum", "Stock mínimo")}{numeric("reorder", "Nível de reposição")}{numeric("maximum", "Stock máximo (0 = sem máximo)")}{text("location", "Localização")}</div>
           <label className="stock-check" title="Portes, mão de obra, assinaturas…: conta nas compras e vendas, mas não movimenta stock."><input disabled={readOnly} name="service" type="checkbox" checked={!!value.service} onChange={e => setValue({ ...value, service: e.target.checked, ...(e.target.checked ? { lots: false, expiry: false } : {}) })} />Serviço (não movimenta stock)</label>
           {details?.warehouses?.length > 0 && <div className="article-warehouse-list"><h4>Stock por armazém autorizado</h4>{details?.warehouses.map((w: Row) => <div key={w.id}><span>{w.name}</span><strong>{quantity(w.quantity)} {value.unit}</strong></div>)}</div>}
           {initial.id && <div className="stock-actions"><ActionButton type="button" onClick={() => navigate("Movimentos")}>Consultar movimentos</ActionButton><ActionButton type="button" onClick={() => navigate("Lotes e validades")}>Consultar lotes e validades</ActionButton></div>}
@@ -175,7 +189,26 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
           <div className="form-grid"><Field label="Fornecedor principal"><select disabled={readOnly} name="supplier_id" value={value.supplier_id || ""} onChange={e => change("supplier_id", e.target.value || null)}><option value="">Sem fornecedor definido</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>{text("supplier_reference", "Referência do fornecedor")}</div>
           {supplier && <p>Fornecedor associado: <strong>{supplier.name}</strong>. As condições gerais do fornecedor são geridas na respetiva ficha, em Entidades.</p>}
           <div className="article-facts">{rights.view_cost && readonly("Último custo de compra registado", money(initial.last_cost))}{readonly("Última compra nos armazéns autorizados", date(details?.last_purchase?.date))}{readonly("Documento de compra", details?.last_purchase?.document || "Sem informação")}</div>
-          <p className="footnote">A referência e o fornecedor principal pertencem a este artigo. O histórico mantém os fornecedores e os custos de cada compra.</p>
+          {initial.id && <section className="article-subsection" aria-labelledby={`${id}-suppliers`}>
+            <h4 id={`${id}-suppliers`}>Compras por fornecedor</h4>
+            {details?.purchase_suppliers?.length > 0
+              ? <div className="table-wrap"><table className="responsive-data-table article-compact-table" aria-label="Compras por fornecedor">
+                <thead><tr><th>Fornecedor</th><th>Compras</th><th>Quantidade</th>{rights.view_cost && <><th>Último custo</th><th>Mínimo / máximo</th><th>Custo médio</th></>}<th>Última compra</th></tr></thead>
+                <tbody>{details!.purchase_suppliers.map((s: Row) => <tr key={s.supplier_id || "none"}>
+                  <td data-label="Fornecedor"><div>{s.supplier_name}{s.main && <small> · principal</small>}</div></td>
+                  <td data-label="Compras"><div>{s.purchases}</div></td>
+                  <td data-label="Quantidade"><div>{quantity(s.quantity)} {value.unit}</div></td>
+                  {rights.view_cost && <>
+                    <td data-label="Último custo"><div>{money(s.last_cost)}</div></td>
+                    <td data-label="Mínimo / máximo"><div>{s.min_cost === null ? "Sem informação" : `${money(s.min_cost)} / ${money(s.max_cost)}`}</div></td>
+                    <td data-label="Custo médio"><div>{money(s.average_cost)}</div></td>
+                  </>}
+                  <td data-label="Última compra"><div>{date(s.last_date)}{s.last_document && <small> · {s.last_document}</small>}</div></td>
+                </tr>)}</tbody>
+              </table></div>
+              : details ? <p>Ainda não há compras registadas deste artigo nos armazéns a que tem acesso.</p> : null}
+          </section>}
+          <p className="footnote">A referência e o fornecedor principal pertencem a este artigo. As compras por fornecedor vêm das receções e dos movimentos de compra; entradas substituídas ou anuladas não contam. Custos sem IVA, por unidade.</p>
           {initial.id && <ActionButton type="button" onClick={() => navigate("Movimentos")}>Consultar histórico de compras e movimentos</ActionButton>}
         </>}
         {index === 7 && <>
@@ -208,7 +241,7 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
         </>}
         {index === 6 && <><h3>Histórico de alterações</h3><p>Últimas 30 alterações da ficha e do preço, com o responsável e a data. Os movimentos têm histórico próprio.</p>
           {details?.history?.length > 0 ? <ol className="article-history">{details?.history.map((entry: Row) => <li key={entry.id}><strong>{entry.label}</strong><span>{date(entry.created_at)} · {entry.user_name || "Sem informação"}</span></li>)}</ol> : <p>Sem histórico de alterações disponível.</p>}</>}
-        {initial.id && [2, 3, 4, 5, 6].includes(index) && <>{detailError ? <Notice tone="error">{detailError}<ActionButton type="button" onClick={() => setAttempt(v => v + 1)}>Voltar a tentar</ActionButton></Notice> : !details && <p role="status">A carregar informação do artigo…</p>}</>}
+        {initial.id && [1, 2, 3, 4, 5, 6].includes(index) && <>{detailError ? <Notice tone="error">{detailError}<ActionButton type="button" onClick={() => setAttempt(v => v + 1)}>Voltar a tentar</ActionButton></Notice> : !details && <p role="status">A carregar informação do artigo…</p>}</>}
       </section>)}
     </fieldset>
     {error && <Notice tone="error" role="alert">{error}</Notice>}

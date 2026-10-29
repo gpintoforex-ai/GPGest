@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from app.models import StockArticle
+from app.models import StockArticle, StockEntry
 from sqlalchemy import event
 from test_inventory import stock_case as stock_case
 
@@ -128,6 +128,83 @@ def test_catalogue_expiry_filters_respect_store_access(stock_case):
     result = client.get("/api/stock/catalog?page=1&expiry=near").json()
     assert result["total"] == 1
     assert float(result["articles"][0]["available_quantity"]) == 10
+
+
+def test_maximum_stock_is_validated_and_filtered(stock_case):
+    from test_inventory import move, product
+
+    client = stock_case[0]
+    bad = client.post(
+        "/api/stock/articles",
+        json={"code": "MAX", "name": "Máximo", "minimum": "2", "reorder": "8", "maximum": "5"},
+    )
+    assert bad.status_code == 422 and bad.json()["detail"][0]["loc"] == ["body", "maximum"]
+    over = product(stock_case, code="EXCESSO", maximum="8")
+    move(stock_case, over, quantity="10", unit_cost="1")
+    unlimited = product(stock_case, code="SEMMAX")
+    move(stock_case, unlimited, quantity="10", unit_cost="1")
+    rows = client.get("/api/stock/catalog?page=1&stock=over").json()["articles"]
+    assert [r["code"] for r in rows] == ["EXCESSO"] and rows[0]["maximum"] == "8"
+
+
+def test_article_details_show_price_history_and_purchases_by_supplier(stock_case):
+    from app.models import BusinessEntity
+    from test_inventory import login, move, product, view
+
+    client, _, factory, _, _ = stock_case
+    with factory.begin() as db:
+        first = BusinessEntity(name="Fornecedor Alfa", is_supplier=True)
+        second = BusinessEntity(name="Fornecedor Beta", is_supplier=True)
+        db.add_all([first, second])
+        db.flush()
+        alpha, beta = first.id, second.id
+    pid = product(stock_case, sale_net="5", supplier_id=alpha)
+    row = view(stock_case, pid)
+    assert client.post(
+        f"/api/stock/articles/{pid}/price", json={"revision": row["revision"], "sale_net": "6"}
+    ).status_code == 200
+    row = view(stock_case, pid)
+    edit = {
+        k: row[k] for k in ("code", "name", "sale_net", "minimum", "reorder", "supplier_id")
+    }
+    # Ficha gravada sem mudar o preço não cria entrada; mudar o IVA cria.
+    assert client.put(
+        f"/api/stock/articles/{pid}", json={**edit, "revision": row["revision"]}
+    ).status_code == 200
+    row = view(stock_case, pid)
+    assert client.put(
+        f"/api/stock/articles/{pid}", json={**edit, "vat_rate": "6", "revision": row["revision"]}
+    ).status_code == 200
+    move(stock_case, pid, quantity="10", unit_cost="2", supplier_id=alpha, document="FT A/1")
+    move(stock_case, pid, quantity="5", unit_cost="3", supplier_id=alpha, document="FT A/2")
+    move(stock_case, pid, quantity="4", unit_cost="2.5", supplier_id=beta, document="FT B/1")
+    # Uma compra substituída por estorno (edição/anulação de receção) não conta.
+    replaced = move(stock_case, pid, quantity="1", unit_cost="9", supplier_id=beta, document="FT B/2")[0]
+    with factory.begin() as db:
+        original = db.get(StockEntry, replaced)
+        db.add(StockEntry(
+            article_id=pid, warehouse_id=original.warehouse_id, user_id=original.user_id,
+            kind="adjustment", quantity=-original.quantity, unit_cost=original.unit_cost,
+            occurred_on=original.occurred_on, request_key="estorno-teste",
+            data=json.dumps({"reversal_of": replaced}),
+        ))
+    details = client.get(f"/api/stock/articles/{pid}/details").json()
+    assert [(float(p["sale_net"]), float(p["vat_rate"])) for p in details["price_history"]] == [
+        (6, 6), (6, 23), (5, 23)
+    ]
+    suppliers = {s["supplier_name"]: s for s in details["purchase_suppliers"]}
+    a = suppliers["Fornecedor Alfa"]
+    assert a["main"] and a["purchases"] == 2 and float(a["quantity"]) == 15
+    assert (float(a["last_cost"]), float(a["min_cost"]), float(a["max_cost"])) == (3, 2, 3)
+    assert abs(float(a["average_cost"]) - 35 / 15) < 1e-6 and a["last_document"] == "FT A/2"
+    b = suppliers["Fornecedor Beta"]
+    assert not b["main"] and b["purchases"] == 1 and float(b["max_cost"]) == 2.5
+    assert b["last_document"] == "FT B/1"
+    # Sem permissão de custos: fornecedores e quantidades sim, custos não.
+    login(client, "reader")
+    hidden = client.get(f"/api/stock/articles/{pid}/details").json()["purchase_suppliers"]
+    assert {s["supplier_name"] for s in hidden} == {"Fornecedor Alfa", "Fornecedor Beta"}
+    assert all(s["last_cost"] is None and s["average_cost"] is None for s in hidden)
 
 
 def test_catalogue_stock_filters_leave_out_services(stock_case):
