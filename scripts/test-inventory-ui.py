@@ -1,7 +1,8 @@
 """Fictitious intercepted APIs only. No real catalogue/stock mutations."""
 
+import os
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -130,6 +131,30 @@ lot = {
 }
 errors, writes = [], []
 fail_save = True
+market = []
+
+
+def market_view():
+    latest = {}
+    for row in market:
+        latest.setdefault(row["store_name"].casefold(), row)
+    prices = sorted(r["price_cents"] for r in latest.values())
+    return {
+        "prices": market,
+        "summary": {
+            "stores": len(prices),
+            "own_cents": 1230,
+            "lowest_cents": prices[0] if prices else None,
+            "highest_cents": prices[-1] if prices else None,
+            "average_cents": round(sum(prices) / len(prices)) if prices else None,
+            "cheaper_stores": sum(p < 1230 for p in prices) if prices else None,
+            "lowest_store": min(latest.values(), key=lambda r: r["price_cents"])["store_name"]
+            if prices
+            else None,
+        },
+        "search_url": "https://www.kuantokusta.pt/search?q=5601234567890",
+        "can_edit": True,
+    }
 
 
 def mock(route):
@@ -156,6 +181,20 @@ def mock(route):
             result = {"id": "new"}
         elif path == "/api/stock/articles/p1" and method == "PUT":
             saved = route.request.post_data_json
+            if saved["code"] == "W100":
+                route.fulfill(
+                    status=409,
+                    json={
+                        "detail": [
+                            {
+                                "loc": ["body", "code"],
+                                "msg": "Código já utilizado.",
+                                "type": "value_error",
+                            }
+                        ]
+                    },
+                )
+                return
             assert saved["name"] == "Edição fictícia"
             assert saved["code"] == "P001" and saved["revision"] == 1
             assert float(saved["sale_net"]) == 10
@@ -163,18 +202,43 @@ def mock(route):
             assert saved["internal_notes"] == "Nota interna fictícia"
             assert saved["attachments"][0]["url"] == "https://example.com/ficha.pdf"
             result = {"id": "p1"}
+        elif path.endswith("/market-prices"):
+            body = route.request.post_data_json
+            assert body["store_name"] == "Loja fictícia" and body["price"] == "11.90", body
+            market.insert(0, {
+                "id": f"mp{len(market)}", "source": body["source"], "store_name": body["store_name"],
+                "price_cents": 1190, "observed_on": body["observed_on"], "url": "", "notes": "",
+                "user_name": "Utilizador fictício", "current": True,
+            })
+            result = market_view()
         elif path == "/api/stock/movements":
             assert route.request.post_data_json["quantity"] == "1"
             result = {"ids": ["move-ui"]}
         elif path == "/api/integrations/wintouch/sync":
             assert route.request.post_data_json["resource"] == "products"
-            result = {"status": "concluida", "read_count": 3813, "inserted_count": 3813, "updated_count": 0,
-                      "error_message": ""}
+            result = {
+                "status": "concluida",
+                "read_count": 3813,
+                "inserted_count": 3813,
+                "updated_count": 0,
+                "error_message": "",
+            }
         elif path == "/api/stock/erp-products/link-by-code":
             body = route.request.post_data_json
-            plan = {"erp_products": 3813, "already_linked": 0, "link": 975, "create": 2838,
-                    "ambiguous": 1, "ambiguous_codes": ["X1"], "local_only": 0}
-            result = {**plan, "linked": 975, "created": 2838 if body.get("create_missing") else 0} if body.get("confirmed") else plan
+            plan = {
+                "erp_products": 3813,
+                "already_linked": 0,
+                "link": 975,
+                "create": 2838,
+                "ambiguous": 1,
+                "ambiguous_codes": ["X1"],
+                "local_only": 0,
+            }
+            result = (
+                {**plan, "linked": 975, "created": 2838 if body.get("create_missing") else 0}
+                if body.get("confirmed")
+                else plan
+            )
         else:
             raise AssertionError(f"Unexpected write {method} {path}")
     elif path == "/api/bootstrap":
@@ -182,7 +246,51 @@ def mock(route):
     elif path == "/api/dashboard":
         result = {}
     elif path == "/api/stock/catalog":
-        result = catalog
+        query = {k: v[0] for k, v in parse_qs(urlsplit(route.request.url).query).items()}
+        rows = list(catalog["articles"])
+        facets = {
+            k: sorted({str(a.get(k, "")) for a in rows} - {""})
+            for k in ("family", "category", "brand", "unit")
+        }
+        for key in ("family", "category", "brand", "supplier_id", "origin"):
+            if query.get(key):
+                rows = [a for a in rows if a.get(key) == query[key]]
+        if query.get("q"):
+            rows = [
+                a
+                for a in rows
+                if query["q"].casefold()
+                in " ".join(
+                    str(a.get(k, ""))
+                    for k in ("code", "name", "reference", "barcodes", "supplier_reference")
+                ).casefold()
+            ]
+        if query.get("active"):
+            rows = [a for a in rows if str(a.get("active")).lower() == query["active"]]
+        if query.get("stock") == "positive":
+            rows = [a for a in rows if float(a.get("available_quantity") or 0) > 0]
+        rows.sort(
+            key=lambda a: str(a.get(query.get("sort", "name"), "")),
+            reverse=query.get("direction") == "desc",
+        )
+        size = int(query.get("size", 25))
+        page_number = int(query.get("page", 1))
+        total = len(rows)
+        result = {
+            **catalog,
+            "facets": facets,
+            "preference_scope": "fictitious.ui",
+            "total": total,
+            "total_all": len(catalog["articles"]),
+            "page": page_number,
+            "pages": max(1, (total + size - 1) // size),
+            "size": size,
+            "articles": []
+            if query.get("metadata_only")
+            else rows[(page_number - 1) * size : page_number * size]
+            if "page" in query
+            else rows,
+        }
     elif path == "/api/stock/report":
         result = {
             "rows": [report_row],
@@ -205,12 +313,21 @@ def mock(route):
         }
     elif path == "/api/stock/lots":
         result = {"rows": [lot]}
+    elif path.endswith("/market-prices"):
+        result = market_view()
     elif path.endswith("/details"):
         result = {
             "company_name": "Empresa fictícia",
             "warehouses": [{"id": "w1", "name": "Principal", "quantity": "5"}],
             "last_purchase": {"date": "2026-10-01", "document": "FT TESTE/1", "unit_cost": "5"},
-            "history": [{"id": "audit-1", "label": "Artigo criado", "created_at": "2026-10-01", "user_name": "Utilizador fictício"}],
+            "history": [
+                {
+                    "id": "audit-1",
+                    "label": "Artigo criado",
+                    "created_at": "2026-10-01",
+                    "user_name": "Utilizador fictício",
+                }
+            ],
             "erp": {"external_id": "100", "enterprise_id": "TESTE"},
         }
     elif path == "/api/stock/movements":
@@ -224,11 +341,11 @@ def mock(route):
 
 with sync_playwright() as p:
     expect.set_options(timeout=15000)
-    browser = p.chromium.launch()
+    browser = p.chromium.launch(executable_path=os.getenv("GPGEST_TEST_CHROMIUM") or None)
     page = browser.new_page(viewport={"width": 1440, "height": 1000}, locale="pt-PT")
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.route("**/api/**", mock)
-    page.goto("http://127.0.0.1:5174/?pagina=Artigos%20e%20validades")
+    page.goto(os.getenv("GPGEST_UI_URL", "http://127.0.0.1:5174") + "/?pagina=Artigos%20e%20validades")
     expect(
         page.get_by_role("heading", name="Artigos, stock e validades", exact=True)
     ).to_be_visible()
@@ -262,6 +379,7 @@ with sync_playwright() as p:
     search.fill("inexistente")
     expect(page.get_by_text("Nenhum artigo corresponde à pesquisa e aos filtros.")).to_be_visible()
     search.fill("")
+    page.get_by_text("Filtros avançados", exact=True).click()
     page.get_by_label("Estado", exact=True).select_option("false")
     expect(page.get_by_text("Nenhum artigo corresponde à pesquisa e aos filtros.")).to_be_visible()
     page.get_by_label("Estado", exact=True).select_option("")
@@ -270,19 +388,28 @@ with sync_playwright() as p:
     expect(page.get_by_role("row", name="P001", exact=False)).to_be_visible()
     page.get_by_label("Família", exact=True).select_option("")
     page.get_by_label("Situação de stock", exact=True).select_option("")
-    page.get_by_label("Mostrar custos na tabela", exact=True).check()
-    expect(page.get_by_role("columnheader", name="Custo médio / última compra", exact=True)).to_be_visible()
-    page.get_by_label("Mostrar custos na tabela", exact=True).uncheck()
+    page.get_by_text("Colunas", exact=True).click()
+    page.get_by_label("Mostrar coluna Custo médio / última compra", exact=True).check()
+    expect(
+        page.get_by_role("columnheader", name="Custo médio / última compra", exact=True)
+    ).to_be_visible()
+    page.get_by_label("Mostrar coluna Custo médio / última compra", exact=True).uncheck()
+    page.get_by_text("Colunas", exact=True).click()
     output = Path(".local/stock-ui")
     output.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(output / "articles-table.png"), animations="disabled")
+    page.get_by_label("Mais ações para Suplemento de teste", exact=True).click()
     page.get_by_role("button", name="Editar Suplemento de teste", exact=True).click()
     local_dialog = page.get_by_role("dialog", name="Editar artigo", exact=True)
-    local_dialog.get_by_role("tab", name="Preços e margens", exact=True).click()
+    local_dialog.get_by_role("tab", name="Preços e rentabilidade", exact=True).click()
     page.keyboard.press("ArrowRight")
-    expect(local_dialog.get_by_role("tab", name="Stock e validades", exact=True)).to_have_attribute("aria-selected", "true")
+    expect(local_dialog.get_by_role("tab", name="Stock", exact=True)).to_have_attribute(
+        "aria-selected", "true"
+    )
     page.keyboard.press("ArrowLeft")
-    expect(local_dialog.get_by_role("tab", name="Preços e margens", exact=True)).to_have_attribute("aria-selected", "true")
+    expect(local_dialog.get_by_role("tab", name="Preços e rentabilidade", exact=True)).to_have_attribute(
+        "aria-selected", "true"
+    )
     expect(local_dialog.get_by_text("6,00", exact=False).first).to_be_visible()
     local_dialog.get_by_label("Venda com IVA (€)", exact=True).fill("24.6")
     expect(local_dialog.get_by_label("Venda sem IVA (€)", exact=True)).to_have_value("20")
@@ -293,33 +420,55 @@ with sync_playwright() as p:
     output = Path(".local/stock-ui")
     output.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(output / "article-prices.png"), animations="disabled")
-    local_dialog.get_by_role("tab", name="Stock e validades", exact=True).click()
+    local_dialog.get_by_role("tab", name="Stock", exact=True).click()
     expect(local_dialog.get_by_text("Stock por armazém autorizado")).to_be_visible()
     local_dialog.get_by_label("Nível de reposição", exact=True).fill("1")
     local_dialog.get_by_role("button", name="Guardar", exact=True).click()
-    expect(local_dialog.get_by_label("Nível de reposição", exact=True)).to_have_attribute("aria-invalid", "true")
-    expect(local_dialog.get_by_role("tab", name="Stock e validades", exact=False)).to_have_attribute("aria-selected", "true")
+    expect(local_dialog.get_by_label("Nível de reposição", exact=True)).to_have_attribute(
+        "aria-invalid", "true"
+    )
+    expect(local_dialog.get_by_role("tab", name="Stock", exact=False)).to_have_attribute(
+        "aria-selected", "true"
+    )
     local_dialog.get_by_label("Nível de reposição", exact=True).fill("10")
     local_dialog.get_by_role("tab", name="Descrição e anexos", exact=True).click()
     local_dialog.get_by_label("Observações internas", exact=True).fill("Nota interna fictícia")
-    local_dialog.get_by_label("Anexos — nome | endereço HTTPS, um por linha", exact=True).fill("Ficha | https://example.com/ficha.pdf")
-    local_dialog.get_by_role("tab", name="ERP e histórico", exact=True).click()
+    local_dialog.get_by_label("Anexos — nome | endereço HTTPS, um por linha", exact=True).fill(
+        "Ficha | https://example.com/ficha.pdf"
+    )
+    local_dialog.get_by_role("tab", name="Histórico", exact=True).click()
     expect(local_dialog.get_by_text("Artigo criado", exact=True)).to_be_visible()
+    # Preços de mercado: Enter regista o preço sem guardar a ficha do artigo.
+    local_dialog.get_by_role("tab", name="Preços de mercado", exact=True).click()
+    expect(local_dialog.get_by_role("link", name="Pesquisar no KuantoKusta")).to_have_attribute(
+        "href", "https://www.kuantokusta.pt/search?q=5601234567890"
+    )
+    local_dialog.get_by_label("Loja", exact=True).fill("Loja fictícia")
+    local_dialog.get_by_label("Preço com IVA (€)", exact=True).fill("11.90")
+    local_dialog.get_by_label("Preço com IVA (€)", exact=True).press("Enter")
+    prices_table = local_dialog.get_by_role("table", name="Preços de mercado")
+    expect(prices_table).to_contain_text("Loja fictícia")
+    expect(prices_table).to_contain_text("−0,40 €")
+    assert "/api/stock/articles/p1" not in writes, writes
+    page.screenshot(path=str(output / "article-market-prices.png"), animations="disabled")
     local_dialog.get_by_role("tab", name="Geral", exact=True).click()
     local_dialog.get_by_label("Código interno", exact=True).fill("W100")
     local_dialog.get_by_role("button", name="Guardar", exact=True).click()
-    expect(local_dialog.get_by_label("Código interno", exact=True)).to_have_attribute("aria-invalid", "true")
+    expect(local_dialog.get_by_label("Código interno", exact=True)).to_have_attribute(
+        "aria-invalid", "true"
+    )
     local_dialog.get_by_label("Código interno", exact=True).fill("P001")
     local_dialog.get_by_label("Designação", exact=True).fill("Edição fictícia")
     # Keyboard save persists the same canonical article fields.
     page.keyboard.press("Control+s")
     expect(local_dialog).not_to_be_visible()
     expect(page.get_by_role("row", name="W100", exact=False)).to_contain_text("movimentos locais")
+    page.get_by_label("Mais ações para Chá da Wintouch", exact=True).click()
     page.get_by_role("button", name="Editar Chá da Wintouch", exact=True).click()
     erp_dialog = page.get_by_role("dialog", name="Editar artigo", exact=True)
     expect(erp_dialog.get_by_text("Artigo da Wintouch", exact=False)).to_be_visible()
     expect(erp_dialog.get_by_label("Código interno", exact=True)).to_have_attribute("readonly", "")
-    erp_dialog.get_by_role("tab", name="Stock e validades", exact=True).click()
+    erp_dialog.get_by_role("tab", name="Stock", exact=True).click()
     expect(erp_dialog.get_by_label("Localização", exact=True)).not_to_have_attribute("readonly", "")
     expect(erp_dialog.get_by_label("Preço sem IVA (€)", exact=True)).to_have_count(0)
     page.keyboard.press("Escape")
@@ -327,7 +476,9 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Registar movimento", exact=True).click()
     movement = page.get_by_role("dialog", name="Registar movimento de stock", exact=True)
     # Os artigos do ERP aceitam movimentos de stock locais.
-    expect(movement.get_by_label("Artigo", exact=True).locator("option", has_text="Chá da Wintouch")).to_have_count(1)
+    expect(
+        movement.get_by_label("Artigo", exact=True).locator("option", has_text="Chá da Wintouch")
+    ).to_have_count(1)
     expect(movement.get_by_label("Quantidade (un)", exact=True)).to_have_value("1")
     movement.get_by_label("Movimento", exact=True).select_option("sale")
     movement.get_by_label("Motivo / observações", exact=True).fill("Venda fictícia de teste")
@@ -345,7 +496,9 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Associar por código", exact=True).click()
     plan = page.get_by_role("region", name="Associação por código")
     expect(plan).to_contain_text("975 fichas locais com o mesmo código")
-    expect(plan.get_by_label("Criar fichas para os 2838 artigos do ERP sem ficha local")).to_be_checked()
+    expect(
+        plan.get_by_label("Criar fichas para os 2838 artigos do ERP sem ficha local")
+    ).to_be_checked()
     plan.get_by_role("button", name="Confirmar associação", exact=True).click()
     expect(page.get_by_text("975 fichas associadas ao ERP; 2838 fichas criadas.")).to_be_visible()
     # Botão «Sincronizar» (modo integrado), como nas tabelas: catálogo, pré-visualização e confirmação.
@@ -362,7 +515,9 @@ with sync_playwright() as p:
     sync.get_by_label("Criar fichas em falta", exact=True).uncheck()
     sync.get_by_role("button", name="Confirmar sincronização (975)", exact=True).click()
     expect(sync).not_to_be_visible()
-    expect(page.get_by_text("Artigos sincronizados: 975 fichas associadas ao ERP; 0 fichas criadas.")).to_be_visible()
+    expect(
+        page.get_by_text("Artigos sincronizados: 975 fichas associadas ao ERP; 0 fichas criadas.")
+    ).to_be_visible()
     catalog["policy"] = {"mode": "local"}
     page.reload()
     page.get_by_role("button", name="Painel", exact=True).click()
@@ -379,9 +534,13 @@ with sync_playwright() as p:
     assert dialog.evaluate("node => node.scrollWidth <= node.clientWidth")
     assert dialog.get_by_role("button", name="Guardar", exact=True).is_visible()
     page.evaluate("document.documentElement.dataset.theme = 'dark'")
-    page.screenshot(path=str(output / "mobile-dialog-dark.png"), full_page=True, animations="disabled")
+    page.screenshot(
+        path=str(output / "mobile-dialog-dark.png"), full_page=True, animations="disabled"
+    )
     page.set_viewport_size({"width": 1440, "height": 1000})
-    page.screenshot(path=str(output / "article-desktop-dark.png"), full_page=True, animations="disabled")
+    page.screenshot(
+        path=str(output / "article-desktop-dark.png"), full_page=True, animations="disabled"
+    )
     page.evaluate("document.documentElement.dataset.theme = 'current'")
     page.screenshot(path=str(output / "article-desktop.png"), full_page=True, animations="disabled")
     page.keyboard.press("Escape")
@@ -391,6 +550,8 @@ with sync_playwright() as p:
     assert writes == [
         "/api/stock/articles",
         "/api/stock/articles",
+        "/api/stock/articles/p1/market-prices",  # Enter regista o preço, não grava a ficha.
+        "/api/stock/articles/p1",  # Duplicate code rejected by the paginated catalogue API.
         "/api/stock/articles/p1",
         "/api/stock/movements",
         "/api/stock/erp-products/link-by-code",

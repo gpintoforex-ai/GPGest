@@ -4,15 +4,16 @@ import { Field } from "./components/Form";
 import { ActionButton, ApiError, ManagedForm, Notice, markDialogSaved, reportFormError, useDialogWorking } from "./components/InteractionUI";
 import { api } from "./lib/api";
 import { articlePayload, articlePrices, validateArticle, type ArticleRow as Row } from "./articleValues";
+import MarketPrices from "./MarketPrices";
 
-const sections = ["Geral", "Preços e margens", "Stock e validades", "Compras e fornecedores", "Descrição e anexos", "ERP e histórico"];
-const fieldSection: Record<string, number> = { minimum: 2, reorder: 2, location: 2, lots: 2, expiry: 2, supplier_id: 3, supplier_reference: 3, description: 4, internal_notes: 4, additional_photos: 4, attachments: 4 };
+const sections = ["Geral", "Preços e rentabilidade", "Stock", "Compras e fornecedores", "Validades e lotes", "Integração ERP", "Histórico", "Descrição e anexos", "Preços de mercado"];
+const fieldSection: Record<string, number> = { sale_net: 1, sale_gross: 1, vat_rate: 1, minimum: 2, reorder: 2, location: 2, lots: 4, expiry: 4, supplier_id: 3, supplier_reference: 3, description: 7, internal_notes: 7, additional_photos: 7, attachments: 7 };
 const money = (v: any) => v === null || v === undefined ? "Sem informação" : new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(Number(v));
 const quantity = (v: any) => v === null || v === undefined ? "Sem informação" : new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 6 }).format(Number(v));
 const date = (v: any) => v ? new Intl.DateTimeFormat("pt-PT", { dateStyle: "short", timeZone: "Europe/Lisbon" }).format(new Date(v)) : "Sem informação";
 
-export default function ArticleForm({ initial, catalog, onSave, onCancel, onNavigate, onSync, canSync }: {
-  initial: Row; catalog: Row; onSave: (value: Row) => Promise<void>; onCancel: () => void;
+export default function ArticleForm({ initial, catalog, readOnly = false, onSave, onCancel, onNavigate, onSync, canSync }: {
+  initial: Row; catalog: Row; readOnly?: boolean; onSave: (value: Row) => Promise<void>; onCancel: () => void;
   onNavigate: (tab: string, id: string) => void; onSync: () => void; canSync: boolean;
 }) {
   const [value, setValue] = useState<Row>(() => articlePayload(initial));
@@ -55,7 +56,7 @@ export default function ArticleForm({ initial, catalog, onSave, onCancel, onNavi
   };
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (saving.current) return;
+    if (readOnly || saving.current) return;
     const invalid = validateArticle(value, catalog.articles, initial.id);
     if (Object.keys(invalid).length) {
       revealErrors(invalid);
@@ -76,16 +77,16 @@ export default function ArticleForm({ initial, catalog, onSave, onCancel, onNavi
       setError((e as Error).message);
     } finally { saving.current = false; setBusy(false); }
   }
-  const text = (key: string, label: string, required = false, readOnly = false, list?: string) => <Field label={label}>
-    <input name={key} value={value[key] ?? ""} required={required} readOnly={readOnly} list={list}
+  const text = (key: string, label: string, required = false, locked = false, list?: string) => <Field label={label}>
+    <input name={key} value={value[key] ?? ""} required={required} readOnly={readOnly || locked} list={list}
       aria-invalid={!!errors[key] || undefined} onChange={e => change(key, e.target.value)} />
   </Field>;
-  const numeric = (key: string, label: string, readOnly = false, max = 1e12, step = "any") => <Field label={label}>
+  const numeric = (key: string, label: string, locked = false, max = 1e12, step = "any") => <Field label={label}>
     <input name={key} type="number" inputMode="decimal" min="0" max={max} step={step} value={value[key] ?? ""}
-      readOnly={readOnly} aria-invalid={!!errors[key] || undefined} onChange={e => change(key, e.target.value)} />
+      readOnly={readOnly || locked} aria-invalid={!!errors[key] || undefined} onChange={e => change(key, e.target.value)} />
   </Field>;
   const gross = (label = "Preço com IVA (€)") => <Field label={label}>
-    <input name="sale_gross" type="number" inputMode="decimal" min="0" step="any" readOnly={!rights.change_price}
+    <input name="sale_gross" type="number" inputMode="decimal" min="0" step="any" readOnly={readOnly || !rights.change_price}
       value={prices.gross === null ? "" : Number(prices.gross.toFixed(6))}
       onChange={e => change("sale_net", e.target.value === "" ? "" : String(Number((Number(e.target.value) / (1 + Number(value.vat_rate) / 100)).toFixed(6))))} />
   </Field>;
@@ -94,8 +95,8 @@ export default function ArticleForm({ initial, catalog, onSave, onCancel, onNavi
   const suppliers: Row[] = catalog.suppliers || [];
   const supplier = suppliers.find(s => s.id === value.supplier_id);
   const list = (key: string) => `${id}-${key}`;
-  return <ManagedForm ref={form} onSubmit={submit} noValidate className="article-form" aria-busy={busy || undefined}
-    onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); form.current?.requestSubmit(); } }}>
+  return <ManagedForm ref={form} onSubmit={submit} noValidate className={`article-form${readOnly ? " is-readonly" : ""}`} aria-busy={busy || undefined}
+    onKeyDown={e => { if (!readOnly && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); form.current?.requestSubmit(); } }}>
     <fieldset className="ui-form-fields" disabled={busy}>
       <div className="article-header">
         <div className="article-image">{value.photo ? <img src={value.photo} alt="Imagem do artigo" referrerPolicy="no-referrer" onError={e => { e.currentTarget.style.visibility = "hidden"; }} onLoad={e => { e.currentTarget.style.visibility = "visible"; }} /> : <Package size={32} aria-hidden="true" />}</div>
@@ -124,55 +125,65 @@ export default function ArticleForm({ initial, catalog, onSave, onCancel, onNavi
           <div className="form-grid article-main-fields">
             {text("code", "Código interno", true, erp)}{text("name", "Designação", true, erp)}
             {readonly("Tipo de artigo", "Produto de stock")}
-            <Field label="Códigos de barras (separados por |)"><input name="barcodes" value={value.barcodes.join("|")} onChange={e => change("barcodes", e.target.value.split("|"))} /></Field>
+            <Field label="Códigos de barras (separados por |)"><input readOnly={readOnly} name="barcodes" value={value.barcodes.join("|")} onChange={e => change("barcodes", e.target.value.split("|"))} /></Field>
             {text("family", "Família", false, false, list("family"))}{text("category", "Subfamília / categoria", false, false, list("category"))}
             {text("brand", "Marca", false, false, list("brand"))}{text("unit", "Unidade", true, false, list("unit"))}
-            {numeric("vat_rate", "IVA (%)", !rights.change_price, 100)}
-            {erp ? readonly("Preço no ERP (€)", money(initial.erp_price)) : <>{numeric("sale_net", "Preço sem IVA (€)", !rights.change_price, 1e9)}{gross()}</>}
-            <Field label="Estado"><select name="active" value={String(value.active)} disabled={erp} onChange={e => change("active", e.target.value === "true")}><option value="true">Ativo</option><option value="false">Inativo</option></select></Field>
+            <Field label="Estado"><select name="active" value={String(value.active)} disabled={readOnly || erp} onChange={e => change("active", e.target.value === "true")}><option value="true">Ativo</option><option value="false">Inativo</option></select></Field>
             {text("photo", "URL da fotografia (HTTPS)")}
           </div>
           <details><summary>Mais detalhes</summary><div className="form-grid">{text("reference", "Referência")}{numeric("precision", "Casas decimais (0 a 6)", false, 6, "1")}</div><p className="footnote">Código manual; não existe numeração automática configurada. O catálogo atual gere artigos de stock. A unidade e o controlo de lotes ficam protegidos depois de existirem movimentos.</p></details>
-          {["family", "category", "brand", "unit"].map(key => <datalist key={key} id={list(key)}>{[...new Set<string>(catalog.articles.map((a: Row) => a[key]).filter(Boolean))].map(v => <option key={v} value={v} />)}</datalist>)}
+          {["family", "category", "brand", "unit"].map(key => <datalist key={key} id={list(key)}>{[...new Set<string>((catalog.facets?.[key] || catalog.articles.map((a: Row) => a[key]).filter(Boolean)))].map(v => <option key={v} value={v} />)}</datalist>)}
         </>}
         {index === 1 && <>
           <h3>Preço de venda e margem bruta</h3>
           <p>A margem utiliza o preço sem IVA e o custo médio ponderado dos movimentos. Os valores da venda são editáveis quando o seu perfil o permite; os custos e as margens são calculados.</p>
           {!erp && <div className="form-grid">{numeric("sale_net", "Venda sem IVA (€)", !rights.change_price, 1e9)}{gross("Venda com IVA (€)")}{numeric("vat_rate", "Taxa de IVA (%)", !rights.change_price, 100)}</div>}
           <div className="article-facts">{readonly("Venda sem IVA", money(prices.net))}{readonly("Venda com IVA", money(prices.gross))}{readonly("IVA", erp ? "Não identificado para o preço do ERP" : `${quantity(value.vat_rate)} %`)}
-            {rights.view_cost && <>{readonly("Custo médio ponderado", money(initial.average_cost))}{readonly("Último custo de compra", money(initial.last_cost))}{readonly("Margem bruta por unidade", money(prices.margin))}{readonly("Margem sobre a venda sem IVA", prices.marginPct === null ? "Não calculável" : `${quantity(prices.marginPct)} %`)}</>}
+            {rights.view_cost && <>{readonly("Custo médio ponderado", money(initial.average_cost))}{readonly("Último custo de compra", money(initial.last_cost))}{readonly("Margem bruta por unidade", money(prices.margin))}{readonly("Margem sobre a venda sem IVA", prices.marginPct === null ? "Não calculável" : `${quantity(prices.marginPct)} %`)}{readonly("Markup sobre o custo", prices.cost && prices.cost > 0 && prices.net !== null ? `${quantity((prices.net - prices.cost) / prices.cost * 100)} %` : "Não calculável")}</>}
           </div>
-          <ActionButton type="button" onClick={() => { setTab(0); requestAnimationFrame(() => form.current?.querySelector<HTMLElement>('[name="sale_net"]')?.focus()); }}>Consultar / editar preço e IVA</ActionButton>
+
           {!rights.view_cost && <p>O seu perfil não permite consultar custos e margens.</p>}
           {erp && <p>O conector não identifica a base de IVA do preço do ERP; a margem de venda não pode ser calculada.</p>}
+          <ActionButton type="button" onClick={() => setTab(8)}>Comparar com o mercado (KuantoKusta)</ActionButton>
+        </>}
+        {index === 8 && <>
+          <h3>Preços de mercado</h3>
+          {initial.id
+            ? <MarketPrices articleId={initial.id} vatRate={Number(value.vat_rate) || 0} cost={rights.view_cost && !erp ? prices.cost : null} readOnly={readOnly} />
+            : <p>Guarde o artigo para registar e comparar preços de mercado.</p>}
         </>}
         {index === 2 && <>
           <h3>Quantidades e controlo</h3>
           <p>O stock atual é a soma dos movimentos nos armazéns a que tem acesso. O reservado corresponde aos pedidos de clientes; o disponível considera armazéns ativos e exclui essas reservas e os lotes expirados, sem compensar faltas entre armazéns.</p>
           <div className="article-facts">{readonly("Stock atual", initial.id ? quantity(initial.quantity) : "Sem movimentos")}{readonly("Stock reservado", quantity(initial.reserved_quantity))}{readonly("Disponível para saída", quantity(initial.available_quantity))}</div>
           <div className="form-grid">{numeric("minimum", "Stock mínimo")}{numeric("reorder", "Nível de reposição")}{text("location", "Localização")}</div>
-          <label className="stock-check" title="Portes, mão de obra, assinaturas…: conta nas compras e vendas, mas não movimenta stock."><input name="service" type="checkbox" checked={!!value.service} onChange={e => setValue({ ...value, service: e.target.checked, ...(e.target.checked ? { lots: false, expiry: false } : {}) })} />Serviço (não movimenta stock)</label>
-          {[["lots", "Controlar lotes"], ["expiry", "Controlar validades"]].map(([key, title]) => <label key={key} className="stock-check"><input name={key} type="checkbox" checked={value[key]} disabled={!!value.service} onChange={e => change(key, e.target.checked)} />{title}</label>)}
-          <p className="footnote">Alertas de validade: {(catalog.settings?.alerts || []).join(", ")} dias antes da validade. O nível de reposição é a quantidade de referência para repor stock.</p>
+          <label className="stock-check" title="Portes, mão de obra, assinaturas…: conta nas compras e vendas, mas não movimenta stock."><input disabled={readOnly} name="service" type="checkbox" checked={!!value.service} onChange={e => setValue({ ...value, service: e.target.checked, ...(e.target.checked ? { lots: false, expiry: false } : {}) })} />Serviço (não movimenta stock)</label>
           {details?.warehouses?.length > 0 && <div className="article-warehouse-list"><h4>Stock por armazém autorizado</h4>{details?.warehouses.map((w: Row) => <div key={w.id}><span>{w.name}</span><strong>{quantity(w.quantity)} {value.unit}</strong></div>)}</div>}
-          {details?.expiry_alerts?.length > 0 && <Notice tone="warning">Lotes com validade próxima ou ultrapassada: {details?.expiry_alerts.map((lot: Row) => `${lot.number} · ${date(lot.expiry)}`).join("; ")}. Consulte os lotes antes de registar saídas.</Notice>}
           {initial.id && <div className="stock-actions"><ActionButton type="button" onClick={() => navigate("Movimentos")}>Consultar movimentos</ActionButton><ActionButton type="button" onClick={() => navigate("Lotes e validades")}>Consultar lotes e validades</ActionButton></div>}
           <p className="footnote">As correções usam «Registar movimento» ou um inventário, com motivo e histórico. As quantidades não se alteram nesta ficha.</p>
         </>}
+        {index === 4 && <>
+          <h3>Validades e lotes</h3>
+          {[["lots", "Controlar lotes"], ["expiry", "Controlar validades"]].map(([key, title]) => <label key={key} className="stock-check"><input name={key} type="checkbox" checked={value[key]} disabled={readOnly || !!value.service} onChange={e => change(key, e.target.checked)} />{title}</label>)}
+          <p className="footnote">Alertas de validade: {(catalog.settings?.alerts || []).join(", ")} dias antes da validade. O nível de reposição é a quantidade de referência para repor stock.</p>
+          {details?.expiry_alerts?.length > 0 && <Notice tone="warning">Lotes com validade próxima ou ultrapassada: {details?.expiry_alerts.map((lot: Row) => `${lot.number} · ${date(lot.expiry)}`).join("; ")}. Consulte os lotes antes de registar saídas.</Notice>}
+          {initial.id && <ActionButton type="button" onClick={() => navigate("Lotes e validades")}>Consultar lotes e validades</ActionButton>}
+          <p>As datas e quantidades dos lotes são geridas no módulo de lotes, com as permissões e justificações existentes.</p>
+        </>}
         {index === 3 && <>
           <h3>Dados de compra do artigo</h3>
-          <div className="form-grid"><Field label="Fornecedor principal"><select name="supplier_id" value={value.supplier_id || ""} onChange={e => change("supplier_id", e.target.value || null)}><option value="">Sem fornecedor definido</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>{text("supplier_reference", "Referência do fornecedor")}</div>
+          <div className="form-grid"><Field label="Fornecedor principal"><select disabled={readOnly} name="supplier_id" value={value.supplier_id || ""} onChange={e => change("supplier_id", e.target.value || null)}><option value="">Sem fornecedor definido</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>{text("supplier_reference", "Referência do fornecedor")}</div>
           {supplier && <p>Fornecedor associado: <strong>{supplier.name}</strong>. As condições gerais do fornecedor são geridas na respetiva ficha, em Entidades.</p>}
           <div className="article-facts">{rights.view_cost && readonly("Último custo de compra registado", money(initial.last_cost))}{readonly("Última compra nos armazéns autorizados", date(details?.last_purchase?.date))}{readonly("Documento de compra", details?.last_purchase?.document || "Sem informação")}</div>
           <p className="footnote">A referência e o fornecedor principal pertencem a este artigo. O histórico mantém os fornecedores e os custos de cada compra.</p>
           {initial.id && <ActionButton type="button" onClick={() => navigate("Movimentos")}>Consultar histórico de compras e movimentos</ActionButton>}
         </>}
-        {index === 4 && <>
-          <h3>Descrição do artigo</h3><Field label="Descrição"><textarea name="description" value={value.description} maxLength={4000} onChange={e => change("description", e.target.value)} /></Field>
-          <Field label="Observações internas"><textarea name="internal_notes" value={value.internal_notes} maxLength={4000} onChange={e => change("internal_notes", e.target.value)} /></Field>
+        {index === 7 && <>
+          <h3>Descrição do artigo</h3><Field label="Descrição"><textarea readOnly={readOnly} name="description" value={value.description} maxLength={4000} onChange={e => change("description", e.target.value)} /></Field>
+          <Field label="Observações internas"><textarea readOnly={readOnly} name="internal_notes" value={value.internal_notes} maxLength={4000} onChange={e => change("internal_notes", e.target.value)} /></Field>
           <p className="footnote">As observações internas destinam-se à equipa e são guardadas separadamente da descrição do artigo.</p>
-          <Field label="Imagens adicionais — endereço HTTPS por linha"><textarea name="additional_photos" value={imageText} onChange={e => { setImageText(e.target.value); change("additional_photos", e.target.value.split("\n").map(v => v.trim()).filter(Boolean)); }} /></Field>
-          <Field label="Anexos — nome | endereço HTTPS, um por linha"><textarea name="attachments" value={attachmentText} onChange={e => {
+          <Field label="Imagens adicionais — endereço HTTPS por linha"><textarea readOnly={readOnly} name="additional_photos" value={imageText} onChange={e => { setImageText(e.target.value); change("additional_photos", e.target.value.split("\n").map(v => v.trim()).filter(Boolean)); }} /></Field>
+          <Field label="Anexos — nome | endereço HTTPS, um por linha"><textarea readOnly={readOnly} name="attachments" value={attachmentText} onChange={e => {
             setAttachmentText(e.target.value);
             change("attachments", e.target.value.split("\n").filter(v => v.trim()).map(line => {
               const separator = line.indexOf("|");
@@ -182,23 +193,25 @@ export default function ArticleForm({ initial, catalog, onSave, onCancel, onNavi
           <p className="footnote">Ligue imagens e fichas técnicas já alojadas por HTTPS. Até 10 imagens e 20 anexos; os ficheiros mantêm-se no alojamento de origem.</p>
           {!!value.additional_photos.length && <div className="article-gallery">{value.additional_photos.filter((url: string) => /^https:\/\//.test(url)).map((url: string, i: number) => <img key={`${i}-${url}`} src={url} alt={`Imagem adicional ${i + 1}`} referrerPolicy="no-referrer" loading="lazy" />)}</div>}
           {!!value.attachments.length && <ul>{value.attachments.filter((a: Row) => /^https:\/\//.test(a.url)).map((a: Row, i: number) => <li key={i}><a href={a.url} target="_blank" rel="noopener noreferrer">{a.name || "Consultar anexo"}</a></li>)}</ul>}
-          <ActionButton type="button" onClick={() => setTab(0)}>Editar imagem principal em Geral</ActionButton>
+          <ActionButton type="button" onClick={() => setTab(0)}>Imagem principal em Geral</ActionButton>
         </>}
         {index === 5 && <>
-          <h3>{erp ? "Ligação ao ERP e histórico" : "Origem local e histórico"}</h3>
+          <h3>{erp ? "Ligação ao ERP" : "Origem local"}</h3>
           <div className="article-facts">{readonly("Criado em", date(details?.created?.created_at))}{readonly("Criado por", details?.created?.user_name || "Sem informação")}{readonly("Última alteração em", date(details?.updated?.created_at))}{readonly("Alterado por", details?.updated?.user_name || "Sem informação")}</div>
           <div className="article-facts">{readonly("Origem", erp ? "Wintouch" : "Local")}{readonly("Empresa", details?.company_name || "Sem informação")}{readonly("Código no ERP", erp ? initial.code : "Não se aplica")}{erp && <>{readonly("Identificador no ERP", details?.erp?.external_id || "Sem informação")}{readonly("Empresa no ERP", details?.erp?.enterprise_id || "Sem informação")}{readonly("Última sincronização do catálogo", date(initial.synced_at))}{readonly("Estado de sincronização", initial.synced_at ? "Catálogo recebido" : "Sem informação")}</>}{readonly("Revisão da ficha", initial.revision ?? 0)}</div>
           {erp && <p>Os dados locais são guardados nesta aplicação. O conector atual importa o catálogo e não permite criar ou alterar artigos na Wintouch.</p>}
           {erp && details?.sync_state === "falhou" && <Notice tone="warning">A última sincronização do catálogo falhou. Consulte Integrações antes de atualizar os artigos.</Notice>}
           {erp && ["pendente", "em_curso"].includes(details?.sync_state) && <p role="status">Existe uma sincronização do catálogo pendente ou em curso.</p>}
-          {canSync && <ActionButton type="button" onClick={onSync}>Importar / atualizar catálogo do ERP</ActionButton>}
+          {!readOnly && canSync && <ActionButton type="button" onClick={onSync}>Importar / atualizar catálogo do ERP</ActionButton>}
           {!erp && <p>Não precisa de configurar um ERP para criar e gerir este artigo.</p>}
-          {details?.history?.length > 0 ? <ol className="article-history">{details?.history.map((entry: Row) => <li key={entry.id}><strong>{entry.label}</strong><span>{date(entry.created_at)} · {entry.user_name || "Sem informação"}</span></li>)}</ol> : <p>Sem histórico de alterações disponível.</p>}
+
         </>}
-        {initial.id && [2, 3, 5].includes(index) && <>{detailError ? <Notice tone="error">{detailError}<ActionButton type="button" onClick={() => setAttempt(v => v + 1)}>Voltar a tentar</ActionButton></Notice> : !details && <p role="status">A carregar informação do artigo…</p>}</>}
+        {index === 6 && <><h3>Histórico de alterações</h3><p>Últimas 30 alterações da ficha e do preço, com o responsável e a data. Os movimentos têm histórico próprio.</p>
+          {details?.history?.length > 0 ? <ol className="article-history">{details?.history.map((entry: Row) => <li key={entry.id}><strong>{entry.label}</strong><span>{date(entry.created_at)} · {entry.user_name || "Sem informação"}</span></li>)}</ol> : <p>Sem histórico de alterações disponível.</p>}</>}
+        {initial.id && [2, 3, 4, 5, 6].includes(index) && <>{detailError ? <Notice tone="error">{detailError}<ActionButton type="button" onClick={() => setAttempt(v => v + 1)}>Voltar a tentar</ActionButton></Notice> : !details && <p role="status">A carregar informação do artigo…</p>}</>}
       </section>)}
     </fieldset>
     {error && <Notice tone="error" role="alert">{error}</Notice>}
-    <div className="ui-dialog-actions article-form-actions"><span className="footnote">Ctrl / ⌘ + S para guardar</span><ActionButton type="button" disabled={busy} onClick={onCancel}>Cancelar</ActionButton><ActionButton type="submit" className="primary" disabled={busy}>{busy ? "A guardar…" : "Guardar"}</ActionButton></div>
+    <div className="ui-dialog-actions article-form-actions">{!readOnly && <span className="footnote">Ctrl / ⌘ + S para guardar</span>}<ActionButton type="button" disabled={busy} onClick={onCancel}>{readOnly ? "Fechar" : "Cancelar"}</ActionButton>{!readOnly && <ActionButton type="submit" className="primary" disabled={busy}>{busy ? "A guardar…" : "Guardar"}</ActionButton>}</div>
   </ManagedForm>;
 }

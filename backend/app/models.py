@@ -1394,6 +1394,29 @@ class PurchaseArticleAlias(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class ArticleMarketPrice(Base):
+    """Preço visto no mercado (KuantoKusta ou outra loja), registado à mão para comparar."""
+
+    __tablename__ = "article_market_prices"
+    __table_args__ = (
+        CheckConstraint("price_cents > 0", name="market_price_positive"),
+        CheckConstraint("source IN ('kuantokusta', 'outro')", name="market_price_source"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    article_id: Mapped[str] = mapped_column(
+        ForeignKey("stock_articles.id", ondelete="CASCADE"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(20), default="kuantokusta")
+    store_name: Mapped[str] = mapped_column(String(120))
+    # Preço de venda ao público, com IVA.
+    price_cents: Mapped[int] = mapped_column(BigInteger)
+    observed_on: Mapped[str] = mapped_column(String(10))
+    url: Mapped[str] = mapped_column(String(2000), default="")
+    notes: Mapped[str] = mapped_column(String(300), default="")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class StockWarehouse(Base):
     __tablename__ = "stock_warehouses"
     __table_args__ = (UniqueConstraint("store_id", "name"),)

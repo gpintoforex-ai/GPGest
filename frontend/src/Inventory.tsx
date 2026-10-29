@@ -3,6 +3,7 @@ import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import OpeningStockImport from "./OpeningStockImport";
 import InventorySync from "./InventorySync";
 import ArticleForm from "./ArticleForm";
+import ArticleGrid from "./ArticleGrid";
 import { newArticle, articlePayload } from "./articleValues";
 import DatePresets from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
@@ -148,8 +149,7 @@ export default function Inventory({
     [tab, setTab] = useWorkspaceTab("stock", "Painel", ["Painel", "Artigos", "Movimentos", "Lotes e validades", "Inventários", "Importações", "Parâmetros"]),
     [error, setError] = useState(""),
     [success, setSuccess] = useState("");
-  const [query, setQuery] = useState(""),
-    [filters, setFilters] = useState<Row>({
+  const [filters, setFilters] = useState<Row>({
       start: today().slice(0, 8) + "01",
       end: currentMonthRange().to,
       warehouse_id: "",
@@ -168,8 +168,6 @@ export default function Inventory({
     [busy, setBusy] = useState(false),
     [page, setPage] = useState(1),
     [lotState, setLotState] = useState("");
-  const [articleFilters, setArticleFilters] = useState<Row>({ family: "", brand: "", supplier_id: "", active: "", stock: "" });
-  const [showArticleCosts, setShowArticleCosts] = useState(false);
   const running = useRef(false),
     requestKey = useRef(crypto.randomUUID());
   const articles: Row[] = catalog?.articles || [],
@@ -181,17 +179,8 @@ export default function Inventory({
     warehouses.find((w) => w.id === id)?.name || id;
   const supplierName = (id: string) =>
     catalog?.suppliers.find((s: Row) => s.id === id)?.name || "—";
-  const visibleArticles = articles.filter(a => {
-    const search = [a.name, a.code, a.reference, ...(a.barcodes || []), a.brand, a.supplier_reference, supplierName(a.supplier_id)].join(" ").toLocaleLowerCase("pt-PT");
-    return search.includes(query.trim().toLocaleLowerCase("pt-PT"))
-      && (!articleFilters.family || a.family === articleFilters.family)
-      && (!articleFilters.brand || a.brand === articleFilters.brand)
-      && (!articleFilters.supplier_id || a.supplier_id === articleFilters.supplier_id)
-      && (!articleFilters.active || String(a.active) === articleFilters.active)
-      && (!articleFilters.stock || (articleFilters.stock === "unknown" ? a.available_quantity == null : a.available_quantity != null && (articleFilters.stock === "low" ? Number(a.available_quantity) < Number(a.minimum || 0) : articleFilters.stock === "zero" ? Number(a.available_quantity) <= 0 : Number(a.available_quantity) > 0)));
-  });
   async function load() {
-    const value = await api("/stock/catalog");
+    const value = await api("/stock/catalog" + (tab === "Artigos" ? "?metadata_only=true" : ""));
     setCatalog(value);
     setConfig(value.settings);
   }
@@ -216,7 +205,7 @@ export default function Inventory({
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     let active = true;
-    api("/stock/catalog")
+    api("/stock/catalog" + (tab === "Artigos" ? "?metadata_only=true" : ""))
       .then((data) => {
         if (active) {
           setCatalog(data);
@@ -229,7 +218,7 @@ export default function Inventory({
     return () => {
       active = false;
     };
-  }, []);
+  }, [tab === "Artigos"]);
   useEffect(() => {
     if (!catalog) return;
     let active = true;
@@ -262,7 +251,11 @@ export default function Inventory({
       active = false;
     };
   }, [tab, params, page, lotState, revision, !!catalog]);
-  function open(kind: string, data: Row = {}) {
+  async function open(kind: string, data: Row = {}) {
+    if (kind === "movement" && !catalog?.articles.length) {
+      try { setCatalog(await api("/stock/catalog")); }
+      catch (e) { setError((e as Error).message); return; }
+    }
     requestKey.current = crypto.randomUUID();
     setError("");
     setDialog({ kind, ...data });
@@ -387,23 +380,9 @@ export default function Inventory({
           )}
         </Notice>
       )}
-      <section className="panel">
+      <section className="panel" hidden={tab === "Artigos"}>
         <div className="form-grid stock-filters filter-bar">
-          {tab === "Artigos" ? (
-            <>
-            <Field label="Pesquisar código, designação, barras ou referência do fornecedor">
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </Field>
-            {[["family", "Família"], ["brand", "Marca"]].map(([key, label]) => <Field key={key} label={label}><select value={articleFilters[key]} onChange={e => setArticleFilters({ ...articleFilters, [key]: e.target.value })}><option value="">Todas</option>{[...new Set(articles.map(a => a[key]).filter(Boolean))].sort().map(v => <option key={v} value={v}>{v}</option>)}</select></Field>)}
-            <Field label="Fornecedor"><select value={articleFilters.supplier_id} onChange={e => setArticleFilters({ ...articleFilters, supplier_id: e.target.value })}><option value="">Todos</option>{catalog.suppliers.map((s: Row) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-            <Field label="Estado"><select value={articleFilters.active} onChange={e => setArticleFilters({ ...articleFilters, active: e.target.value })}><option value="">Todos</option><option value="true">Ativos</option><option value="false">Inativos</option></select></Field>
-            <Field label="Situação de stock"><select value={articleFilters.stock} onChange={e => setArticleFilters({ ...articleFilters, stock: e.target.value })}><option value="">Todas</option><option value="positive">Com stock</option><option value="zero">Sem stock / negativo</option><option value="low">Abaixo do mínimo</option><option value="unknown">Sem informação</option></select></Field>
-            </>
-          ) : (
+          {tab !== "Artigos" && (
             <>
               <Field label="Armazém">
                 <select
@@ -669,149 +648,11 @@ export default function Inventory({
           )}
         </section>
       )}
-      {tab === "Artigos" && (
-        <section className="panel">
-          <h2>Catálogo de artigos</h2>
-          <p className="footnote" role="status">{visibleArticles.length} de {articles.length} artigos · Quantidades dos movimentos nos armazéns autorizados.</p>
-          {rights.view_cost && <label className="stock-check"><input type="checkbox" checked={showArticleCosts} onChange={e => setShowArticleCosts(e.target.checked)} />Mostrar custos na tabela</label>}
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Código</th>
-                  <th>Designação</th>
-                  <th>Família</th>
-                  <th className="numeric">Preço de venda</th>
-                  {rights.view_cost && showArticleCosts && <th className="numeric">Custo médio / última compra</th>}
-                  <th className="numeric">Stock disponível</th>
-                  <th>Estado</th>
-                  <th>ERP</th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleArticles
-                  .map((a) => (
-                    <tr key={a.id}>
-                      <td><strong>{a.code}</strong></td>
-                      <td>
-                        {a.photo && (
-                          <img
-                            src={a.photo}
-                            alt=""
-                            className="stock-photo"
-                            loading="lazy"
-                            referrerPolicy="no-referrer"
-                          />
-                        )}
-                        <strong>
-                          {a.name}
-                        </strong>
-                        <small>{[a.reference, a.brand].filter(Boolean).join(" · ")}</small>
-                      </td>
-                      <td>
-                        {a.family || "Sem família"}
-                        {a.category && <small>{a.category}</small>}
-                      </td>
-                      <td className="numeric">
-                        {a.origin === "ERP" ? (
-                          <>
-                            {money(a.erp_price)}
-                            <small>{a.erp_price_basis}</small>
-                          </>
-                        ) : (
-                          <>
-                            {a.sale_net == null || a.vat_rate == null ? "Sem informação" : money(Number(a.sale_net) * (1 + Number(a.vat_rate) / 100))}
-                            <small>Com IVA{a.vat_rate == null ? "" : ` · ${qty(a.vat_rate)} %`}</small>
-                          </>
-                        )}
-                      </td>
-                      {rights.view_cost && showArticleCosts && <td className="numeric">{money(a.average_cost)}<small>{money(a.last_cost)}</small></td>}
-                      <td className="numeric">
-                        {qty(a.available_quantity)}
-                        <small>Atual: {qty(a.quantity)} · Reservado: {qty(a.reserved_quantity)}</small>
-                        <small>{a.location}</small>
-                      </td>
-                      <td>
-                        <span className="article-state">{a.active ? "Ativo" : "Inativo"}</span>
-                      </td>
-                      <td>
-                        {a.origin === "ERP" ? "Wintouch" : "Local"}
-                        <small>
-                          {a.stock_state}
-                          {a.synced_at &&
-                            ` · Catálogo sincronizado: ${day(a.synced_at)}`}
-                        </small>
-                      </td>
-                      <td>
-                        <div className="stock-actions">
-                          {rights.adjust_stock && (
-                            <ActionButton
-                              title="Editar artigo"
-                              aria-label={`Editar ${a.name}`}
-                              onClick={() => open("article", { article: a })}
-                            >
-                              <Pencil size={16} />
-                            </ActionButton>
-                          )}
-                          {a.origin === "Local" && rights.adjust_stock && (
-                            <>
-                              <ActionButton aria-label={`${a.active ? "Desativar" : "Ativar"} ${a.name}`} onClick={() => run(async () => {
-                                if (!await confirmAction({ title: a.active ? "Desativar artigo?" : "Ativar artigo?", message: `Pretende ${a.active ? "desativar" : "ativar"} «${a.name}»? O histórico é preservado.`, confirmLabel: a.active ? "Desativar" : "Ativar" })) return;
-                                await api(`/stock/articles/${a.id}`, { ...articlePayload(a), active: !a.active }, { method: "PUT" });
-                                await saved(a.active ? "Artigo desativado." : "Artigo ativado.");
-                              })}>{a.active ? "Desativar" : "Ativar"}</ActionButton>
-                              <ActionButton
-                                className="danger"
-                                title="Eliminar artigo"
-                                aria-label={`Eliminar ${a.name}`}
-                                onClick={() =>
-                                  run(async () => {
-                                    if (
-                                      !(await confirmAction({
-                                        title: "Eliminar artigo?",
-                                        message: `Pretende eliminar «${a.name}»? Só é possível sem histórico; caso contrário, edite a ficha e desative-o.`,
-                                        confirmLabel: "Eliminar artigo",
-                                        tone: "danger",
-                                      }))
-                                    )
-                                      return;
-                                    await api(
-                                      `/stock/articles/${a.id}`,
-                                      {},
-                                      { method: "DELETE" },
-                                    );
-                                    await saved("Artigo eliminado.");
-                                  })
-                                }
-                              >
-                                <Trash2 size={16} />
-                              </ActionButton>
-                            </>
-                          )}
-                          {a.origin === "Local" && rights.change_price && (
-                            <ActionButton
-                              onClick={() => open("price", { article: a })}
-                            >
-                              Preço
-                            </ActionButton>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-          {!!articles.length && !visibleArticles.length && <p>Nenhum artigo corresponde à pesquisa e aos filtros.</p>}
-          {!articles.length && (
-            <p>
-              O catálogo está vazio. Crie um artigo, importe um CSV ou associe
-              artigos do ERP.
-            </p>
-          )}
-        </section>
-      )}
+      {tab === "Artigos" && <ArticleGrid key={catalog.preference_scope || "catalog"} catalog={catalog} revision={revision}
+        onOpen={(article, readOnly = false) => open("article", { article, readOnly })}
+        onPrice={article => open("price", { article })}
+        onDuplicate={article => open("article", { article: { ...articlePayload(article), id: undefined, code: "", barcodes: [], revision: 0, name: `${article.name} (cópia)`, active: true } })}
+        onChanged={message => { setSuccess(message); setRevision(v => v + 1); }} />}
       {tab === "Movimentos" && (
         <section className="panel">
           <h2>Histórico de stock</h2>
@@ -1211,7 +1052,7 @@ export default function Inventory({
             {
               (
                 {
-                  article: dialog.article?.id ? "Editar artigo" : "Novo artigo",
+                  article: dialog.readOnly ? "Consultar artigo" : dialog.article?.id ? "Editar artigo" : "Novo artigo",
                   movement: "Registar movimento de stock",
                   warehouse: "Novo armazém",
                   "inventory-new": "Iniciar inventário",
@@ -1226,6 +1067,7 @@ export default function Inventory({
           {dialog.kind === "article" && (
             <ArticleForm
               initial={dialog.article}
+              readOnly={!!dialog.readOnly}
               catalog={catalog}
               onCancel={() => setDialog(null)}
               canSync={admin && rights.adjust_stock && catalog.policy.mode === "integrated"}

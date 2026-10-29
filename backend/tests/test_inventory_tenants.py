@@ -28,6 +28,7 @@ def test_inventory_company_isolation_and_foreign_identifiers(platform):
     enter(client, b["slug"])
     catalog = client.get("/api/stock/catalog").json()
     assert catalog["articles"] == [] and catalog["warehouses"] == []
+    assert client.get("/api/stock/catalog?page=1").json()["total"] == 0
     assert client.get("/api/stock/movements").json()["rows"] == []
     assert client.post("/api/stock/movements", json=operation).status_code == 404
     assert client.delete(f"/api/stock/articles/{pid}").status_code == 404

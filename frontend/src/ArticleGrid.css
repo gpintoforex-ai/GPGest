@@ -1,0 +1,216 @@
+.article-grid-heading,
+.article-grid-tools,
+.article-selection,
+.article-grid-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.article-grid-heading {
+  justify-content: space-between;
+}
+.article-grid-heading p {
+  color: var(--color-muted);
+  margin: 4px 0 16px;
+}
+.article-grid-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.article-grid-filters > :first-child {
+  grid-column: span 2;
+}
+.article-grid-tools {
+  margin: 16px 0;
+  align-items: end;
+}
+.article-grid-tools label {
+  min-width: 130px;
+}
+.article-grid input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex: 0 0 auto;
+  vertical-align: middle;
+}
+.article-grid-scroll {
+  max-height: 65vh;
+  overflow: auto;
+}
+.article-grid table {
+  width: 100%;
+}
+.article-grid th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-surface);
+  box-shadow: 0 1px var(--color-border);
+  white-space: nowrap;
+}
+.article-grid td {
+  padding: 12px;
+  vertical-align: top;
+}
+.article-grid small {
+  display: block;
+  color: var(--color-muted);
+  margin-top: 4px;
+}
+.article-grid .article-name {
+  text-align: left;
+  white-space: normal;
+  display: block;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--color-text);
+}
+.article-grid .article-name strong {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.article-grid .article-no-stock td:first-child,
+.article-grid .article-low-stock td:first-child {
+  border-left: 3px solid var(--color-warning);
+}
+.article-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  font-size: 12px;
+  margin-top: 3px;
+}
+.article-badge.warning {
+  color: var(--color-warning);
+}
+.article-badge.muted {
+  color: var(--color-muted);
+}
+.article-badge.success {
+  color: var(--color-accent-ink);
+}
+.article-selection {
+  padding: 12px;
+  margin: 12px 0;
+  background: var(--color-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.article-grid-pagination {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.article-grid-pagination > span {
+  margin-right: auto;
+}
+.article-grid.density-compact td {
+  padding: 6px 10px;
+}
+.article-grid.density-comfortable td {
+  padding: 20px 14px;
+}
+.article-row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 120px;
+}
+.article-row-actions details > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.article-grid summary {
+  cursor: pointer;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+.article-columns > div {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.article-columns label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.article-form.is-readonly input:not([type="checkbox"]),
+.article-form.is-readonly textarea {
+  background: var(--color-subtle);
+}
+.article-form .article-view-notice {
+  margin-bottom: 12px;
+}
+@media (max-width: 640px) {
+  .article-grid-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .article-grid-filters > :first-child {
+    grid-column: auto;
+  }
+  .article-grid-tools > * {
+    flex: 1 1 42%;
+  }
+  .article-grid-scroll {
+    max-height: 60vh;
+  }
+  .article-grid table {
+    min-width: 760px;
+  }
+  .article-grid-pagination {
+    justify-content: space-between;
+  }
+}
+
+.article-advanced {
+  grid-column: 1 / -1;
+}
+.article-advanced-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.article-columns {
+  position: relative;
+}
+.article-columns > div {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  min-width: 255px;
+  max-height: 350px;
+  overflow: auto;
+  box-shadow: 0 8px 24px #0002;
+}
+.workspace .article-grid input[type="checkbox"] {
+  appearance: auto;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  padding: 0;
+  border-radius: 3px;
+  accent-color: var(--color-accent-ink);
+}
+.workspace .article-grid input[type="checkbox"]::before,
+.workspace .article-grid input[type="checkbox"]::after {
+  content: none;
+}
+@media (max-width: 640px) {
+  .article-advanced-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

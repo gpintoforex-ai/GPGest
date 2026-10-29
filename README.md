@@ -73,6 +73,8 @@ Ao fechar uma folha com diferença de numerário, é criado automaticamente um m
 
 Os **Movimentos previstos** apresentam numa única lista os documentos locais e os saldos a crédito Wintouch, com origem identificada e totais conjuntos. A importação atualiza os saldos de vendas e compras ainda em aberto, incluindo documentos anteriores ao período selecionado. O filtro de vencimento começa no documento pendente mais antigo da loja selecionada e termina no último dia do mês atual. Sem pendentes, a data inicial assume o primeiro dia do mês atual. Pode alterar as datas ou usar **Limpar datas**; atualizar os dados conserva uma data inicial alterada manualmente. Também pode filtrar por vendas/compras e pesquisar a entidade. Os filtros atualizam a lista, os totais e a paginação. Administradores e gestores podem liquidar os saldos Wintouch diretamente pelo formulário, com confirmação de envio à origem.
 
+Grelha e ficha de artigos: [comportamento, desempenho e testes](docs/ARTIGOS-GRELHA-E-FICHA.md). Comparação com o KuantoKusta e outras lojas: [preços de mercado](docs/PRECOS-MERCADO.md).
+
 ## Começar neste computador
 
 1. Abra a pasta do projeto no VS Code.

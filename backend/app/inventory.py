@@ -5,10 +5,13 @@ from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 from typing import Literal
+from unicodedata import combining, normalize
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, HTTPException, Query
 from pydantic import Field, field_validator
-from sqlalchemy import func, select, text
+from sqlalchemy import case, cast, func, select, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from .db import db_session
@@ -128,7 +131,10 @@ def article(db, identifier, writable=False, *, stock=False):
                 409,
             )
         if stock_from_erp(db):
-            fail("O stock desta empresa é controlado pelo ERP e o conector não permite escrevê-lo.", 409)
+            fail(
+                "O stock desta empresa é controlado pelo ERP e o conector não permite escrevê-lo.",
+                409,
+            )
     return row
 
 
@@ -147,17 +153,26 @@ def warehouse_dependencies(db, row):
         for document in db.scalars(
             select(ProcurementDocument).where(ProcurementDocument.store_id == row.store_id)
         )
-        if any(line.get("warehouse_id") == row.id for line in json.loads(document.data).get("lines", []))
+        if any(
+            line.get("warehouse_id") == row.id
+            for line in json.loads(document.data).get("lines", [])
+        )
     )
     return [
         (
             "movimentos de stock no histórico",
-            db.scalar(select(func.count()).select_from(StockEntry).where(StockEntry.warehouse_id == row.id)),
+            db.scalar(
+                select(func.count())
+                .select_from(StockEntry)
+                .where(StockEntry.warehouse_id == row.id)
+            ),
         ),
         (
             "inventários associados",
             db.scalar(
-                select(func.count()).select_from(StockInventory).where(StockInventory.warehouse_id == row.id)
+                select(func.count())
+                .select_from(StockInventory)
+                .where(StockInventory.warehouse_id == row.id)
             ),
         ),
         ("documentos de compra associados", documents),
@@ -367,16 +382,26 @@ def save_article(
         if (old.get("lots") != data.lots or old.get("expiry") != data.expiry) and entries(
             db, existing.id
         ):
-            field_fail("lots" if old.get("lots") != data.lots else "expiry", "O controlo de lotes/validades não pode mudar num artigo com histórico.", 409)
+            field_fail(
+                "lots" if old.get("lots") != data.lots else "expiry",
+                "O controlo de lotes/validades não pode mudar num artigo com histórico.",
+                409,
+            )
         if data.service and not old.get("service") and entries(db, existing.id):
-            field_fail("service", "Um artigo com movimentos de stock não pode passar a serviço.", 409)
+            field_fail(
+                "service", "Um artigo com movimentos de stock não pode passar a serviço.", 409
+            )
         if old.get("unit", "un") != data.unit and entries(db, existing.id):
             field_fail("unit", "A unidade não pode mudar num artigo com histórico.", 409)
         if any(
             abs(entry.quantity) != abs(entry.quantity).quantize(D(1).scaleb(-data.precision))
             for entry in entries(db, existing.id)
         ):
-            field_fail("precision", "A precisão indicada não permite representar as quantidades do histórico.", 409)
+            field_fail(
+                "precision",
+                "A precisão indicada não permite representar as quantidades do histórico.",
+                409,
+            )
     elif data.sale_net:
         require(user, config, "change_price")
     if data.expiry and not data.lots:
@@ -395,7 +420,9 @@ def save_article(
         if other.code.casefold() == data.code.casefold():
             field_fail("code", f"Código já utilizado pelo artigo «{other.name}».", 409)
         if set(json.loads(other.data).get("barcodes", [])) & set(data.barcodes):
-            field_fail("barcodes", f"Código de barras já utilizado pelo artigo «{other.name}».", 409)
+            field_fail(
+                "barcodes", f"Código de barras já utilizado pelo artigo «{other.name}».", 409
+            )
     row = existing or StockArticle(code=data.code, name=data.name)
     row.code, row.name, row.active, row.data = data.code, data.name, data.active, dump(payload)
     row.revision = (row.revision or 0) + 1
@@ -419,7 +446,10 @@ def post(db, user, data, authorize, *, source="manual", bypass=False):
     target = warehouse(db, user, data.target_id, authorize) if data.kind == "transfer" else None
     for item in (origin, target):
         if item is not None and not item.active:
-            fail(f"O armazém «{item.name}» está inativo e não aceita novos movimentos. Reative-o em Tabelas → Armazéns.", 409)
+            fail(
+                f"O armazém «{item.name}» está inativo e não aceita novos movimentos. Reative-o em Tabelas → Armazéns.",
+                409,
+            )
     if target and target.id == origin.id:
         fail("Selecione outro armazém de destino.")
     if data.occurred_on > date.today():
@@ -689,7 +719,14 @@ def entry_view(row, cost_visible):
 
 
 def article_view(
-    db, row, allowed_warehouses, cost_visible, history=None, erp=None, erp_stock=False, available=None
+    db,
+    row,
+    allowed_warehouses,
+    cost_visible,
+    history=None,
+    erp=None,
+    erp_stock=False,
+    available=None,
 ):
     data = json.loads(row.data)
     history = entries(db, row.id) if history is None else history
@@ -711,10 +748,18 @@ def article_view(
         "erp_id": row.erp_id,
         "synced_at": erp.synced_at if erp else None,
         # Stock dos artigos do ERP registado na IAZELA (o conector não lê quantidades).
-        "stock_state": "serviço (sem stock)" if data.get("service") else "indisponível no conector" if erp and erp_stock else "movimentos locais",
+        "stock_state": "serviço (sem stock)"
+        if data.get("service")
+        else "indisponível no conector"
+        if erp and erp_stock
+        else "movimentos locais",
         "quantity": None if erp and erp_stock else str(sum((e.quantity for e in visible), ZERO)),
-        "reserved_quantity": None if erp and erp_stock else (available or {}).get("reserved_quantity"),
-        "available_quantity": None if erp and erp_stock else (available or {}).get("available_quantity"),
+        "reserved_quantity": None
+        if erp and erp_stock
+        else (available or {}).get("reserved_quantity"),
+        "available_quantity": None
+        if erp and erp_stock
+        else (available or {}).get("available_quantity"),
         "average_cost": str(cost)
         if cost_visible and cost is not None and not (erp and erp_stock)
         else None,
@@ -789,39 +834,214 @@ def register_routes(app, current, authorize, scope, audit):
         ]
 
     @app.get("/api/stock/catalog")
-    def catalogue(user=Depends(current), db: Session = Depends(db_session)):
+    def catalogue(
+        user=Depends(current),
+        db: Session = Depends(db_session),
+        metadata_only: bool = False,
+        page: int | None = Query(None, ge=1),
+        size: int = Query(25, ge=1, le=100),
+        q: str = Query("", max_length=200),
+        family: str = "",
+        category: str = "",
+        brand: str = "",
+        supplier_id: str = "",
+        active: Literal["", "true", "false"] = "",
+        origin: Literal["", "Local", "ERP"] = "",
+        stock: Literal["", "positive", "zero", "low", "unknown"] = "",
+        expiry: Literal["", "near", "expired", "valid", "missing"] = "",
+        sort: str = "name",
+        direction: Literal["asc", "desc"] = "asc",
+    ):
         config = settings(db)
         rights = permissions(user, config)
         allowed = wh_ids(db, user)
-        authorized_warehouses = list(db.scalars(select(StockWarehouse).where(StockWarehouse.id.in_(allowed))))
+        authorized_warehouses = list(
+            db.scalars(select(StockWarehouse).where(StockWarehouse.id.in_(allowed)))
+        )
         active_warehouses = {w.id for w in authorized_warehouses if w.active}
-        grouped = defaultdict(list)
-        for entry in db.scalars(select(StockEntry).order_by(StockEntry.created_at, StockEntry.id)):
-            grouped[entry.article_id].append(entry)
-        erp = {row.id: row for row in db.scalars(select(WintouchProduct))}
-        erp_stock = stock_from_erp(db)
-        lot_map = {lot.id: lot for lot in db.scalars(select(StockLot))}
-        holds = defaultdict(list)
-        for hold, article_id in db.execute(
-            select(CustomerOrderReservation, CustomerOrderLine.article_id)
-            .join(CustomerOrderLine, CustomerOrderLine.id == CustomerOrderReservation.line_id)
-            .where(CustomerOrderReservation.warehouse_id.in_(allowed), CustomerOrderReservation.quantity > 0)
+        # Keep the legacy unpaged contract for stock workflows. The grid filters,
+        # counts and pages metadata in SQL before loading any movement history.
+        payload = cast(StockArticle.data, JSONB)
+        external = WintouchProduct
+        expressions = {
+            "code": func.coalesce(external.code, StockArticle.code),
+            "name": func.coalesce(external.name, StockArticle.name),
+            "family": payload["family"].astext,
+            "category": payload["category"].astext,
+            "active": func.coalesce(external.active, StockArticle.active),
+            "origin": case((external.id.is_not(None), "ERP"), else_="Local"),
+        }
+        if sort not in expressions:
+            fail("Ordenação de artigos inválida.")
+        query = select(StockArticle).outerjoin(external, external.id == StockArticle.erp_id)
+        for key, value in (
+            ("family", family),
+            ("category", category),
+            ("brand", brand),
+            ("supplier_id", supplier_id),
         ):
-            holds[article_id].append(hold)
-        return {
-            "articles": [
-                article_view(
-                    db,
-                    row,
-                    allowed,
-                    rights["view_cost"],
-                    grouped[row.id],
-                    erp.get(row.erp_id),
-                    erp_stock,
-                    availability(grouped[row.id], allowed, lot_map, holds[row.id], active_warehouses),
+            if value:
+                query = query.where(payload[key].astext == value)
+        if origin:
+            query = query.where(expressions["origin"] == origin)
+        if active:
+            query = query.where(expressions["active"] == (active == "true"))
+        if q.strip():
+            query = query.outerjoin(
+                BusinessEntity, BusinessEntity.id == payload["supplier_id"].astext
+            )
+            searchable = func.lower(
+                func.concat_ws(
+                    " ",
+                    expressions["code"],
+                    expressions["name"],
+                    payload["reference"].astext,
+                    payload["barcodes"].astext,
+                    payload["supplier_reference"].astext,
+                    payload["brand"].astext,
+                    BusinessEntity.name,
                 )
-                for row in db.scalars(select(StockArticle).order_by(StockArticle.name))
-            ],
+            )
+            # Portable Portuguese search, including databases created with locale C.
+            accented = "ÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÇÑÝŸ"
+            plain = "".join(normalize("NFD", char)[0] for char in accented)
+            searchable = func.lower(
+                func.translate(searchable, accented + accented.lower(), plain + plain.lower())
+            )
+            term = "".join(
+                char for char in normalize("NFD", q.strip()) if not combining(char)
+            ).lower()
+            query = query.where(searchable.contains(term, autoescape=True))
+        total = db.scalar(select(func.count()).select_from(query.subquery()))
+        total_all = db.scalar(select(func.count()).select_from(StockArticle))
+        facets = {}
+        for key in ("family", "category", "brand", "unit"):
+            field = payload[key].astext
+            facets[key] = list(
+                db.scalars(
+                    select(field).where(field.is_not(None), field != "").distinct().order_by(field)
+                )
+            )
+        ordered = expressions[sort]
+        ordered = func.lower(ordered) if sort != "active" else ordered
+        query = query.order_by(
+            ordered.asc().nulls_last() if direction == "asc" else ordered.desc().nulls_last(),
+            StockArticle.id,
+        )
+        derived = bool(stock or expiry)
+        current_page = min(page or 1, max(1, (total + size - 1) // size))
+        if page is not None and not derived:
+            query = query.offset((current_page - 1) * size).limit(size)
+        selected = [] if metadata_only else list(db.scalars(query))
+        identifiers = [row.id for row in selected]
+        erp = (
+            {
+                row.id: row
+                for row in db.scalars(
+                    select(external).where(
+                        external.id.in_([row.erp_id for row in selected if row.erp_id])
+                    )
+                )
+            }
+            if selected
+            else {}
+        )
+        grouped = defaultdict(list)
+        if identifiers:
+            for entry in db.scalars(
+                select(StockEntry)
+                .where(StockEntry.article_id.in_(identifiers))
+                .order_by(StockEntry.created_at, StockEntry.id)
+            ):
+                grouped[entry.article_id].append(entry)
+        erp_stock = stock_from_erp(db)
+        lot_map = (
+            {
+                lot.id: lot
+                for lot in db.scalars(select(StockLot).where(StockLot.article_id.in_(identifiers)))
+            }
+            if identifiers
+            else {}
+        )
+        holds = defaultdict(list)
+        if identifiers:
+            for hold, article_id in db.execute(
+                select(CustomerOrderReservation, CustomerOrderLine.article_id)
+                .join(CustomerOrderLine, CustomerOrderLine.id == CustomerOrderReservation.line_id)
+                .where(
+                    CustomerOrderLine.article_id.in_(identifiers),
+                    CustomerOrderReservation.warehouse_id.in_(allowed),
+                    CustomerOrderReservation.quantity > 0,
+                )
+            ):
+                holds[article_id].append(hold)
+        rows = []
+        for row in selected:
+            value = article_view(
+                db,
+                row,
+                allowed,
+                rights["view_cost"],
+                grouped[row.id],
+                erp.get(row.erp_id),
+                erp_stock,
+                availability(grouped[row.id], allowed, lot_map, holds[row.id], active_warehouses),
+            )
+            quantities = defaultdict(lambda: ZERO)
+            for entry in grouped[row.id]:
+                if entry.warehouse_id in active_warehouses and entry.lot_id:
+                    quantities[(entry.warehouse_id, entry.lot_id)] += entry.quantity
+            dates = [
+                date.fromisoformat(str(lot_map[lot_id].expiry)[:10])
+                for (_, lot_id), quantity in quantities.items()
+                if quantity > 0 and lot_id in lot_map and lot_map[lot_id].expiry
+            ]
+            nearest = min(dates) if dates else None
+            value["expiry_state"] = (
+                (
+                    "expired"
+                    if nearest < now().astimezone(ZoneInfo("Europe/Lisbon")).date()
+                    else "near"
+                    if (nearest - now().astimezone(ZoneInfo("Europe/Lisbon")).date()).days
+                    <= max(config["alerts"], default=90)
+                    else "valid"
+                )
+                if nearest
+                else "missing"
+            )
+            value["nearest_expiry"] = nearest
+            quantity = value["available_quantity"]
+            if stock and not (
+                stock == "unknown"
+                and quantity is None
+                or quantity is not None
+                and (
+                    stock == "low"
+                    and D(quantity) < D(str(value.get("minimum", 0)))
+                    or stock == "zero"
+                    and D(quantity) <= 0
+                    or stock == "positive"
+                    and D(quantity) > 0
+                )
+            ):
+                continue
+            if expiry and value["expiry_state"] != expiry:
+                continue
+            rows.append(value)
+        if derived and not metadata_only:
+            total = len(rows)
+            current_page = min(page or 1, max(1, (total + size - 1) // size))
+            if page is not None:
+                rows = rows[(current_page - 1) * size : current_page * size]
+        return {
+            "articles": rows,
+            "total": total,
+            "total_all": total_all,
+            "page": current_page,
+            "pages": max(1, (total + size - 1) // size),
+            "size": size,
+            "facets": facets,
+            "preference_scope": f"{db.info.get('company', {}).get('id', 'local')}.{user.id}",
             "warehouses": [
                 {"id": w.id, "store_id": w.store_id, "name": w.name, "active": w.active}
                 for w in authorized_warehouses
@@ -851,7 +1071,9 @@ def register_routes(app, current, authorize, scope, audit):
     def article_details(identifier: str, user=Depends(current), db: Session = Depends(db_session)):
         product = article(db, identifier)
         allowed = wh_ids(db, user)
-        authorized_warehouses = list(db.scalars(select(StockWarehouse).where(StockWarehouse.id.in_(allowed))))
+        authorized_warehouses = list(
+            db.scalars(select(StockWarehouse).where(StockWarehouse.id.in_(allowed)))
+        )
         config = settings(db)
         rights = permissions(user, config)
         visible = [e for e in entries(db, product.id) if e.warehouse_id in allowed]
@@ -860,51 +1082,119 @@ def register_routes(app, current, authorize, scope, audit):
         for entry in visible:
             quantities[entry.warehouse_id] += entry.quantity
         last_purchase = next((e for e in reversed(visible) if e.kind == "purchase"), None)
-        lots = {lot.id: lot for lot in db.scalars(select(StockLot).where(StockLot.article_id == product.id))}
-        holds = list(db.scalars(
-            select(CustomerOrderReservation).join(CustomerOrderLine, CustomerOrderLine.id == CustomerOrderReservation.line_id)
-            .where(CustomerOrderLine.article_id == product.id, CustomerOrderReservation.warehouse_id.in_(allowed), CustomerOrderReservation.quantity > 0)
-        ))
-        available = availability(visible, allowed, lots, holds, {w.id for w in authorized_warehouses if w.active})
+        lots = {
+            lot.id: lot
+            for lot in db.scalars(select(StockLot).where(StockLot.article_id == product.id))
+        }
+        holds = list(
+            db.scalars(
+                select(CustomerOrderReservation)
+                .join(CustomerOrderLine, CustomerOrderLine.id == CustomerOrderReservation.line_id)
+                .where(
+                    CustomerOrderLine.article_id == product.id,
+                    CustomerOrderReservation.warehouse_id.in_(allowed),
+                    CustomerOrderReservation.quantity > 0,
+                )
+            )
+        )
+        available = availability(
+            visible, allowed, lots, holds, {w.id for w in authorized_warehouses if w.active}
+        )
         erp = db.get(WintouchProduct, product.erp_id) if product.erp_id else None
         labels = {
             "stock_article_create": "Artigo criado",
             "stock_article_edit": "Ficha atualizada",
             "stock_article_price": "Preço atualizado",
         }
-        history = list(db.scalars(
-            select(Audit).where(
+        history = list(
+            db.scalars(
+                select(Audit)
+                .where(
+                    Audit.target_id == product.id,
+                    Audit.action.in_(labels),
+                    (Audit.store_id.is_(None)) | (Audit.store_id.in_(scope(user, db))),
+                )
+                .order_by(Audit.created_at.desc(), Audit.id.desc())
+                .limit(30)
+            )
+        )
+        created = db.scalar(
+            select(Audit)
+            .where(
                 Audit.target_id == product.id,
-                Audit.action.in_(labels),
+                Audit.action == "stock_article_create",
                 (Audit.store_id.is_(None)) | (Audit.store_id.in_(scope(user, db))),
-            ).order_by(Audit.created_at.desc(), Audit.id.desc()).limit(30)
-        ))
-        created = db.scalar(select(Audit).where(Audit.target_id == product.id, Audit.action == "stock_article_create", (Audit.store_id.is_(None)) | (Audit.store_id.in_(scope(user, db)))).order_by(Audit.created_at, Audit.id).limit(1))
-        latest_sync = db.scalar(select(WintouchSyncRun).where(WintouchSyncRun.enterprise_id == erp.enterprise_id, WintouchSyncRun.resource == "products").order_by(WintouchSyncRun.started_at.desc()).limit(1)) if erp else None
+            )
+            .order_by(Audit.created_at, Audit.id)
+            .limit(1)
+        )
+        latest_sync = (
+            db.scalar(
+                select(WintouchSyncRun)
+                .where(
+                    WintouchSyncRun.enterprise_id == erp.enterprise_id,
+                    WintouchSyncRun.resource == "products",
+                )
+                .order_by(WintouchSyncRun.started_at.desc())
+                .limit(1)
+            )
+            if erp
+            else None
+        )
         authors = [h.user_id for h in history] + ([created.user_id] if created else [])
         names = {u.id: u.name for u in db.scalars(select(User).where(User.id.in_(authors)))}
+
         def history_view(item):
-            return {"id": item.id, "label": labels[item.action], "created_at": item.created_at, "user_name": names.get(item.user_id)} if item else None
+            return (
+                {
+                    "id": item.id,
+                    "label": labels[item.action],
+                    "created_at": item.created_at,
+                    "user_name": names.get(item.user_id),
+                }
+                if item
+                else None
+            )
+
         return {
             "company_name": db.info.get("company", {}).get("name"),
             "reserved_quantity": None if unavailable else available["reserved_quantity"],
             "available_quantity": None if unavailable else available["available_quantity"],
             "expiry_alerts": [
-                {"number": lots[lot_id].number, "expiry": lots[lot_id].expiry, "quantity": str(quantity)}
+                {
+                    "number": lots[lot_id].number,
+                    "expiry": lots[lot_id].expiry,
+                    "quantity": str(quantity),
+                }
                 for (_, lot_id), quantity in balances(visible).items()
-                if quantity > 0 and lot_id in lots and lots[lot_id].expiry
-                and (date.fromisoformat(lots[lot_id].expiry) - date.today()).days <= max(config["alerts"], default=90)
-            ] if not unavailable else [],
+                if quantity > 0
+                and lot_id in lots
+                and lots[lot_id].expiry
+                and (date.fromisoformat(lots[lot_id].expiry) - date.today()).days
+                <= max(config["alerts"], default=90)
+            ]
+            if not unavailable
+            else [],
             "warehouses": [
-                {"id": w.id, "name": w.name, "quantity": None if unavailable else str(quantities[w.id])}
+                {
+                    "id": w.id,
+                    "name": w.name,
+                    "quantity": None if unavailable else str(quantities[w.id]),
+                }
                 for w in authorized_warehouses
             ],
             "last_purchase": {
                 "date": last_purchase.occurred_on,
                 "document": json.loads(last_purchase.data).get("document"),
-                "unit_cost": str(last_purchase.unit_cost) if rights["view_cost"] and last_purchase.unit_cost is not None else None,
-            } if last_purchase else None,
-            "erp": {"external_id": erp.external_id, "enterprise_id": erp.enterprise_id} if erp else None,
+                "unit_cost": str(last_purchase.unit_cost)
+                if rights["view_cost"] and last_purchase.unit_cost is not None
+                else None,
+            }
+            if last_purchase
+            else None,
+            "erp": {"external_id": erp.external_id, "enterprise_id": erp.enterprise_id}
+            if erp
+            else None,
             "sync_state": latest_sync.status if latest_sync else None,
             "created": history_view(created),
             "updated": history_view(history[0]) if history else None,
