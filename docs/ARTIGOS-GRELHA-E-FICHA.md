@@ -41,6 +41,8 @@ Na consulta paginada, pesquisa, filtros de identificação, contagem e ordenaç�
 
 Os serviços (portes, mão de obra…) não movimentam stock: na grelha aparecem como «Serviço», sem alertas de stock, e ficam fora dos filtros de situação de stock. A verificação de código e códigos de barras repetidos ao gravar não lê as fichas de todos os artigos: o código compara-se sem distinguir maiúsculas (incluindo acentuadas) e os códigos de barras são procurados no PostgreSQL.
 
+O catálogo completo (sem `page`), usado por Compras, Encomendas de clientes, Ciclo de encomendas e «Registar movimento», lê os movimentos como linhas simples (sem objetos ORM) e responde com o mesmo JSON gerado diretamente (teste de equivalência em `test_article_catalog.py`). Com 4 000 artigos e 20 000 movimentos fictícios, passou de cerca de 1,3 s para cerca de 0,9 s; a página da grelha demora menos de 0,1 s. O custo restante cresce com o número de movimentos; a evolução seguinte é estes ecrãs pesquisarem artigos por página em vez de carregarem o catálogo inteiro.
+
 Filtros de saldo ou validade precisam de avaliar os movimentos de todos os candidatos antes de paginar. Para catálogos com histórico muito extenso, a evolução seguinte é estudar agregações e índices com medições, preservando o custo médio histórico. Não foram introduzidas migrações nem substituídas regras do stock.
 
 A origem ERP e a data de receção do catálogo não garantem que não tenham ocorrido alterações posteriores na origem. Os estados apresentados não inventam uma sincronização individual bidirecional.

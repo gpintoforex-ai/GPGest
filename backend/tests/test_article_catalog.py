@@ -207,6 +207,38 @@ def test_article_details_show_price_history_and_purchases_by_supplier(stock_case
     assert all(s["last_cost"] is None and s["average_cost"] is None for s in hidden)
 
 
+def test_catalogue_json_matches_fastapi_encoding(stock_case, monkeypatch):
+    """O catálogo responde com json.dumps direto: o resultado tem de ser o do FastAPI."""
+    from datetime import date, timedelta
+    from decimal import Decimal as D
+
+    import app.inventory as inventory
+    from app.models import WintouchProduct
+    from fastapi.encoders import jsonable_encoder
+    from test_inventory import move, product
+
+    client, _, factory, _, _ = stock_case
+    lots = product(stock_case, code="LOTES", name="Artigo com lotes ção", lots=True, expiry=True)
+    move(stock_case, lots, lot_number="L1", unit_cost="2.3333",
+         expiry=(date.today() + timedelta(days=5)).isoformat())
+    erp_article = product(stock_case, code="ERPCOPIA")
+    with factory.begin() as db:
+        erp = WintouchProduct(external_id="x1", enterprise_id="E", code="W1", name="Do ERP",
+                              active=True, sale_price=D("4.5"))
+        db.add(erp)
+        db.flush()
+        db.get(StockArticle, erp_article).erp_id = erp.id
+    captured = []
+    original = inventory.fast_json
+    monkeypatch.setattr(inventory, "fast_json", lambda c: captured.append(c) or original(c))
+    for url in ("/api/stock/catalog", "/api/stock/catalog?page=1", "/api/stock/catalog?metadata_only=true"):
+        response = client.get(url)
+        assert response.status_code == 200 and response.headers["content-type"] == "application/json"
+        assert response.json() == jsonable_encoder(captured[-1]), url
+    article = next(a for a in captured[0]["articles"] if a["code"] == "LOTES")
+    assert isinstance(article["nearest_expiry"], date)  # datas e Decimal passam pela conversão
+
+
 def test_catalogue_stock_filters_leave_out_services(stock_case):
     from test_inventory import product
 

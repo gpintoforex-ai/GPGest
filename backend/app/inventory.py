@@ -2,13 +2,14 @@
 
 import json
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 from unicodedata import combining, normalize
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query, Response
+from fastapi.encoders import decimal_encoder
 from pydantic import Field, field_validator
 from sqlalchemy import case, cast, func, select, text
 from sqlalchemy.dialects.postgresql import JSONB, array
@@ -63,6 +64,26 @@ OUTGOING = {"sale", "supplier_return", "loss", "expired", "transfer"}
 
 def dump(value):
     return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def fast_json(content):
+    """O mesmo JSON que o FastAPI gera, sem o jsonable_encoder (lento no catálogo completo)."""
+
+    def default(value):
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        if isinstance(value, Decimal):
+            return decimal_encoder(value)
+        if isinstance(value, (set, frozenset)):
+            return list(value)
+        raise TypeError(f"Valor sem conversão para JSON: {type(value).__name__}")
+
+    return Response(
+        json.dumps(
+            content, ensure_ascii=False, allow_nan=False, default=default, separators=(",", ":")
+        ),
+        media_type="application/json",
+    )
 
 
 def document_key(value):
@@ -973,10 +994,13 @@ def register_routes(app, current, authorize, scope, audit):
         )
         grouped = defaultdict(list)
         if identifiers:
-            for entry in db.scalars(
-                select(StockEntry)
-                .where(StockEntry.article_id.in_(identifiers))
-                .order_by(StockEntry.created_at, StockEntry.id)
+            # Só leitura: linhas simples (mesmos atributos) em vez de objetos ORM, que custam
+            # caro no catálogo completo.
+            table = StockEntry.__table__
+            for entry in db.execute(
+                select(table)
+                .where(table.c.article_id.in_(identifiers))
+                .order_by(table.c.created_at, table.c.id)
             ):
                 grouped[entry.article_id].append(entry)
         erp_stock = stock_from_erp(db)
@@ -1064,7 +1088,7 @@ def register_routes(app, current, authorize, scope, audit):
             current_page = min(page or 1, max(1, (total + size - 1) // size))
             if page is not None:
                 rows = rows[(current_page - 1) * size : current_page * size]
-        return {
+        return fast_json({
             "articles": rows,
             "total": total,
             "total_all": total_all,
@@ -1096,7 +1120,7 @@ def register_routes(app, current, authorize, scope, audit):
             "users": [{"id": u.id, "name": u.name} for u in db.scalars(select(User))]
             if user.role == "administrador"
             else [],
-        }
+        })
 
     @app.get("/api/stock/articles/{identifier}/details")
     def article_details(identifier: str, user=Depends(current), db: Session = Depends(db_session)):
