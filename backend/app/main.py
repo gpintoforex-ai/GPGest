@@ -236,7 +236,8 @@ def balance(db, session):
             next(row["expected_cents"] for row in stored["summary"] if row["key"] == "numerario"),
         )
     if cash_local.is_local(db, session, integration_policy):
-        return next(row["expected_cents"] for row in cash_local.drawer_rows(db, session) if row["key"] == "numerario")
+        expected = next(row["expected_cents"] for row in cash_local.drawer_rows(db, session) if row["key"] == "numerario")
+        return expected + cash_posting.difference_totals(db, session).get("numerario", 0)
     total = session.opening_cents + int(
         db.scalar(
             select(func.sum(Movement.direction * Movement.amount_cents)).where(
@@ -506,7 +507,8 @@ def session_result(db, s, rows=None, context=None):
     return {
         **serial(s),
         "count_data": counting,
-        "balance_cents": next(row["expected_cents"] for row in rows if row["key"] == "numerario") if local else balance(db, s),
+        "balance_cents": (next(row["expected_cents"] for row in rows if row["key"] == "numerario")
+            + cash_posting.difference_totals(db, s).get("numerario", 0)) if local and not s.closed_at else balance(db, s),
         "totals": {row["key"]: row["net_cents"] for row in rows},
         "sheet": {
             "workflow_mode": "local" if local else "integrated",
@@ -890,6 +892,7 @@ def close_session(
         # discrepancy remain separate, so nothing is added a second time.
         rows = cash_local.drawer_rows(db, s)
         ledger_expected = next(row["expected_cents"] for row in rows if row["key"] == "numerario")
+        ledger_expected += counting["posted_movements"]["difference_totals"].get("numerario", 0)
     counting.update(
         final=True,
         summary=rows,

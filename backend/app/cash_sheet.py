@@ -11,15 +11,15 @@ from sqlalchemy import func, select
 
 from . import db as database
 from .models import (
+    BankDeposit,
     CashSession,
+    DocumentPayment,
+    LocalPaymentMethod,
     Movement,
     Register,
-    WintouchSaleRecord,
-    BankDeposit,
-    DocumentPayment,
     WintouchCashAccount,
-    LocalPaymentMethod,
     WintouchPaymentMethod,
+    WintouchSaleRecord,
 )
 
 LABELS = {
@@ -254,6 +254,10 @@ def summary(db, session, register_only=False, methods=None):
                 (Movement.origin == "deposito_modulo") | (Movement.reversed_by.is_(None) & Movement.reversal_of.is_(None)),
                 Movement.origin != "fecho_caixa", Movement.origin != "opening_balance",
             )
+    if register_only:
+        # Closing adjustments settle the actual ledger, not the expectation:
+        # including them here would hide the discrepancy or apply it twice.
+        query = query.where(~((Movement.origin == "fecho_local") & (Movement.kind == "diferenca_caixa")))
     for move in db.scalars(query):
         if move.origin == "deposito_modulo":
             deposit = db.scalar(

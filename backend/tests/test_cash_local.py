@@ -42,7 +42,7 @@ def sheet(client, identifier):
     return next(row for row in client.get("/api/sessions").json() if row["id"] == identifier)
 
 
-def test_draft_preserves_money_and_close_posts_only_missing_sales(local):
+def test_draft_preserves_money_and_close_posts_missing_sales_and_difference(local):
     c, ids, factory = local
     identifier = open_cash(c, ids["registers"][0]).json()["id"]
     assert movement(c, ids, identifier, payment="cartao", amount="980").status_code == 200
@@ -70,8 +70,8 @@ def test_draft_preserves_money_and_close_posts_only_missing_sales(local):
         == 200
     )
     with factory() as db:
-        assert db.scalar(select(func.count()).select_from(Movement)) == 2
-        assert not db.scalar(select(Movement.id).where(Movement.kind == "diferenca_caixa"))
+        assert db.scalar(select(func.count()).select_from(Movement)) == 3
+        assert db.scalar(select(Movement.id).where(Movement.kind == "diferenca_caixa"))
     closed = sheet(c, identifier)
     assert closed["sheet"]["workflow_mode"] == "local"
     assert closed["sheet"]["reconciliation"]["difference_cents"] == 0
@@ -79,7 +79,7 @@ def test_draft_preserves_money_and_close_posts_only_missing_sales(local):
     assert c.get(f"/api/sessions/{identifier}/report").content.startswith(b"%PDF")
 
 
-def test_physical_drawer_350_counted_340_and_no_adjustment(local):
+def test_physical_drawer_350_counted_340_posts_shortage(local):
     c, ids, factory = local
     identifier = open_cash(c, ids["registers"][0], "100").json()["id"]
     movement(c, ids, identifier, amount="300")
@@ -103,7 +103,7 @@ def test_physical_drawer_350_counted_340_and_no_adjustment(local):
         == 200
     )
     with factory() as db:
-        assert db.scalar(select(func.count()).select_from(Movement)) == 2
+        assert db.scalar(select(func.count()).select_from(Movement)) == 3
         assert db.scalar(select(Audit.id).where(Audit.action == "conferencia_folha_caixa"))
     assert (
         c.post(
@@ -116,7 +116,7 @@ def test_physical_drawer_350_counted_340_and_no_adjustment(local):
     assert not reopened["sheet"]["reconciliation"]["checked"]
     assert reopened["count_data"]["reopen_reason"] == "Recontar dinheiro da gaveta"
     with factory() as db:
-        assert db.scalar(select(func.count()).select_from(Movement)) == 2
+        assert db.scalar(select(func.count()).select_from(Movement)) == 4
 
 
 def test_blank_and_zero_confirmed_are_distinct(local):
@@ -304,8 +304,8 @@ def test_other_payment_counts_persist_and_require_difference_reason(local):
     assert closed.status_code == 200, closed.text
     assert sheet(c, identifier)["count_data"]["values"]["cartao"] == 4500
     with factory() as db:
-        assert db.scalar(select(func.count()).select_from(Movement)) == 1
-        assert not db.scalar(select(Movement.id).where(Movement.kind == "diferenca_caixa"))
+        assert db.scalar(select(func.count()).select_from(Movement)) == 2
+        assert db.scalar(select(Movement.id).where(Movement.kind == "diferenca_caixa"))
 
 
 def test_deposit_without_session_only_reduces_drawer_after_cash_exit(local):
@@ -560,7 +560,9 @@ def test_manual_credits_persist_and_only_post_at_close(local):
     report_text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(report)).pages)
     assert "Créditos: 30,00 EUR" in report_text
     with factory() as db:
-        assert db.scalar(select(func.count()).select_from(Movement)) == 4
+        assert db.scalar(select(func.count()).select_from(Movement)) == 5
+    difference = next(row for row in c.get("/api/movements").json() if row["kind"] == "diferenca_caixa")
+    assert difference["direction"] == -1 and difference["amount_cents"] == 1000
 
 
 def test_credits_include_recorded_receipts_once_and_zero_is_explicit(local):

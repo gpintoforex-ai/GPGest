@@ -799,6 +799,7 @@ export default function LocalCashSheet({
           </div>
         </details>
         </div>
+        {editable && <p className="footnote">Ao fechar, cada diferença conferida gera um movimento real: entrada por excesso ou saída por falta. O rascunho e a conferência não criam estes movimentos; reabrir estorna os lançamentos do fecho.</p>}
         <Field
           label={
             hasDifference

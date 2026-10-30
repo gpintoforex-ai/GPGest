@@ -15,7 +15,7 @@ def active(rows):
     return [row for row in rows if not row["reversed_by"] and not row["reversal_of"]]
 
 
-def test_close_posts_only_manual_totals_and_keeps_count_difference(local):
+def test_close_posts_manual_totals_and_real_count_difference(local):
     c, ids, factory = local
     identifier = open_cash(c, ids["registers"][0], "100").json()["id"]
     payload = {**declared(numerario="300", cartao="200", mbway="50", transferencia="100"),
@@ -30,20 +30,20 @@ def test_close_posts_only_manual_totals_and_keeps_count_difference(local):
     closed = c.post(f"/api/sessions/{identifier}/close", json=payload)
     assert closed.status_code == 200, closed.text
     rows = active(c.get("/api/movements?all_records=true").json())
-    assert len(rows) == 6 and all(row["origin"] == "fecho_local" for row in rows)
-    assert sum(row["direction"] * row["amount_cents"] for row in rows) == 59500
+    assert len(rows) == 7 and all(row["origin"] == "fecho_local" for row in rows)
+    assert sum(row["direction"] * row["amount_cents"] for row in rows) == 58500
     assert {row["entity"] for row in rows if row["kind"] == "fornecedor"} == {"Fornecedor XPTO"}
     closed_sheet = sheet(c, identifier)
     cash = next(row for row in closed_sheet["sheet"]["reconciliation"]["rows"] if row["key"] == "numerario")
     assert cash["expected_cents"] == 35000 and cash["counted_cents"] == 34000 and cash["count_difference_cents"] == -1000
-    assert closed_sheet["balance_cents"] == closed_sheet["count_data"]["ledger_balance_cents"] == 35000
+    assert closed_sheet["balance_cents"] == closed_sheet["count_data"]["ledger_balance_cents"] == 34000
     assert closed_sheet["sheet"]["reconciliation"]["checked"] is True
-    assert len(closed_sheet["count_data"]["posted_movements"]["ids"]) == 6
-    assert not any(row["kind"] == "diferenca_caixa" for row in rows)
+    assert len(closed_sheet["count_data"]["posted_movements"]["ids"]) == 7
+    assert [(row["payment"], row["direction"] * row["amount_cents"]) for row in rows if row["kind"] == "diferenca_caixa"] == [("numerario", -1000)]
     assert c.post(f"/api/sessions/{identifier}/close", json=payload).status_code == 409
-    assert len(c.get("/api/movements?all_records=true").json()) == 6
+    assert len(c.get("/api/movements?all_records=true").json()) == 7
     with factory() as db:
-        assert db.scalar(select(func.count()).select_from(Audit).where(Audit.action == "movimento_fecho_local")) == 6
+        assert db.scalar(select(func.count()).select_from(Audit).where(Audit.action == "movimento_fecho_local")) == 7
 
 
 def test_partial_existing_sales_debits_credits_are_not_duplicated(local):
@@ -58,8 +58,8 @@ def test_partial_existing_sales_debits_credits_are_not_duplicated(local):
     assert result.status_code == 200, result.text
     posted = [row for row in c.get("/api/movements?all_records=true").json() if row["origin"] == "fecho_local"]
     assert {(row["kind"], row["payment"], row["amount_cents"]) for row in posted} == {
-        ("venda", "cartao", 2000), ("entrada_extra", "numerario", 500), ("fornecedor", "numerario", 2000)}
-    assert not any(row["kind"] == "diferenca_caixa" for row in posted)
+        ("venda", "cartao", 2000), ("entrada_extra", "numerario", 500), ("fornecedor", "numerario", 2000), ("diferenca_caixa", "cartao", 2000)}
+    assert next(row for row in posted if row["kind"] == "diferenca_caixa")["direction"] == -1
     assert sheet(c, identifier)["expected_cents"] == 34000
 
 
