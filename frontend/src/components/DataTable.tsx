@@ -1,6 +1,8 @@
 import { useState, type InputHTMLAttributes, type ReactNode } from "react";
-import { ActionButton } from "./InteractionUI";
+import { Download } from "lucide-react";
+import { ActionButton, Notice } from "./InteractionUI";
 import { Empty } from "./Form";
+import { downloadCsv } from "../lib/csv";
 import "./DataTable.css";
 
 export function SearchInput({
@@ -50,9 +52,18 @@ export type TableColumn<T> = {
   label: string;
   render: (row: T) => ReactNode;
   sortValue?: (row: T) => string | number;
+  /** Valor na exportação CSV; colunas sem ele (ex.: ações) ficam fora do ficheiro. */
+  exportValue?: (row: T) => unknown;
+  /** Alinha à direita valores e quantidades. */
+  numeric?: boolean;
 };
 
-/** Simple catalog/audit tables only. Financial and reconciliation grids retain their own controls. */
+/**
+ * Listagens com os dados todos no navegador: pesquisa, ordenação, paginação, filtros próprios
+ * (`toolbar`), exportação CSV dos resultados filtrados e estados de carregamento, erro e vazio.
+ * Uma falha nunca é apresentada como lista vazia. Grelhas financeiras, editores de linhas e listas
+ * paginadas no servidor mantêm os seus controlos.
+ */
 export function DataTable<T>({
   label,
   rows,
@@ -60,6 +71,12 @@ export function DataTable<T>({
   rowKey,
   searchText,
   rowClassName,
+  toolbar,
+  loading = false,
+  error = "",
+  emptyText = "Sem registos para apresentar",
+  exportName,
+  initialSort = null,
 }: {
   label: string;
   rows: readonly T[];
@@ -68,12 +85,22 @@ export function DataTable<T>({
   searchText: (row: T) => string;
   /** Classe opcional por linha (ex.: cor do estado). */
   rowClassName?: (row: T) => string | undefined;
+  /** Filtros próprios do módulo, apresentados junto à pesquisa. */
+  toolbar?: ReactNode;
+  /** Primeira consulta em curso: não mostra a tabela nem «sem registos». */
+  loading?: boolean;
+  /** Falha da consulta; as linhas recebidas antes continuam visíveis. */
+  error?: string;
+  emptyText?: string;
+  /** Nome do ficheiro CSV; sem ele (ou sem colunas exportáveis) não há exportação. */
+  exportName?: string;
+  initialSort?: { id: string; ascending: boolean } | null;
 }) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(10);
   const [sort, setSort] = useState<{ id: string; ascending: boolean } | null>(
-    null,
+    initialSort,
   );
   const normalize = (value: string) =>
     value
@@ -101,6 +128,13 @@ export function DataTable<T>({
   }
   const pages = Math.max(1, Math.ceil(filtered.length / size));
   const current = Math.min(page, pages);
+  const exported = columns.filter((item) => item.exportValue);
+  const exportRows = () =>
+    downloadCsv(exportName!, [
+      exported.map((item) => item.label),
+      ...filtered.map((row) => exported.map((item) => item.exportValue!(row))),
+    ]);
+  const waiting = loading && !rows.length;
   return (
     <div className="workspace-data-table">
       <FilterBar label={`Filtros de ${label}`}>
@@ -112,6 +146,7 @@ export function DataTable<T>({
             setPage(1);
           }}
         />
+        {toolbar}
         <label>
           Por página
           <select
@@ -124,9 +159,26 @@ export function DataTable<T>({
             <option>10</option>
             <option>25</option>
             <option>50</option>
+            <option>100</option>
           </select>
         </label>
+        {exportName && exported.length > 0 && (
+          <ActionButton
+            type="button"
+            variant="secondary"
+            disabled={!filtered.length}
+            onClick={exportRows}
+          >
+            <Download size={16} aria-hidden="true" />
+            Exportar CSV
+          </ActionButton>
+        )}
       </FilterBar>
+      {error && <Notice tone="error" role="alert">{error}</Notice>}
+      {waiting ? (
+        <p role="status">A carregar…</p>
+      ) : (
+      <>
       <div className="table-wrap">
         <table className="responsive-data-table" aria-label={label}>
           <thead>
@@ -134,6 +186,7 @@ export function DataTable<T>({
               {columns.map((item) => (
                 <th
                   key={item.id}
+                  className={item.numeric ? "numeric" : undefined}
                   aria-sort={
                     sort?.id === item.id
                       ? sort.ascending
@@ -172,7 +225,7 @@ export function DataTable<T>({
             {filtered.slice((current - 1) * size, current * size).map((row) => (
               <tr key={rowKey(row)} className={rowClassName?.(row)}>
                 {columns.map((item) => (
-                  <td key={item.id} data-label={item.label}>
+                  <td key={item.id} data-label={item.label} className={item.numeric ? "numeric" : undefined}>
                     <div>{item.render(row)}</div>
                   </td>
                 ))}
@@ -181,16 +234,18 @@ export function DataTable<T>({
           </tbody>
         </table>
       </div>
-      {!filtered.length && (
+      {!filtered.length && !(error && !rows.length) && (
         <Empty
           text={
-            query
+            query && rows.length
               ? "Sem resultados para esta pesquisa"
-              : "Sem registos para apresentar"
+              : emptyText
           }
         />
       )}
-      <div className="workspace-pagination">
+      </>
+      )}
+      {!waiting && <div className="workspace-pagination">
         <span role="status">
           {filtered.length} registo(s) · Página {current} de {pages}
         </span>
@@ -208,7 +263,7 @@ export function DataTable<T>({
         >
           Seguinte
         </ActionButton>
-      </div>
+      </div>}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { Archive as ArchiveIcon, CheckCircle2, Download, FileSearch, Link2, Refr
 import { api } from "./lib/api";
 import { ManagedForm, ActionButton, AppDialog, Notice, confirmAction } from "./components/InteractionUI";
 import { Field } from "./components/Form";
+import { DataTable } from "./components/DataTable";
 import { MetricCard, StatusBadge } from "./components/BusinessUI";
 import AssistantIdentity from "./components/AssistantIdentity";
 import { formatEuro } from "./utils/format";
@@ -501,13 +502,24 @@ function Periods({ navigate }: { navigate: (page: string) => void }) {
 
 function AuditLog({ open }: { open: (id: string) => void }) {
   const [rows, setRows] = useState<Row[] | null>(null), [action, setAction] = useState(""), [error, setError] = useState("");
-  useEffect(() => { api(`/archive/audit?action=${action}`).then(setRows).catch(e => setError((e as Error).message)); }, [action]);
+  useEffect(() => {
+    let alive = true; setRows(null); setError("");
+    api(`/archive/audit?action=${action}`).then(result => { if (alive) setRows(result); }).catch(e => { if (alive) setError((e as Error).message); });
+    return () => { alive = false; };
+  }, [action]);
+  const detail = (r: Row) => Object.entries(r.detail || {}).map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · ");
   return <section className="panel">
-    <Field label="Ação"><select value={action} onChange={e => setAction(e.target.value)}><option value="">Todas</option>{Object.entries(ACTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
-    {error && <Notice tone="error">{error}</Notice>}
-    {!rows ? <p role="status">A carregar…</p> : !rows.length ? <p className="arc-empty">Sem registos.</p> :
-      <div className="table-wrap"><table><thead><tr><th>Data</th><th>Utilizador</th><th>Ação</th><th>Documento</th><th>Detalhe</th></tr></thead>
-        <tbody>{rows.map(r => <tr key={r.id}><td>{when(r.created_at)}</td><td>{r.user}</td><td>{ACTIONS[r.action] || r.action}</td><td>{r.document_id ? <ActionButton type="button" className="arc-link" onClick={() => open(r.document_id)}>{r.document || "Documento"}</ActionButton> : "—"}</td><td className="arc-detail-cell">{Object.entries(r.detail || {}).map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · ")}</td></tr>)}</tbody></table></div>}
+    <DataTable<Row> label="auditoria do arquivo" rows={rows || []} rowKey={r => r.id} loading={!rows && !error} error={error}
+      emptyText="Sem registos." exportName="auditoria-arquivo.csv"
+      searchText={r => [r.user, ACTIONS[r.action] || r.action, r.document, detail(r)].join(" ")}
+      toolbar={<Field label="Ação"><select value={action} onChange={e => setAction(e.target.value)}><option value="">Todas</option>{Object.entries(ACTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>}
+      columns={[
+        { id: "data", label: "Data", render: r => when(r.created_at), sortValue: r => r.created_at || "", exportValue: r => when(r.created_at) },
+        { id: "utilizador", label: "Utilizador", render: r => r.user, sortValue: r => r.user || "", exportValue: r => r.user },
+        { id: "acao", label: "Ação", render: r => ACTIONS[r.action] || r.action, sortValue: r => ACTIONS[r.action] || r.action, exportValue: r => ACTIONS[r.action] || r.action },
+        { id: "documento", label: "Documento", render: r => r.document_id ? <ActionButton type="button" className="arc-link" onClick={() => open(r.document_id)}>{r.document || "Documento"}</ActionButton> : "—", exportValue: r => r.document || "" },
+        { id: "detalhe", label: "Detalhe", render: r => <span className="arc-detail-cell">{detail(r)}</span>, exportValue: detail },
+      ]} />
   </section>;
 }
 

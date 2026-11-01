@@ -85,7 +85,22 @@ def run():
                 suggestion.get_by_role("button",name="Rever sugestão",exact=True).click()
                 expect(page.get_by_label("Ações executadas no teste")).to_have_text("indicador:neutral · necessidades · rever")
                 page.get_by_role("searchbox",name="Pesquisar registos de teste",exact=True).fill("teste 12")
-                expect(page.get_by_role("table",name="registos de teste",exact=True).locator("tbody tr")).to_have_count(1)
+                grid = page.get_by_role("table",name="registos de teste",exact=True)
+                expect(grid.locator("tbody tr")).to_have_count(1)
+                page.get_by_role("searchbox",name="Pesquisar registos de teste",exact=True).fill("")
+                page.get_by_role("group",name="Filtros de registos de teste",exact=True).locator("label",has_text="Grupo").locator("select").select_option("par")
+                expect(page.get_by_text("6 registo(s) · Página 1 de 1",exact=True)).to_be_visible()
+                assert grid.locator("td.numeric").first.evaluate("node=>getComputedStyle(node).textAlign") in ("right","end") or width <= 600
+                with page.expect_download() as download:
+                    page.get_by_role("button",name="Exportar CSV",exact=True).first.click()
+                saved = download.value.path().read_bytes().decode("utf-8-sig")
+                assert saved.splitlines()[0] == '"Artigo";"Quantidade"' and len(saved.splitlines()) == 7, saved
+                waiting = page.locator(".workspace-data-table").nth(1)
+                expect(waiting.get_by_role("status")).to_have_text("A carregar…")
+                expect(waiting.get_by_text("Sem registos para apresentar")).to_have_count(0)
+                failed = page.locator(".workspace-data-table").nth(2)
+                expect(failed.get_by_role("alert")).to_contain_text("Falha de teste na consulta.")
+                expect(failed.get_by_text("Sem registos para apresentar")).to_have_count(0)
                 field = page.get_by_label("Campo de teste",exact=True)
                 field.focus()
                 if theme == "current":

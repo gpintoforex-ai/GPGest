@@ -3,6 +3,7 @@ import { Copy, QrCode, ScanLine } from "lucide-react";
 import { api } from "./lib/api";
 import { ActionButton, ManagedForm, Notice, confirmAction } from "./components/InteractionUI";
 import { Field } from "./components/Form";
+import { DataTable } from "./components/DataTable";
 import "./DocumentScanner.css";
 
 type Row = Record<string, any>;
@@ -53,11 +54,15 @@ export default function QuickScanAccesses() {
         <ActionButton type="button" onClick={() => void run(async () => { await navigator.clipboard.writeText(pairing.link); setNotice("Link copiado. Envie-o apenas para o dispositivo a emparelhar."); })}><Copy size={17} aria-hidden="true" />Copiar link</ActionButton></div>
       <ActionButton type="button" onClick={() => { setPairing(null); void load(); }}>Fechar</ActionButton>
     </div>}
-    {data.accesses.length ? <div className="table-wrap"><table>
-      <thead><tr><th>Nome / dispositivo</th><th>Loja</th><th>Pasta de destino</th><th>Estado</th><th>Último uso</th><th>Ações</th></tr></thead>
-      <tbody>{data.accesses.map((item: Row) => <tr key={item.id}>
-        <td>{item.name}</td><td>{item.store}</td><td>{item.folder_name}</td><td>{state(item)}</td><td>{when(item.last_used_at)}</td>
-        <td>{!item.revoked && <div className="quick-actions">
+    <DataTable<Row> label="acessos rápidos" rows={data.accesses} rowKey={item => item.id} emptyText="Ainda não existem acessos rápidos."
+      searchText={item => [item.name, item.store, item.folder_name, state(item)].join(" ")}
+      columns={[
+        { id: "nome", label: "Nome / dispositivo", render: item => item.name, sortValue: item => item.name || "" },
+        { id: "loja", label: "Loja", render: item => item.store, sortValue: item => item.store || "" },
+        { id: "pasta", label: "Pasta de destino", render: item => item.folder_name, sortValue: item => item.folder_name || "" },
+        { id: "estado", label: "Estado", render: item => state(item), sortValue: item => state(item) },
+        { id: "uso", label: "Último uso", render: item => when(item.last_used_at), sortValue: item => item.last_used_at || "" },
+        { id: "acoes", label: "Ações", render: (item: Row) => !item.revoked && <div className="quick-actions">
           <ActionButton type="button" onClick={() => { setPairing(null); setForm({ id: item.id, name: item.name, store_id: item.store_id, folder_id: item.folder_id, active: item.active, pin: "", confirm: "" }); }}>Editar</ActionButton>
           <ActionButton type="button" action="Emparelhar" onClick={() => void run(async () => {
             if (item.paired && !(await confirmAction({ title: "Emparelhar novo dispositivo?", message: "O dispositivo atual deixa de ter acesso e as sessões abertas terminam.", confirmLabel: "Emparelhar novo" }))) return;
@@ -68,9 +73,8 @@ export default function QuickScanAccesses() {
             if (!(await confirmAction({ title: "Revogar este acesso?", message: "O dispositivo deixa de funcionar de imediato e o acesso não pode ser reativado. Os documentos já guardados mantêm-se.", confirmLabel: "Revogar" }))) return;
             await api(`/quick-scan/accesses/${item.id}/revoke`, {}); await load(); setNotice("Acesso revogado.");
           })}>Revogar</ActionButton>
-        </div>}</td>
-      </tr>)}</tbody>
-    </table></div> : <p>Ainda não existem acessos rápidos.</p>}
+        </div> },
+      ]} />
     {!form && <ActionButton type="button" className="primary" disabled={!data.folders.length || !data.stores.length} onClick={() => { setPairing(null); setForm({ name: "", store_id: data.stores[0]?.id || "", folder_id: data.folders[0]?.id || "", active: true, pin: "", confirm: "" }); }}>Novo acesso rápido</ActionButton>}
     {form && <ManagedForm className="quick-form" onSubmit={event => { event.preventDefault(); void run(async () => {
       if ((form.pin || !editing) && form.pin !== form.confirm) throw new Error("Os dois PIN não coincidem.");
@@ -97,10 +101,17 @@ export default function QuickScanAccesses() {
     {data.recent.length > 0 && <>
       <h4>Últimas digitalizações rápidas</h4>
       <p>Ficam na pasta de destino de cada acesso e são encontradas pela conferência documental. Não criam compras automaticamente.</p>
-      <div className="table-wrap"><table>
-        <thead><tr><th>Data</th><th>Ficheiro</th><th>Tipo</th><th>Acesso</th><th>Loja</th><th className="numeric">Páginas</th><th>Estado</th></tr></thead>
-        <tbody>{data.recent.map((r: Row) => <tr key={r.id}><td>{when(r.created_at)}</td><td>{r.name}</td><td>{r.type}</td><td>{r.access}</td><td>{r.store}</td><td className="numeric">{r.pages}</td><td>{STATUS[r.status] || r.status}</td></tr>)}</tbody>
-      </table></div>
+      <DataTable<Row> label="últimas digitalizações rápidas" rows={data.recent} rowKey={r => r.id} exportName="digitalizacoes-rapidas.csv"
+        searchText={r => [r.name, r.type, r.access, r.store, STATUS[r.status] || r.status].join(" ")}
+        columns={[
+          { id: "data", label: "Data", render: r => when(r.created_at), sortValue: r => r.created_at || "", exportValue: r => when(r.created_at) },
+          { id: "ficheiro", label: "Ficheiro", render: r => r.name, sortValue: r => r.name || "", exportValue: r => r.name },
+          { id: "tipo", label: "Tipo", render: r => r.type, sortValue: r => r.type || "", exportValue: r => r.type },
+          { id: "acesso", label: "Acesso", render: r => r.access, sortValue: r => r.access || "", exportValue: r => r.access },
+          { id: "loja", label: "Loja", render: r => r.store, sortValue: r => r.store || "", exportValue: r => r.store },
+          { id: "paginas", label: "Páginas", numeric: true, render: r => r.pages, sortValue: r => Number(r.pages) || 0, exportValue: r => r.pages },
+          { id: "estado", label: "Estado", render: r => STATUS[r.status] || r.status, sortValue: r => STATUS[r.status] || r.status, exportValue: r => STATUS[r.status] || r.status },
+        ]} />
     </>}
   </section>;
 }

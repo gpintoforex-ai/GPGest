@@ -26,7 +26,9 @@ As camadas antigas não foram removidas em bloco: continuam a servir os módulos
 | `ContextSuggestion` | Conteúdo e evidências fornecidas pelo módulo. A origem pode ser expandida; a ação é uma callback explícita e fica bloqueada quando não há evidência. O componente não consulta serviços nem executa operações ao montar. A autorização final continua no fluxo/API. |
 | `SyncStatus` | Recebe estado real, rótulo facultativo e data facultativa de última sincronização bem-sucedida. Não deduz sincronização pela origem ERP ou pela data de abertura do ecrã. |
 
-`ActionButton`, `AppDialog`, `ManagedForm`, `DetailDrawer`, `DataTable` e `ModuleTabs` mantêm os seus mecanismos existentes. As variantes explícitas de botões têm agora uma apresentação desativada comum. Não foi criada uma segunda biblioteca de janelas ou formulários.
+| `DataTable` | Listagens com os dados todos no navegador: pesquisa sem acentos, ordenação por coluna, paginação de 10 a 100, filtros próprios do módulo (`toolbar`), colunas numéricas alinhadas à direita e exportação CSV (`exportName` + `exportValue` por coluna; separador «;», BOM UTF-8, proteção contra fórmulas) dos resultados filtrados de todas as páginas. A primeira consulta mostra «A carregar…» e uma falha mostra o erro, nunca «sem registos»; após uma falha de atualização as linhas anteriores continuam visíveis. Grelhas financeiras, editores de linhas e listas paginadas no servidor mantêm os seus controlos. |
+
+`ActionButton`, `AppDialog`, `ManagedForm`, `DetailDrawer` e `ModuleTabs` mantêm os seus mecanismos existentes. As variantes explícitas de botões têm agora uma apresentação desativada comum. Não foi criada uma segunda biblioteca de janelas ou formulários.
 
 ## Integrações nesta fase
 
@@ -50,3 +52,7 @@ Antes desta fase foi guardado no diretório de trabalho do Codex um arquivo do c
 ## Resumos operacionais e evidência (E–H)
 
 `OperationsOverview` adapta os dados existentes a `ModuleOverview`, `KpiCard` e `ContextSuggestion`, com estados de carregamento/erro distintos de zero. A origem e o âmbito são explícitos. A hora opcional identifica a resposta recebida, não uma sincronização do conector. Não faz consultas ou escritas por si próprio. `MetricCard` admite conteúdo complementar para conservar explicações e ações dos cartões bancários. O percurso de etapas adapta-se a várias linhas, incluindo o ciclo completo de oito etapas no detalhe do pedido. Ver `MIGRACAO-GLOBAL-FASES-E-H.md`.
+
+## Grelhas comuns — fase 1, lote 1
+
+Passaram para o `DataTable` comum: auditoria do Arquivo digital, histórico da plataforma, acessos por PIN e últimas digitalizações rápidas, ficheiros no Google Drive (com filtro Por importar / Já importados), histórico de emails, últimas sincronizações ERP e histórico de importações SAF-T (com filtro de estado). Os dados, as chamadas à API, as ações por linha e as confirmações são os mesmos; acrescentam-se pesquisa, ordenação, paginação, exportação CSV onde é útil e estados de carregamento/erro distintos de vazio. Testes: `scripts/test-business-ui.py` (contrato da grelha em 1536/768/390 px, claro e escuro) e `scripts/test-common-grids-ui.py` (histórico SAF-T com API intercetada). Os editores de linhas, as conferências financeiras e as listas paginadas no servidor ficam para lotes seguintes ou mantêm controlos próprios.

@@ -8,6 +8,7 @@ import { api } from "./lib/api";
 import { Field } from "./components/Form";
 import { ActionButton, AppDialog, ManagedForm, Notice, markDialogSaved } from "./components/InteractionUI";
 import { StatusBadge } from "./components/BusinessUI";
+import { DataTable } from "./components/DataTable";
 import DriveImportFiles, { DriveSearchNotice, useDriveFiles } from "./DriveImportFiles";
 import SaftArticleProposals from "./SaftArticleProposals";
 import "./SaftSales.css";
@@ -17,6 +18,7 @@ const money = (value: number) => new Intl.NumberFormat("pt-PT", { style: "curren
 const day = (value: string) => value?.slice(0, 10).split("-").reverse().join("/") || "—";
 const states: Row = { validating: "A validar XML…", ready: "Pronto para confirmar", importing: "A importar…", completed: "Importado", failed: "Falhado" };
 const decisions: Row = { new: "Novo", existing: "Já existente", conflict: "Conflito" };
+const importResult = (row: Row) => row.status === "failed" ? `0 aplicados / ${row.summary.result?.rejected ? `${row.summary.result.rejected} rejeitados` : "ficheiro rejeitado"}` : row.summary.result ? `${row.summary.result.imported || 0} novos · ${row.summary.result.updated || 0} atualizados · ${row.summary.result.ignored || 0} ignorados` : "Por confirmar";
 const kinds: Row = { invoice: "Fatura / nota", receipt: "Recibo", customer: "Cliente", product: "Artigo / serviço" };
 
 export function SaftReference({ sessionId, selectedDay }: { sessionId: string; selectedDay: string }) {
@@ -55,7 +57,7 @@ function ReferenceTables({ data }: { data: Row }) {
 
 export default function SaftSales({ stores, store, admin, local }: { stores: Row[]; store: string; admin: boolean; local: boolean }) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Lisbon", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const [history, setHistory] = useState<Row | null>(null), [opened, setOpened] = useState<Row | null>(null);
+  const [history, setHistory] = useState<Row | null>(null), [opened, setOpened] = useState<Row | null>(null), [historyState, setHistoryState] = useState("");
   const [target, setTarget] = useState(store || stores[0]?.id || ""), [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [mapping, setMapping] = useState<Row | null>(null), [start, setStart] = useState(today.slice(0, 8) + "01"), [end, setEnd] = useState(currentMonthRange().to);
@@ -89,9 +91,17 @@ export default function SaftSales({ stores, store, admin, local }: { stores: Row
         onPick={async drive => { setOpened(await api("/saft/imports/drive", { store_id: target, drive_id: drive.id }, { timeoutMs: 600000 })); await load(); }} />
     </section></> },
 { id: "historico", label: "Histórico", content: <><section className="panel"><h2>Histórico de importações</h2><ActionButton disabled={busy} onClick={() => run(load)}><RefreshCw size={16}/>Atualizar histórico</ActionButton>
-      {!history && !error && <p role="status">A carregar histórico…</p>}
-      <div className="table-wrap"><table><thead><tr><th>Ficheiro / data</th><th>Empresa / período</th><th>Estado</th><th>Resultado</th><th>Ações</th></tr></thead><tbody>{history?.imports.map((row: Row) => <tr key={row.id}><td>{row.filename}<br/><small>{day(row.created_at)} · {row.user_id}</small></td><td>{row.header.CompanyName || "—"}<br/>{day(row.header.StartDate)} — {day(row.header.EndDate)}</td><td><StatusBadge tone={row.status === "failed" ? "danger" : row.status === "completed" ? "success" : "warning"}>{states[row.status]}</StatusBadge></td><td>{row.status === "failed" ? `0 aplicados / ${row.summary.result?.rejected ? `${row.summary.result.rejected} rejeitados` : "ficheiro rejeitado"}` : row.summary.result ? `${row.summary.result.imported || 0} novos · ${row.summary.result.updated || 0} atualizados · ${row.summary.result.ignored || 0} ignorados` : "Por confirmar"}</td><td><ActionButton onClick={() => setOpened(row)}><Eye size={16}/>Consultar importação</ActionButton></td></tr>)}</tbody></table></div>
-      {history && !history.imports.length && <p>Ainda não existem importações SAF-T nesta empresa.</p>}
+      <DataTable<Row> label="histórico de importações SAF-T" rows={(history?.imports || []).filter((row: Row) => !historyState || row.status === historyState)} rowKey={row => row.id} loading={!history && !error}
+        emptyText="Ainda não existem importações SAF-T nesta empresa." exportName="historico-saft.csv"
+        searchText={row => [row.filename, row.user_id, row.header.CompanyName, states[row.status], importResult(row)].join(" ")}
+        toolbar={<label>Estado<select value={historyState} onChange={event => setHistoryState(event.target.value)}><option value="">Todos</option>{Object.entries(states).map(([key, label]) => <option key={key} value={key}>{label as string}</option>)}</select></label>}
+        columns={[
+          { id: "ficheiro", label: "Ficheiro / data", sortValue: row => row.created_at || "", exportValue: row => `${row.filename} (${day(row.created_at)})`, render: row => <>{row.filename}<br/><small>{day(row.created_at)} · {row.user_id}</small></> },
+          { id: "empresa", label: "Empresa / período", sortValue: row => row.header.StartDate || "", exportValue: row => `${row.header.CompanyName || "—"} ${day(row.header.StartDate)} — ${day(row.header.EndDate)}`, render: row => <>{row.header.CompanyName || "—"}<br/>{day(row.header.StartDate)} — {day(row.header.EndDate)}</> },
+          { id: "estado", label: "Estado", sortValue: row => states[row.status] || row.status, exportValue: row => states[row.status] || row.status, render: row => <StatusBadge tone={row.status === "failed" ? "danger" : row.status === "completed" ? "success" : "warning"}>{states[row.status]}</StatusBadge> },
+          { id: "resultado", label: "Resultado", exportValue: importResult, render: importResult },
+          { id: "acoes", label: "Ações", render: row => <ActionButton onClick={() => setOpened(row)}><Eye size={16}/>Consultar importação</ActionButton> },
+        ]} />
     </section></> },
 { id: "artigos", label: "Artigos", content: <><SaftArticleProposals refresh={history?.imports.filter((row: Row) => row.status === "completed").length || 0} /></> },
 { id: "meios", label: "Meios de pagamento", content: <>{mapping && <PaymentMapping value={mapping} busy={busy} onSave={draft => run(async () => {

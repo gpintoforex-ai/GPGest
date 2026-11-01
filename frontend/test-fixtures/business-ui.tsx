@@ -42,6 +42,46 @@ import "../src/components/BusinessUI.css";
 import "./business-ui.css";
 
 initializeTheme();
+
+type GridRow = { id: number; name: string; quantity: number };
+const gridRows: GridRow[] = Array.from({ length: 12 }, (_, i) => ({
+  id: i,
+  name: `Artigo de teste ${i + 1}`,
+  quantity: (i + 1) * 3,
+}));
+
+/** Grelha comum: pesquisa, filtro próprio, exportação e estados distintos de carregamento, erro e vazio. */
+function GridFixture() {
+  const [group, setGroup] = useState("");
+  return (
+    <>
+      <DataTable<GridRow>
+        label="registos de teste"
+        rows={gridRows.filter((row) => !group || (row.id % 2 === 0) === (group === "par"))}
+        columns={[
+          { id: "name", label: "Artigo", sortValue: (row) => row.name, render: (row) => row.name, exportValue: (row) => row.name },
+          { id: "quantity", label: "Quantidade", numeric: true, sortValue: (row) => row.quantity, render: (row) => row.quantity, exportValue: (row) => row.quantity },
+        ]}
+        rowKey={(row) => String(row.id)}
+        searchText={(row) => row.name}
+        exportName="registos-de-teste.csv"
+        toolbar={
+          <label>
+            Grupo
+            <select value={group} onChange={(event) => setGroup(event.target.value)}>
+              <option value="">Todos</option>
+              <option value="par">Pares</option>
+              <option value="impar">Ímpares</option>
+            </select>
+          </label>
+        }
+      />
+      <DataTable<GridRow> label="grelha a carregar" rows={[]} loading columns={[]} rowKey={(row) => String(row.id)} searchText={(row) => row.name} />
+      <DataTable<GridRow> label="grelha com falha" rows={[]} error="Falha de teste na consulta." columns={[]} rowKey={(row) => String(row.id)} searchText={(row) => row.name} />
+    </>
+  );
+}
+
 const tones: BusinessTone[] = [
   "neutral",
   "info",
@@ -255,23 +295,7 @@ function Catalog() {
         </section>
         <section className="panel">
           <h2>Grelha e formulário existentes</h2>
-          <DataTable
-            label="registos de teste"
-            rows={Array.from({ length: 12 }, (_, i) => ({
-              id: i,
-              name: `Artigo de teste ${i + 1}`,
-            }))}
-            columns={[
-              {
-                id: "name",
-                label: "Artigo",
-                sortValue: (row) => row.name,
-                render: (row) => row.name,
-              },
-            ]}
-            rowKey={(row) => String(row.id)}
-            searchText={(row) => row.name}
-          />
+          <GridFixture />
           <ManagedForm
             onSubmit={(event) => {
               event.preventDefault();

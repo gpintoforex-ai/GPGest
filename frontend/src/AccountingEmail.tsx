@@ -6,6 +6,7 @@ import { api } from "./lib/api";
 import { Field } from "./components/Form";
 import { ActionButton, ActionLink, AppDialog, ManagedForm, Notice, confirmAction, confirmFormExit, markDialogSaved } from "./components/InteractionUI";
 import { StatusBadge } from "./components/BusinessUI";
+import { DataTable } from "./components/DataTable";
 
 type Row = Record<string, any>;
 export const emailStates: Record<string, string> = {
@@ -20,16 +21,19 @@ const categories = [["compras", "Faturas de compras e despesas"], ["notas_credit
   ["extratos", "Extratos importados (CSV)"], ["pagamentos", "Pagamentos e comprovativos disponíveis"], ["pendencias", "Relatórios de pendências e divergências"]];
 
 export function EmailHistory({ onOpen, refreshKey = 0 }: { onOpen: (row: Row) => void; refreshKey?: number }) {
-  const [rows, setRows] = useState<Row[]>([]), [error, setError] = useState("");
-  useEffect(() => { let active = true; api("/emails").then(result => { if (active) { setRows(result); setError(""); } }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [refreshKey]);
+  const [rows, setRows] = useState<Row[]>([]), [error, setError] = useState(""), [loaded, setLoaded] = useState(false);
+  useEffect(() => { let active = true; api("/emails").then(result => { if (active) { setRows(result); setError(""); setLoaded(true); } }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [refreshKey]);
   return <section className="panel"><h3>Histórico de emails</h3><p className="footnote">Últimos 100 envios desta empresa. A aceitação SMTP não confirma a receção pelo contabilista.</p>
-    {error && <Notice tone="error">{error}</Notice>}
-    <div className="table-wrap"><table><thead><tr><th>Preparado em / utilizador</th><th>Período</th><th>Destinatários</th><th>Estado</th><th>Ações</th></tr></thead><tbody>{rows.map(row => <tr key={row.id}>
-      <td>{day(row.created_at)}<br/><small>{row.created_by}</small></td><td>{day(row.start)} — {day(row.end)}</td>
-      <td>{row.draft.to?.join(", ")} {!!row.draft.cc?.length && <small>CC: {row.draft.cc.join(", ")}</small>}</td>
-      <td><StatusBadge tone={row.status === "received" ? "success" : row.status === "failed" ? "danger" : row.status === "accepted" ? "neutral" : "warning"}>{emailStates[row.status] || row.status}</StatusBadge>{row.uncertain && <small>Entrega incerta: confirme antes de repetir.</small>}</td>
-      <td><ActionButton onClick={() => onOpen(row)}><Eye size={16}/>Consultar</ActionButton></td>
-    </tr>)}</tbody></table></div>{!rows.length && !error && <p>Ainda não existem envios preparados nesta empresa.</p>}
+    <DataTable<Row> label="histórico de emails" rows={rows} rowKey={row => row.id} loading={!loaded && !error} error={error}
+      emptyText="Ainda não existem envios preparados nesta empresa." exportName="historico-emails.csv"
+      searchText={row => [row.created_by, row.draft.to?.join(" "), row.draft.cc?.join(" "), emailStates[row.status] || row.status].join(" ")}
+      columns={[
+        { id: "preparado", label: "Preparado em / utilizador", sortValue: row => row.created_at || "", exportValue: row => `${day(row.created_at)} ${row.created_by || ""}`, render: row => <>{day(row.created_at)}<br/><small>{row.created_by}</small></> },
+        { id: "periodo", label: "Período", sortValue: row => row.start || "", exportValue: row => `${day(row.start)} — ${day(row.end)}`, render: row => <>{day(row.start)} — {day(row.end)}</> },
+        { id: "destinatarios", label: "Destinatários", exportValue: row => row.draft.to?.join(", "), render: row => <>{row.draft.to?.join(", ")} {!!row.draft.cc?.length && <small>CC: {row.draft.cc.join(", ")}</small>}</> },
+        { id: "estado", label: "Estado", sortValue: row => emailStates[row.status] || row.status, exportValue: row => emailStates[row.status] || row.status, render: row => <><StatusBadge tone={row.status === "received" ? "success" : row.status === "failed" ? "danger" : row.status === "accepted" ? "neutral" : "warning"}>{emailStates[row.status] || row.status}</StatusBadge>{row.uncertain && <small>Entrega incerta: confirme antes de repetir.</small>}</> },
+        { id: "acoes", label: "Ações", render: row => <ActionButton onClick={() => onOpen(row)}><Eye size={16}/>Consultar</ActionButton> },
+      ]} />
   </section>;
 }
 

@@ -77,7 +77,7 @@
 .arc-pending h3 { display: flex; gap: 8px; align-items: center; }
 .arc-check { display: flex; gap: 8px; align-items: flex-start; min-height: 44px; padding: 6px 0; }
 .arc-check input { margin-top: 3px; }
-.arc-detail-cell { max-width: 420px; font-size: 0.8rem; word-break: break-word; }
+.arc-detail-cell { display: block; max-width: 420px; font-size: 0.8rem; word-break: break-word; }
 
 @media (max-width: 900px) {
   .arc-detail { grid-template-columns: 1fr; }

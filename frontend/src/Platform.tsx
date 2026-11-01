@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { ShieldCheck, Building2, Plus, LogOut, KeyRound } from "lucide-react";
 import { api } from "./lib/api";
 import { Field, Form } from "./components/Form";
+import { DataTable } from "./components/DataTable";
 type Company = {
   id: string;
   name: string;
@@ -46,6 +47,17 @@ export default function Platform() {
     setCompanies(await api("/platform/companies"));
     setAudit(await api("/platform/audit"));
   }
+  const companyName = (a: any) =>
+    companies.find((c) => c.id === a.company_id)?.name || "Plataforma";
+  const auditDate = (a: any) =>
+    new Intl.DateTimeFormat("pt-PT", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Europe/Lisbon",
+    }).format(new Date(a.created_at));
   useEffect(() => {
     document.title = "Plataforma · IAZELA";
   }, []);
@@ -567,38 +579,20 @@ export default function Platform() {
           ))}
         </div></>},{id:"historico",label:"Histórico",content:<><section className="panel" style={{ marginTop: 24 }}>
           <h3>Histórico da plataforma</h3>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Data</th>
-                  <th>Empresa</th>
-                  <th>Ação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {audit.map((a) => (
-                  <tr key={a.id}>
-                    <td>
-                      {new Intl.DateTimeFormat("pt-PT", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        timeZone: "Europe/Lisbon",
-                      }).format(new Date(a.created_at))}
-                    </td>
-                    <td>
-                      {companies.find((c) => c.id === a.company_id)?.name ||
-                        "Plataforma"}
-                    </td>
-                    <td>{a.action.replaceAll("_", " ")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable<any>
+            label="histórico da plataforma"
+            rows={audit}
+            rowKey={(a) => String(a.id)}
+            emptyText="Sem registos no histórico."
+            exportName="historico-plataforma.csv"
+            initialSort={{ id: "data", ascending: false }}
+            searchText={(a) => `${companyName(a)} ${a.action.replaceAll("_", " ")}`}
+            columns={[
+              { id: "data", label: "Data", render: (a) => auditDate(a), sortValue: (a) => a.created_at, exportValue: (a) => auditDate(a) },
+              { id: "empresa", label: "Empresa", render: (a) => companyName(a), sortValue: (a) => companyName(a), exportValue: (a) => companyName(a) },
+              { id: "acao", label: "Ação", render: (a) => a.action.replaceAll("_", " "), sortValue: (a) => a.action, exportValue: (a) => a.action.replaceAll("_", " ") },
+            ]}
+          />
         </section></>},{id:"legal",label:"Informação legal e privacidade",content:<><LegalAdmin /></>}]} />
         <footer>
           Administração da plataforma · {admin.email}
