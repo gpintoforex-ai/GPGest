@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
+import { DataTable } from "./components/DataTable";
 import "./Employees.css";
 
 type Store = { id: string; name: string };
@@ -37,12 +38,6 @@ const roles: Record<string, string> = {
   operador: "Operador",
   consulta: "Consulta",
 };
-const normalize = (value: string) =>
-  value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("pt-PT");
-
 function EmployeeDialog({
   employee,
   stores,
@@ -209,7 +204,6 @@ export default function Employees({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
   const [kind, setKind] = useState("all");
   const [editing, setEditing] = useState<Employee | null>(null);
   const [opened, setOpened] = useState(false);
@@ -257,12 +251,16 @@ export default function Employees({
     .filter(
       (row) =>
         (!store || row.allStores || row.store_ids.includes(store)) &&
-        (kind === "all" || row.account === (kind === "with")) &&
-        normalize([row.name, row.email, row.phone].join(" ")).includes(
-          normalize(search.trim()),
-        ),
+        (kind === "all" || row.account === (kind === "with")),
     )
     .sort((a, b) => a.name.localeCompare(b.name, "pt-PT"));
+  const storeNames = (row: (typeof rows)[number]) =>
+    row.allStores
+      ? "Todos os estabelecimentos"
+      : stores
+          .filter((item) => row.store_ids.includes(item.id))
+          .map((item) => item.name)
+          .join(", ") || "Sem estabelecimento";
   async function toggle(employee: Employee) {
     if (employee.active && !(await confirmAction({ title: "Inativar funcionário?", message: `«${employee.name}» deixará de estar disponível para novas atribuições. O histórico será preservado.`, confirmLabel: "Inativar funcionário", tone: "warning" }))) return;
     setBusy(employee.id);
@@ -330,68 +328,60 @@ export default function Employees({
         </Notice>
       )}
       <section className="panel" aria-busy={loading || busy !== null}>
-        <div className="employee-filters filter-bar">
-          <Field label="Pesquisar por nome ou contacto">
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </Field>
-          <Field label="Tipo de registo">
-            <select
-              value={kind}
-              onChange={(event) => setKind(event.target.value)}
-            >
-              <option value="all">Todos</option>
-              <option value="with">Com acesso à IAZELA</option>
-              <option value="without">Sem acesso à IAZELA</option>
-            </select>
-          </Field>
-        </div>
-        {loading && <p role="status">A carregar funcionários…</p>}
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Nome</th>
-                <th>Email</th>
-                <th>Telefone</th>
-                <th>Estabelecimentos</th>
-                <th>Perfil / acesso</th>
-                <th>Estado</th>
-                {admin && <th>Ações</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.key}>
-                  <td>
-                    <strong>{row.name}</strong>
-                    <small>{row.account ? "Utilizador" : "Funcionário"}</small>
-                  </td>
-                  <td>{row.email || "—"}</td>
-                  <td>{row.phone || "—"}</td>
-                  <td>
-                    {row.allStores
-                      ? "Todos os estabelecimentos"
-                      : stores
-                          .filter((item) => row.store_ids.includes(item.id))
-                          .map((item) => item.name)
-                          .join(", ") || "Sem estabelecimento"}
-                  </td>
-                  <td>
-                    <span className={`pill${row.account ? "" : " neutral"}`}>
-                      {row.role}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`pill${row.active ? "" : " neutral"}`}>
-                      {row.active ? "Ativo" : "Inativo"}
-                    </span>
-                  </td>
-                  {admin && (
-                    <td>
-                      {row.employee ? (
+        <DataTable<(typeof rows)[number]>
+          label="funcionários e utilizadores"
+          rows={rows}
+          rowKey={(row) => row.key}
+          loading={loading}
+          emptyText="Não existem registos para esta seleção."
+          exportName="funcionarios.csv"
+          searchText={(row) => [row.name, row.email, row.phone].join(" ")}
+          toolbar={
+            <Field label="Tipo de registo">
+              <select value={kind} onChange={(event) => setKind(event.target.value)}>
+                <option value="all">Todos</option>
+                <option value="with">Com acesso à IAZELA</option>
+                <option value="without">Sem acesso à IAZELA</option>
+              </select>
+            </Field>
+          }
+          columns={[
+            {
+              id: "nome",
+              label: "Nome",
+              sortValue: (row) => row.name,
+              exportValue: (row) => row.name,
+              render: (row) => (
+                <>
+                  <strong>{row.name}</strong>
+                  <small>{row.account ? "Utilizador" : "Funcionário"}</small>
+                </>
+              ),
+            },
+            { id: "email", label: "Email", sortValue: (row) => row.email || "", exportValue: (row) => row.email, render: (row) => row.email || "—" },
+            { id: "telefone", label: "Telefone", exportValue: (row) => row.phone, render: (row) => row.phone || "—" },
+            { id: "lojas", label: "Estabelecimentos", sortValue: storeNames, exportValue: storeNames, render: storeNames },
+            {
+              id: "perfil",
+              label: "Perfil / acesso",
+              sortValue: (row) => row.role,
+              exportValue: (row) => row.role,
+              render: (row) => <span className={`pill${row.account ? "" : " neutral"}`}>{row.role}</span>,
+            },
+            {
+              id: "estado",
+              label: "Estado",
+              sortValue: (row) => (row.active ? "Ativo" : "Inativo"),
+              exportValue: (row) => (row.active ? "Ativo" : "Inativo"),
+              render: (row) => <span className={`pill${row.active ? "" : " neutral"}`}>{row.active ? "Ativo" : "Inativo"}</span>,
+            },
+            ...(admin
+              ? [
+                  {
+                    id: "acoes",
+                    label: "Ações",
+                    render: (row: (typeof rows)[number]) =>
+                      row.employee ? (
                         <div className="employee-row-actions">
                           <ActionButton
                             disabled={busy !== null}
@@ -406,33 +396,22 @@ export default function Employees({
                           </ActionButton>
                           <ActionButton
                             disabled={busy !== null}
-                            className={
-                              row.active ? "danger" : "employee-activate"
-                            }
+                            className={row.active ? "danger" : "employee-activate"}
                             aria-label={`${row.active ? "Inativar" : "Ativar"} ${row.name}`}
                             onClick={() => toggle(row.employee!)}
                           >
-                            {row.active ? (
-                              <CircleMinus size={16} aria-hidden="true" />
-                            ) : (
-                              <CircleCheck size={16} aria-hidden="true" />
-                            )}
+                            {row.active ? <CircleMinus size={16} aria-hidden="true" /> : <CircleCheck size={16} aria-hidden="true" />}
                             {row.active ? "Inativar" : "Ativar"}
                           </ActionButton>
                         </div>
                       ) : (
                         "—"
-                      )}
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {!loading && !rows.length && (
-          <p>Não existem registos para esta seleção.</p>
-        )}
+                      ),
+                  },
+                ]
+              : []),
+          ]}
+        />
         {admin && !stores.length && (
           <p className="footnote">
             Crie primeiro um estabelecimento em Organização para registar

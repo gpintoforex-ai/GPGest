@@ -150,6 +150,7 @@ export function DataTable<T>({
         <label>
           Por página
           <select
+            aria-label="Registos por página"
             value={size}
             onChange={(event) => {
               setSize(Number(event.target.value));
