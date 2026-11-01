@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { api } from "./lib/api";
 import { Field, Form } from "./components/Form";
+import { DataTable } from "./components/DataTable";
 import {
   ActionButton,
   AppDialog,
@@ -55,6 +56,7 @@ const qty = (v: any) =>
       );
 const day = (v: any) =>
   v ? String(v).slice(0, 10).split("-").reverse().join("/") : "—";
+const inventoryState = (inv: Row) => (inv.status === "confirmed" ? "Confirmado" : "Rascunho");
 const percent = (v: any) =>
   v === null || v === undefined ? "Não calculável" : `${qty(v)} %`;
 const kinds: Row = {
@@ -519,100 +521,110 @@ export default function Inventory({
                   {report.coverage.erp_stock_unavailable} artigos.
                 </p>
               )}
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Artigo</th>
-                      <th className="numeric">Stock</th>
-                      <th>Reposição / risco</th>
-                      <th className="numeric">Vendas líquidas</th>
-                      {rights.view_cost && (
-                        <>
-                          <th className="numeric">Margem realizada</th>
-                          <th className="numeric">Margem prevista / un.</th>
-                          <th className="numeric">Contribuição conhecida</th>
-                        </>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...report.rows]
-                      .sort(
-                        (a, b) =>
-                          Number(b.below_minimum) - Number(a.below_minimum) ||
-                          Number(b.risk_quantity) - Number(a.risk_quantity),
-                      )
-                      .map((r: Row) => (
-                        <tr key={r.id}>
-                          <td>
-                            {r.code} · {r.name}
-                            {r.no_sales && <small>Sem vendas no período</small>}
-                          </td>
-                          <td className="numeric">{qty(r.quantity)}</td>
-                          <td>
-                            {r.below_minimum && (
-                              <strong className="stock-warning">
-                                Abaixo do mínimo ·{" "}
-                              </strong>
-                            )}
-                            Sugestão: {qty(r.replenishment)}
-                            <small>
-                              Em risco: {qty(r.risk_quantity)} · Expirado:{" "}
-                              {qty(r.expired_quantity)}
-                            </small>
-                            {r.excess_with_expiry && (
-                              <strong className="stock-warning">
-                                Excesso com validade próxima
-                              </strong>
-                            )}
-                          </td>
-                          <td className="numeric">{money(r.net_sales)}</td>
-                          {rights.view_cost && (
+              <DataTable<Row>
+                label="relatório de stock por artigo"
+                rows={[...report.rows].sort(
+                  (a, b) =>
+                    Number(b.below_minimum) - Number(a.below_minimum) ||
+                    Number(b.risk_quantity) - Number(a.risk_quantity),
+                )}
+                rowKey={(r) => r.id}
+                emptyText="Sem artigos locais nos filtros selecionados."
+                exportName="relatorio-stock.csv"
+                searchText={(r) => `${r.code} ${r.name}`}
+                columns={[
+                  {
+                    id: "artigo",
+                    label: "Artigo",
+                    sortValue: (r) => `${r.code} ${r.name}`,
+                    exportValue: (r) => `${r.code} · ${r.name}`,
+                    render: (r) => (
+                      <>
+                        {r.code} · {r.name}
+                        {r.no_sales && <small>Sem vendas no período</small>}
+                      </>
+                    ),
+                  },
+                  { id: "stock", label: "Stock", numeric: true, sortValue: (r) => Number(r.quantity) || 0, exportValue: (r) => qty(r.quantity), render: (r) => qty(r.quantity) },
+                  {
+                    id: "reposicao",
+                    label: "Reposição / risco",
+                    sortValue: (r) => Number(r.replenishment) || 0,
+                    exportValue: (r) => `${r.below_minimum ? "Abaixo do mínimo · " : ""}Sugestão: ${qty(r.replenishment)} · Em risco: ${qty(r.risk_quantity)} · Expirado: ${qty(r.expired_quantity)}`,
+                    render: (r) => (
+                      <>
+                        {r.below_minimum && (
+                          <strong className="stock-warning">
+                            Abaixo do mínimo ·{" "}
+                          </strong>
+                        )}
+                        Sugestão: {qty(r.replenishment)}
+                        <small>
+                          Em risco: {qty(r.risk_quantity)} · Expirado:{" "}
+                          {qty(r.expired_quantity)}
+                        </small>
+                        {r.excess_with_expiry && (
+                          <strong className="stock-warning">
+                            Excesso com validade próxima
+                          </strong>
+                        )}
+                      </>
+                    ),
+                  },
+                  { id: "vendas", label: "Vendas líquidas", numeric: true, sortValue: (r) => Number(r.net_sales) || 0, exportValue: (r) => money(r.net_sales), render: (r) => money(r.net_sales) },
+                  ...(rights.view_cost
+                    ? [
+                        {
+                          id: "margem",
+                          label: "Margem realizada",
+                          numeric: true,
+                          sortValue: (r: Row) => Number(r.gross_margin) || 0,
+                          exportValue: (r: Row) => money(r.gross_margin),
+                          render: (r: Row) => (
                             <>
-                              <td className="numeric">
-                                {money(r.gross_margin)}
+                              {money(r.gross_margin)}
+                              <small>
+                                {percent(r.actual?.margin_pct)} · Acréscimo:{" "}
+                                {percent(r.actual?.markup_pct)}
+                              </small>
+                              {r.unknown_sales > 0 && (
                                 <small>
-                                  {percent(r.actual?.margin_pct)} · Acréscimo:{" "}
-                                  {percent(r.actual?.markup_pct)}
+                                  {r.unknown_sales} linhas sem custo excluídas
                                 </small>
-                                {r.unknown_sales > 0 && (
-                                  <small>
-                                    {r.unknown_sales} linhas sem custo excluídas
-                                  </small>
-                                )}
-                              </td>
-                              <td className="numeric">
-                                {money(r.projected?.margin)}
-                                <small>
-                                  {percent(r.projected?.margin_pct)}
-                                </small>
-                                <ActionButton
-                                  title="Simular desconto"
-                                  aria-label={`Simular desconto de ${r.name}`}
-                                  onClick={() =>
-                                    open("discount", {
-                                      article: findArticle(r.id),
-                                      cost: r.cost,
-                                    })
-                                  }
-                                >
-                                  <Calculator size={16} />
-                                </ActionButton>
-                              </td>
-                              <td className="numeric">
-                                {money(r.contribution)}
-                              </td>
+                              )}
                             </>
-                          )}
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-              {!report.rows.length && (
-                <p>Sem artigos locais nos filtros selecionados.</p>
-              )}
+                          ),
+                        },
+                        {
+                          id: "prevista",
+                          label: "Margem prevista / un.",
+                          numeric: true,
+                          sortValue: (r: Row) => Number(r.projected?.margin) || 0,
+                          exportValue: (r: Row) => money(r.projected?.margin),
+                          render: (r: Row) => (
+                            <>
+                              {money(r.projected?.margin)}
+                              <small>{percent(r.projected?.margin_pct)}</small>
+                              <ActionButton
+                                title="Simular desconto"
+                                aria-label={`Simular desconto de ${r.name}`}
+                                onClick={() =>
+                                  open("discount", {
+                                    article: findArticle(r.id),
+                                    cost: r.cost,
+                                  })
+                                }
+                              >
+                                <Calculator size={16} />
+                              </ActionButton>
+                            </>
+                          ),
+                        },
+                        { id: "contribuicao", label: "Contribuição conhecida", numeric: true, sortValue: (r: Row) => Number(r.contribution) || 0, exportValue: (r: Row) => money(r.contribution), render: (r: Row) => money(r.contribution) },
+                      ]
+                    : []),
+                ]}
+              />
               {rights.view_cost && (
                 <div className="stock-rank">
                   <div>
@@ -782,104 +794,106 @@ export default function Inventory({
       )}
       {tab === "Lotes e validades" && (
         <section className="panel">
-          <div className="panel-title">
-            <h2>Lotes com stock</h2>
-            <Field label="Estado da validade">
-              <select
-                value={lotState}
-                onChange={(e) => setLotState(e.target.value)}
-              >
-                <option value="">Todos</option>
-                {Object.entries(states).map(([key, label]) => (
-                  <option key={key} value={key}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Artigo / lote</th>
-                  <th>Armazém</th>
-                  <th>Prazo / estado</th>
-                  <th className="numeric">Quantidade</th>
-                  {rights.view_cost && (
-                    <th className="numeric">Valor a custo médio</th>
-                  )}
-                  <th>Origem</th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lots.map((l: Row) => (
-                  <tr key={`${l.id}-${l.warehouse_id}`}>
-                    <td>
-                      {articleName(l.article_id)}
-                      <small>{l.number}</small>
-                    </td>
-                    <td>{warehouseName(l.warehouse_id)}</td>
-                    <td>
-                      <strong
-                        className={
-                          l.state === "expired" || l.state === "near"
-                            ? "stock-warning"
-                            : ""
-                        }
-                      >
-                        {states[l.state]}
-                      </strong>
+          <h2>Lotes com stock</h2>
+          <DataTable<Row>
+            label="lotes com stock"
+            rows={lots}
+            rowKey={(l) => `${l.id}-${l.warehouse_id}`}
+            emptyText="Sem lotes com saldo nos filtros selecionados. O stock sem validade continua registado e pode ser filtrado acima."
+            exportName="lotes-validades.csv"
+            searchText={(l) => `${articleName(l.article_id)} ${l.number} ${warehouseName(l.warehouse_id)} ${supplierName(l.supplier_id)} ${l.document}`}
+            toolbar={
+              <Field label="Estado da validade">
+                <select value={lotState} onChange={(e) => setLotState(e.target.value)}>
+                  <option value="">Todos</option>
+                  {Object.entries(states).map(([key, label]) => (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            }
+            columns={[
+              {
+                id: "lote",
+                label: "Artigo / lote",
+                sortValue: (l) => articleName(l.article_id),
+                exportValue: (l) => `${articleName(l.article_id)} · ${l.number}`,
+                render: (l) => (
+                  <>
+                    {articleName(l.article_id)}
+                    <small>{l.number}</small>
+                  </>
+                ),
+              },
+              { id: "armazem", label: "Armazém", sortValue: (l) => warehouseName(l.warehouse_id), exportValue: (l) => warehouseName(l.warehouse_id), render: (l) => warehouseName(l.warehouse_id) },
+              {
+                id: "prazo",
+                label: "Prazo / estado",
+                sortValue: (l) => l.expiry || "",
+                exportValue: (l) => `${states[l.state]} · ${day(l.expiry)}`,
+                render: (l) => (
+                  <>
+                    <strong className={l.state === "expired" || l.state === "near" ? "stock-warning" : ""}>
+                      {states[l.state]}
+                    </strong>
+                    <small>
+                      {day(l.expiry)} ·{" "}
+                      {l.deadline === "consumo_preferencial" ? "Consumo preferencial" : "Validade"}
+                    </small>
+                    {l.alert !== null && (
                       <small>
-                        {day(l.expiry)} ·{" "}
-                        {l.deadline === "consumo_preferencial"
-                          ? "Consumo preferencial"
-                          : "Validade"}
+                        Alerta {l.alert} dias · {l.days} dias restantes
                       </small>
-                      {l.alert !== null && (
-                        <small>
-                          Alerta {l.alert} dias · {l.days} dias restantes
-                        </small>
-                      )}
-                    </td>
-                    <td className="numeric">{qty(l.quantity)}</td>
-                    {rights.view_cost && (
-                      <td className="numeric">
-                        {money(l.cost_value)}
-                        <small>
-                          Primeira entrada / un.: {money(l.unit_cost)}
-                        </small>
-                      </td>
                     )}
-                    <td>
-                      {supplierName(l.supplier_id)}
-                      <small>
-                        {l.document} · Entrada {day(l.entry_date)}
-                      </small>
-                    </td>
-                    <td>
-                      {rights.manage_lots && (
-                        <ActionButton
-                          title="Editar validade"
-                          aria-label={`Editar validade do lote ${l.number}`}
-                          onClick={() => open("lot", { lot: l })}
-                        >
-                          <Pencil size={16} />
-                        </ActionButton>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {!lots.length && (
-            <p>
-              Sem lotes com saldo nos filtros selecionados. O stock sem validade
-              continua registado e pode ser filtrado acima.
-            </p>
-          )}
+                  </>
+                ),
+              },
+              { id: "quantidade", label: "Quantidade", numeric: true, sortValue: (l) => Number(l.quantity) || 0, exportValue: (l) => qty(l.quantity), render: (l) => qty(l.quantity) },
+              ...(rights.view_cost
+                ? [
+                    {
+                      id: "valor",
+                      label: "Valor a custo médio",
+                      numeric: true,
+                      sortValue: (l: Row) => Number(l.cost_value) || 0,
+                      exportValue: (l: Row) => money(l.cost_value),
+                      render: (l: Row) => (
+                        <>
+                          {money(l.cost_value)}
+                          <small>Primeira entrada / un.: {money(l.unit_cost)}</small>
+                        </>
+                      ),
+                    },
+                  ]
+                : []),
+              {
+                id: "origem",
+                label: "Origem",
+                sortValue: (l) => l.entry_date || "",
+                exportValue: (l) => `${supplierName(l.supplier_id)} · ${l.document} · ${day(l.entry_date)}`,
+                render: (l) => (
+                  <>
+                    {supplierName(l.supplier_id)}
+                    <small>
+                      {l.document} · Entrada {day(l.entry_date)}
+                    </small>
+                  </>
+                ),
+              },
+              {
+                id: "acoes",
+                label: "Ações",
+                render: (l) =>
+                  rights.manage_lots && (
+                    <ActionButton title="Editar validade" aria-label={`Editar validade do lote ${l.number}`} onClick={() => open("lot", { lot: l })}>
+                      <Pencil size={16} />
+                    </ActionButton>
+                  ),
+              },
+            ]}
+          />
         </section>
       )}
       {tab === "Inventários" && (
@@ -902,41 +916,29 @@ export default function Inventory({
             preservadas. Se o stock entretanto sair e impedir o ajuste, reconte
             a posição.
           </p>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Iniciado</th>
-                  <th>Armazém</th>
-                  <th>Estado</th>
-                  <th>Posições</th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inventories.map((inv) => (
-                  <tr key={inv.id}>
-                    <td>{day(inv.created_at)}</td>
-                    <td>{warehouseName(inv.warehouse_id)}</td>
-                    <td>
-                      {inv.status === "confirmed" ? "Confirmado" : "Rascunho"}
-                    </td>
-                    <td>{inv.lines.length}</td>
-                    <td>
-                      <ActionButton
-                        onClick={() => open("inventory", { inventory: inv })}
-                      >
-                        {inv.status === "confirmed"
-                          ? "Consultar"
-                          : "Contar / confirmar"}
-                      </ActionButton>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {!inventories.length && <p>Sem sessões de inventário.</p>}
+          <DataTable<Row>
+            label="inventários físicos"
+            rows={inventories}
+            rowKey={(inv) => inv.id}
+            emptyText="Sem sessões de inventário."
+            initialSort={{ id: "iniciado", ascending: false }}
+            searchText={(inv) => `${warehouseName(inv.warehouse_id)} ${inventoryState(inv)}`}
+            columns={[
+              { id: "iniciado", label: "Iniciado", sortValue: (inv) => inv.created_at || "", render: (inv) => day(inv.created_at) },
+              { id: "armazem", label: "Armazém", sortValue: (inv) => warehouseName(inv.warehouse_id), render: (inv) => warehouseName(inv.warehouse_id) },
+              { id: "estado", label: "Estado", sortValue: inventoryState, render: inventoryState },
+              { id: "posicoes", label: "Posições", numeric: true, sortValue: (inv) => inv.lines.length, render: (inv) => inv.lines.length },
+              {
+                id: "acoes",
+                label: "Ações",
+                render: (inv) => (
+                  <ActionButton onClick={() => open("inventory", { inventory: inv })}>
+                    {inv.status === "confirmed" ? "Consultar" : "Contar / confirmar"}
+                  </ActionButton>
+                ),
+              },
+            ]}
+          />
         </section>
       )}
       {tab === "Importações" && (
@@ -1815,6 +1817,7 @@ function StockImports({
     [preview, setPreview] = useState<Row | null>(null),
     [source, setSource] = useState<Row | null>(null),
     [erp, setErp] = useState<Row | null>(null),
+    [erpLink, setErpLink] = useState(""),
     [linkPlan, setLinkPlan] = useState<Row | null>(null),
     [createMissing, setCreateMissing] = useState(true),
     [target, setTarget] = useState(
@@ -2333,50 +2336,53 @@ function StockImports({
         {erp && (
           <>
             <p>{erp.stock}</p>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Código / artigo</th>
-                    <th>Última sincronização do catálogo</th>
-                    <th>Ação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {erp.rows.map((r: Row) => (
-                    <tr key={r.id}>
-                      <td>
-                        {r.code} · {r.name}
-                      </td>
-                      <td>{day(r.synced_at)}</td>
-                      <td>
-                        {r.linked
-                          ? "Associado"
-                          : rights.adjust_stock && (
-                              <ActionButton
-                                disabled={busy}
-                                onClick={() =>
-                                  run(async () => {
-                                    await api("/stock/erp-products", {
-                                      erp_id: r.id,
-                                    });
-                                    setErp(null);
-                                    await saved(
-                                      "Artigo ERP associado: o stock é registado aqui.",
-                                    );
-                                  })
-                                }
-                              >
-                                <Package size={16} />
-                                Associar
-                              </ActionButton>
-                            )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable<Row>
+              label="artigos sincronizados do ERP"
+              rows={erp.rows.filter((r: Row) => !erpLink || (erpLink === "linked") === !!r.linked)}
+              rowKey={(r) => r.id}
+              emptyText="Nenhum artigo ERP nesta seleção."
+              searchText={(r) => `${r.code} ${r.name}`}
+              toolbar={
+                <label>
+                  Associação
+                  <select value={erpLink} onChange={(event) => setErpLink(event.target.value)}>
+                    <option value="">Todos</option>
+                    <option value="pending">Por associar</option>
+                    <option value="linked">Associados</option>
+                  </select>
+                </label>
+              }
+              columns={[
+                { id: "artigo", label: "Código / artigo", sortValue: (r) => `${r.code} ${r.name}`, render: (r) => `${r.code} · ${r.name}` },
+                { id: "sincronizado", label: "Última sincronização do catálogo", sortValue: (r) => r.synced_at || "", render: (r) => day(r.synced_at) },
+                {
+                  id: "acao",
+                  label: "Ação",
+                  render: (r) =>
+                    r.linked
+                      ? "Associado"
+                      : rights.adjust_stock && (
+                          <ActionButton
+                            disabled={busy}
+                            onClick={() =>
+                              run(async () => {
+                                await api("/stock/erp-products", {
+                                  erp_id: r.id,
+                                });
+                                setErp(null);
+                                await saved(
+                                  "Artigo ERP associado: o stock é registado aqui.",
+                                );
+                              })
+                            }
+                          >
+                            <Package size={16} />
+                            Associar
+                          </ActionButton>
+                        ),
+                },
+              ]}
+            />
           </>
         )}
       </section>
