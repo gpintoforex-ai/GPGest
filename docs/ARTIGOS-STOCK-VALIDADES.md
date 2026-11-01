@@ -69,7 +69,7 @@ O painel distingue stock atual de resultados do período. Inclui reposição, va
 
 ## ERP e SAF-T
 
-**ERP:** o catálogo sincronizado existente é reutilizado por associação explícita. O artigo e preço continuam a ser consultados do registo ERP original. A base de IVA do preço não é presumida quando o conector não a identifica. A ficha ERP não aceita edição local ou movimentos de stock. O conector Wintouch atual não implementa quantidades de stock: são sempre **indisponíveis**, independentemente de a sincronização de catálogo terminar, falhar ou estar pendente. Não existe escrita automática para o ERP.
+**ERP:** o catálogo sincronizado existente é reutilizado por associação explícita. O artigo e preço continuam a ser consultados do registo ERP original. A base de IVA do preço não é presumida quando o conector não a identifica. A ficha ERP não aceita edição local ou movimentos de stock. O conector Wintouch atual não implementa quantidades de stock: são sempre **indisponíveis**, independentemente de a sincronização de catálogo terminar, falhar ou estar pendente. Não existe escrita automática para o ERP. As **vendas Wintouch importadas** geram saídas de stock dos artigos associados a partir do início do controlo (ver [VENDAS-WINTOUCH.md](VENDAS-WINTOUCH.md#saídas-de-stock)), com as mesmas exclusões das vendas SAF-T.
 
 **SAF-T:** a importação fiscal existente continua a servir a análise de vendas sem gerar stock. A passagem para stock exige:
 

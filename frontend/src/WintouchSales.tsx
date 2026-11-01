@@ -11,16 +11,56 @@ const money = (v: number) =>
   );
 const day = (v: string) => calendarDay(v).split("-").reverse().join("/") || "—";
 
+/** Resumo das saídas de stock geradas pelas vendas importadas (só quando o controlo de stock está ativo). */
+export function StockOutcome({ stock }: { stock: Row }) {
+  if (stock.status !== "aplicado")
+    return (
+      <Notice className={stock.status === "erro" ? "error" : "warning"} role="status">
+        <strong>O stock não foi alterado.</strong> As vendas foram importadas para os movimentos financeiros, mas não geraram
+        movimentos de stock: {stock.message}
+      </Notice>
+    );
+  const issues = [...(stock.conflicts || []), ...(stock.pending || [])];
+  return (
+    <Notice className={stock.pending_count || stock.conflict_count ? "warning" : "success"} role="status">
+      <strong>Stock:</strong> {stock.applied} saída(s) de venda, {stock.returns} devolução(ões) por nota de crédito
+      {stock.reversed ? ` e ${stock.reversed} estorno(s) de documentos anulados` : ""}.
+      {issues.length > 0 && (
+        <details>
+          <summary>
+            {stock.pending_count} linha(s) por aplicar{stock.conflict_count ? ` e ${stock.conflict_count} conflito(s)` : ""}
+          </summary>
+          <ul>
+            {issues.map((item: Row, index: number) => (
+              <li key={index}>
+                <b>{item.document}</b>{item.article ? ` · ${item.article}` : ""}: {item.reason}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </Notice>
+  );
+}
+
 export function SalesImportPanel({ company }: { company: Row }) {
   const [stores, setStores] = useState<Row[]>([]);
+  const [warehouses, setWarehouses] = useState<Row[]>([]);
+  const [store, setStore] = useState("");
   const [notice, setNotice] = useState("");
+  const [stock, setStock] = useState<Row | null>(null);
   const [error, setError] = useState("");
   const [initialRange] = useState(currentMonth);
   useEffect(() => {
     api("/bootstrap")
-      .then((b) => setStores(b.stores))
+      .then((b) => { setStores(b.stores); setStore(b.stores[0]?.id || ""); })
       .catch((e) => setError(e.message));
+    // Sem acesso aos armazéns, a escolha automática (ligação ao ERP ou armazém único) continua disponível.
+    api("/tables/warehouses/records?status=active&size=100")
+      .then((r) => setWarehouses(r.rows || []))
+      .catch(() => setWarehouses([]));
   }, []);
+  const storeWarehouses = warehouses.filter((w) => w.values?.store_id === store);
   return (
     <section className="panel">
       <h3>Importar vendas e movimentos de caixa Wintouch</h3>
@@ -41,16 +81,20 @@ export function SalesImportPanel({ company }: { company: Row }) {
         </Notice>
       )}
       {notice && <p role="status">{notice}</p>}
+      {stock && <StockOutcome stock={stock} />}
       {company.active && company.api_active && stores.length > 0 ? (
         <Form
           submitLabel="Importar vendas"
           onSubmit={async (v) => {
             setNotice("");
+            setStock(null);
             const r = await api("/integrations/wintouch/sales", {
               ...v,
+              warehouse_id: v.warehouse_id || null,
               confirm_demo: v.confirm_demo === "on",
             });
             if (r.status !== "concluida") throw new Error(r.error_message);
+            setStock(r.stock || null);
             setNotice(
               `Importação concluída: ${r.inserted_count} registos novos e ${r.updated_count} atualizados. Consulte Movimentos reais e Movimentos previstos.`,
             );
@@ -58,7 +102,7 @@ export function SalesImportPanel({ company }: { company: Row }) {
           }}
         >
           <Field label="Loja de destino">
-            <select name="store_id" required>
+            <select name="store_id" required value={store} onChange={(e) => setStore(e.target.value)}>
               {stores.map((r) => (
                 <option value={r.id} key={r.id}>
                   {r.name}
@@ -66,6 +110,16 @@ export function SalesImportPanel({ company }: { company: Row }) {
               ))}
             </select>
           </Field>
+          {storeWarehouses.length > 1 && (
+            <Field label="Armazém das saídas de stock">
+              <select name="warehouse_id" defaultValue="">
+                <option value="">Pela ligação dos armazéns ao ERP</option>
+                {storeWarehouses.map((w) => (
+                  <option value={w.id} key={w.id}>{w.description}</option>
+                ))}
+              </select>
+            </Field>
+          )}
           <DatePresets names={["start_date", "end_date"]} />
           <Field label="Vendas desde">
             <input
@@ -94,6 +148,11 @@ export function SalesImportPanel({ company }: { company: Row }) {
             atualizados pela conta corrente Wintouch. Confirme que todos os
             documentos desta ligação pertencem à loja escolhida. Período máximo:
             um ano.
+          </p>
+          <p className="footnote">
+            Com o controlo de stock ativo, as linhas dos documentos de venda desde a data de início
+            geram saídas de stock dos artigos associados (uma vez por linha); as notas de crédito
+            devolvem ao custo da venda original. As linhas que não podem ser aplicadas ficam listadas.
           </p>
         </Form>
       ) : (

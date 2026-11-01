@@ -26,6 +26,44 @@ Em **Integrações → Importar vendas Wintouch**, escolha loja e datas e execut
 Cada envio tem um identificador único e auditoria persistida antes da chamada externa. Uma falha com resultado desconhecido bloqueia novas liquidações desse saldo para impedir duplicados; deve verificar o documento na Wintouch antes de resolver a operação. A liquidação suporta EUR e documentos sem retenções. A atualização dos movimentos reais segue a importação de vendas/recebimentos.
 - Faturas, faturas-recibo, faturas simplificadas e notas de crédito de venda são selecionadas pelas classes 5, 3, 40 e 6, confirmadas nos tipos de documentos da instalação. Orçamentos, encomendas, guias e compras ficam excluídos. Os recibos de recebimento são consultados separadamente.
 
+## Saídas de stock
+
+Com o controlo de stock ativo (data de início em Artigos → Parâmetros), a importação lê também as
+linhas de artigo das faturas, faturas-recibo, faturas simplificadas e notas de crédito a partir dessa
+data e aplica-as ao stock logo a seguir, com o utilizador que importou:
+
+- **Linhas:** só `GET product_documents/{id}/withsources` devolve as quantidades (o embed encadeado
+  das dimensões responde 400 na API validada). É uma consulta por documento; as linhas ficam guardadas
+  no documento importado e só são lidas de novo quando a versão do documento muda na Wintouch. Linhas
+  de texto e componentes de menus não movimentam stock.
+- **Venda:** cada linha de artigo associado a uma ficha local gera uma saída «Venda Wintouch», com o
+  documento, a venda líquida da linha (sem IVA e descontos) e o custo médio do momento. O armazém é o
+  escolhido na importação; sem escolha, o armazém ligado ao armazém Wintouch da linha (Tabelas →
+  Armazéns) ou o único armazém ativo da loja.
+- **Nota de crédito:** devolve ao stock ao custo da venda original, quando a linha de origem
+  (`Sources`) já foi integrada; caso contrário fica listada para registo manual.
+- **Uma vez por linha:** a identidade é a linha da Wintouch; repetir o período não volta a baixar o
+  stock. Uma venda manual do mesmo documento e artigo impede a integração (e vice-versa).
+- **Documento anulado depois de integrado:** devolução ligada a cada saída ainda não devolvida
+  (estorno), sem apagar movimentos. **Documento alterado** (linha mudada ou removida): fica em conflito,
+  sem novos movimentos; reveja e registe o acerto manualmente.
+- **Ficam por aplicar, listadas no resultado:** artigos sem ficha associada, artigos com lotes, armazém
+  por definir e linhas recusadas pelas regras de stock (por exemplo, stock insuficiente). Uma linha
+  recusada não impede as restantes; repetir a importação volta a tentá-la.
+
+**Sincronizar a partir dos movimentos de stock:** em Artigos → Movimentos, o administrador usa
+**Sincronizar vendas**, escolhe o período (atalhos ou datas), a loja e, se houver vários, o armazém. A
+sincronização corre em segundo plano (`POST /api/integrations/wintouch/sales/start`) e a janela mostra
+uma barra de progresso real: etapa em curso e documentos tratados de um total (leitura dos documentos
+de venda e aplicação ao stock); nas etapas sem total conhecido a barra fica em movimento. Pode fechar a
+janela: ao reabrir, o acompanhamento é retomado (`/sales/running`). No fim mostra os registos importados
+e o resultado no stock, com as linhas por aplicar. Só uma sincronização de vendas corre de cada vez por
+empresa; uma execução sem sinal de vida há dez minutos é dada como interrompida.
+
+Cada aplicação fica na auditoria (`vendas_wintouch_stock`) com as quantidades de saídas, devoluções,
+estornos, pendentes e conflitos. Sem data de início do controlo de stock, a importação não lê linhas
+nem altera o stock.
+
 ## Consistência
 
 Cada ID de documento, pagamento ou pendente fica único por empresa API, no esquema da empresa GPGest. Repetir o período atualiza os registos. Pagamentos não são calculados a partir do total da fatura. Os totais documentais usam bases tributáveis e IVA, sem somar descontos novamente. Apenas EUR é suportado e os montantes são lidos com Decimal e convertidos em cêntimos.
@@ -40,7 +78,7 @@ As datas sem offset mantêm a data de calendário indicada pela origem, sem inve
 
 ## Limites atuais
 
-É um snapshot de consulta dos movimentos Wintouch. A importação não abre nem fecha caixas, não escreve na Wintouch e não gera lançamentos locais. Na **Folha de caixa**, os créditos e débitos Wintouch do dia e da loja entram automaticamente nos totais, juntamente com todos os movimentos reais manuais da mesma loja/dia, de todas as sessões. Os valores ficam conservados no relatório ao fechar. A atribuição do numerário Wintouch a uma caixa para autorizar pagamentos continua única por loja/dia; o total diário apresentado na folha não disponibiliza dinheiro de outras caixas. Não concilia automaticamente um pagamento Wintouch com um lançamento manual. A tabela apresenta ambas as origens identificadas, sem gerar um segundo lançamento local. Anexos e estornos locais só estão disponíveis nos registos GPGest; os registos importados são geridos na Wintouch.
+É um snapshot de consulta dos movimentos Wintouch. A importação não abre nem fecha caixas, não escreve na Wintouch e não gera lançamentos financeiros locais (as saídas de stock descritas acima são a exceção, só com o controlo de stock ativo). Na **Folha de caixa**, os créditos e débitos Wintouch do dia e da loja entram automaticamente nos totais, juntamente com todos os movimentos reais manuais da mesma loja/dia, de todas as sessões. Os valores ficam conservados no relatório ao fechar. A atribuição do numerário Wintouch a uma caixa para autorizar pagamentos continua única por loja/dia; o total diário apresentado na folha não disponibiliza dinheiro de outras caixas. Não concilia automaticamente um pagamento Wintouch com um lançamento manual. A tabela apresenta ambas as origens identificadas, sem gerar um segundo lançamento local. Anexos e estornos locais só estão disponíveis nos registos GPGest; os registos importados são geridos na Wintouch.
 
 Notas de crédito não são consideradas reembolsos pagos sem um pagamento identificado. Anulações com `DeletedDate` são preservadas como documento anulado e os seus pagamentos não são publicados como reais. Recibos com estado de processamento não validado são rejeitados. Descontos, retenções e valores pendentes não são convertidos automaticamente em dinheiro recebido.
 

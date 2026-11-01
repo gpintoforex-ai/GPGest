@@ -4,6 +4,7 @@ import { currentMonthRange } from "./components/DatePresets";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import OpeningStockImport from "./OpeningStockImport";
 import InventorySync from "./InventorySync";
+import StockSalesSync from "./StockSalesSync";
 import ArticleForm from "./ArticleForm";
 import ArticleGrid from "./ArticleGrid";
 import { newArticle, articlePayload } from "./articleValues";
@@ -169,6 +170,7 @@ export default function Inventory({
     [config, setConfig] = useState<Row | null>(null);
   const [dialog, setDialog] = useState<Row | null>(null),
     [syncing, setSyncing] = useState(false),
+    [salesSync, setSalesSync] = useState(false),
     [busy, setBusy] = useState(false),
     [page, setPage] = useState(1),
     [lotState, setLotState] = useState("");
@@ -352,6 +354,14 @@ export default function Inventory({
       </div>
       {error && <Notice tone="error">{error}</Notice>}
       {success && <Notice tone="success">{success}</Notice>}
+      {salesSync && (
+        <StockSalesSync
+          stores={stores}
+          warehouses={warehouses}
+          onClose={() => setSalesSync(false)}
+          onDone={() => setRevision((v) => v + 1)}
+        />
+      )}
       {syncing && (
         <InventorySync
           onClose={() => {
@@ -676,7 +686,19 @@ export default function Inventory({
         onChanged={message => { setSuccess(message); setRevision(v => v + 1); }} />}
       {tab === "Movimentos" && (
         <section className="panel">
-          <h2>Histórico de stock</h2>
+          <div className="stock-sync-panel-title">
+            <h2>Histórico de stock</h2>
+            {catalog.policy.mode === "integrated" && (
+              <ActionButton
+                disabled={!admin}
+                title={admin ? "Importa as vendas Wintouch do período e aplica as linhas ao stock, com barra de progresso." : "Só o administrador pode sincronizar as vendas com o ERP."}
+                onClick={() => setSalesSync(true)}
+              >
+                <RefreshCw size={16} aria-hidden="true" />
+                Sincronizar vendas
+              </ActionButton>
+            )}
+          </div>
           <p className="footnote">
             Movimentos confirmados são preservados. Corrija através de devolução
             ou ajuste justificado.

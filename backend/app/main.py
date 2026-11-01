@@ -1798,6 +1798,7 @@ def company_sales_list(user=Depends(current), db: Session = Depends(db_session))
         if r.kind == "previsto" and r.external_id in local_owned:
             continue
         data = json.loads(r.data)
+        data.pop("lines", None)  # Linhas de artigo: só para as saídas de stock, não para a lista.
         if r.kind == "real" and not is_real_cash_movement(data):
             continue
         if r.id in supplier_overrides and (data.get("entity") or "").strip() in ("", "Entidade não indicada"):
@@ -1856,15 +1857,15 @@ def import_cash_sheet_erp(session_id: str, data: CashSheetERPImport, user=Depend
     return {"import": result, "closed": bool(session.closed_at), "sheet": session_result(db, session)}
 
 
-@app.post("/api/integrations/wintouch/sales")
-def company_sales_import(
-    data: SalesImport, user=Depends(current), db: Session = Depends(db_session)
-):
+def sales_source(data: SalesImport, user, db):
+    """Valida o pedido e a ligação Wintouch da empresa; regista a importação na auditoria."""
+    from datetime import date
+
     from cryptography.fernet import InvalidToken
 
+    from .inventory import settings as stock_settings
+    from .inventory import stock_from_erp
     from .platform import cipher, validate_url
-    from .wintouch_sales import synchronize_sales
-    from .wintouch_sync import SyncError
 
     authorize(user, db, data.store_id, ["administrador"])
     if not db.get(Store, data.store_id):
@@ -1895,12 +1896,174 @@ def company_sales_import(
         data.store_id,
     )
     db.commit()
+    # As linhas de artigo só são lidas a partir do início do controlo de stock (uma consulta por documento).
+    control = stock_settings(db)["control_start"]
+    return {
+        "company_id": company_id, "enterprise": enterprise, "url": url, "key": key,
+        "lines_from": date.fromisoformat(control) if control and not stock_from_erp(db) else None,
+    }
+
+
+def run_sales_import(db, user, data: SalesImport, source, progress=None):
+    """Importa as vendas do período e aplica as linhas ao stock (quando o controlo está ativo)."""
+    from .wintouch_sales import synchronize_sales
+    from .wintouch_stock import apply_sales_stock
+    from .wintouch_sync import SyncError
+
     try:
-        return synchronize_sales(
-            db.get_bind(), enterprise, data.store_id, data.start_date, data.end_date, url, key
+        result = synchronize_sales(
+            db.get_bind(), source["enterprise"], data.store_id, data.start_date, data.end_date,
+            source["url"], source["key"], source["lines_from"], progress,
         )
     except SyncError as exc:
         raise HTTPException(409, str(exc)) from None
+    if result["status"] == "concluida":
+        db.expire_all()
+        try:
+            result["stock"] = apply_sales_stock(
+                db, user, authorize, source["enterprise"], data.store_id, data.start_date,
+                data.end_date, data.warehouse_id, progress,
+            )
+            stock = result["stock"]
+            record(db, user, "vendas_wintouch_stock", source["company_id"], {
+                k: stock.get(k) for k in ("status", "applied", "returns", "reversed", "pending_count", "conflict_count")
+            }, data.store_id)
+            db.commit()
+        except HTTPException as exc:
+            db.rollback()
+            result["stock"] = {"status": "erro", "message": exc.detail if isinstance(exc.detail, str) else "As saídas de stock não foram aplicadas."}
+    return result
+
+
+@app.post("/api/integrations/wintouch/sales")
+def company_sales_import(
+    data: SalesImport, user=Depends(current), db: Session = Depends(db_session)
+):
+    return run_sales_import(db, user, data, sales_source(data, user, db))
+
+
+SALES_PROGRESS = "vendas:progresso"
+
+
+def sales_progress_view(run):
+    finished = run.status != "em_curso"
+    return {
+        "id": run.id,
+        "status": run.status,
+        "stage": run.current_label,
+        "done": run.done_count,
+        "total": run.total_count,
+        "error": run.error_message if run.status == "falhou" else "",
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "result": json.loads(run.results or "null") if finished else None,
+    }
+
+
+@app.post("/api/integrations/wintouch/sales/start")
+def company_sales_start(
+    data: SalesImport, user=Depends(current), db: Session = Depends(db_session)
+):
+    """Importação de vendas em segundo plano, com progresso consultável (etapa, feitos, total)."""
+    import threading
+
+    from .models import WintouchSyncRun
+
+    source = sales_source(data, user, db)
+    limit = now() - timedelta(minutes=10)
+    for stale in db.scalars(select(WintouchSyncRun).where(
+        WintouchSyncRun.enterprise_id == source["enterprise"], WintouchSyncRun.resource == SALES_PROGRESS,
+        WintouchSyncRun.status == "em_curso",
+    )):
+        if (stale.heartbeat_at or stale.started_at) < limit:
+            stale.status, stale.finished_at = "falhou", now()
+            stale.error_message = "Sincronização interrompida antes de terminar. Pode repetir o período."
+    db.commit()
+    run = WintouchSyncRun(
+        enterprise_id=source["enterprise"], resource=SALES_PROGRESS, status="em_curso",
+        current_label="A preparar", heartbeat_at=now(), results="null",
+    )
+    db.add(run)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Já existe uma sincronização de vendas em curso. Aguarde que termine.") from None
+    # Sessão própria (mesmo esquema da empresa): a do pedido fecha quando a resposta sai.
+    bind, info, run_id, user_id = db.get_bind(), dict(db.info), run.id, user.id
+
+    def work():
+        last = [0.0]
+
+        def progress(stage, done, total):
+            # No máximo ~3 escritas por segundo; a última de cada etapa é sempre gravada.
+            if monotonic() - last[0] < 0.3 and done != total:
+                return
+            last[0] = monotonic()
+            with Session(bind=bind) as tracker:
+                current_run = tracker.get(WintouchSyncRun, run_id)
+                current_run.current_label = stage[:300]
+                current_run.done_count, current_run.total_count = done, total
+                current_run.heartbeat_at = now()
+                tracker.commit()
+
+        status, error, payload = "concluida", "", None
+        with Session(bind=bind, expire_on_commit=False) as worker:
+            worker.info.update(info)
+            try:
+                payload = run_sales_import(worker, worker.get(User, user_id), data, source, progress)
+                if payload["status"] != "concluida":
+                    status, error = "falhou", payload.get("error_message") or "A importação não terminou."
+            except HTTPException as exc:
+                worker.rollback()
+                status, error = "falhou", exc.detail if isinstance(exc.detail, str) else "A importação não terminou."
+            except Exception:
+                worker.rollback()
+                status, error = "falhou", "Falha inesperada durante a sincronização. Repita o período; os registos já gravados não são duplicados."
+        with Session(bind=bind) as tracker:
+            current_run = tracker.get(WintouchSyncRun, run_id)
+            current_run.status, current_run.error_message = status, error
+            current_run.finished_at = now()
+            current_run.current_label = ""
+            current_run.results = json.dumps(payload, ensure_ascii=False, default=str)
+            tracker.commit()
+
+    threading.Thread(target=work, name="sync-vendas-wintouch", daemon=True).start()
+    return sales_progress_view(run)
+
+
+def sales_progress_run(db, run_id=None):
+    from .models import WintouchSyncRun
+
+    company_id = db.info.get("company", {}).get("id")
+    with database.next_platform_session() as core:
+        company = core.get(Company, company_id) if company_id else None
+        enterprise = company.api_enterprise if company else None
+    query = select(WintouchSyncRun).where(
+        WintouchSyncRun.resource == SALES_PROGRESS, WintouchSyncRun.enterprise_id == enterprise
+    )
+    if run_id:
+        return db.scalar(query.where(WintouchSyncRun.id == run_id))
+    return db.scalar(query.where(WintouchSyncRun.status == "em_curso").order_by(WintouchSyncRun.started_at.desc()))
+
+
+@app.get("/api/integrations/wintouch/sales/runs/{run_id}")
+def company_sales_run(run_id: str, user=Depends(current), db: Session = Depends(db_session)):
+    if user.role != "administrador":
+        raise HTTPException(403, "Só o administrador acompanha a sincronização de vendas.")
+    run = sales_progress_run(db, run_id)
+    if not run:
+        raise HTTPException(404, "Sincronização não encontrada.")
+    return sales_progress_view(run)
+
+
+@app.get("/api/integrations/wintouch/sales/running")
+def company_sales_running(user=Depends(current), db: Session = Depends(db_session)):
+    """Sincronização de vendas ainda em curso (para retomar o acompanhamento ao reabrir)."""
+    if user.role != "administrador":
+        return None
+    run = sales_progress_run(db)
+    return sales_progress_view(run) if run else None
 
 
 def settlement_context(db, user, record_id):
