@@ -8,7 +8,7 @@ Segue o comportamento comum das Tabelas ([TABELAS-COMPORTAMENTO-COMUM.md](TABELA
 
 Campos (tabela `purchase_document_types`, migração **0068**): código (único), descrição, natureza (`compra` | `nota_credito_compra`), sinal (+1 fatura, −1 nota de crédito, derivado da natureza), condição de pagamento (`dinheiro` | `credito`), meio de pagamento por omissão, dias de vencimento (só a crédito), série, «gera movimento de caixa», «gera dívida», ativo, criado/atualizado em. Os dois indicadores derivam da condição (dinheiro → caixa; crédito → dívida) quando não são indicados, mas ficam guardados para permitir exceções. A origem (IAZELA/ERP), o identificador e o código na Wintouch e a última sincronização ficam na ligação ao ERP comum às tabelas (`erp_links`).
 
-Tipos pré-carregados na primeira utilização (também em empresas novas):
+Tipos pré-carregados na primeira utilização (também em empresas novas). Se o utilizador remover todos os tipos, a tabela fica vazia e **não volta a ser pré-carregada**: crie os tipos ou importe-os da Wintouch (as receções precisam de pelo menos um tipo ativo).
 
 | Código | Descrição | Natureza | Sinal | Pagamento | Caixa | Dívida |
 |---|---|---|---|---|---|---|

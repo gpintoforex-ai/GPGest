@@ -7,7 +7,14 @@ Na tabela de Armazéns, a ação **Remover** exige confirmação e a permissão 
 ## Circuito
 
 1. Crie uma encomenda, selecione fornecedor, armazém e artigos e guarde o rascunho. Confirme a encomenda quando estiver revista. A confirmação não cria stock, dívida ou envio de email.
+   Uma encomenda sem número do documento recebe o numerador sequencial **EC-0001, EC-0002, …**, o mesmo das encomendas preparadas nas Encomendas de clientes.
 2. Na encomenda confirmada, escolha **Receber mercadoria**. Ajuste a quantidade da entrega, indique rejeições, lotes e validades e confirme. As quantidades aceites entram no livro de stock existente. Uma receção pode reunir linhas de várias encomendas do mesmo fornecedor/estabelecimento; também pode ser criada sem encomenda.
+   **Encomendas por receber:** no topo de **Receções de mercadoria** estão as encomendas confirmadas com mercadoria pendente, as atrasadas assinaladas a vermelho. Cada uma mostra a previsão de entrega, o que falta receber e os **clientes à espera** (pedidos das Encomendas de clientes, os urgentes a vermelho). **Receber** abre a receção já com as quantidades pendentes.
+   - Ao **confirmar**, as quantidades aceites que pertencem a encomendas feitas para pedidos de clientes ficam **reservadas automaticamente** a esses clientes, pela ordem das atribuições. O excedente fica em stock geral. A receção mostra o que foi reservado. Uma reserva impossível (por exemplo, stock já consumido) fica como aviso e não anula a receção.
+   - Repetir a confirmação não volta a reservar.
+   - Uma receção que já reservou para clientes não se anula nem se edita nas Compras: liberte as reservas no pedido e corrija com uma devolução ao fornecedor.
+   - **Anexar PDF** guarda a guia ou a fatura no Arquivo digital e liga-a ao documento. Um ficheiro igual já arquivado é reutilizado.
+   - Com o tipo de documento, a confirmação cria a compra e o movimento **real** (a dinheiro) ou **previsto** (a crédito, com vencimento). O previsto entra na **Previsão de liquidez**, e a receção tem a ligação para a abrir.
 3. Na receção, escolha **Associar fatura**. Pode juntar várias receções e selecionar uma compra já existente, incluindo documentos identificados no e-Fatura, ou um documento do catálogo ERP. As validações exigem a mesma identidade e montante. Uma compra nova usa a tabela `purchases`, aparece na conferência documental e tem proposta de despesa no mecanismo existente. A associação a uma receção não cria outra entrada.
 4. Na compra direta de mercadorias, a confirmação cria uma receção relacionada e aplica os mesmos controlos de stock, lote e validade. Serviços e despesas não movimentam stock.
 5. Use **Devolver mercadoria** na receção original. Indique quantidade e motivo. A confirmação cria a saída física; a posterior nota de crédito cria o documento financeiro sem repetir a saída. As devoluções sem nota de crédito aparecem na visão geral.
@@ -16,13 +23,46 @@ Na tabela de Armazéns, a ação **Remover** exige confirmação e a permissão 
 
 **Tipo de documento na receção:** cada receção indica o tipo de documento de compra (FC, FCD, NCC, NCCD…), que gera ao confirmar a compra, a dívida e o previsto ou o movimento real de caixa, e nas notas de crédito a saída de stock. Ver [TIPOS-DOCUMENTO-COMPRA.md](TIPOS-DOCUMENTO-COMPRA.md).
 
+## Validades na receção
+
+Ao **lançar** uma receção (manual, a partir de fatura ou a partir das Encomendas de clientes):
+- **Artigos com lotes exigem validade.** Sem ela, a receção não é lançada e a mensagem diz que artigos e lotes faltam. Se o lote já existir com validade, essa conta. O rascunho pode ser gravado sem validade.
+- **Validade a menos de 2 anos** da data do documento: aviso a âmbar na linha e no documento.
+- **Validade a menos de 1 ano**: aviso a vermelho, e a receção fica com uma **reclamação ao fornecedor por fazer**. A lista **Reclamações de validade por fazer** aparece no topo de Receções de mercadoria. Em cada receção, **Registar reclamação** (como e quando) ou **Não reclamar** (porquê) guardam o registo. Fica no documento e na auditoria (`compra_circuito_reclamacao_validade`). A lista mostra também a etiqueta «Reclamar validade».
+
+As linhas das janelas de receção mostram estes avisos junto ao campo Validade enquanto se preenche.
+
+**Lote ou validade num artigo sem controlo de lotes:** antes eram descartados sem aviso; agora o lançamento é recusado com o motivo.
+- Na receção a partir de fatura, a linha avisa e permite **ativar «Controlar lotes e validades» na ficha do artigo** ao lançar, se o artigo ainda não tiver stock. Fica na auditoria.
+- Num artigo novo criado na receção, há um botão que marca o controlo de lotes.
+- Se o artigo já tiver stock sem lote, a mensagem pede para ativar os lotes na ficha do artigo, indicando o lote do stock existente.
+- Na receção manual, a mesma situação é recusada com a indicação para ativar os lotes na ficha.
+
+## Devoluções por validade
+
+Na ficha do fornecedor, separador **Validades e devoluções**, indica-se se o fornecedor **aceita a devolução de produtos a acabar a validade** e **quantos meses antes** avisar (1 a 36, 3 por omissão).
+
+Em **Devoluções a fornecedores**, **Produtos a devolver por validade** lista os lotes em stock desses fornecedores cuja validade termina dentro desse aviso:
+- artigo, lote, validade e dias que faltam (vermelho a 30 dias ou menos);
+- quantidade, armazém e fornecedor.
+
+O fornecedor de cada lote é o da compra que lhe deu entrada; se não estiver registado, é o fornecedor principal do artigo. Lotes já vencidos não aparecem. **Preparar devolução** abre a devolução já preenchida com o lote, a quantidade, o motivo «validade» e o último custo. Só confirmar a devolução movimenta o stock. A Visão geral das Compras mostra quantos lotes estão nesta lista.
+
 ## Receção a partir de fatura (PDF do Arquivo digital)
 
 Em **Receções de mercadoria → Receção a partir de fatura**, escolha a fatura do fornecedor guardada no Arquivo digital (as já recebidas aparecem marcadas e não podem dar entrada outra vez). O original (PDF ou imagem) aparece ao lado da conferência, fixo enquanto se percorrem as linhas, e começa a ser mostrado enquanto a leitura/OCR decorre; **Ocultar/Mostrar fatura** alterna o painel e **Abrir noutra janela** abre-o à parte (útil com dois ecrãs). Em ecrãs estreitos começa oculto. Cada visualização fica no histórico do documento no arquivo.
 
 1. **Leitura das linhas** (`app/invoice_lines.py`): primeiro o texto do PDF com a disposição em colunas; nas digitalizações, OCR (Tesseract, `GPGEST_OCR_*`; 3×, a cores, até 3500 px, que foi a resolução que melhor leu as faturas reais). Não depende do formato de cada fornecedor: em cada linha procura a combinação em que **quantidade × preço × (1 − desconto) = valor da linha**. Isso separa a quantidade de números da descrição («BIO 25») e de códigos (EAN, lotes) e funciona sem colunas alinhadas. Deteta ofertas (desconto de 100 %), bónus («5 + 1» entram 6 unidades pelo valor da linha), um desconto global comum a todas as linhas e lote/validade na própria linha ou na seguinte. A soma das linhas é comparada com a base tributável do documento; uma diferença é assinalada. Linhas sem conta certa não são propostas (preenchem-se à mão) e portes/envios ficam desmarcados.
 2. **Correspondência com os artigos** (`app/purchase_receiving.py`), por ordem: correspondência aprendida, código de barras, referência do fornecedor, código do artigo e nome semelhante. O nome semelhante penaliza tamanhos diferentes («500 ml» ≠ «250 ml») e só é escolhido automaticamente com semelhança alta e margem clara; caso contrário ficam sugestões e é proposto um artigo novo, com aviso quando há semelhantes.
-   O **fornecedor** escolhe-se a escrever o nome ou o NIF (lista filtrada, como na folha de caixa); «＋ Criar novo» abre a ficha com o nome escrito. A lista é a mesma de **Tabelas → Fornecedores**, incluindo os fornecedores do ERP. Um fornecedor do ERP ainda sem ficha local passa a ter uma (ligada à entidade do ERP) quando se confirma a receção; nada é escrito no ERP. O mesmo vale para os fornecedores escolhidos em Receções, Compras e Encomendas a fornecedores. Junto ao prazo de pagamento aparecem a **rubrica** e o **meio de pagamento do fornecedor**, tal como na tabela de Fornecedores (com os do ERP quando a ficha local não os tem). **Editar fornecedor** (o lápis junto à pesquisa) abre a ficha da tabela para atualizar os dados sem sair da receção. Depois de gravar, a receção passa a usar os dados novos. O documento não é lançado com a ficha incompleta: sem NIF, rubrica, prazo ou meio de pagamento aparece um aviso com o que falta, a confirmação fica bloqueada e o servidor recusa o lançamento, também ao editar uma receção. O cabeçalho mostra o **prazo de pagamento** da ficha do fornecedor e o **vencimento** calculado a partir da data do documento (mesma regra de `payment_terms.due_date`). As linhas que ainda precisam de artigo — **por criar** ou **por associar** — ficam a vermelho, com etiqueta e uma contagem por cima das linhas.
+   O **fornecedor** escolhe-se a escrever o nome ou o NIF (lista filtrada, como na folha de caixa); «＋ Criar novo» abre a ficha com o nome escrito. A lista é a mesma de **Tabelas → Fornecedores**, incluindo os fornecedores do ERP. Um fornecedor do ERP ainda sem ficha local passa a ter uma (ligada à entidade do ERP) quando se confirma a receção; nada é escrito no ERP. O mesmo vale para os fornecedores escolhidos em Receções, Compras e Encomendas a fornecedores. Junto ao prazo de pagamento aparecem a **rubrica** e o **meio de pagamento do fornecedor**, tal como na tabela de Fornecedores (com os do ERP quando a ficha local não os tem). **Editar fornecedor** (o lápis junto à pesquisa) abre a ficha da tabela para atualizar os dados sem sair da receção. Depois de gravar, a receção passa a usar os dados novos. O documento não é lançado com a ficha incompleta: sem NIF, rubrica, prazo ou meio de pagamento aparece um aviso com o que falta, a confirmação fica bloqueada e o servidor recusa o lançamento, também ao editar uma receção. **Regra comum a todos os movimentos:** um fornecedor só pode ser usado num movimento com **rubrica**, **meio de pagamento** e **prazo de pagamento** preenchidos na ficha. Os rascunhos gravam-se com a ficha incompleta. A verificação é feita **ao lançar (confirmar)** o documento. Os da Wintouch contam como preenchidos. O servidor recusa e indica o que falta em:
+   - encomendas, receções, compras, devoluções e notas de crédito (ao confirmar, incluindo a edição de receções confirmadas);
+   - encomendas reais preparadas a partir das encomendas de clientes e receções dessas encomendas;
+   - lançamentos da conferência e-Fatura (um fornecedor criado na hora pela conferência fica por lançar até a ficha estar completa);
+   - movimentos manuais de stock com fornecedor;
+   - débitos atribuídos a fornecedores no fecho de caixa.
+
+   Anular ou estornar nunca é bloqueado. Nas Encomendas de clientes, a ficha incompleta aparece a vermelho junto ao fornecedor e no quadro de necessidades.
+   O cabeçalho mostra o **prazo de pagamento** da ficha do fornecedor e o **vencimento** calculado a partir da data do documento (mesma regra de `payment_terms.due_date`). As linhas que ainda precisam de artigo — **por criar** ou **por associar** — ficam a vermelho, com etiqueta e uma contagem por cima das linhas.
    O **tipo de documento** é proposto a partir do tipo da fatura lido do QR ou do arquivo: **FT** e **ND** → tipo de compra a crédito (**FC**, ou outro tipo ativo a crédito); **FR** e **FS** → compra a dinheiro (**FCD**). Fica editável, e o meio de pagamento e o vencimento seguem o tipo, como na escolha manual.
    Se o NIF da fatura não corresponder a nenhum fornecedor, **Criar fornecedor** abre a ficha de fornecedor das Tabelas já com o NIF e o nome do documento e consulta o VIES (morada, código postal, localidade); depois de criado, fica escolhido na receção.
    **Descontos:** cada linha mostra e permite corrigir quantidade, bónus, preço unitário e desconto (%); o cabeçalho tem o **desconto global (%)** do documento, proposto quando todas as linhas de mercadoria partilham o mesmo desconto comum (senão, esse desconto fica nas linhas afetadas). O valor líquido e o custo por unidade recebida (faturadas + bónus) são recalculados ao editar. A receção guarda o preço da fatura e um desconto equivalente que junta desconto da linha, desconto global e bónus, para que o custo em stock seja valor líquido ÷ unidades.
@@ -76,6 +116,16 @@ No modo integrado, este circuito identifica os documentos locais e as associaç�
 - Regressão com os testes de stock, movimentos previstos e liquidações locais de liquidez.
 - `scripts/test-procurement-ui.py`: menu, formulário, escolha de artigo, rascunho, janelas modais, telemóvel e contraste nos temas claro/escuro, apenas com APIs simuladas.
 - Compilação TypeScript/Vite. Os testes de escrita usam uma base temporária, eliminada após execução. Nenhum email real foi enviado pelos testes.
+
+### Leitura de faturas digitalizadas (OCR)
+
+Uma fatura digitalizada não tem texto: as linhas são lidas por OCR. Nos PDF da Digitalização (uma fotografia por página), o OCR lê a **fotografia original** em várias tentativas, por esta ordem: ampliada a 4000 px em cinzento, depois a cores a 3200 px, e por fim a página redesenhada. Fica a primeira leitura cuja soma das linhas fecha com a base do documento; se nenhuma fechar, a que leu mais linhas. Quando a primeira tentativa falha, a leitura pode demorar até cerca de 15 s. Cada linha só é aceite quando **quantidade × preço = total** (ou com o desconto comum do documento). No fim, a soma das linhas é comparada com a base do documento. Para compensar os erros típicos do OCR:
+- **Vírgula perdida no preço unitário** («2780» lido em vez de 27,80): a vírgula é reposta só se a conta fechar.
+- **Um algarismo mal lido** («2780» em vez de 27,60): aceita-se total ÷ quantidade quando difere do lido num único algarismo e fecha a conta exatamente.
+- Números com zeros à esquerda (NIB, telefone, códigos) nunca entram nestas correções.
+- Quando há correções, a receção avisa para confirmar os preços com o original.
+- **Linhas de oferta:** uma linha logo a seguir, do mesmo produto, só com quantidade e IVA (sem preço nem total), é a oferta da linha anterior. Fica como **bónus**: entra em stock e reparte o custo (ex.: 3 + 1 a 27,60 € dá 20,70 €/un.).
+- **Lote:** com coluna «Lote» depois da designação, o número longo no fim da descrição vai para o lote.
 
 ## Despesas por rubrica e compras do ERP
 

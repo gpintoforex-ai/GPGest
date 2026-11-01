@@ -40,6 +40,7 @@ npm.cmd --prefix frontend run build
 - X, tooltip, Escape, clique no fundo e reposição do foco;
 - continuar a editar ou descartar alterações;
 - erros de validação local e do servidor, mantendo os dados, tanto em Field como em etiquetas nativas, incluindo a descrição acessível;
+- a mensagem de erro **nomeia os campos a rever** com o rótulo do ecrã, até quatro, por exemplo «Reveja: Código interno: Verifique o valor introduzido.». Um campo sem caixa visível aparece com o nome técnico legível (ex.: «linha 1 · quantity»). O formulário **salta para o primeiro campo com erro**: abre a secção recolhida onde está e centra-o no ecrã (`fieldErrorSummary` em `InteractionUI.tsx`, aplicado em `lib/api.ts` a todas as respostas de validação);
 - duas submissões imediatas com uma única operação no backend;
 - campos e fecho bloqueados durante uma gravação em curso;
 - calculadora sobreposta à contagem e respetivo rascunho;

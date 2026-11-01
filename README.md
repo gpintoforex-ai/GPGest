@@ -9,6 +9,8 @@ Janelas, confirmações e acessibilidade: [revisão da interface](docs/REVISAO-I
 
 Organização dos módulos, separadores, contexto de navegação e validação: [auditoria e reestruturação da interface](docs/AUDITORIA-INTERFACE.md).
 
+Reformulação visual e funcional: [navegação, Centro de Encomendas e indicadores](docs/REFORMULACAO-ZELA.md), [design system](docs/DESIGN-SYSTEM-IAZELA.md), [dashboard global](docs/DASHBOARD-GLOBAL-FASE-D.md), [migração dos módulos e assistência contextual](docs/MIGRACAO-GLOBAL-FASES-E-H.md) e [pesquisa global](docs/PESQUISA-GLOBAL.md).
+
 Digitalizar fotografias e PDFs para anexos e dossiês: [guia de digitalização](docs/DIGITALIZACAO-DOCUMENTOS.md).
 Digitalização rápida por PIN a partir do ecrã de entrada, em dispositivos emparelhados: [digitalização rápida](docs/DIGITALIZACAO-RAPIDA.md).
 Arquivo central de todos os documentos, com caixa de entrada, extração, relações, pendências e assistente: [arquivo digital](docs/ARQUIVO-DIGITAL.md).
@@ -51,7 +53,7 @@ Dinheiro guardado em **cêntimos inteiros**, sem ponto flutuante. A conversão d
 
 Em **Folha de caixa → Nova folha de caixa**, escolha caixa e dia e introduza o fundo de maneio inicial.
 
-No **modo local autónomo**, declare o **Faturado** e os **Débitos / créditos** do dia por numerário, Multibanco/TPA, MB WAY, transferência e meios locais ativos. O faturado é a base do esperado; no numerário, incluem-se o fundo de maneio e as restantes entradas e saídas. Campos vazios diferem de zeros confirmados. Guardar o rascunho ou a conferência não cria movimentos. O fecho regista os montantes ainda em falta nos movimentos reais, com os pagamentos separados por fornecedor e meio de pagamento, sem duplicar valores já registados nem criar ajustes para diferenças de contagem. A reabertura anula os lançamentos desse fecho e preserva a auditoria; a lista de movimentos reais apresenta os lançamentos válidos. Consulte [Conferência local da Folha de Caixa](docs/FOLHA-CAIXA-LOCAL.md).
+No **modo local autónomo**, declare o **Faturado** e os **Débitos / créditos** do dia por numerário, Multibanco/TPA, MB WAY, transferência e meios locais ativos. O faturado é a base do esperado; no numerário, incluem-se o fundo de maneio e as restantes entradas e saídas. Campos vazios diferem de zeros confirmados. Guardar o rascunho ou a conferência não cria movimentos. O fecho regista os montantes ainda em falta nos movimentos reais, com os pagamentos separados por fornecedor e meio de pagamento, sem duplicar valores já registados. As diferenças de contagem justificadas geram movimentos reais separados, por meio de pagamento, preservando os valores da conferência. A reabertura anula os lançamentos desse fecho e preserva a auditoria; a lista de movimentos reais apresenta os lançamentos válidos. Consulte [Conferência local da Folha de Caixa](docs/FOLHA-CAIXA-LOCAL.md).
 
 No **modo integrado**, a tabela mantém o cálculo de **todos os movimentos reais da loja nesse dia**: créditos e débitos manuais GPGest, de todas as sessões/caixas, e movimentos ERP já importados. **Dia dos movimentos reais** permite ajustar o dia. Créditos, débitos e saldo são separados por meio de pagamento e origem; o fundo inicial entra apenas no numerário esperado. Entrar no menu e concluir uma importação atualiza os valores calculados. Os parágrafos seguintes descrevem esta conferência integrada.
 
@@ -69,7 +71,7 @@ O fecho conserva na base de dados os valores esperados, contagens e origens apur
 
 Não emite documentos fiscais. Não substitui o Wintouch. Cartões são recebimentos registados, não saldos bancários confirmados. O saldo do dashboard corresponde às sessões **abertas**, evitando somar novamente o dinheiro de sessões históricas fechadas.
 
-Ao fechar uma folha com diferença de numerário, é criado automaticamente um movimento real **Diferença de caixa**: entrada por excesso ou saída por falta, com a justificação e referência à folha. A folha fechada conserva o esperado e a diferença originais. Reabrir estorna automaticamente o ajuste, conservando ambos os movimentos no histórico; um novo fecho apura novamente a diferença. As diferenças dos restantes meios continuam na conferência, sem criar recebimentos ou pagamentos bancários.
+Ao fechar uma folha com diferença de numerário, é criado automaticamente um movimento real **Diferença de caixa**: entrada por excesso ou saída por falta, com a justificação e referência à folha. A folha fechada conserva o esperado e a diferença originais. Reabrir estorna automaticamente o ajuste, conservando ambos os movimentos no histórico; um novo fecho apura novamente a diferença. No modo local, as diferenças dos restantes meios conferidos também geram movimentos reais, com o respetivo meio e conta predefinida quando configurada. No modo integrado, mantém-se o ajuste apenas do numerário.
 
 Os **Movimentos previstos** apresentam numa única lista os documentos locais e os saldos a crédito Wintouch, com origem identificada e totais conjuntos. A importação atualiza os saldos de vendas e compras ainda em aberto, incluindo documentos anteriores ao período selecionado. O filtro de vencimento começa no documento pendente mais antigo da loja selecionada e termina no último dia do mês atual. Sem pendentes, a data inicial assume o primeiro dia do mês atual. Pode alterar as datas ou usar **Limpar datas**; atualizar os dados conserva uma data inicial alterada manualmente. Também pode filtrar por vendas/compras e pesquisar a entidade. Os filtros atualizam a lista, os totais e a paginação. Administradores e gestores podem liquidar os saldos Wintouch diretamente pelo formulário, com confirmação de envio à origem.
 
@@ -238,6 +240,6 @@ O módulo integrado está em **Tabelas → Artigos e validades**, com catálogo 
 
 ## Encomendas de clientes
 
-Disponível em **Compras e Stock → Encomendas de clientes**, com pedidos, reservas, simulação por fornecedor, compras, receções parciais, contactos e entregas. Consulte [utilização, arquitetura e limitações](docs/ENCOMENDAS-CLIENTES.md). Requer a migração 0057 antes de reiniciar o backend.
+Disponível em **Compras e Stock → Encomendas de clientes**, com pedidos, reservas, simulação por fornecedor, compras, receções parciais, contactos e entregas. Consulte [utilização, arquitetura e limitações](docs/ENCOMENDAS-CLIENTES.md). Os avisos de todos os módulos estão no sino da barra do menu: ver [Avisos](docs/AVISOS.md). Necessidades, propostas e condições por fornecedor: [centro de abastecimento](docs/CENTRO-ABASTECIMENTO.md). Requer a migração 0057 antes de reiniciar o backend.
 
 A evolução do [ciclo integrado de encomendas](docs/CICLO-ENCOMENDAS.md) acrescenta recomendações de reposição, originais/OCR/cloud, conferência tripla, propostas e escritas Wintouch confirmadas, e automatizações autorizadas por loja. Requer a migração 0058; consulte os limites do stock ERP e dos documentos suportados antes de ativar escritas.

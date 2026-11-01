@@ -148,3 +148,12 @@ Não há analítica nem registo de imagens ou PINs. O único dado guardado no di
   - revogação.
 
 Os testes automáticos não substituem a verificação num iPhone/Safari e num Android/Chrome reais, com HTTPS, câmara física e uma conta Google ligada.
+
+
+## Qualidade para ler faturas (OCR)
+
+Uma fatura digitalizada é uma fotografia: os valores das linhas são lidos por OCR, e os algarismos pequenos precisam de resolução. Uma folha A4 fotografada pela câmara em direto ficava com cerca de 1500 × 2100 px (≈ 185 ppp). O OCR precisa de perto de 300 ppp, e a esta resolução trocava algarismos dos preços.
+- A câmara em direto pede agora a **resolução máxima** que o telemóvel anuncia. Antes pedia «4K, se possível», o que ficava muitas vezes em 1920 × 1080.
+- Quando a página recortada fica abaixo de 2000 px no lado maior, a pré-visualização avisa: aproxime o telemóvel da folha ou use **«Fotografar»**. Essa opção abre a aplicação da câmara do telemóvel, que tira a fotografia na resolução total do sensor.
+- Para faturas com letra pequena: folha plana, boa luz sem sombras, a folha a ocupar quase todo o enquadramento e o modo «Cor» (realçada).
+- A receção a partir de fatura lê a fotografia original guardada no PDF, ampliada, em vez de redesenhar a página (ver `COMPRAS-E-STOCK.md`).

@@ -202,14 +202,25 @@ recusa entidades sem exatamente uma morada principal.
   indicação para a rever. Sem meio escolhido, uma entidade da Wintouch segue o meio do ERP.
 - Ao **criar**, rubrica, prazo e meio de pagamento são obrigatórios (`create_required`); as fichas já
   existentes podem ser editadas sem eles.
-- A janela de criar/editar tem dois separadores: **Dados gerais** (identificação e contactos, localização)
-  e **Condições comerciais** (rubrica, prazo e meio de pagamento), com os botões de guardar sempre
+- A janela de criar/editar tem dois separadores (três nos fornecedores): **Dados gerais** (identificação e contactos, localização)
+  e **Condições comerciais** (rubrica, prazo e meio de pagamento; nos fornecedores também o grupo
+  **Encomendas ao fornecedor**: encomenda mínima sem portes, portes por encomenda, portes grátis a partir
+  de e prazo de entrega) e, nos fornecedores, **Validades e devoluções** (aceita devolução de produtos a
+  acabar a validade e quantos meses antes avisar, de 1 a 36, 3 por omissão), com os botões de guardar sempre
   visíveis. Os separadores ocupam o mesmo espaço, pelo que a janela não muda de tamanho ao trocar. Se
-  faltar um campo obrigatório noutro separador, a janela mostra-o ao guardar. A ficha cabe sem
-  deslocação num portátil comum (1366×768).
+  faltar um campo obrigatório noutro separador, a janela mostra-o ao guardar. As fichas com
+  separadores abrem mais largas (até 1000 px) com os campos em menos linhas, para caberem sem deslocação na
+  área útil de um portátil com o browser aberto (1366×657, verificado também a 1280×600;
+  `scripts/test-supplier-dialog-ui.py`).
 - O tipo (cliente/fornecedor) não aparece na ficha: resulta da tabela onde se cria. Editar em
   «Fornecedores» mantém a marca de cliente, e vice-versa.
 - Cada campo tem um ícone ilustrativo junto ao nome (NIF, nome, email, morada, prazo, meio, …).
+- As condições de encomenda do fornecedor ficam guardadas uma vez, nas mesmas condições comerciais usadas
+  pelas Encomendas de clientes (`supplier_order_terms`, sem migração). A ficha e o separador **Condições dos
+  fornecedores** editam os mesmos valores. A ficha só altera o mínimo, os portes, os portes grátis e o
+  prazo; descontos, escalões, preços acordados e alertas mantêm-se. Não são enviadas ao ERP: a Wintouch não
+  tem estes campos. A alteração fica na auditoria (`fornecedor_condicoes_encomenda`). Um fornecedor do
+  ERP sem ficha local passa a ter uma quando se gravam condições.
 - Em **Editar**, os botões **Anterior**/**Seguinte** mudam de registo pela ordem da listagem; com
   alterações por guardar, pede confirmação antes.
 - **NIF:** o dígito de controlo é verificado ao escrever. Ao sair do campo, um NIF português válido e

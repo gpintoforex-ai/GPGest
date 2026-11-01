@@ -16,7 +16,9 @@ Foram feitas três pequenas leituras reais, uma por endpoint com `limit=1`, na l
 
 ## Campos e limites atuais
 
-Artigos: ID, código, nome, estado, custo `LastCostGlobal`, controlo de lotes e metadados de origem conhecidos. O custo exige precisão compatível com `NUMERIC(18,4)`. Preços de venda, moeda e stock requerem os adaptadores dos endpoints respetivos; não são inferidos a partir de outros preços.
+Artigos: ID, código, nome, estado, custo `LastCostGlobal`, controlo de lotes e metadados de origem conhecidos. O custo exige precisão compatível com `NUMERIC(18,4)`. Moeda e stock requerem os adaptadores dos endpoints respetivos.
+
+Preço de venda (migração **0071**): no fim da importação de artigos lê-se a **linha de preço 1** de cada artigo em `GET products/{id}/prices` (`PriceWithoutVAT` → `wt_products.sale_price`, `PriceWithVAT` → `sale_price_vat`) e a taxa de IVA de venda em `GET product_prices_change` (`TaxRate` → `vat_rate`; os preços dessa lista vêm a zero e o filtro `price_row` é recusado). A lista de artigos não traz preços: `products?embed=ProductPrices` responde HTTP 500 («nº de registos demasiado elevado»), mesmo com páginas de 1 registo. Por isso há um pedido por artigo, 8 em paralelo e no máximo 4 minutos (≈ 0,15 s por pedido; 3813 artigos ≈ 1 minuto). Um artigo sem linha 1 fica sem preço; um pedido que falhe ou fique fora do tempo mantém o preço anterior e a execução termina com o aviso «Preço de venda não lido para N de M artigos». O catálogo nunca é anulado por falta de preços. A ficha do artigo mostra o preço com IVA, o preço sem IVA e a taxa, e calcula as margens com o preço sem IVA.
 
 Entidades: ID, código, nome, NIF e os campos de email/telefone se a listagem os fornecer; `IsClient` e `IsSupplier` podem coexistir. Campos desconhecidos mantêm-se desconhecidos e dados ausentes não apagam os campos locais previamente recebidos. Não importa moradas, dados bancários nem respostas completas da API.
 
