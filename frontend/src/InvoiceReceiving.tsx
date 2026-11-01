@@ -7,6 +7,7 @@ import Processing from "./tables/Processing";
 import RecordDialog from "./tables/RecordDialog";
 import SupplierPicker from "./components/SupplierPicker";
 import ReceiptFinance from "./ReceiptFinance";
+import ExpiryHint from "./components/ExpiryHint";
 import type { TableInfo } from "./tables/types";
 import "./tables/TablePage.css";
 
@@ -290,6 +291,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           vat: String(line.vatValue || 0),
           lot: line.lotValue,
           expiry: line.expiryValue || null,
+          enable_lots: !!line.enableLots,
         })),
       };
       if (editReceipt) {
@@ -473,6 +475,18 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           </div>; })()}
           <Field label="Lote"><input disabled={!line.include} value={line.lotValue} onChange={e => change(index, { lotValue: e.target.value })} /></Field>
           <Field label="Validade"><input type="date" disabled={!line.include} value={line.expiryValue} onChange={e => change(index, { expiryValue: e.target.value })} /></Field>
+          {line.include && (line.lotValue || line.expiryValue) && (() => {
+            // Lote/validade num artigo sem controlo de lotes: eram descartados ao lançar.
+            const existing = line.choice !== NEW ? active.find((x: Row) => x.id === line.choice) : null;
+            if (line.choice === NEW ? line.newArticle.lots : existing?.lots) return null;
+            if (line.choice === NEW) return <div className="invoice-receiving-lots"><Notice tone="warning">O artigo novo não controla lotes: o lote e a validade não seriam guardados.</Notice>
+              <ActionButton type="button" onClick={() => change(index, { newArticle: { ...line.newArticle, lots: true, expiry: !!line.expiryValue || line.newArticle.expiry, service: false } })}>Controlar lotes e validades neste artigo novo</ActionButton></div>;
+            const withStock = Number(existing?.quantity || 0) > 0;
+            return <div className="invoice-receiving-lots"><Notice tone="warning">«{existing?.name || line.description}» não controla lotes: o lote e a validade não seriam guardados.{withStock ? " O artigo já tem stock: ative os lotes na ficha do artigo (separador Validades e lotes), indicando o lote do stock existente." : ""}</Notice>
+              {!withStock && <label className="stock-check"><input type="checkbox" checked={!!line.enableLots} onChange={e => change(index, { enableLots: e.target.checked })} />Ativar «Controlar lotes e validades» na ficha deste artigo ao lançar</label>}</div>;
+          })()}
+          {line.include && <ExpiryHint expiry={line.expiryValue} documentDate={header?.document_date || ""}
+            required={line.choice === NEW ? !!line.newArticle.lots : !!active.find((x: Row) => x.id === line.choice)?.lots} />}
         </div>
         {line.include && line.choice === NEW && <div className="invoice-receiving-new">
           <span className="invoice-receiving-new-title"><PackagePlus size={16} aria-hidden="true" />Artigo novo</span>

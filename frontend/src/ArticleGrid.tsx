@@ -1,3 +1,5 @@
+import { useRecordHandoff } from "./components/useRecordHandoff";
+import { useLocationSearch } from "./components/WorkspaceUI";
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { MoreHorizontal, SlidersHorizontal } from "lucide-react";
 import { api } from "./lib/api";
@@ -333,6 +335,7 @@ export default function ArticleGrid({
       return defaults;
     }
   });
+  const handoffLocation = useLocationSearch();
   const [query, setQuery] = useState(""),
     [search, setSearch] = useState("");
   const [filters, setFilters] = useState<Row>(emptyFilters);
@@ -416,6 +419,21 @@ export default function ArticleGrid({
       current = false;
     };
   }, [search, filters, page, prefs.size, sort, revision, retry]);
+  useEffect(() => {
+    const params = new URLSearchParams(handoffLocation);
+    if (params.get("pagina") === "Artigos e validades" && params.get("consulta.tipo") === "article") {
+      const text = params.get("pesquisa.artigos") || "";
+      setQuery(text); setSearch(text); setFilters(emptyFilters); setPage(1);
+    }
+  }, [handoffLocation]);
+  useRecordHandoff("article", ["Artigos e validades"], (id, stillCurrent) => {
+    void api(`/stock/catalog?${new URLSearchParams({record_id:id,page:"1",size:"1"})}`,undefined,{preserveDraft:true}).then(result => {
+      if (!stillCurrent()) return;
+      const article = result.articles?.find((row:Row) => row.id === id);
+      if (article) onOpen(article,true); else setActionError("O artigo já não está disponível para consulta. Atualize a pesquisa.");
+    }).catch(error => { if (stillCurrent()) setActionError(error.message); });
+    return true;
+  });
   const rows: Row[] = data?.articles || [];
   const visible = columns.filter(
     (c) => !prefs.hidden.includes(c.id) && (!c.cost || rights.view_cost),
@@ -817,7 +835,7 @@ export default function ArticleGrid({
                   }
                 >
                   {c.sort ? (
-                    <button
+                    <ActionButton
                       type="button"
                       className="article-sort"
                       onClick={() => {
@@ -839,7 +857,7 @@ export default function ArticleGrid({
                             : " ↓"
                           : ""}
                       </span>
-                    </button>
+                    </ActionButton>
                   ) : (
                     c.label
                   )}
@@ -880,7 +898,7 @@ export default function ArticleGrid({
                   <td key={c.id} data-label={c.label} className={`article-col-${c.id}`}>
                     <div>
                       {c.id === "name" ? (
-                        <button
+                        <ActionButton
                           type="button"
                           className="article-name"
                           title="Consultar artigo"
@@ -888,7 +906,7 @@ export default function ArticleGrid({
                           onClick={() => onOpen(r, true)}
                         >
                           {c.render(r)}
-                        </button>
+                        </ActionButton>
                       ) : (
                         c.render(r)
                       )}

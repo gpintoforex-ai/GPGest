@@ -1,3 +1,4 @@
+import { MetricCard } from "./components/BusinessUI";
 import DatePresets, { currentMonthRange } from "./components/DatePresets";
 import { paymentTone } from "./lib/paymentTone";
 import { ActionButton, Notice } from "./components/InteractionUI";
@@ -229,6 +230,10 @@ export default function RecordList({
   }
   return (
     <>
+      {rows.length > 0 && <div className="record-overview" aria-label="Resumo da listagem">
+        <MetricCard label="Registos filtrados" value={invalid ? "Período inválido" : filtered.length} description={`${from || "Início"} a ${to || "fim"} · todos os resultados, antes da paginação`} tone="info"/>
+        {totalField && <MetricCard label="Linhas apenas de consulta" value={invalid ? "—" : consultOnly} description="Excluídas dos totais financeiros para evitar duplicações"/>}
+      </div>}
       <div
         className="record-filters filter-bar"
         role="group"

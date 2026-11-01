@@ -1,3 +1,5 @@
+import { ContextSuggestion } from "./components/OverviewUI";
+import { useRecordHandoff } from "./components/useRecordHandoff";
 import { currentMonthRange } from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
@@ -322,6 +324,7 @@ function Uploader({ stores, store, onDone }: { stores: Store[]; store: string; o
 export default function Archive({ page, stores, store, navigate }: { page: string; stores: Store[]; store: string; navigate: (page: string) => void }) {
   const [meta, reloadMeta] = useOverview();
   const [open, setOpen] = useState<string | null>(null), [version, setVersion] = useState(0), [notice, setNotice] = useState(""), [error, setError] = useState("");
+  useRecordHandoff("document", [page], id => { setOpen(id); return true; });
   const canManage = !!meta?.can_manage;
   const changed = () => { setVersion(v => v + 1); void reloadMeta(); };
   async function run(task: () => Promise<void>) {
@@ -350,6 +353,11 @@ export default function Archive({ page, stores, store, navigate }: { page: strin
     </div>}
     {meta && !meta.ocr_available && <Notice tone="info">OCR local indisponível no servidor: documentos digitalizados sem texto nem QR ficam para preenchimento manual.</Notice>}
     {(meta?.integrity_failed || 0) > 0 && <Notice tone="error">{meta?.integrity_failed} documento(s) com falha de integridade. Veja Arquivo — Configurações.</Notice>}
+    {meta && (meta.inbox > 0 || meta.proposals > 0) && <ContextSuggestion title="Rever as pendências do arquivo"
+      evidence={[`${meta.inbox} documentos na caixa de entrada; ${meta.proposals} propostas de associação`,"Origem: visão geral do arquivo, com as permissões atuais. Rever não significa pagar, lançar no ERP ou entregar à contabilidade."]}
+      actionLabel={meta.inbox > 0 ? "Rever caixa de entrada" : "Rever associações"} onReview={()=>navigate(meta.inbox > 0 ? "Caixa de entrada" : "Associações")}>
+      Confirme o original e os dados extraídos antes de validar uma associação ou preparar um envio.
+    </ContextSuggestion>}
     <Assistant open={setOpen} navigate={navigate} canManage={canManage} />
     {meta && <section className="panel"><h3>Recebidos recentemente</h3><DocumentTable rows={meta.latest} onOpen={setOpen} empty="Ainda não há documentos. Use «Atualizar arquivo» para indexar os existentes ou carregue ficheiros na Caixa de entrada." />
       <p className="arc-muted">Origens: {meta.origins.map((o: Row) => `${o.label} (${o.count})`).join(" · ") || "—"} · Última atualização: {when(meta.last_sync_at)}</p></section>}

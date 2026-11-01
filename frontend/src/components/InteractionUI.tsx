@@ -544,6 +544,8 @@ export const ActionButton = forwardRef<
     action?: string;
     dismiss?: boolean;
     confirmation?: Confirmation;
+    variant?: "primary" | "secondary" | "success" | "danger" | "suggestion" | "quiet";
+    inferAction?: boolean;
   }
 >(function ActionButton(
   {
@@ -551,6 +553,8 @@ export const ActionButton = forwardRef<
     action,
     dismiss,
     confirmation,
+    variant,
+    inferAction = true,
     onClick,
     className = "",
     ...props
@@ -560,7 +564,7 @@ export const ActionButton = forwardRef<
   const dialog = useContext(DialogContext);
   const windowBusy = useWindowBusy();
   const text = textOf(children);
-  const matched = actions.find(([pattern]) => pattern.test(action || text || props["aria-label"] || props.title || ""));
+  const matched = inferAction ? actions.find(([pattern]) => pattern.test(action || text || props["aria-label"] || props.title || "")) : undefined;
   const Icon = matched?.[1];
   const direct = Children.toArray(children);
   const onlyIcon = !text && direct.some(iconElement);
@@ -579,10 +583,11 @@ export const ActionButton = forwardRef<
       disabled={props.disabled || windowBusy}
       ref={ref}
       data-cancel={closing || undefined}
-      data-action-tone={className.includes("danger") ? "danger" : matched?.[3]}
+      data-variant={variant}
+      data-action-tone={variant ? undefined : className.includes("danger") ? "danger" : matched?.[3]}
       aria-label={props["aria-label"] || (onlyIcon ? label : undefined)}
       title={props.title || (onlyIcon ? label : undefined)}
-      className={`ui-action ${matched?.[3] && !className.includes("primary") ? `ui-action-${matched[3]} ` : ""}${className}`}
+      className={`ui-action ${!variant && matched?.[3] && !className.includes("primary") ? `ui-action-${matched[3]} ` : ""}${className}`}
       onClick={async (event) => {
         if (confirmation) {
           event.preventDefault();
@@ -643,6 +648,8 @@ function validationMessage(entry: {
   ctx?: Record<string, unknown>;
 }) {
   const type = entry.type || "";
+  // Regras de negócio do servidor (field_fail, validadores): a explicação já vem em português.
+  if (type === "value_error" && entry.msg) return entry.msg.replace(/^Value error, /, "");
   if (type === "missing") return "Preencha este campo.";
   if (type.includes("too_short"))
     return `Introduza pelo menos ${entry.ctx?.min_length ?? 1} caracteres.`;
@@ -728,6 +735,28 @@ export function beginOperation(path: string, mutating: boolean) {
     },
   };
 }
+/** Nome do campo como aparece no ecrã (rótulo), a partir do nome técnico devolvido pelo servidor. */
+function fieldLabel(form: Element | null | undefined, key: string) {
+  const parts = key.split(".");
+  for (const candidate of [key, parts[parts.length - 1], parts[0]]) {
+    if (!candidate || !form) continue;
+    const control = form.querySelector<HTMLInputElement>(`[name="${CSS.escape(candidate)}"], #${CSS.escape(candidate)}`);
+    if (!control) continue;
+    const label = control.labels?.[0]?.innerText || control.closest(".field")?.querySelector("label")?.innerText || control.getAttribute("aria-label") || "";
+    const clean = label.replace(/\s+/g, " ").replace(/\s*\*$/, "").trim();
+    if (clean) return clean;
+  }
+  // Sem campo visível: «lines.0.quantity» → «linha 1 · quantity».
+  return parts.map(part => (/^\d+$/.test(part) ? `linha ${Number(part) + 1}` : part.replace(/_/g, " "))).join(" · ");
+}
+
+/** «Preço de venda: Indique um número válido · Stock máximo: …» (até quatro campos). */
+export function fieldErrorSummary(form: Element | null | undefined, fields: Record<string, string>) {
+  const entries = Object.entries(fields);
+  const listed = entries.slice(0, 4).map(([key, message]) => `${fieldLabel(form, key)}: ${message.replace(/\.$/, "")}`);
+  return listed.join(" · ") + (entries.length > 4 ? ` (e mais ${entries.length - 4})` : "");
+}
+
 export function reportFormError(
   form: Element | null | undefined,
   error: ApiError,
@@ -822,7 +851,14 @@ export const ManagedForm = forwardRef<
             node instanceof HTMLSelectElement ||
             node instanceof HTMLTextAreaElement,
         ) as HTMLElement | undefined;
-        form.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+        // Leva ao primeiro campo com erro, mesmo numa secção fechada ou fora do ecrã.
+        const invalid = form.querySelector<HTMLElement>('[aria-invalid="true"]');
+        if (invalid) {
+          let section = invalid.closest("details");
+          while (section) { section.open = true; section = section.parentElement?.closest("details") || null; }
+          invalid.scrollIntoView({ block: "center", behavior: "smooth" });
+          invalid.focus({ preventScroll: true });
+        }
         if (!Object.keys(fields).length) field?.focus();
       });
     };

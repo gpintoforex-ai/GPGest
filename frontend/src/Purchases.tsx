@@ -1,3 +1,4 @@
+import OperationsOverview from "./components/OperationsOverview";
 import DatePresets from "./components/DatePresets";
 import { ActionLink } from "./components/InteractionUI";
 import { confirmAction } from "./components/InteractionUI";
@@ -93,6 +94,16 @@ export default function Purchases({ stores, store, manager, admin, embedded = fa
   return <>
     <div className="page-intro"><div><h1>{embedded ? "Faturas e documentos" : "Compras"}</h1><p>Pagamento e documento são acompanhados separadamente.</p></div>{manager && <div className="actions"><ActionButton disabled={busy || !selectedStore} onClick={() => { setImportFile(null); setImportPreview(null); setError(""); setModal("import"); }}>Importar ficheiro</ActionButton><ActionButton disabled={busy || !selectedStore} onClick={() => { setError(""); setModal("config"); }}>Configurar e-Fatura</ActionButton><ActionButton disabled={busy || !connection?.has_password || !connection?.certificate_ready} onClick={() => setModal("sync")}>Sincronizar e-Fatura</ActionButton><ActionButton className="primary" disabled={busy || !selectedStore} onClick={() => { setError(""); setModal("new"); }}>Registar compra</ActionButton></div>}</div>
     {error && !modal && <Notice className="error" role="alert">{error}</Notice>}{notice && <Notice className="success" onDismiss={() => setNotice("")}>{notice}</Notice>}
+    <OperationsOverview source={rows} title="Compras e documentação" loaded={loaded} error={!loaded && !!error}
+      scope={`Documentos de todas as páginas com os filtros atuais · ${range.from || "início"} a ${range.to || "hoje"} · ${store ? "loja selecionada" : "lojas autorizadas"}`} metrics={[
+        {label:"Documentos filtrados",value:filtered.length,description:"Faturas e notas de crédito; não são pagamentos",tone:"info",onOpen:()=>setView("compras")},
+        {label:"Sem anexo",value:filtered.filter(r=>!r.attachments.length).length,description:"Documento digital ainda por associar",tone:"warning",onOpen:()=>{setView("compras");setDocuments("missing");}},
+        {label:"Pagamentos por associar",value:bankMissing.length,description:"Débitos bancários com remanescente no período e pesquisa atuais",tone:"warning",onOpen:()=>setView("bancos")}
+      ]} suggestion={filtered.some(r=>!r.attachments.length)?{
+        title:"Completar a documentação das compras",reason:"Abra a compra para rever o documento e os pagamentos separadamente.",
+        evidence:[`${filtered.filter(r=>!r.attachments.length).length} documentos filtrados sem anexo`,"Uma associação ao pagamento não substitui a fatura."],
+        actionLabel:"Rever primeira compra sem anexo",onReview:()=>{const row=filtered.find(r=>!r.attachments.length);if(row)openDetail(row);}
+      }:null}/>
     {refreshingImport && <p role="status">Importação guardada. A atualizar a lista de compras…</p>}
     {manager && connection && !connection.certificate_ready && <section className="panel"><p><strong>e-Fatura: certificado por configurar.</strong> A sincronização ficará disponível depois de configurar os acessos e o certificado da AT no servidor. Já pode registar compras, anexar documentos e reconciliar pagamentos.</p></section>}
     <section className="panel">

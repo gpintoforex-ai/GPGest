@@ -1,3 +1,4 @@
+import OperationsOverview from "./components/OperationsOverview";
 import { currentMonthRange } from "./components/DatePresets";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import DatePresets from "./components/DatePresets";
@@ -366,6 +367,11 @@ export default function Reconciliation({
         </div>
       </div>
       <AssistantIdentity assistant="nuno" />
+      {tab === "movimentos" && <OperationsOverview source={data} title="Conferência bancária" scope={`${from} a ${to} · conta, loja e filtros atuais · movimentos e propostas são contagens distintas`} loaded={loaded} error={!loaded && !!error} metrics={[
+        {label:"Movimentos do banco",value:banks.length,description:"Linhas do banco incluídas nos filtros",tone:"info"},
+        {label:"Registos internos",value:internals.length,description:"Registos da aplicação incluídos nos filtros",tone:"neutral"},
+        {label:"Propostas para rever",value:visibleCards.length+visibleSuggestions.length,description:"Uma proposta pode conter vários movimentos",tone:"suggestion",onOpen:()=>setView("sugestoes")}
+      ]} suggestion={visibleCards.length+visibleSuggestions.length ? {title:"Rever as correspondências propostas",reason:"Confira conta, moeda, datas e remanescentes. A associação e uma eventual comissão mantêm confirmações distintas.",evidence:[`${visibleSuggestions.length} propostas simples e ${visibleCards.length} propostas de liquidação`,"Só propostas com todos os movimentos visíveis nos filtros atuais."],actionLabel:"Rever sugestões bancárias",onReview:()=>setView("sugestoes")}:null}/>}
       <ModuleTabs label="Áreas da reconciliação" value={tab} tabs={[{"id": "movimentos", "label": "Movimentos e sugestões"}, {"id": "faturas", "label": "Faturas e documentos"}, {"id": "historico", "label": "Histórico"}]} onChange={value => { setTab(value); setError(""); }} />
       {error && (
         <Notice className="error" role="alert">

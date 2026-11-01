@@ -94,3 +94,25 @@ div.invoice-receiving-result p { margin: 0; flex: 1 1 280px; }
 .invoice-receiving-supplier { display: flex; align-items: flex-end; gap: 8px; min-width: 0; }
 .invoice-receiving-supplier > :first-child { flex: 1 1 auto; min-width: 0; }
 .invoice-receiving-supplier > .invoice-receiving-supplier-edit { flex: none; min-width: 44px; min-height: 44px; padding: 0; justify-content: center; }
+
+/* Encomendas por receber: clientes à espera e PDF anexados. */
+.procurement-to-receive td .status-badge {
+  display: inline-block;
+  margin: 2px 4px 2px 0;
+}
+.procurement-customers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.procurement-attached {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.procurement-attached .status-badge {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}

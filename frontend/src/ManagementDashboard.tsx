@@ -10,10 +10,11 @@ import { BarList, ChartFrame, ColumnsChart, ForecastChart, Legend } from "./Dash
 import { formatEuro } from "./utils/format";
 import { handOffPeriod } from "./utils/periodHandoff";
 import "./ManagementDashboard.css";
+import { OrderCycleSignals } from "./OrderAnalytics";
 
 type Row = Record<string, any>;
-type SectionKey = "summary" | "evolution" | "attention" | "actions" | "operation";
-const SECTIONS: [SectionKey, string][] = [["summary", "Resumo do negócio"], ["evolution", "Evolução"], ["attention", "O que precisa da sua atenção"], ["actions", "Ações rápidas"], ["operation", "Operação de caixa"]];
+type SectionKey = "summary" | "evolution" | "attention" | "actions" | "operation" | "orders";
+const SECTIONS: [SectionKey, string][] = [["summary", "Resumo do negócio"], ["evolution", "Evolução"], ["attention", "O que precisa da sua atenção"], ["actions", "Ações rápidas"], ["operation", "Operação de caixa"], ["orders", "Encomendas e abastecimento"]];
 const DUE: [string, string][] = [["vencido", "Vencido"], ["7_dias", "Próx. 7 dias"], ["30_dias", "8–30 dias"], ["mais_30", "> 30 dias"], ["sem_data", "Sem data"]];
 const SEVERITY: Record<string, [string, typeof AlertTriangle]> = { critical: ["Crítico", OctagonAlert], warning: ["Atenção", AlertTriangle], info: ["Informação", CircleDot] };
 const lisbonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Lisbon", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -61,32 +62,45 @@ function BlockState({ block, children }: { block?: Row; children: ReactNode }) {
 
 /** Dashboard de gestão: resumo, evolução, atenção e ações rápidas, com os mesmos filtros. */
 export default function ManagementDashboard({ store, scopeKey, companyName, mode, role, navigate, onAction, operation }: {
-  store: string; scopeKey: string; companyName: string; mode: string; role: string; navigate: (page: string) => void; onAction: (kind: string) => void; operation?: ReactNode;
+  store: string; scopeKey: string; companyName: string; mode: string; role: string; navigate: (page: string, params?: Record<string,string>) => void; onAction: (kind: string) => void; operation?: ReactNode;
 }) {
   const today = lisbonToday();
   const [start, setStart] = useState(today.slice(0, 8) + "01"), [end, setEnd] = useState(currentMonthRange().to);
   const [compare, setCompare] = useState("previous");
-  const [data, setData] = useState<Row | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState("");
+  const dataKey = JSON.stringify([scopeKey, role, mode, store, start, end, compare]);
+  const [snapshot, setSnapshot] = useState<{ key: string; data: Row } | null>(null);
+  const data = snapshot?.key === dataKey ? snapshot.data : null;
+  const [loading, setLoading] = useState(true), [error, setError] = useState("");
   const [customizing, setCustomizing] = useState(false), [version, setVersion] = useState(0);
   const [prefs, savePrefs] = usePreferences(scopeKey);
   const valid = !!start && !!end && start <= end;
   const request = useRef(0);
   useEffect(() => {
-    if (!valid) return;
     const id = ++request.current;
+    let active = true;
+    setError("");
+    if (!valid) { setLoading(false); return; }
     setLoading(true); setError("");
     api(`/dashboard/overview?${new URLSearchParams({ start, end, compare, store_id: store })}`, undefined, { timeoutMs: 90_000 })
-      .then(result => { if (id === request.current) setData(result); })
-      .catch(e => { if (id === request.current) setError((e as Error).message); })
-      .finally(() => { if (id === request.current) setLoading(false); });
-  }, [start, end, compare, store, version]);
+      .then(result => {
+        if (!result.permissions || !result.period || !result.comparison || !Array.isArray(result.attention))
+          throw new Error("O resumo financeiro está indisponível nesta versão do servidor.");
+        if (active && id === request.current) setSnapshot({ key: dataKey, data: result });
+      })
+      .catch(e => { if (active && id === request.current) setError((e as Error).message); })
+      .finally(() => { if (active && id === request.current) setLoading(false); });
+    return () => { active = false; };
+  }, [dataKey, valid, version]);
   const open = (page: string, withPeriod = true) => { if (withPeriod) handOffPeriod(page, start, end); navigate(page); };
-  const sales = data?.sales, treasury = data?.treasury, expenses = data?.expenses, margin = data?.margin;
+  const unavailable = error ? { status: "error", message: "Consulta indisponível. Tente atualizar o painel." } : !valid ? { status: "error", message: "Indique um período válido." } : undefined;
+  const sales = data?.sales || unavailable, treasury = data?.treasury || unavailable, expenses = data?.expenses || unavailable, margin = data?.margin || unavailable;
   const salesPage = data?.mode === "local" ? "Faturação e recebimentos" : "Movimentos reais";
 
   const sections: Record<SectionKey, ReactNode> = {
+    orders: ["administrador", "gestor"].includes(role) ? <OrderCycleSignals store={store} start={start} end={end} revision={version} navigate={navigate} /> : <p>Os indicadores de compras requerem autorização para consultar custos.</p>,
     operation,
     summary: <div className="dash-kpis">
+      {data?.permissions?.finance === false && <Notice>Os indicadores financeiros não estão disponíveis para o seu perfil.</Notice>}
       {data?.permissions?.finance !== false && <Kpi label={`Faturação${sales?.vat_basis ? ` (${sales.vat_basis})` : ""}`} meta={sales?.meta} onOpen={() => open(salesPage)}>
         <BlockState block={sales}><strong>{formatEuro(sales?.total_cents)}</strong><Delta value={sales?.change_percent} /><small>{sales?.documents} documento(s)</small></BlockState></Kpi>}
       {data?.permissions?.finance !== false && <Kpi label="Saldo disponível conhecido" meta={treasury?.meta?.balance} onOpen={() => open("Previsão de liquidez", false)} state={treasury?.balance_complete === false || treasury?.accounts?.some((a: Row) => a.stale) ? "warn" : ""}>
@@ -150,7 +164,7 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
       </ChartFrame>}</BlockState>}
     </div>,
     attention: <div className="dash-attention">
-      {!data && <p className="dash-loading" role="status">A analisar…</p>}
+      {!data && <p className="dash-loading" role="status">{error ? "Análise indisponível." : !valid ? "Indique um período válido." : "A analisar…"}</p>}
       {data && !data.attention.length && <p className="dash-muted">Nada a assinalar com os dados disponíveis neste período.</p>}
       {data?.attention.map((note: Row) => { const [label, Icon] = SEVERITY[note.severity]; return <article key={note.key} className={`dash-note is-${note.severity}`}>
         <span className="dash-note-severity"><Icon size={16} aria-hidden="true" />{label}</span>
@@ -169,7 +183,7 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
       <ActionButton type="button" onClick={() => navigate("Previsão de liquidez")}>Previsão de liquidez</ActionButton>
     </div>,
   };
-  const order = prefs.order.filter(key => SECTIONS.some(([k]) => k === key)).concat(SECTIONS.map(([k]) => k).filter(k => !prefs.order.includes(k)));
+  const order = prefs.order.filter(key => SECTIONS.some(([k]) => k === key)).concat(SECTIONS.map(([k]) => k).filter(k => !prefs.order.includes(k))).filter(key => key !== "orders" || ["administrador", "gestor"].includes(role));
   const move = (key: SectionKey, delta: number) => {
     const next = [...order]; const index = next.indexOf(key); const target = index + delta;
     if (target < 0 || target >= next.length) return;
@@ -186,9 +200,9 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
       <ActionButton type="button" disabled={loading} onClick={() => setVersion(v => v + 1)}><RefreshCw size={16} />Atualizar</ActionButton>
       <ActionButton type="button" aria-expanded={customizing} onClick={() => setCustomizing(!customizing)}><Settings2 size={16} />Personalizar</ActionButton>
     </div>
-    <p className="dash-context">{companyName} · {store ? "estabelecimento selecionado no topo" : "todos os estabelecimentos autorizados"} · {data ? <>Comparação: {data.comparison.method}{data.period.in_progress && " · período em curso"} · atualizado {when(data.generated_at)}</> : "a calcular…"}</p>
+    <p className="dash-context">{companyName} · {store ? "estabelecimento selecionado no topo" : "todos os estabelecimentos autorizados"} · {data ? <>Comparação: {data.comparison.method}{data.period.in_progress && " · período em curso"} · atualizado {when(data.generated_at)}</> : error ? "consulta indisponível" : !valid ? "período inválido" : "a calcular…"}</p>
     {!valid && <Notice tone="warning">Indique um período válido.</Notice>}
-    {error && <Notice tone="error">{error} <ActionButton type="button" onClick={() => setVersion(v => v + 1)}>Tentar novamente</ActionButton></Notice>}
+    {error && <Notice tone="error">{error}{data && " São apresentados dados da última consulta deste âmbito; atualize para confirmar os valores."} <ActionButton type="button" onClick={() => setVersion(v => v + 1)}>Tentar novamente</ActionButton></Notice>}
     {customizing && <section className="panel dash-customize" aria-label="Personalizar o painel">
       <p>Mostre, oculte ou reordene as áreas. A preferência fica guardada neste navegador para o seu utilizador.</p>
       {order.map((key, index) => <div key={key} className="dash-customize-row">

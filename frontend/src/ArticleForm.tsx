@@ -1,7 +1,9 @@
+import { MetricCard } from "./components/BusinessUI";
+import { ContextSuggestion } from "./components/OverviewUI";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Package } from "lucide-react";
 import { Field } from "./components/Form";
-import { ActionButton, ApiError, ManagedForm, Notice, markDialogSaved, reportFormError, useDialogWorking } from "./components/InteractionUI";
+import { ActionButton, ApiError, ManagedForm, Notice, fieldErrorSummary, markDialogSaved, reportFormError, useDialogWorking } from "./components/InteractionUI";
 import { api } from "./lib/api";
 import { articlePayload, articlePrices, validateArticle, type ArticleRow as Row } from "./articleValues";
 import MarketPrices from "./MarketPrices";
@@ -18,6 +20,9 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
   onNavigate: (tab: string, id: string) => void; onSync: () => void; canSync: boolean;
 }) {
   const [value, setValue] = useState<Row>(() => articlePayload(initial));
+  // Ligar «Controlar lotes» num artigo já existente: o stock lançado sem lote passa para este lote.
+  const [openingLot, setOpeningLot] = useState({ number: "", expiry: "" });
+  const needsOpeningLot = !!initial.id && !initial.lots && !!value.lots;
   const [imageText, setImageText] = useState((initial.additional_photos || []).join("\n"));
   const [attachmentText, setAttachmentText] = useState((initial.attachments || []).map((a: Row) => a.name ? `${a.name} | ${a.url}` : a.url).join("\n"));
   const [tab, setTab] = useState(0), [errors, setErrors] = useState<Record<string, string>>({});
@@ -28,7 +33,8 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
   const id = useId();
   useDialogWorking(busy);
   const erp = initial.origin === "ERP", rights = catalog.permissions || {};
-  const prices = articlePrices(erp ? null : value.sale_net, value.vat_rate, rights.view_cost ? initial.average_cost : null);
+  // Artigos da Wintouch: margens sobre o preço sem IVA da linha de preço 1 do ERP.
+  const prices = articlePrices(erp ? initial.erp_price_net : value.sale_net, erp ? initial.erp_vat_rate : value.vat_rate, rights.view_cost ? initial.average_cost : null);
   const change = (key: string, next: any) => {
     setValue(old => ({ ...old, [key]: next }));
     setErrors(old => { const nextErrors = { ...old }; delete nextErrors[key]; return nextErrors; });
@@ -51,7 +57,8 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
         const field = form.current?.querySelector<HTMLElement>(`[name="${first.replace(/[^a-z_]/g, "")}"]`);
         const details = field?.closest("details");
         if (details) details.open = true;
-        field?.focus();
+        field?.scrollIntoView({ block: "center", behavior: "smooth" });
+        field?.focus({ preventScroll: true });
       });
     }
   };
@@ -61,14 +68,16 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
     const invalid = validateArticle(value, catalog.articles, initial.id);
     if (Object.keys(invalid).length) {
       revealErrors(invalid);
-      reportFormError(form.current, new ApiError("Reveja os campos assinalados.", invalid));
-      setError("Reveja os campos assinalados.");
+      const message = `Reveja: ${fieldErrorSummary(form.current, invalid)}.`;
+      reportFormError(form.current, new ApiError(message, invalid));
+      setError(message);
       return;
     }
     saving.current = true;
     setBusy(true); setError(""); setErrors({});
     try {
-      await onSave({ ...value, code: value.code.trim(), name: value.name.trim(), precision: Number(value.precision), barcodes: value.barcodes.map((v: string) => v.trim()).filter(Boolean) });
+      await onSave({ ...value, code: value.code.trim(), name: value.name.trim(), precision: Number(value.precision), barcodes: value.barcodes.map((v: string) => v.trim()).filter(Boolean),
+        ...(needsOpeningLot && openingLot.number.trim() ? { opening_lot: { number: openingLot.number.trim(), expiry: openingLot.expiry || null } } : {}) });
       markDialogSaved(form.current);
     } catch (e) {
       if (e instanceof ApiError) {
@@ -91,7 +100,7 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
       value={prices.gross === null ? "" : Number(prices.gross.toFixed(6))}
       onChange={e => change("sale_net", e.target.value === "" ? "" : String(Number((Number(e.target.value) / (1 + Number(value.vat_rate) / 100)).toFixed(6))))} />
   </Field>;
-  const readonly = (label: string, v: any) => <div className="article-fact"><span>{label}</span><strong>{v}</strong></div>;
+  const readonly = (label: string, v: any) => <MetricCard className="article-fact" label={label} value={v} description="Dados da ficha atual" />;
   const navigate = (section: string) => onNavigate(section, initial.id);
   const suppliers: Row[] = catalog.suppliers || [];
   const supplier = suppliers.find(s => s.id === value.supplier_id);
@@ -104,11 +113,13 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
         <div><span className="article-eyebrow">{value.code || "Novo artigo"}</span><h3>{value.name || "Designação do artigo"}</h3><span className="article-state">{value.active ? "Ativo" : "Inativo"} · {erp ? "Wintouch" : "Local"}</span></div>
       </div>
       <div className="article-summary" aria-label="Resumo do artigo">
-        {readonly(erp ? "Preço no ERP · IVA não identificado" : "Preço de venda com IVA", money(erp ? initial.erp_price : prices.gross))}
+        {readonly(erp ? `Preço no ERP · ${initial.erp_price_basis || "Sem preço no ERP"}` : "Preço de venda com IVA", money(erp ? initial.erp_price : prices.gross))}
         {rights.view_cost && <>{readonly("Custo médio por unidade", money(prices.cost))}{readonly("Margem bruta / un. sem IVA", prices.margin === null ? "Sem informação" : `${money(prices.margin)} · ${prices.marginPct === null ? "Não calculável" : `${quantity(prices.marginPct)} %`}`)}</>}
         {readonly("Stock disponível", initial.id ? quantity(initial.available_quantity) : "Sem movimentos")}
       </div>
-      {prices.margin !== null && prices.margin < 0 && <Notice tone="warning">O preço sem IVA está abaixo do custo médio.</Notice>}
+      {rights.view_cost && prices.margin !== null && prices.margin < 0 && <ContextSuggestion title="Rever a rentabilidade do artigo" tone="warning"
+        evidence={[`Artigo ${value.code || "em criação"}`,"Preço sem IVA inferior ao custo médio conhecido; cálculo da ficha atual, incluindo alterações ainda por guardar."]}
+        actionLabel="Rever preços e rentabilidade" onReview={()=>setTab(1)}>O preço sem IVA está abaixo do custo médio.</ContextSuggestion>}
       {erp && <Notice tone="info">Artigo da Wintouch: código, nome, estado e preço vêm do ERP e só se alteram na origem. Os restantes dados e o stock são geridos aqui.</Notice>}
       <div className="article-tabs" role="tablist" aria-label="Ficha do artigo" onKeyDown={e => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
@@ -140,7 +151,7 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
           <p>A margem utiliza o preço sem IVA e o custo médio ponderado dos movimentos. Os valores da venda são editáveis quando o seu perfil o permite; os custos e as margens são calculados.</p>
           {!erp && <div className="form-grid">{numeric("sale_net", "Venda sem IVA (€)", !rights.change_price, 1e9)}{gross("Venda com IVA (€)")}{numeric("vat_rate", "Taxa de IVA (%)", !rights.change_price, 100)}</div>}
           {/* Nos artigos locais o preço já está nos campos acima: aqui só o que é calculado. */}
-          <div className="article-facts">{erp && <>{readonly("Preço no ERP", money(initial.erp_price))}{readonly("IVA", "Não identificado para o preço do ERP")}</>}
+          <div className="article-facts">{erp && <>{readonly("Preço no ERP com IVA", money(initial.erp_price_basis === "Com IVA" ? initial.erp_price : null))}{readonly("Preço no ERP sem IVA", money(initial.erp_price_net))}{readonly("IVA", initial.erp_vat_rate == null ? "Não indicado pelo ERP" : `${quantity(initial.erp_vat_rate)} %`)}</>}
             {rights.view_cost && <>{readonly("Custo médio ponderado", money(initial.average_cost))}{readonly("Último custo de compra", money(initial.last_cost))}{readonly("Margem bruta por unidade", money(prices.margin))}{readonly("Margem sobre a venda sem IVA", prices.marginPct === null ? "Não calculável" : `${quantity(prices.marginPct)} %`)}{readonly("Markup sobre o custo", prices.cost && prices.cost > 0 && prices.net !== null ? `${quantity((prices.net - prices.cost) / prices.cost * 100)} %` : "Não calculável")}</>}
           </div>
           {!rights.view_cost && <p>O seu perfil não permite consultar custos e margens.</p>}
@@ -180,6 +191,13 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
         {index === 4 && <>
           <h3>Validades e lotes</h3>
           {[["lots", "Controlar lotes"], ["expiry", "Controlar validades"]].map(([key, title]) => <label key={key} className="stock-check"><input name={key} type="checkbox" checked={value[key]} disabled={readOnly || !!value.service} onChange={e => change(key, e.target.checked)} />{title}</label>)}
+          {needsOpeningLot && <div className="article-opening-lot">
+            <Notice tone="info">Se este artigo já tiver stock lançado sem lote, indique o lote (e a validade) que fica com esse stock. Ao guardar, o stock sem lote passa para este lote com dois ajustes registados (saída sem lote e entrada no lote, ao custo médio). A quantidade e o valor do stock não mudam e o histórico mantém-se.</Notice>
+            <div className="form-grid">
+              <Field label="Lote do stock existente"><input name="opening_lot" maxLength={100} disabled={readOnly} value={openingLot.number} onChange={e => setOpeningLot({ ...openingLot, number: e.target.value })} /></Field>
+              {value.expiry && <Field label="Validade desse lote"><input type="date" disabled={readOnly} value={openingLot.expiry} onChange={e => setOpeningLot({ ...openingLot, expiry: e.target.value })} /></Field>}
+            </div>
+          </div>}
           <p className="footnote">Alertas de validade: {(catalog.settings?.alerts || []).join(", ")} dias antes da validade. O nível de reposição é a quantidade de referência para repor stock.</p>
           {details?.expiry_alerts?.length > 0 && <Notice tone="warning">Lotes com validade próxima ou ultrapassada: {details?.expiry_alerts.map((lot: Row) => `${lot.number} · ${date(lot.expiry)}`).join("; ")}. Consulte os lotes antes de registar saídas.</Notice>}
           {initial.id && <ActionButton type="button" onClick={() => navigate("Lotes e validades")}>Consultar lotes e validades</ActionButton>}

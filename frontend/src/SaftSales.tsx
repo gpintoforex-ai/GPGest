@@ -1,3 +1,4 @@
+import OperationsOverview from "./components/OperationsOverview";
 import { currentMonthRange } from "./components/DatePresets";
 import { TaskWorkspace } from "./components/WorkspaceUI";
 import DatePresets from "./components/DatePresets";
@@ -99,6 +100,11 @@ export default function SaftSales({ stores, store, admin, local }: { stores: Row
     })}/>}</> },
 { id: "analise", label: "Análise", content: <><section className="panel"><h2>Analisar faturação e recebimentos</h2><ManagedForm onSubmit={e => { e.preventDefault(); void run(async () => setAnalysis(await api(`/saft/analysis?store_id=${encodeURIComponent(target)}&start=${start}&end=${end}`))); }}><div className="form-grid"><DatePresets from={start} to={end} onSelect={(from, to) => { setStart(from); setEnd(to); }} /><Field label="Desde"><input type="date" required value={start} onChange={e => setStart(e.target.value)}/></Field><Field label="Até"><input type="date" required min={start} value={end} onChange={e => setEnd(e.target.value)}/></Field></div><p>Estabelecimento: {stores.find(row => row.id === target)?.name}</p><ActionButton disabled={busy}><Eye size={16}/>Consultar período</ActionButton></ManagedForm>{analysis && <ReferenceTables data={analysis}/>}</section></> }
 ]} />
+    <OperationsOverview source={history} title="Acompanhamento das importações SAF-T" scope="Histórico autorizado de ficheiros carregados da empresa · não representa um total de vendas nem de recebimentos" loaded={!!history} error={!history && !!error} metrics={[
+      {label:"Ficheiros concluídos",value:history?.imports.filter((r: Row)=>r.status === "completed").length,description:"Importações aplicadas após confirmação",tone:"success"},
+      {label:"Por confirmar",value:history?.imports.filter((r: Row)=>r.status === "ready").length,description:"Ficheiros validados, ainda sem aplicação",tone:"warning"},
+      {label:"Com falha",value:history?.imports.filter((r: Row)=>r.status === "failed").length,description:"Ficheiros que exigem revisão",tone:"danger"}
+    ]} suggestion={history?.imports.some((r: Row)=>r.status === "ready") ? {title:"Rever uma importação por confirmar",reason:"Consulte os documentos, conflitos e correspondências antes de aplicar o ficheiro.",evidence:["Origem: ficheiros validados com estado Pronto para confirmar.","A importação não regista automaticamente recebimentos nem movimentos de stock."],actionLabel:"Rever pré-visualização da importação",onReview:()=>setOpened(history.imports.find((r: Row)=>r.status === "ready"))}:null}/>
     {opened && <ImportDialog key={opened.id} initial={opened} onClose={() => { setOpened(null); void load(); }} onUpdated={() => { void load(); }}/>}
   </>;
 }

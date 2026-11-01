@@ -1,3 +1,5 @@
+import { MetricCard } from "./components/BusinessUI";
+import OperationsOverview from "./components/OperationsOverview";
 import { currentMonthRange } from "./components/DatePresets";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import OpeningStockImport from "./OpeningStockImport";
@@ -483,6 +485,16 @@ export default function Inventory({
             <p role="status">A calcular indicadores…</p>
           ) : (
             <>
+              <OperationsOverview source={report} title="Prioridades de stock" scope={`Artigos do relatório filtrado · ${filters.start} a ${filters.end} · quantidades utilizáveis e critérios da política de stock`} metrics={[
+                {label:"Abaixo do mínimo",value:report.rows.filter((r: Row)=>r.below_minimum).length,description:"Artigos abaixo do mínimo configurado",tone:"warning"},
+                {label:"Com validade em risco",value:report.rows.filter((r: Row)=>Number(r.risk_quantity)>0).length,description:"Artigos com lotes em risco, segundo os alertas configurados",tone:"danger",onOpen:()=>setTab("Lotes e validades")},
+                {label:"Sem vendas no período",value:report.rows.filter((r: Row)=>r.no_sales).length,description:"Sem saídas de venda no período escolhido; não implica excesso",tone:"neutral"},
+                {label:"Excesso com validade próxima",value:report.rows.filter((r: Row)=>r.excess_with_expiry).length,description:"Critério de excesso e validade calculado pelo relatório",tone:"warning"}
+              ]} suggestion={report.rows.some((r: Row)=>r.below_minimum) ? {
+                title:"Rever a política de reposição",reason:"Consulte o artigo e as necessidades antes de preparar uma compra.",
+                evidence:[`Relatório de stock de ${filters.start} a ${filters.end}`,"Mínimos e disponibilidade calculados pelo serviço de stock; não são uma reserva ou uma compra."],
+                actionLabel:"Consultar artigo prioritário",onReview:()=>{const row=report.rows.find((r: Row)=>r.below_minimum);const article=findArticle(row.id);if(article)void open("article",{article,readOnly:true});}
+              }:null} />
               <div className="stock-summary">
                 {[
                   ["Stock a custo conhecido", report.totals.stock_value],
@@ -493,10 +505,7 @@ export default function Inventory({
                 ]
                   .filter(([, value]) => value !== null)
                   .map(([label, value]) => (
-                    <div key={label}>
-                      <span>{label}</span>
-                      <strong>{money(value)}</strong>
-                    </div>
+                    <MetricCard key={String(label)} label={String(label)} value={money(value)} description="Valor conhecido do relatório filtrado; consulte a cobertura e os registos abaixo." />
                   ))}
               </div>
               {report.coverage && (

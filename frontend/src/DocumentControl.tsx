@@ -1,3 +1,4 @@
+import { ContextSuggestion } from "./components/OverviewUI";
 import { currentMonthRange } from "./components/DatePresets";
 import { ActionMenu, ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import { DetailDrawer, TaskWorkspace } from "./components/WorkspaceUI";
@@ -445,14 +446,19 @@ export default function DocumentControl({
       </div>
       <AssistantIdentity assistant="clara" />
       <div className="doc-overview-grid">
-        <MetricCard label="Documentos importados" value={loading ? "—" : storeRows.filter(r => Boolean(r.import_id)).length} description="Documentos associados a uma importação" />
-        <MetricCard label="Relacionados com o ERP" value={loading ? "—" : storeRows.filter(r => r.erp_status === "confirmada").length} description="Correspondências confirmadas" tone="success" />
-        <MetricCard label="Não encontrados no ERP" value={loading ? "—" : storeRows.filter(r => r.erp_status === "sem_correspondencia").length} description="Sem correspondência nos dados consultados" tone="warning" />
-        <MetricCard label="Sem anexo" value={loading ? "—" : storeRows.filter(r => r.attachment_status === "sem_anexo").length} description="Cópia digital ainda por associar" tone="warning" />
-        <MetricCard label="Com divergências" value={loading ? "—" : storeRows.filter(r => r.erp_status === "divergencias").length} description="Diferenças que exigem revisão" tone="danger" />
-        <MetricCard label="A aguardar aprovação" value={loading ? "—" : storeRows.filter(r => r.draft?.status === "preparado").length} description="Propostas preparadas por rever; sem aprovação formal" />
+        <MetricCard label="Documentos importados" value={loading || error ? "—" : storeRows.filter(r => Boolean(r.import_id)).length} description="Documentos associados a uma importação" />
+        <MetricCard label="Relacionados com o ERP" value={loading || error ? "—" : storeRows.filter(r => r.erp_status === "confirmada").length} description="Correspondências confirmadas" tone="success" />
+        <MetricCard label="Não encontrados no ERP" value={loading || error ? "—" : storeRows.filter(r => r.erp_status === "sem_correspondencia").length} description="Sem correspondência nos dados consultados" tone="warning" />
+        <MetricCard label="Sem anexo" value={loading || error ? "—" : storeRows.filter(r => r.attachment_status === "sem_anexo").length} description="Cópia digital ainda por associar" tone="warning" />
+        <MetricCard label="Com divergências" value={loading || error ? "—" : storeRows.filter(r => r.erp_status === "divergencias").length} description="Diferenças que exigem revisão" tone="danger" />
+        <MetricCard label="A aguardar aprovação" value={loading || error ? "—" : storeRows.filter(r => r.draft?.status === "preparado").length} description="Propostas preparadas por rever; sem aprovação formal" />
       </div>
-      <details className="pending-breakdown">
+      {!loading && !error && filtered.some(r=>r.attachment_status === "sem_anexo") && <ContextSuggestion title="Rever documentos sem anexo"
+        evidence={[`${filtered.filter(r=>r.attachment_status === "sem_anexo").length} documentos filtrados sem cópia digital associada`,`Período ${filters.from} a ${filters.to}`,"Origem: conferência documental carregada; ausência de anexo não prova ausência de lançamento no ERP."]}
+        actionLabel="Consultar documento sem anexo" onReview={()=>{const row=filtered.find(r=>r.attachment_status === "sem_anexo");if(row)void openDoc(row);}}>
+        Consulte o documento e a sua origem antes de associar a cópia digital ou preparar a entrega.
+      </ContextSuggestion>}
+      {!loading && !error && <details className="pending-breakdown">
       <summary>Outras pendências a acompanhar</summary>
       <div className="doc-dashboard-section-title"><h2>Pendências a acompanhar</h2><span>{store ? stores.find(s => s.id === store)?.name : "Todas as lojas"} · Indicadores da seleção de loja</span></div>
       {!catalog.some((row) => !store || row.store_id === store) && (
@@ -461,6 +467,7 @@ export default function DocumentControl({
           Consulte o ERP para atualizar as correspondências.
         </p>
       )}
+
       <div className="doc-pending-grid">
         {[
           [
@@ -512,7 +519,7 @@ export default function DocumentControl({
           </div>
         ))}
       </div>
-      </details>
+      </details>}
       <ModuleTabs label="Áreas da conferência documental" value={tab} tabs={[{"id": "conferencia", "label": "Faturas e conferência"}, {"id": "anexos", "label": "Documentos e anexos"}, {"id": "despesas", "label": "Despesas por tratar"}, {"id": "contabilidade", "label": "Estado contabilístico"}]} onChange={value => { setTab(value);  }} />
       {error && !modal && (
         <Notice role="alert" className="error">

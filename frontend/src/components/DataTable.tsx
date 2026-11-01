@@ -59,12 +59,15 @@ export function DataTable<T>({
   columns,
   rowKey,
   searchText,
+  rowClassName,
 }: {
   label: string;
   rows: readonly T[];
   columns: readonly TableColumn<T>[];
   rowKey: (row: T) => string;
   searchText: (row: T) => string;
+  /** Classe opcional por linha (ex.: cor do estado). */
+  rowClassName?: (row: T) => string | undefined;
 }) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -167,7 +170,7 @@ export function DataTable<T>({
           </thead>
           <tbody>
             {filtered.slice((current - 1) * size, current * size).map((row) => (
-              <tr key={rowKey(row)}>
+              <tr key={rowKey(row)} className={rowClassName?.(row)}>
                 {columns.map((item) => (
                   <td key={item.id} data-label={item.label}>
                     <div>{item.render(row)}</div>

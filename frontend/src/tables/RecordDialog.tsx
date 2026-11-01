@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import {
   AlignLeft, Building2, CalendarClock, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, CreditCard, Hash,
-  Info, ListChecks, Mail, Mailbox, MapPin, Palette, Percent, Phone, Shapes, Store, Tag, Type, User,
+  Euro, Info, ListChecks, Mail, Mailbox, MapPin, Palette, Percent, Phone, Shapes, Store, Tag, Truck, Type, User,
   type LucideIcon,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -13,6 +13,9 @@ import { ModuleTabs } from "../components/WorkspaceUI";
 import { ActiveBadge, OriginBadge, SyncBadge } from "./Badges";
 import Processing from "./Processing";
 import { displayValue, formatDateTime, gendered, type FieldSpec, type RecordDetails, type TableContext, type TableInfo } from "./types";
+// A ficha também abre fora das Tabelas (ex.: Encomendas de clientes): sem estes estilos, os
+// separadores apareciam todos ao mesmo tempo.
+import "./TablePage.css";
 
 type Mode = "create" | "edit" | "view";
 
@@ -56,6 +59,7 @@ const FIELD_ICONS: Record<string, LucideIcon> = {
   locality: Building2, category_id: Tag, payment_term_id: CalendarClock, payment_method_id: CreditCard,
   store_id: Store, days: CalendarDays, discount_percent: Percent, term_type: CalendarClock, icon: Shapes,
   color: Palette, vat_deduction_percent: Percent,
+  order_minimum: Euro, shipping: Truck, free_shipping: Truck, lead_days: CalendarDays,
 };
 const TYPE_ICONS: Partial<Record<FieldSpec["type"], LucideIcon>> = {
   text: Type, textarea: AlignLeft, number: Hash, decimal: Percent, select: ListChecks, email: Mail, nif: Hash,
@@ -198,7 +202,7 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
       case "boolean":
         return <label className="checkbox table-checkbox"><input type="checkbox" {...common} checked={!!value} onChange={e => set(field.name, e.target.checked)} /> {field.label}</label>;
       case "textarea":
-        return <textarea {...common} rows={2} maxLength={field.max_length || undefined} minLength={field.min_length || undefined} value={value} onChange={e => set(field.name, e.target.value)} />;
+        return <textarea {...common} rows={(field.span ?? 3) >= 6 ? 2 : 1} maxLength={field.max_length || undefined} minLength={field.min_length || undefined} value={value} onChange={e => set(field.name, e.target.value)} />;
       case "number":
         return <input type="number" step="1" {...common} min={field.minimum ?? undefined} max={field.maximum ?? undefined} value={value ?? ""} onChange={e => set(field.name, e.target.value)} />;
       case "decimal":

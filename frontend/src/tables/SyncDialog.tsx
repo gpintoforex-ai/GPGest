@@ -65,6 +65,8 @@ export default function SyncDialog({ table, context, direction, ids, onClose, on
   const [plan, setPlan] = useState<Plan | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [resolutions, setResolutions] = useState<Record<string, Resolution>>({});
+  // Seleção proposta pela pré-visualização: só uma escolha diferente fica «por guardar».
+  const [proposed, setProposed] = useState<Set<string>>(new Set());
   // Execução em segundo plano: progresso enquanto corre; resultados quando termina.
   const [run, setRun] = useState<SyncRun | null>(null);
   const [checked, setChecked] = useState(false);
@@ -80,7 +82,9 @@ export default function SyncDialog({ table, context, direction, ids, onClose, on
     try {
       const data: Plan = await api(`/tables/${table.key}/sync/plan`, { direction, ids: scope, options, confirm_demo: true });
       setPlan(data);
-      setSelected(new Set(data.items.filter(i => i.action !== "ignorar" && (preselect ? preselect.includes(i.key) : !i.optional)).map(i => i.key)));
+      const initial = new Set(data.items.filter(i => i.action !== "ignorar" && (preselect ? preselect.includes(i.key) : !i.optional)).map(i => i.key));
+      setSelected(initial);
+      setProposed(initial);
       setResolutions(Object.fromEntries(data.items.filter(i => i.action === "conflito").map(i => [i.key, "ignorar" as Resolution])));
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -143,8 +147,11 @@ export default function SyncDialog({ table, context, direction, ids, onClose, on
   const allMarked = actionable.length > 0 && marked === actionable.length;
   const setAll = (on: boolean) => setSelected(on ? new Set(actionable.map(i => i.key)) : new Set());
   const toggle = (key: string, on: boolean) => setSelected(current => { const next = new Set(current); if (on) next.add(key); else next.delete(key); return next; });
+  // Depois de executar não há nada por guardar: os resultados já estão gravados (ou a correr no servidor).
+  const dirty = !!plan && !run && (selected.size !== proposed.size || [...selected].some(k => !proposed.has(k))
+    || Object.values(resolutions).some(r => r !== "ignorar"));
 
-  return <AppDialog autoOpen busy={busy} className="modal table-dialog table-sync-dialog" onRequestClose={onClose} aria-labelledby="table-sync-title">
+  return <AppDialog autoOpen busy={busy} dirty={dirty} className="modal table-dialog table-sync-dialog" onRequestClose={onClose} aria-labelledby="table-sync-title">
     <div className="panel-title"><h2 id="table-sync-title">{labels.title} — {table.title}</h2></div>
     <Notice className={direction === "import" ? "info" : "warning"} role="status"><b>Destino:</b> {labels.destination}</Notice>
     <p className="footnote">{scope.length ? `Registos selecionados: ${scope.length}.` : "Todos os registos da tabela."} Nada é alterado antes de confirmar.</p>

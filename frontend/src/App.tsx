@@ -1,9 +1,13 @@
+import TopAlerts from "./components/TopAlerts";
+import WorkspaceNavigation from "./components/WorkspaceNavigation";
+import { ARCHIVE_PAGES, APP_PAGES, PAGE_ALIASES, canViewPage, PROCUREMENT_PAGES, activeNavigation, navigationParams, visibleNavigation, type NavigationItem, type NavigationGroup } from "./navigationCatalog";
 import Info from "./components/InfoIcon";
 import DocumentScanner, { ScanSettings } from "./DocumentScanner";
 import { DataTable } from "./components/DataTable";
-import { LoadingState, ModuleTabs, TaskWorkspace, useLocationSearch, updateLocationParam } from "./components/WorkspaceUI";
+import { LoadingState, ModuleTabs, TaskWorkspace, useLocationSearch, updateLocationParam, updateLocationParams } from "./components/WorkspaceUI";
 import Brand from "./components/Brand";
-import MenuSearch from "./components/MenuSearch";
+
+
 import { PrivacyNotice } from "./Legal";
 import { ActionButton, AppDialog, Notice, confirmAction } from "./components/InteractionUI";
 import {
@@ -55,7 +59,7 @@ type Row = Record<string, any>;
 import TenantIntegrations from "./TenantIntegrations";
 
 
-import CashSheetList from "./CashSheetList";
+
 import type { PaymentMethod, PaymentBankDefault } from "./PaymentMethods";
 
 
@@ -75,12 +79,13 @@ import { api } from "./lib/api";
 import { Empty, Field, Form, Select } from "./components/Form";
 import AttachmentPanel from "./AttachmentPanel";
 import MovementTable from "./MovementTable";
-import DrivePendingNotice from "./DrivePendingNotice";
 
 
 
 
 import { CloseButton, confirmFormExit, dismissDisclosure, useOverlayFocus } from "./components/InteractionUI";
+const CashSheetList = lazy(() => import("./CashSheetList"));
+const GlobalSearch = lazy(() => import("./components/GlobalSearch"));
 const EmailSettings = lazy(() => import("./EmailSettings"));
 const SaftSales = lazy(() => import("./SaftSales"));
 const Deposits = lazy(() => import("./Deposits"));
@@ -94,6 +99,7 @@ const DocumentControl = lazy(() => import("./DocumentControl"));
 const BillingConference = lazy(() => import("./BillingConference"));
 const AccountingDelivery = lazy(() => import("./AccountingDelivery"));
 const RubricExpenses = lazy(() => import("./RubricExpenses"));
+const WorkOverview = lazy(() => import("./WorkOverview"));
 const ManagementDashboard = lazy(() => import("./ManagementDashboard"));
 const ManagementMaps = lazy(() => import("./ManagementMaps"));
 const Inventory = lazy(() => import("./Inventory"));
@@ -113,11 +119,11 @@ const BankOverview = lazy(() => import("./BankOverview"));
 const PaymentMethods = lazy(() => import("./PaymentMethods"));
 const TablePage = lazy(() => import("./tables/TablePage"));
 const InvoiceWorkflowSettings = lazy(() => import("./InvoiceWorkflow").then(module => ({ default: module.InvoiceWorkflowSettings })));
-const ARCHIVE_PAGES = ["Arquivo — Visão geral", "Caixa de entrada", "Todos os documentos", "Associações", "Pendências", "Dossiês contabilísticos", "Arquivo — Auditoria", "Arquivo — Configurações"];
-const APP_PAGES: readonly string[] = ["Encomendas de clientes", ...ARCHIVE_PAGES, ...["Dashboard", "Compras e Stock — Visão geral", "Meios de pagamento", "Prazos de pagamento", "Tipos de Documentos", "Folha de caixa", "Movimentos previstos", "Movimentos reais", "Múltiplas contas", "Bancos", "Extratos", "Reconciliação automática", "Conferência documental", "Despesas por rubrica", "Mapas de gestão", "Entrega à contabilidade", "Email", "Importar SAF-T de vendas", "Digitalizar documento", "Relatórios", "Integrações", "Rubricas", "Caixas", "Operadores / funcionários", "Organização", "Depósitos", "Previsão de liquidez", "Faturação e recebimentos", "Armazéns", "Artigos e validades", "Clientes", "Fornecedores", "Regime de IVA", "Aparência", "Configuração inicial", "Anexos", "Digitalização", "Verificação automática e-Fatura", "Tesouraria", "Contabilidade", "Arquivo digital", "Compras e Stock", "Tabelas", "Receitas e despesas", "Configurações", "Parâmetros", "Arquivo — Visão geral", "Caixa de entrada", "Todos os documentos", "Associações", "Pendências", "Dossiês contabilísticos", "Arquivo — Auditoria", "Arquivo — Configurações", "Encomendas a fornecedores", "Receções de mercadoria", "Compras", "Devoluções a fornecedores", "Movimentos de stock"]];
-const MANAGER_PAGES: readonly string[] = ["Despesas por rubrica", "Mapas de gestão", "Configuração inicial", "Regime de IVA", "Anexos", "Digitalização", "Verificação automática e-Fatura", "Arquivo — Auditoria", "Arquivo — Configurações"];
-const canViewPage = (name: string, role: string) => ["administrador", "gestor"].includes(role) || !MANAGER_PAGES.includes(name);
-const PAGE_ALIASES: Record<string, string> = { "Tesouraria": "Folha de caixa", "Contabilidade": "Conferência documental", "Arquivo digital": "Arquivo — Visão geral", "Compras e Stock": "Compras e Stock — Visão geral", "Tabelas": "Clientes", "Configurações": "Organização", "Parâmetros": "Configuração inicial" };
+
+
+
+
+
 const requestedPage = () => { const requested = new URLSearchParams(window.location.search).get("pagina") || "Dashboard"; const value = PAGE_ALIASES[requested] || requested; return APP_PAGES.includes(value) ? value : "Dashboard"; };
 type Bootstrap = {
   payment_methods?: Record<string, string>;
@@ -160,16 +166,8 @@ export default function App() {
     [error, setError] = useState(""),
     [mobile, setMobile] = useState(false),
     [sidebarCollapsed, setSidebarCollapsed] = useState(false),
-    [financeOpen, setFinanceOpen] = useState(false),
-    [accountingOpen, setAccountingOpen] = useState(false),
-    [archiveOpen, setArchiveOpen] = useState(false),
-    [procurementOpen, setProcurementOpen] = useState(false),
-    [configurationOpen, setConfigurationOpen] = useState(false),
-    [parametersOpen, setParametersOpen] = useState(false),
     [scanMenuOpen, setScanMenuOpen] = useState(false),
-    [banksOpen, setBanksOpen] = useState(false),
 
-    [tablesOpen, setTablesOpen] = useState(false),
     [store, setStore] = useState(""),
     [requestKey, setRequestKey] = useState(crypto.randomUUID());
   const locationSearch = useLocationSearch();
@@ -186,11 +184,14 @@ export default function App() {
     if (!boot) return;
     const next = requestedPage();
     const destination = canViewPage(next, boot.user.role) ? next : "Dashboard";
-    if (destination !== page) void navigatePage(destination).then(accepted => {
+    if (destination !== page) void navigatePage(destination, undefined, true).then(accepted => {
       if (!accepted) updateLocationParam("pagina", page, true);
     });
     else if (new URLSearchParams(locationSearch).get("pagina") !== destination) updateLocationParam("pagina", destination, true);
   }, [locationSearch, cacheScope]);
+  useEffect(() => {
+    if (boot && page === "Encomendas de clientes" && requestedPage() === page && (new URLSearchParams(locationSearch).get("area.pedidos-clientes") || "centro") === "centro" && !store && boot.stores[0]) setStore(boot.stores[0].id);
+  }, [!!boot, page, locationSearch, store]);
   useOverlayFocus(mobile, ".sidebar", () => setMobile(false));
   const pageTitle = page === "Dashboard" ? "Visão geral" : page === "Compras e Stock — Visão geral" ? "Compras e Stock" : page;
   useEffect(() => {
@@ -199,24 +200,14 @@ export default function App() {
   const navigationPending = useRef(false);
   const pageScroll = useRef(new Map<string, number>());
   useLayoutEffect(() => { window.scrollTo({ top: pageScroll.current.get(page) || 0, behavior: "instant" }); }, [page]);
-  async function navigatePage(next: string) {
-    if (next === page) return true;
+  async function navigatePage(next: string, rawParameters?: Record<string,string> | string, fromLocation = false) {
+    const parameters = typeof rawParameters === "object" ? rawParameters : undefined;
+    next = PAGE_ALIASES[next] || next;
+    if (next === page && !parameters) return true;
     if (!APP_PAGES.includes(next) || (boot && !canViewPage(next, boot.user.role)) || navigationPending.current || document.querySelector(".workspace dialog[open]")) return false;
     navigationPending.current = true;
     try {
     if (!(await confirmFormExit(document.querySelector(".page-cache:not([hidden])") || document.querySelector(".workspace"), true))) return false;
-    if (next === "Organização" || [
-      "Configuração inicial",
-      "Integrações",
-      "Regime de IVA",
-      "Aparência",
-      "Anexos",
-      "Digitalização",
-      "Verificação automática e-Fatura",
-    ].includes(next)) {
-      setConfigurationOpen(true);
-      setParametersOpen(next !== "Organização");
-    }
     if (next === "Meios de pagamento" && page !== next) {
       setPaymentReturn({ page, scrollY: window.scrollY, focus: document.activeElement as HTMLElement | null });
     } else if (next !== "Meios de pagamento") {
@@ -224,9 +215,18 @@ export default function App() {
     }
     pageScroll.current.set(page, window.scrollY);
     setPage(next);
-    updateLocationParam("pagina", next);
+    if (!fromLocation) updateLocationParams({pagina:next, "menu.area":null, "menu.destino":null, "consulta.tipo":null, "consulta.id":null, "consulta.chave":null, ...parameters});
     setMobile(false);
     return true;
+    } finally { navigationPending.current = false; }
+  }
+  async function changeWorkspaceStore(next: string): Promise<boolean> {
+    if (navigationPending.current) return false;
+    navigationPending.current = true;
+    try {
+      if (!(await confirmFormExit(document.querySelector(".workspace")))) return false;
+      setStore(next);
+      return true;
     } finally { navigationPending.current = false; }
   }
   function closePaymentMethods() {
@@ -444,81 +444,15 @@ export default function App() {
     visibleSessions.some((s) => s.id === m.session_id) || (!m.session_id && boot.registers.some(r => r.id === m.register_id && (!store || r.store_id === store))),
   );
   const open = visibleSessions.filter((s) => !s.closed_at);
-  const menu = [
-    ["Dashboard", LayoutDashboard],
-    ["Tesouraria", Wallet],
-
-    ["Bancos", Landmark],
-    ["Contabilidade", FileBarChart],
-    ["Arquivo digital", ArchiveIcon],
-    ["Compras e Stock", Package],
-    ["Tabelas", Package],
-    ["Receitas e despesas", Receipt],
-    ["Relatórios", FileBarChart],
-    ["Configurações", Settings],
-  ] as const;
-  const configurationMenu = [
-    ["Organização", Building2],
-    ["Email", Mail],
-    ["Parâmetros", SlidersHorizontal],
-  ] as const;
-  const parameterMenu = [
-    ["Configuração inicial", Settings],
-    ["Integrações", Plug],
-    ["Regime de IVA", FileBarChart],
-    ["Aparência", Settings],
-    ["Anexos", Package],
-    ["Digitalização", Camera],
-    ["Verificação automática e-Fatura", CheckCircle],
-  ] as const;
-  const financeMenu = [
-    ["Folha de caixa", Wallet],
-    ["Movimentos reais", ArrowLeftRight],
-    ["Movimentos previstos", Clock],
-    ["Depósitos", Landmark],
-    ["Previsão de liquidez", Clock],
-    ...(boot.integration?.mode === "local" ? [["Importar SAF-T de vendas", FileUp] as const, ["Faturação e recebimentos", Receipt] as const] : []),
-  ] as const;
-
-  const banksMenu = [
-    ["Múltiplas contas", Landmark],
-    ["Extratos", Receipt],
-    ["Reconciliação automática", CheckCircle],
-  ] as const;
-  const accountingMenu = [["Conferência documental", Receipt], ["Despesas por rubrica", FileBarChart], ["Mapas de gestão", FileBarChart], ["Entrega à contabilidade", FileBarChart]] as const;
-  // Arquivo digital: entrada, pesquisa, relações e dossiês de todos os documentos (a digitalização passa para aqui).
-  const archiveMenu = [
-    ["Arquivo — Visão geral", LayoutDashboard], ["Caixa de entrada", Inbox], ["Todos os documentos", FileText], ["Digitalizar documento", Camera],
-    ["Associações", Link2], ["Pendências", AlertTriangle], ["Dossiês contabilísticos", FolderArchive],
-    ...(manager ? [["Arquivo — Auditoria", ShieldCheck] as const, ["Arquivo — Configurações", Settings] as const] : []),
-  ] as const;
-  const procurementMenu = [["Compras e Stock — Visão geral", LayoutDashboard], ["Encomendas de clientes", Receipt], ["Encomendas a fornecedores", Receipt], ["Receções de mercadoria", Package], ["Devoluções a fornecedores", ArrowLeftRight], ["Movimentos de stock", ArrowLeftRight]] as const;
-  const tablesMenu = [
-    ["Clientes", Receipt],
-    ["Fornecedores", Landmark],
-    ["Bancos", Landmark],
-    ["Artigos e validades", Package],
-    ["Armazéns", Package],
-    ["Rubricas", FileBarChart],
-    ["Caixas", Wallet],
-    ["Meios de pagamento", CreditCard],
-    ["Prazos de pagamento", Clock],
-    ["Tipos de Documentos", FileText],
-    ["Operadores / funcionários", Users],
-  ] as const;
-  const navigationGroups = [
-    { label: "Tesouraria", items: financeMenu }, { label: "Bancos", items: banksMenu },
-    { label: "Contabilidade", items: accountingMenu.filter(([name]) => manager || !["Despesas por rubrica", "Mapas de gestão"].includes(name)) },
-    { label: "Arquivo digital", items: archiveMenu }, { label: "Compras e Stock", items: procurementMenu },
-    { label: "Tabelas", items: tablesMenu },
-    { label: "Configurações", items: [...configurationMenu.filter(([name]) => name !== "Parâmetros"), ...parameterMenu.filter(([name]) => manager || name === "Aparência")] },
-  ];
-  const moduleNavigation = navigationGroups.find(group => group.items.some(([name]) => name === page));
-  const searchMenus = [...new Map([
-    ...navigationGroups.flatMap(group => group.items.map(([name]) => ({ id: name, label: name.replace("Arquivo — ", "").replace("Compras e Stock — ", ""), group: group.label }))),
-    ...menu.filter(([name]) => !navigationGroups.some(group => group.label === name)).map(([name]) => ({ id: name, label: name === "Dashboard" ? "Visão geral" : name, group: "Gestão" })),
-  ].filter(item => canViewPage(item.id, boot.user.role)).map(item => [item.id, item])).values()];
+  const navigationGroups = visibleNavigation(boot.user.role, boot.integration?.mode || '');
+  const activeNavigationTarget = activeNavigation(navigationGroups, page, locationSearch);
+  const moduleNavigation = activeNavigationTarget?.group;
+  const navigationItems = navigationGroups.flatMap(group => group.items.map(item => ({group,item})));
+  const searchMenus = navigationItems.map(({group,item}) => ({id:item.id,label:item.label,group:group.label}));
+  const navigateTarget = (group:NavigationGroup,item:NavigationItem) => navigatePage(item.page,navigationParams(group,item));
+  const navigateSearch = (id:string) => {const target=navigationItems.find(t=>t.item.id===id);return target?navigateTarget(target.group,target.item):navigatePage(id);};
   const activePage = page;
+  const orderCenterActive = page === "Encomendas de clientes" && (new URLSearchParams(locationSearch).get("area.pedidos-clientes") || "centro") === "centro";
   const openModal = async (kind: string, row: Row | null = null) => {
     if (kind === "movement") { setMovementPayment("numerario"); setMovementSession(""); }
     if (kind === "account" || kind === "edit-account") setCustomBank(kind === "edit-account" && !boot.bank_institutions?.some(bank => bank.name === row?.bank));
@@ -546,7 +480,7 @@ export default function App() {
     ["numerario", "cartao", "transferencia", "outro"].map(key => [key, labels[key]]),
   );
   return (
-    <div className={`shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+    <div className={`shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${orderCenterActive ? "order-center-mode" : ""}`}>
       <a className="skip-workspace" href="#main-workspace">Ir para a área de trabalho</a>
       {mobile && <ActionButton className="sidebar-backdrop" aria-label="Fechar menu" title="Fechar menu" onClick={() => setMobile(false)} />}
       <aside className={mobile ? "sidebar visible" : "sidebar"} onKeyDown={event => { if (mobile && event.key === "Escape") { event.preventDefault(); setMobile(false); document.querySelector<HTMLElement>('.header-tools button[aria-label],.topbar button[aria-label]')?.focus(); } }}>
@@ -557,125 +491,7 @@ export default function App() {
           <small>GESTÃO EMPRESARIAL</small>
         </div>
         <ActionButton className="sidebar-collapse" aria-label={sidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>{sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}<span className="nav-label">Recolher menu</span></ActionButton>
-        <nav aria-label="Navegação principal">
-          {menu.map(([label, Icon]) => {
-            const group = label === "Configurações"
-              ? { items: configurationMenu, expanded: configurationOpen, toggle: () => setConfigurationOpen(!configurationOpen), id: "configuration-submenu" }
-              : label === "Tabelas"
-              ? { items: tablesMenu, expanded: tablesOpen, toggle: () => setTablesOpen(!tablesOpen), id: "tables-submenu" }
-              : label === "Bancos"
-                ? { items: banksMenu, expanded: banksOpen, toggle: () => setBanksOpen(!banksOpen), id: "banks-submenu" }
-              : label === "Contabilidade"
-                ? { items: accountingMenu, expanded: accountingOpen, toggle: () => setAccountingOpen(!accountingOpen), id: "accounting-submenu" }
-              : label === "Arquivo digital"
-                ? { items: archiveMenu, expanded: archiveOpen, toggle: () => setArchiveOpen(!archiveOpen), id: "archive-submenu" }
-              : label === "Compras e Stock"
-                ? { items: procurementMenu, expanded: procurementOpen, toggle: () => setProcurementOpen(!procurementOpen), id: "procurement-submenu" }
-                : { items: financeMenu, expanded: financeOpen, toggle: () => setFinanceOpen(!financeOpen), id: "finance-submenu" };
-            const groupedMenu = group.items;
-            const expanded = group.expanded;
-            const submenuId = group.id;
-            return label === "Tesouraria" || label === "Bancos" || label === "Contabilidade" || label === "Arquivo digital" || label === "Compras e Stock" || label === "Tabelas" || label === "Configurações" ? (
-              <div className="finance-menu" key={label}>
-                <ActionButton
-                  className={
-                    groupedMenu.some(([name]) => name === page) ||
-                    label === "Configurações" && parameterMenu.some(([name]) => name === page)
-                      ? "active"
-                      : ""
-                  }
-                  aria-expanded={expanded}
-                  aria-controls={submenuId}
-                  aria-label={label}
-                  title={label}
-                  onClick={group.toggle}
-                >
-                  <Icon size={19} /> <span className="nav-label">{label}</span>
-                  {expanded ? (
-                    <ChevronDown size={15} />
-                  ) : (
-                    <ChevronRight size={15} />
-                  )}
-                </ActionButton>
-                <div
-                  id={submenuId}
-                  className="finance-submenu"
-                  hidden={!expanded}
-                >
-                  {groupedMenu.map(([name, FinanceIcon]) => (
-                    name === "Parâmetros" && manager ? (
-                      <div className="finance-menu" key={name}>
-                        <ActionButton
-                          className={parameterMenu.some(([parameter]) => parameter === page) ? "active" : ""}
-                          aria-expanded={parametersOpen}
-                          aria-controls="parameters-submenu"
-                          aria-label={name}
-                          title={name}
-                          onClick={() => setParametersOpen(!parametersOpen)}
-                        >
-                          <FinanceIcon size={17} /> <span className="nav-label">{name}</span>
-                          {parametersOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                        </ActionButton>
-                        <div id="parameters-submenu" className="finance-submenu" hidden={!parametersOpen}>
-                          {manager && parameterMenu.map(([parameter, ParameterIcon]) => (
-                            <ActionButton
-                              key={parameter}
-                              className={page === parameter ? "active" : ""}
-                              aria-current={page === parameter ? "page" : undefined}
-                              aria-label={parameter}
-                              title={parameter}
-                              onClick={() => {
-                                navigatePage(parameter);
-                                setMobile(false);
-                                setError("");
-                              }}
-                            >
-                              <ParameterIcon size={17} /> <span className="nav-label">{parameter}</span>
-                              {page === parameter && <ChevronRight size={15} />}
-                            </ActionButton>
-                          ))}
-                        </div>
-                      </div>
-                    ) : name !== "Parâmetros" ? (
-                      <ActionButton
-                        key={name}
-                        className={page === name ? "active" : ""}
-                        aria-current={page === name ? "page" : undefined}
-                        aria-label={name}
-                        title={name}
-                        onClick={() => {
-                          navigatePage(name);
-                          setMobile(false);
-                          setError("");
-                        }}
-                      >
-                        <FinanceIcon size={17} /> <span className="nav-label">{name === "Compras e Stock — Visão geral" ? "Visão geral" : name.replace(/^Arquivo — /, "")}</span>
-                        {page === name && <ChevronRight size={15} />}
-                      </ActionButton>
-                    ) : null
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <ActionButton
-                key={label}
-                className={page === label ? "active" : ""}
-                aria-current={page === label ? "page" : undefined}
-                aria-label={label === "Dashboard" ? "Visão geral" : label}
-                title={label === "Dashboard" ? "Visão geral" : label}
-                onClick={() => {
-                  navigatePage(label);
-                  setMobile(false);
-                  setError("");
-                }}
-              >
-                <Icon size={19} />
-                <span className="nav-label">{label === "Dashboard" ? "Visão geral" : label}</span>
-                {page === label && <ChevronRight size={15} />}
-              </ActionButton>
-            );
-          })}
-        </nav>
+        <WorkspaceNavigation groups={navigationGroups} activeId={activeNavigationTarget?.item.id} activeGroup={moduleNavigation?.id} collapsed={sidebarCollapsed} onExpand={()=>setSidebarCollapsed(false)} onNavigate={navigateTarget} />
         <div className="sidebar-footer">
           <div
             className={`sidebar-mode ${integratedMode ? "integrated" : "local"}`}
@@ -729,20 +545,14 @@ export default function App() {
             <span className="active-company">{boot.company?.name || "IAZELA"}</span><small className="operating-mode-label">{boot.integration?.mode === "integrated" ? `Modo integrado · ${boot.integration.provider} · ${boot.integration.active ? boot.integration.writes ? "Ligação configurada" : "Apenas leitura" : "Ligação desativada"}` : "Modo local autónomo"}</small>
             <span className="header-page-context">{moduleNavigation?.label || "Gestão"} / {pageTitle}</span>
           </div>
-          <MenuSearch items={searchMenus} onNavigate={navigatePage} />
+          <Suspense fallback={null}><GlobalSearch key={cacheScope} store={store} menus={searchMenus} onMenu={navigateSearch} onNavigate={navigatePage} /></Suspense>
           <div className="header-tools">
+            <TopAlerts key={cacheScope} store={store} page={page} drive={manager} onNavigate={(next, params) => navigatePage(next, params)} />
             <ThemeSettings compact />
-            <select
+            {!orderCenterActive && <select
               aria-label="Filtrar loja"
               value={store}
-              onChange={async (e) => {
-                const next = e.target.value;
-                if (navigationPending.current) return;
-                navigationPending.current = true;
-                try {
-                  if (await confirmFormExit(document.querySelector(".workspace"))) setStore(next);
-                } finally { navigationPending.current = false; }
-              }}
+              onChange={event => { void changeWorkspaceStore(event.target.value); }}
             >
               <option value="">Todas as lojas</option>
               {boot.stores.map((s) => (
@@ -750,7 +560,7 @@ export default function App() {
                   {s.name}
                 </option>
               ))}
-            </select>
+            </select>}
             <span className="today">
               {new Intl.DateTimeFormat("pt-PT", {
                 day: "numeric",
@@ -773,7 +583,6 @@ export default function App() {
               </span>
             </div>
           )}
-          {manager && <DrivePendingNotice key={boot.user.id} onOpen={navigatePage} />}
           {notice && (
             <Notice onDismiss={() => setNotice("")} className="success" role="status">
               {notice}
@@ -784,27 +593,12 @@ export default function App() {
               {error}
             </Notice>
           )}
-          {moduleNavigation && moduleNavigation.label !== "Tesouraria" && moduleNavigation.label !== "Contabilidade" && moduleNavigation.label !== "Tabelas" && moduleNavigation.label !== "Compras e Stock" && <div className="module-navigation"><span className="module-navigation-label">{moduleNavigation.label}</span><ModuleTabs label={`Navegação de ${moduleNavigation.label}`} value={page} tabs={moduleNavigation.items.map(([name]) => ({ id: name, label: name.replace("Arquivo — ", "").replace("Compras e Stock — ", "") }))} onChange={next => { void navigatePage(next); }} /></div>}
           {visiblePages.map(cachedPage => <div key={`${cacheScope}:${cachedPage}`} className="page-cache" hidden={cachedPage !== activePage} data-page={cachedPage}>
             <Suspense fallback={<LoadingState />}>{((page: string) => <>
           {page === "Dashboard" && (
             <>
               <CompanySetupPanel boot={boot} reload={reload} hasOpenSession={open.length > 0} onNavigate={navigatePage} onAction={openModal} />
-              <div className="page-intro">
-                <div>
-                  <span className="eyebrow">VISÃO GERAL</span>
-                  <h1>Visão geral do negócio</h1>
-                  <p>Acompanhe a operação e mantenha a caixa sob controlo.</p>
-                </div>
-                {write && (
-                  <ActionButton
-                    className="primary"
-                    onClick={() => openModal("movement")}
-                  >
-                    <Plus size={18} /> Novo movimento
-                  </ActionButton>
-                )}
-              </div>
+              <WorkOverview store={store} role={boot.user.role} mode={boot.integration?.mode || "local"} navigate={navigatePage} financial={<>
               <ManagementDashboard store={store} scopeKey={`${boot.company?.id || boot.company?.nif || ""}:${boot.user.id}`} companyName={boot.company?.name || "Empresa"}
                 mode={boot.integration?.mode || "local"} role={boot.user.role} navigate={navigatePage} onAction={kind => void openModal(kind)} operation={<>
               <div className="dashboard-grid">
@@ -853,6 +647,7 @@ export default function App() {
                 <MovementTable categories={boot.categories} registers={boot.registers} onAttachments={(m) => openModal("attachments", m)} rows={visibleMovements.slice(0, 5)} />
               </section>
               </>} />
+              </>} />
             </>
           )}
           {page === "Folha de caixa" && (
@@ -896,10 +691,10 @@ export default function App() {
                 }
                 configuration={manager && (
                   <>
-                    <ActionButton type="button" onClick={() => { setTablesOpen(true); void navigatePage("Caixas"); }}>
+                    <ActionButton type="button" onClick={() => { void navigatePage("Caixas"); }}>
                       <Wallet size={18} aria-hidden="true" /> Configurar caixas
                     </ActionButton>
-                    <ActionButton type="button" onClick={() => { setTablesOpen(true); navigatePage("Meios de pagamento"); }}>
+                    <ActionButton type="button" onClick={() => { navigatePage("Meios de pagamento"); }}>
                       <CreditCard size={18} aria-hidden="true" /> Configurar meios de pagamento
                     </ActionButton>
                   </>
@@ -1237,27 +1032,8 @@ export default function App() {
           {page === "Faturação e recebimentos" && <BillingConference stores={boot.stores} store={store} manager={manager} />}
           {page === "Armazéns" && <TablePage tableKey="warehouses" context={tableContext} active={activePage === page} store={store} />}
           {page === "Artigos e validades" && <Suspense fallback={<p role="status">A carregar artigos e stock…</p>}><Inventory stores={boot.stores} admin={boot.user.role === "administrador"} /></Suspense>}
-          {page === "Encomendas de clientes" && <Suspense fallback={<LoadingState />}><CustomerOrders stores={boot.stores} store={store} company={boot.company} navigate={navigatePage} /></Suspense>}
-          {page !== "Encomendas de clientes" && procurementMenu.some(([name]) => name === page) && <Suspense fallback={<p role="status">A carregar compras e stock…</p>}><Procurement key={page} section={page} store={store} stores={boot.stores} categories={boot.categories} navigate={navigatePage} /></Suspense>}
-          {[
-            "Receitas e despesas",
-          ].includes(page) && (
-            <section className="panel roadmap">
-              <span className="eyebrow">ÁREA INDISPONÍVEL</span>
-              <h1>{page}</h1>
-              <p>
-                {page === "Artigos e validades"
-                  ? "O controlo de lotes e validades ainda não está disponível nesta versão."
-                  : "A análise de receitas e despesas ainda não está disponível nesta versão."}
-              </p>
-              <p>
-                Pode continuar a consultar os movimentos, conferir a caixa e organizar os documentos nos restantes módulos.
-              </p>
-              <ActionButton onClick={() => navigatePage("Folha de caixa")}>
-                Ir para folha de caixa
-              </ActionButton>
-            </section>
-          )}
+          {page === "Encomendas de clientes" && <Suspense fallback={<LoadingState />}><CustomerOrders stores={boot.stores} store={store} company={boot.company} navigate={navigatePage} onStoreChange={changeWorkspaceStore} /></Suspense>}
+          {page !== "Encomendas de clientes" && PROCUREMENT_PAGES.includes(page) && <Suspense fallback={<p role="status">A carregar compras e stock…</p>}><Procurement key={page} section={page} store={store} stores={boot.stores} categories={boot.categories} navigate={navigatePage} /></Suspense>}
           {page === "Prazos de pagamento" && <TablePage tableKey="payment_terms" context={tableContext} active={activePage === page} />}
           {page === "Tipos de Documentos" && <TablePage tableKey="document_types" context={tableContext} active={activePage === page} />}
           {(page === "Clientes" || page === "Fornecedores") && <TablePage tableKey={page === "Clientes" ? "customers" : "suppliers"} context={tableContext} active={activePage === page} />}

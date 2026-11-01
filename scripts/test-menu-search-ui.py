@@ -17,6 +17,8 @@ def mock(route):
     path = urlsplit(route.request.url).path
     if path == "/api/bootstrap":
         result = boot
+    elif path == "/api/workspace/search":
+        result = {"read_only":True,"groups":[]}
     elif path == "/api/dashboard":
         result = {}
     elif path == "/api/stock/catalog":
@@ -33,11 +35,11 @@ with sync_playwright() as p:
     page.route("**/api/**", mock)
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto("http://127.0.0.1:5174/?pagina=Apar%C3%AAncia")
-    search = page.get_by_role("combobox", name="Pesquisar menus", exact=True)
+    search = page.get_by_role("combobox", name="Pesquisa global", exact=True)
     expect(search).to_be_visible()
     search.fill("reconciliacao")
     expect(page.get_by_role("option", name=re.compile("Reconciliação automática"))).to_be_visible()
-    expect(page.get_by_role("listbox", name="Menus encontrados").get_by_role("option")).to_have_count(1)
+    expect(page.get_by_role("listbox", name="Resultados da pesquisa global").get_by_role("option")).to_have_count(1)
     page.keyboard.press("Escape")
     expect(search).to_have_attribute("aria-expanded", "false")
     page.keyboard.press("Control+k")
@@ -48,15 +50,15 @@ with sync_playwright() as p:
     expect(search).to_have_value("")
     expect(search).to_have_attribute("aria-expanded", "false")
     search.fill("arquivo")
-    options = page.get_by_role("listbox", name="Menus encontrados").get_by_role("option")
+    options = page.get_by_role("listbox", name="Resultados da pesquisa global").get_by_role("option")
     expect(options.first).to_have_attribute("aria-selected", "true")
     page.keyboard.press("ArrowDown")
     expect(options.nth(1)).to_have_attribute("aria-selected", "true")
     page.keyboard.press("ArrowUp")
     expect(options.first).to_have_attribute("aria-selected", "true")
     search.fill("zzznenhummenu")
-    expect(page.get_by_text("Nenhum menu encontrado.", exact=True)).to_be_visible()
-    page.get_by_role("button", name="Limpar pesquisa de menus").click()
+    expect(page.get_by_text("Sem resultados para esta pesquisa e âmbito.", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Limpar pesquisa global").click()
     expect(search).to_have_value("")
     search.fill("fornecedores")
     output = Path(".local/menu-search")
@@ -74,15 +76,15 @@ with sync_playwright() as p:
     boot["user"]["role"] = "operador"
     page.reload()
     search.fill("regime de iva")
-    expect(page.get_by_text("Nenhum menu encontrado.", exact=True)).to_be_visible()
+    expect(page.get_by_text("Sem resultados para esta pesquisa e âmbito.", exact=True)).to_be_visible()
     search.fill("verificacao")
-    expect(page.get_by_text("Nenhum menu encontrado.", exact=True)).to_be_visible()
+    expect(page.get_by_text("Sem resultados para esta pesquisa e âmbito.", exact=True)).to_be_visible()
     search.fill("saf")
     expect(page.get_by_role("option", name=re.compile("Importar SAF-T de vendas"))).to_be_visible()
     boot["integration"]["mode"] = "integrated"
     page.reload()
     search.fill("saf")
-    expect(page.get_by_text("Nenhum menu encontrado.", exact=True)).to_be_visible()
+    expect(page.get_by_text("Sem resultados para esta pesquisa e âmbito.", exact=True)).to_be_visible()
     assert not errors, errors
     browser.close()
 print("PASS: menu search, accents, keyboard, navigation, role/mode filters and mobile/light/dark; no writes.")

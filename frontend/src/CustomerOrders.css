@@ -27,6 +27,19 @@
   width: min(940px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
 }
+.co-simulation-dialog.ui-dialog { width:min(1240px,calc(100vw - 32px)); }
+.co-simulation-dialog .co-simulator-layout { display:grid;grid-template-columns:minmax(0,1.6fr) minmax(300px,1fr);gap:18px 22px;align-items:start;min-width:0; }
+.co-simulator-layout>* { grid-column:1;min-width:0; }
+.co-simulator-layout>h2,.co-simulator-layout>.workspace-savebar { grid-column:1 / -1; }
+.co-simulator-layout>.co-simulator-summary { grid-column:2;grid-row:2 / span 20;align-self:start;position:sticky;top:10px;padding:20px;border:1px solid var(--border-default);border-radius:16px;background:var(--surface-primary); }
+.co-simulator-summary>h3 { margin:0 0 16px;font-size:20px; }
+.co-simulator-summary .co-totals { margin:14px 0; }
+.co-simulator-summary .co-grid { grid-template-columns:1fr; }
+.co-simulator-summary .co-totals>dl { display:flex;flex-direction:column;gap:10px; }
+.co-simulator-summary .co-totals>dl>div { display:flex;justify-content:space-between;align-items:baseline;gap:16px; }
+.co-simulator-summary .co-totals>dl dd { text-align:right;margin:0; }
+.co-simulator-summary .co-totals>dl>div:nth-child(7) { padding-top:14px;border-top:1px solid var(--border-default);font-size:20px;font-weight:700; }
+@media(max-width:1100px) { .co-simulation-dialog .co-simulator-layout { display:block; }.co-simulator-layout>.co-simulator-summary { position:static;margin:20px 0; }.co-simulator-layout>.co-simulator-summary>* { max-width:100%; } }
 .co-dialog details {
   padding: 12px 0;
   border-bottom: 1px solid var(--color-border);
@@ -50,7 +63,8 @@
   display: block;
 }
 .co-warning {
-  color: var(--text-warning, var(--color-text));
+  color: var(--color-warning);
+  font-weight: 600;
 }
 .co-inline,
 .co-alert {
@@ -123,4 +137,265 @@
 }
 .customer-orders h2 {
   overflow-wrap: anywhere;
+}
+
+/* Pesquisa de fornecedor com acesso à ficha. */
+.co-supplier-field > .status-badge {
+  flex-basis: 100%;
+  white-space: normal;
+}
+.co-supplier-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  min-width: 0;
+  margin: 8px 0;
+}
+.co-supplier-field .supplier-picker {
+  flex: 1;
+  min-width: 0;
+}
+.co-inline-supplier {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.co-icon.ui-action,
+.co-inline-supplier button {
+  min-height: 28px;
+  padding: 4px 6px;
+}
+.co-muted {
+  color: var(--color-muted);
+}
+
+/* Cabeçalho com estado à direita (detalhe do pedido). */
+.co-need-head {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.co-need-head .status-badge {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .co-need-head {
+    flex-direction: column;
+  }
+}
+/* Filtros dos pedidos e secções juntas no mesmo separador. */
+.co-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 12px;
+}
+.co-attention > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.co-section {
+  margin-top: 24px;
+}
+
+/* Destaques nas janelas: a cor só marca o que pede atenção ou ação. */
+.co-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.co-line-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  margin: 2px 0;
+}
+.customer-orders td .status-badge {
+  display: inline-block;
+  margin-top: 2px;
+}
+.co-highlight {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 4px solid currentColor;
+}
+.co-highlight-success { color: var(--color-success); background: var(--color-success-bg); }
+.co-highlight-warning { color: var(--color-warning); background: var(--color-warning-bg); }
+.co-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 14px;
+  margin: 12px 0;
+}
+.co-facts dt {
+  font-size: 13px;
+  color: var(--color-muted);
+}
+.co-facts dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.co-text-danger {
+  color: var(--color-danger);
+}
+.co-notes {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--color-subtle);
+  white-space: pre-wrap;
+}
+.co-quantities > div {
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.co-q-warning { background: var(--color-warning-bg); }
+.co-q-warning :is(dt, dd) { color: var(--color-warning); }
+.co-q-success { background: var(--color-success-bg); }
+.co-q-success :is(dt, dd) { color: var(--color-success); }
+.co-q-muted dd { color: var(--color-muted); }
+.co-product .co-need-head h3 {
+  margin: 0;
+}
+.co-product-locked {
+  border-left: 4px solid var(--color-info);
+}
+
+/* Simulador: condições do fornecedor e reposição automática. */
+.co-terms-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  align-items: center;
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-info);
+  border-radius: 8px;
+  background: var(--color-info-bg);
+}
+.co-terms-summary small {
+  color: var(--color-muted);
+}
+.co-low-stock {
+  margin: 16px 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+.co-low-stock h3 {
+  margin: 0;
+}
+.co-low-stock table {
+  width: 100%;
+}
+.co-low-stock td .co-icon {
+  margin-left: 6px;
+}
+.co-due {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: center;
+  margin: 2px 0 6px;
+}
+.co-due small {
+  flex-basis: 100%;
+}
+
+/* Encomendas necessárias: cor da linha = o que fazer; quantidades e valores em destaque. */
+.co-need-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+.co-need-row > td:first-child {
+  box-shadow: inset 4px 0 0 var(--co-need-tone, var(--color-border));
+}
+.co-need-row-danger { --co-need-tone: var(--color-danger); }
+.co-need-row-danger > td { background: var(--color-danger-bg); }
+.co-need-row-warning { --co-need-tone: var(--color-warning); }
+.co-need-row-success { --co-need-tone: var(--color-success); }
+.co-need-supplier {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+.co-need-supplier small,
+.co-need-line small,
+.co-need-value small,
+.co-due small {
+  display: block;
+  color: var(--color-muted);
+}
+.co-need-line {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 4px 0 8px;
+}
+.co-qty {
+  min-width: 2.2em;
+  padding: 2px 6px;
+  border-radius: 6px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--color-info);
+  background: var(--color-info-bg);
+  border: 1px solid var(--color-info);
+}
+.co-need-value {
+  display: grid;
+  gap: 4px;
+  min-width: 150px;
+  justify-items: start;
+}
+.co-amount {
+  font-size: 1.15rem;
+}
+.co-need-value progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--color-primary);
+}
+.co-need-value .co-text-warning {
+  color: var(--color-warning);
+}
+.co-due {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: center;
+}
+.co-need-actions {
+  display: grid;
+  gap: 6px;
+  justify-items: stretch;
+}
+.co-need-actions .ui-action {
+  justify-content: center;
+  white-space: nowrap;
+}
+.co-terms-source {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-weight: 600;
+}
+.co-terms-adjust > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.co-shipping-goal { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border-default); }
+.co-shipping-goal progress { width: 100%; accent-color: var(--context-suggestion); }
+.co-shipping-goal p { font-weight: 600; }
+.co-bonus {
+  margin: 6px 0;
 }

@@ -190,3 +190,5 @@
   flex-shrink: 0;
   color: var(--color-nav, #14263f);
 }
+
+.record-overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; margin: 12px 0; }

@@ -28,9 +28,14 @@ export function updateLocationParam(
   value: string,
   replace = false,
 ) {
+  updateLocationParams({ [name]: value || null }, replace);
+}
+export function updateLocationParams(values: Record<string, string | null>, replace = false) {
   const url = new URL(window.location.href);
-  if (value) url.searchParams.set(name, value);
-  else url.searchParams.delete(name);
+  for (const [name, value] of Object.entries(values)) {
+    if (value !== null) url.searchParams.set(name, value);
+    else url.searchParams.delete(name);
+  }
   if (url.href === window.location.href) return;
   window.history[replace ? "replaceState" : "pushState"](null, "", url);
   window.dispatchEvent(new Event(changed));
@@ -135,6 +140,7 @@ export function ModuleTabs({
         <ActionButton
           type="button"
           key={tab.id}
+          inferAction={false}
           id={`${prefix}-tab-${encodeURIComponent(tab.id)}`}
           role={panels ? "tab" : undefined}
           aria-selected={panels ? value === tab.id : undefined}

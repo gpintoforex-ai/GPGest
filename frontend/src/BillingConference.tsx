@@ -1,3 +1,5 @@
+import { MetricCard } from "./components/BusinessUI";
+import OperationsOverview from "./components/OperationsOverview";
 import { currentMonthRange } from "./components/DatePresets";
 import { takePeriod } from "./utils/periodHandoff";
 import DatePresets from "./components/DatePresets";
@@ -111,6 +113,11 @@ export default function BillingConference({ stores, store, manager }: { stores: 
     </div><ActionButton disabled={busy} onClick={() => setVersion(v => v + 1)}><RefreshCw size={16} />Atualizar</ActionButton></section>
     {!data && !error && <p role="status">A carregar faturação e recebimentos…</p>}
     {indicators && <BillingIndicators indicators={indicators} />}
+    <OperationsOverview source={data} title="Conferência de vendas" scope={`${start} a ${end} · estabelecimento selecionado · faturação e recebimentos são medidas distintas`} loaded={!!data} error={!data && !!error} metrics={[
+      {label:"Documentos",value:data?.documents?.length,description:"Documentos incluídos na consulta do período",tone:"info",onOpen:()=>setTab("documentos")},
+      {label:"Correspondências propostas",value:data?.suggestions?.length,description:"Sugestões para revisão; não são associações confirmadas",tone:"suggestion",onOpen:()=>setTab("sugestoes")}
+    ]} suggestion={data?.suggestions?.length ? {title:"Rever correspondências de faturação",reason:"Compare os documentos e os recebimentos de origem antes de confirmar a associação.",evidence:[`${data.suggestions.length} propostas da conferência no período ${start} a ${end}`,"Associar não cria um recebimento nem emite uma fatura."],actionLabel:"Rever propostas de conferência",onReview:()=>setTab("sugestoes")}:null}/>
+
     {data && !data.billing_available && <Notice tone="warning">Sem NIF da empresa configurado, não há faturação SAF-T para conferir. Os recebimentos continuam disponíveis.</Notice>}
     {data && <section className="panel">
       <div className="conference-tabs" role="group" aria-label="Vistas da conferência">{tabs.map(([key, label]) => <ActionButton key={key} type="button" aria-pressed={tab === key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>{label}</ActionButton>)}</div>
@@ -184,7 +191,7 @@ export function BillingIndicators({ indicators }: { indicators: Row }) {
     ["Em conferência", c.pending_cents, `${c.pending_documents} documento(s) por justificar · justificado ${money(c.justified_cents)}`],
   ];
   return <section className="panel billing-indicators" aria-label="Indicadores de faturação e tesouraria">
-    <div className="billing-cards">{cards.map(([label, value, hint]) => <div key={label} className="billing-card"><span>{label}</span><strong>{value === null ? "Sem informação" : money(value)}</strong><small>{hint}</small></div>)}</div>
+    <div className="billing-cards">{cards.map(([label, value, hint]) => <MetricCard key={label} className="billing-card" label={label} value={value === null ? "Sem informação" : money(value)} description={hint} />)}</div>
     {indicators.to_justify_cents !== null && <p className="billing-difference"><strong>Por justificar/conferir: {money(indicators.to_justify_cents)}</strong> (total faturado com IVA − recebimentos líquidos). <small>{indicators.to_justify_note}</small></p>}
   </section>;
 }

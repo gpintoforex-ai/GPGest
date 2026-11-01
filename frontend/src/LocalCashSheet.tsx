@@ -1,3 +1,4 @@
+import { ContextSuggestion } from "./components/OverviewUI";
 import Info from "./components/InfoIcon";
 import CashConferenceWindow from "./CashConferenceWindow";
 import { ActionLink } from "./components/InteractionUI";
@@ -567,6 +568,11 @@ export default function LocalCashSheet({
       className="panel cash-sheet local-cash-sheet"
       aria-label={`Folha de caixa ${register}`}
     >
+      {editable && cashDifference !== null && cashDifference !== 0 && <ContextSuggestion title="Rever a diferença de numerário" tone="warning"
+        evidence={[`Folha de ${s.sheet.day} · ${register}`,`Contado menos esperado: ${money(cashDifference)}`,"Valores da conferência preenchida nesta folha; confirme a contagem e a justificação antes de guardar."]}
+        actionLabel="Rever contagem de numerário" onReview={()=>setCountDialog(true)}>
+        A contagem apresenta uma diferença. Reveja-a antes do fecho; os movimentos de regularização continuam sujeitos às regras e confirmações existentes.
+      </ContextSuggestion>}
       <div className="local-cash-header">
         <div className="local-cash-identity">
           <h3>
@@ -675,6 +681,26 @@ export default function LocalCashSheet({
         counted={counted}
         declaredSales={!legacyClose}
       />
+        {editable && countDialog && (
+          <CashCountDialog
+            defaultMode={preferences.countMode}
+            initial={{
+              mode: form.mode as "total" | "denominations",
+              counts: form.counts,
+              total: form.cash,
+            }}
+            expected={cashExpected}
+            onCancel={() => setCountDialog(false)}
+            onApply={(draft) => {
+              update({
+                mode: draft.mode,
+                counts: draft.counts,
+                cash: draft.total,
+              });
+              setCountDialog(false);
+            }}
+          />
+        )}
       <SaftReference sessionId={s.id} selectedDay={s.sheet.day}/>
       <CashConferenceWindow title={s.closed_at ? "Ver detalhes do fecho" : "Conferência e fecho"} information={<div className="cash-conference-header-info">          <ActionButton
             type="button"
@@ -799,6 +825,7 @@ export default function LocalCashSheet({
           </div>
         </details>
         </div>
+        {editable && <p className="footnote">Ao fechar, cada diferença conferida gera um movimento real: entrada por excesso ou saída por falta. O rascunho e a conferência não criam estes movimentos; reabrir estorna os lançamentos do fecho.</p>}
         <Field
           label={
             hasDifference
@@ -1182,26 +1209,7 @@ export default function LocalCashSheet({
           </NumericKeypad>
         )}
 
-        {editable && countDialog && (
-          <CashCountDialog
-            defaultMode={preferences.countMode}
-            initial={{
-              mode: form.mode as "total" | "denominations",
-              counts: form.counts,
-              total: form.cash,
-            }}
-            expected={cashExpected}
-            onCancel={() => setCountDialog(false)}
-            onApply={(draft) => {
-              update({
-                mode: draft.mode,
-                counts: draft.counts,
-                cash: draft.total,
-              });
-              setCountDialog(false);
-            }}
-          />
-        )}
+
         {stored.updated_at && (
           <p className="footnote">
             Última alteração: {stored.updated_by_name || "Utilizador registado"}{" "}

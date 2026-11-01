@@ -8,7 +8,7 @@ const money = (v: any) => v === null || v === undefined || v === "" ? "Sem infor
 const quantity = (v: any) => new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 6 }).format(Number(v));
 const day = (v: string) => v.split("-").reverse().join("/");
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Lisbon" }).format(new Date());
-const blank = { supplier_id: "", revision: 0, supplier_reference: "", agreed_cost: "", valid_until: "", lead_days: "", min_quantity: "", pack_quantity: "", notes: "" };
+const blank = { supplier_id: "", revision: 0, supplier_reference: "", agreed_cost: "", valid_until: "", lead_days: "", min_quantity: "", pack_quantity: "", bonus_buy_quantity: "", bonus_free_quantity: "", notes: "" };
 const normalize = (value: Row): Row => ({
   terms: Array.isArray(value?.terms) ? value.terms : [],
   can_edit: !!value?.can_edit,
@@ -64,6 +64,8 @@ export default function ArticleSupplierTerms({ articleId, suppliers, purchases, 
         lead_days: value.lead_days === "" ? null : Number(value.lead_days),
         min_quantity: decimal(value.min_quantity),
         pack_quantity: decimal(value.pack_quantity),
+        bonus_buy_quantity: decimal(value.bonus_buy_quantity),
+        bonus_free_quantity: decimal(value.bonus_free_quantity),
         notes: value.notes,
       }, { method: "PUT" })));
       setValue(blank);
@@ -98,7 +100,7 @@ export default function ArticleSupplierTerms({ articleId, suppliers, purchases, 
   </Field>;
   return <div className="article-supplier-terms" data-ignore-dirty>
     {data.terms.length ? <div className="table-wrap"><table className="responsive-data-table article-compact-table" aria-label="Condições por fornecedor">
-      <thead><tr><th>Fornecedor</th><th>Referência</th>{data.cost_visible && <><th>Preço acordado</th><th>Último custo real</th></>}<th>Prazo</th><th>Mínimo / múltiplo</th>{editable && <th>Ações</th>}</tr></thead>
+      <thead><tr><th>Fornecedor</th><th>Referência</th>{data.cost_visible && <><th>Preço acordado</th><th>Último custo real</th></>}<th>Prazo</th><th>Mínimo / múltiplo</th><th>Bonificação</th>{editable && <th>Ações</th>}</tr></thead>
       <tbody>{data.terms.map((t: Row) => {
         const expired = t.valid_until && t.valid_until < today();
         const paid = real(t.supplier_id);
@@ -111,6 +113,10 @@ export default function ArticleSupplierTerms({ articleId, suppliers, purchases, 
           </>}
           <td data-label="Prazo"><div>{t.lead_days === null ? "Sem prazo" : `${t.lead_days} dia(s)`}</div></td>
           <td data-label="Mínimo / múltiplo"><div>{t.min_quantity ? `${quantity(t.min_quantity)} ${unit}` : "—"} / {t.pack_quantity ? `${quantity(t.pack_quantity)} ${unit}` : "—"}</div></td>
+          <td data-label="Bonificação"><div>{t.bonus_buy_quantity
+            ? <><b>{quantity(t.bonus_buy_quantity)} + {quantity(t.bonus_free_quantity)} oferta</b>
+              {data.cost_visible && t.agreed_cost !== null && <small> · custo efetivo {money(Number(t.agreed_cost) * Number(t.bonus_buy_quantity) / (Number(t.bonus_buy_quantity) + Number(t.bonus_free_quantity)))} / un.</small>}</>
+            : "—"}</div></td>
           {editable && <td data-label="Ações"><div className="article-terms-actions">
             <ActionButton type="button" disabled={busy} aria-label={`Editar condições de ${t.supplier_name}`} onClick={() => choose(t.supplier_id)}>Editar</ActionButton>
             <ActionButton type="button" disabled={busy} aria-label={`Remover condições de ${t.supplier_name}`} onClick={() => remove(t)}>Remover</ActionButton>
@@ -133,6 +139,8 @@ export default function ArticleSupplierTerms({ articleId, suppliers, purchases, 
         {input("lead_days", "Prazo de entrega (dias)", { type: "number", inputMode: "numeric", min: "0", max: "3650", step: "1" })}
         {input("min_quantity", `Quantidade mínima (${unit})`, { type: "number", inputMode: "decimal", min: "0", step: "any" })}
         {input("pack_quantity", `Múltiplo de encomenda (${unit})`, { type: "number", inputMode: "decimal", min: "0", step: "any" })}
+        {input("bonus_buy_quantity", `Bonificação: na compra de (${unit})`, { type: "number", inputMode: "decimal", min: "0", step: "any" })}
+        {input("bonus_free_quantity", `Oferta de (${unit})`, { type: "number", inputMode: "decimal", min: "0", step: "any" })}
         {input("notes", "Observações", { maxLength: 300 })}
       </div>
       <div className="stock-actions">

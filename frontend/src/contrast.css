@@ -1,31 +1,33 @@
 /* Semantic contrast contract. Context classes keep light cards readable in dark mode. */
 :root, .surface-light {
-  --text-primary: #172b36; --text-secondary: #526572; --text-muted: #526572;
+  --text-primary: #14213d; --text-secondary: #526179; --text-muted: #526572;
   --text-label: #304653; --text-placeholder: #526572; --text-disabled: #65757f;
-  --surface-primary: #fff; --surface-secondary: #f5f7f9; --surface-elevated: #fff;
-  --border-default: #dce5e9; --border-control: #7c8f9a; --border-focus: #087765;
+  --surface-primary: #fff; --surface-secondary: #f6f8fc; --surface-elevated: #fff;
+  --border-default: #dce5e9; --border-control: #7c8ba1; --border-focus: #087f7b;
+  --field-highlight-bg: var(--surface-primary); --field-focus-ring: #5eead4;
   --icon-primary: #304653; --icon-secondary: #526572;
-  --action-primary: #0f6b5e; --action-primary-hover: #0b594f; --action-danger: #ad2935;
+  --action-primary: #1d4ed8; --action-primary-hover: #1e40af; --action-primary-ink: #1d4ed8; --action-danger: #ad2935;
   --action-primary-light: #32cbb0; --action-primary-light-hover: #48d8c5; --action-primary-light-ink: #102c39;
   --context-accent: #087765; --context-accent-bg: #e5f7f3;
   --context-success: #176b45; --context-success-bg: #eaf6ee;
   --context-warning: #805400; --context-warning-bg: #fff5e5;
-  --context-danger-bg: #fff0f1; --context-info: #24559a; --context-info-bg: #eef4ff;
+  --context-danger-bg: #fff0f1; --context-info: #24559a; --context-info-bg: #eef4ff; --context-suggestion: #6d28d9; --context-suggestion-bg: #ede9fe;
 }
 :root[data-theme="dark"], .surface-dark {
   --text-primary: #f5fafc; --text-secondary: #cbd8df; --text-muted: #bdcdd6;
   --text-label: #e0eaf0; --text-placeholder: #b3c5cf; --text-disabled: #9db0bb;
-  --surface-primary: #102c39; --surface-secondary: #071f2b; --surface-elevated: #143442;
-  --border-default: #355361; --border-control: #72929f; --border-focus: #53e0c6;
+  --surface-primary: #121d30; --surface-secondary: #0b1220; --surface-elevated: #1b2940;
+  --border-default: #355361; --border-control: #7b8ba5; --border-focus: #5eead4;
+  --field-highlight-bg: var(--surface-primary); --field-focus-ring: #5eead4;
   --icon-primary: #e0eaf0; --icon-secondary: #cbd8df;
-  --action-primary: #0e7469; --action-primary-hover: #0b6159; --action-danger: #ffacb4;
+  --action-primary: #2563eb; --action-primary-hover: #1e40af; --action-primary-ink: #93c5fd; --action-danger: #ffacb4;
   --context-accent: #53e0c6; --context-accent-bg: #103f43;
   --context-success: #9ae8b9; --context-success-bg: #123a2f;
   --context-warning: #f2ce7d; --context-warning-bg: #3b321c;
-  --context-danger-bg: #41232d; --context-info: #bed5ff; --context-info-bg: #172e4b;
+  --context-danger-bg: #41232d; --context-info: #bed5ff; --context-info-bg: #172e4b; --context-suggestion: #c4b5fd; --context-suggestion-bg: #291a46;
 }
 :root, :root[data-theme], .surface-light, .surface-dark {
-  --color-text: var(--text-primary); --color-muted: var(--text-secondary);
+  --color-bg: var(--surface-secondary); --color-text: var(--text-primary); --color-muted: var(--text-secondary);
   --color-surface: var(--surface-primary); --color-subtle: var(--surface-secondary);
   --color-border: var(--border-default); --color-primary: var(--action-primary);
   --color-primary-hover: var(--action-primary-hover); --color-accent-ink: var(--context-accent);
@@ -54,6 +56,19 @@
 :is(button,.ui-action).primary:disabled { opacity: 1; color: var(--text-disabled); background: var(--surface-secondary); border-color: var(--border-default); }
 .workspace .record-pagination button:disabled { opacity: 1; color: var(--text-disabled); background: var(--surface-secondary); }
 :is(button,.ui-action,input,select,textarea):focus-visible { outline: 3px solid var(--border-focus); outline-offset: 3px; }
+:is(.workspace,.platform-page,.login-form,dialog) :is(input,select,textarea):focus {
+  border-color:var(--border-focus);background-color:var(--field-highlight-bg);
+  outline:3px solid var(--field-focus-ring);outline-offset:3px;
+  box-shadow:0 0 0 1px var(--border-focus);
+}
+:is(.workspace,.platform-page,.login-form,dialog) input:-webkit-autofill {
+  -webkit-text-fill-color:var(--text-primary);
+  -webkit-box-shadow:0 0 0 1000px var(--field-highlight-bg) inset;
+  caret-color:var(--text-primary);
+}
+:is(.workspace,.platform-page,.login-form,dialog) input:-webkit-autofill:focus {
+  -webkit-box-shadow:0 0 0 1000px var(--field-highlight-bg) inset,0 0 0 1px var(--border-focus);
+}
 :is(.workspace,dialog) :is(input[type="checkbox"],input[type="radio"]) { accent-color: var(--action-primary); width: 18px; height: 18px; flex-shrink: 0; }
 :is(.workspace,dialog,.platform-page) :is(input[type="checkbox"],input[type="radio"]) { appearance: none; display: inline-grid; place-content: center; width: 18px; height: 18px; min-height: 18px; padding: 0; margin: 3px; border: 1.5px solid var(--border-control); border-radius: 4px; background: var(--surface-primary); vertical-align: middle; }
 :is(.workspace,dialog,.platform-page) input[type="radio"] { border-radius: 50%; }

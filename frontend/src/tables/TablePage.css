@@ -95,6 +95,10 @@
 .table-dialog {
   width: min(760px, calc(100vw - 32px));
 }
+/* Fichas com separadores (clientes, fornecedores): mais largas, menos linhas, sem deslocação. */
+.table-dialog:has(.table-tab-panels) {
+  width: min(1000px, calc(100vw - 32px));
+}
 .table-sync-dialog {
   width: min(980px, calc(100vw - 32px));
 }

@@ -1,7 +1,7 @@
 """Purchasing UI with mocked APIs; never creates real orders or sends email."""
 import json
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from playwright.sync_api import sync_playwright, expect
 
 root=Path(__file__).resolve().parents[1]
@@ -27,6 +27,9 @@ def intercept(route):
     elif path=='/entities':result=[supplier]
     elif path=='/purchases':result=[]
     elif path=='/procurement-ledger':result={'rows':[],'more':False}
+    elif path=='/procurement/expiry-returns':result={'items':[{'article_id':'p1','code':inv['article']['code'],'description':inv['article']['name'],'unit':'un',
+        'lot_id':'lot1','lot_number':'L-VAL','expiry':'2026-11-20','days_left':21,'warn_from':'2026-08-20','quantity':'3','warehouse_id':catalog['warehouses'][0]['id'],
+        'warehouse_name':catalog['warehouses'][0]['name'],'store_id':'demo','supplier_id':'supplier','supplier_name':supplier['name'],'months':3}]}
     else:return ns['intercept'](route)
     route.fulfill(content_type='application/json',body=json.dumps(result))
 
@@ -38,9 +41,9 @@ with sync_playwright() as p:
         errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
         page.add_init_script(f"localStorage.setItem('iazela-theme','{theme}')")
         page.route('**/api/**',intercept)
-        page.goto('http://127.0.0.1:5174/')
-        page.get_by_role('button',name='Compras e Stock',exact=True,include_hidden=True).evaluate('(e)=>e.click()')
-        page.get_by_role('button',name='Encomendas a fornecedores',exact=True,include_hidden=True).evaluate('(e)=>e.click()')
+        # Páginas abertas pelo endereço: o menu está a ser reorganizado e não faz parte deste teste.
+        open_page=lambda name:page.goto('http://127.0.0.1:5174/?pagina='+quote(name))
+        open_page('Encomendas a fornecedores')
         page.get_by_role('button',name='Nova encomenda',exact=True).click()
         dialog=page.get_by_role('dialog',name='Encomenda — rascunho')
         expect(dialog).to_be_visible()
@@ -59,6 +62,38 @@ with sync_playwright() as p:
         expect(detail).to_be_visible()
         expect(detail.get_by_role('button',name='Confirmar encomenda',exact=True)).to_be_visible()
         assert len(documents)==1 and documents[0]['lines'][0]['quantity']=='20'
+        detail.get_by_role('button',name='Fechar',exact=True).click()
+        # Receção: encomendas por receber no topo, com os clientes à espera.
+        documents[0].update(status='confirmed',confirmed_at='2026-10-18T12:00:00Z',document='ENC/1',expected_date='2026-10-01',
+            customer_orders=[{'order_id':'o1','number':'PC-1','customer':'Cliente Urgente','description':inv['article']['name'],'waiting':'5','urgent':True,'due_date':None}])
+        open_page('Receções de mercadoria')
+        pending=page.get_by_role('table',name='Encomendas por receber',exact=True)
+        expect(pending).to_contain_text('ENC/1')
+        expect(pending).to_contain_text('PC-1 · Cliente Urgente · 5')
+        expect(pending.get_by_text('Em atraso',exact=True)).to_be_visible()
+        page.screenshot(path=str(output/f'to-receive-{theme}-{width}.png'),full_page=True)
+        audit=page.evaluate((root/'scripts/contrast-audit.js').read_text(encoding='utf-8'))
+        assert not audit.get('failures'),audit.get('failures')
+        assert not audit.get('overflow'),audit
+        pending.get_by_role('button',name='Receber',exact=True).click()
+        receipt=page.get_by_role('dialog',name='Receção — rascunho')
+        expect(receipt.get_by_label('Quantidade recebida',exact=True)).to_have_value('20')
+        expect(receipt.get_by_label('Anexar PDF (guarda no Arquivo digital)',exact=True)).to_be_visible()
+        receipt.get_by_role('button',name='Fechar',exact=True).click()
+        # Devoluções: lotes a acabar a validade de fornecedores que aceitam devolução.
+        open_page('Devoluções a fornecedores')
+        expiring=page.get_by_role('table',name='Produtos a devolver por validade',exact=True)
+        expect(expiring).to_contain_text('L-VAL')
+        expect(expiring).to_contain_text('Faltam 21 dia(s)')
+        page.screenshot(path=str(output/f'expiry-returns-{theme}-{width}.png'),full_page=True)
+        expiring.get_by_role('button',name='Preparar devolução',exact=True).click()
+        back=page.get_by_role('dialog',name='Devolução — rascunho')
+        expect(back.get_by_label('Quantidade',exact=True)).to_have_value('3')
+        expect(back.get_by_label('Divergências / motivo',exact=True)).to_have_value('Validade 20/11/2026: devolução aceite pelo fornecedor')
+        expect(back.get_by_label('Tipo de motivo',exact=True)).to_have_value('validade')
+        back.get_by_role('button',name='Fechar',exact=True).click()
+        dirty=page.get_by_role('alertdialog',name='Descartar alterações?',exact=True)
+        if dirty.count():dirty.get_by_role('button',name='Descartar alterações',exact=True).click()
         assert not errors,errors
         page.close()
     browser.close()

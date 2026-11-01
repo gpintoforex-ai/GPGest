@@ -154,6 +154,7 @@ export function StockAvailability({
     let alive = true;
     void api("/order-cycle/stock?store_id=" + encodeURIComponent(storeId))
       .then((r) => {
+        if (!Array.isArray(r.items)) throw new Error("O stock livre está indisponível. Atualize a consulta para tentar novamente.");
         if (alive) setRows(r.items);
       })
       .catch((e) => {
@@ -199,19 +200,30 @@ export function ReplenishmentRecommendations({
 }) {
   const [rows, setRows] = useState<Row[]>([]),
     [selected, setSelected] = useState<Row | null>(null);
+  const [period, setPeriod] = useState("0"), [customDays, setCustomDays] = useState(90);
+  const periodDays = period === "custom" ? customDays : Number(period);
+  const recommendationRequest = useRef(0);
   const action = useCycleAction();
   async function load() {
+    const request = ++recommendationRequest.current;
+    if (period === "custom" && (!Number.isInteger(periodDays) || periodDays < 7 || periodDays > 730)) {
+      setRows([]);
+      action.setError("Escolha entre 7 e 730 dias de histórico.");
+      return;
+    }
+    action.setError("");
     const result = await api(
       "/order-cycle/recommendations?store_id=" +
         encodeURIComponent(storeId) +
         "&supplier_id=" +
-        encodeURIComponent(supplierId),
+        encodeURIComponent(supplierId) +
+        (periodDays >= 7 && periodDays <= 730 ? "&period_days=" + periodDays : ""),
     );
-    setRows(result.items);
+    if (request === recommendationRequest.current) setRows(result.items);
   }
   useEffect(() => {
     if (storeId) void load().catch((e) => action.setError(e.message));
-  }, [storeId, supplierId]);
+  }, [storeId, supplierId, periodDays]);
   if (!storeId)
     return (
       <Notice>Escolha uma loja para calcular necessidades de compra.</Notice>
@@ -224,6 +236,14 @@ export function ReplenishmentRecommendations({
         seleção é sempre sua.
       </p>
       {action.error && <Notice role="alert">{action.error}</Notice>}
+      <Field label="Período de vendas">
+        <select value={period} onChange={e => setPeriod(e.target.value)}>
+          <option value="0">Configuração do artigo / fornecedor</option>
+          {[7, 15, 30, 60, 90].map(days => <option key={days} value={days}>{days} dias</option>)}
+          <option value="custom">Personalizado</option>
+        </select>
+      </Field>
+      {period === "custom" && <Field label="Dias de histórico (7 a 730)"><input type="number" min={7} max={730} value={customDays} onChange={e => setCustomDays(Number(e.target.value))} /></Field>}
       <ActionButton
         disabled={action.busy}
         onClick={() => void action.run(load)}
@@ -254,6 +274,8 @@ export function ReplenishmentRecommendations({
                 Livre {quantity(r.free)} · Trânsito {quantity(r.incoming)}
                 <br />
                 Pedidos {quantity(r.customer_demand)}
+                <small>Cobertura: {r.coverage_days == null ? "sem histórico" : `${quantity(r.coverage_days)} dias`} · Prazo: {r.lead_days ?? "—"} dias</small>
+                {r.sales_history && <small>Vendas 30 / 60 / 90 dias: {quantity(r.sales_history["30"])} / {quantity(r.sales_history["60"])} / {quantity(r.sales_history["90"])}</small>}
               </>
             ),
           },
@@ -300,6 +322,7 @@ export function ReplenishmentRecommendations({
               <div className="actions">
                 {onAdd && (
                   <ActionButton
+                    variant="suggestion"
                     disabled={Number(r.quantity) <= 0 || !r.supplier_id}
                     onClick={() => onAdd(r)}
                   >
@@ -351,6 +374,7 @@ export function ReplenishmentRecommendations({
                 ["coverage_days", "Dias de cobertura", 1, 365],
                 ["history_days", "Dias de histórico", 7, 730],
                 ["shelf_days", "Validade prevista (dias)", 1, 3650],
+                ["maximum_stock", "Stock máximo após satisfazer clientes", 0, 1000000000000],
                 ["seasonal_factor", "Fator sazonal", 0, 10],
                 [
                   "budget_cents",
@@ -383,7 +407,7 @@ export function ReplenishmentRecommendations({
                       })
                     }
                     required={
-                      !["shelf_days", "budget_cents"].includes(String(key))
+                      !["shelf_days", "budget_cents", "maximum_stock"].includes(String(key))
                     }
                   />
                 </Field>

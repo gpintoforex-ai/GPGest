@@ -1,4 +1,4 @@
-import { beginOperation, reportFormError, responseError } from "../components/InteractionUI";
+import { beginOperation, fieldErrorSummary, reportFormError, responseError } from "../components/InteractionUI";
 
 export async function api(path: string, body?: unknown, options?: { timeoutMs?: number; method?: "POST" | "PUT" | "DELETE"; preserveDraft?: boolean }) {
   const operation = beginOperation(path, body !== undefined);
@@ -24,6 +24,9 @@ export async function api(path: string, body?: unknown, options?: { timeoutMs?: 
   if (r.status === 401) window.dispatchEvent(new Event("gpgest-expired"));
   if (!r.ok) {
     const error = responseError(data.detail, r.status);
+    // A mensagem diz que campos rever (com o nome que aparece no ecrã), não só «os assinalados».
+    if (Object.keys(error.fields).length && error.message.startsWith("Reveja os campos assinalados"))
+      error.message = `Reveja: ${fieldErrorSummary(operation.form, error.fields)}.`;
     reportFormError(operation.form, error);
     throw error;
   }

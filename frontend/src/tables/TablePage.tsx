@@ -1,3 +1,5 @@
+import OperationsOverview from "../components/OperationsOverview";
+import { useRecordHandoff } from "../components/useRecordHandoff";
 import { useCallback, useEffect, useState } from "react";
 import { CircleMinus, Eye, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
@@ -48,6 +50,10 @@ export default function TablePage({ tableKey, context, active = true, store = ""
   const [warning, setWarning] = useState("");
   const [busy, setBusy] = useState("");
 
+  useRecordHandoff(tableKey, [tableKey === "customers" ? "Clientes" : tableKey === "suppliers" ? "Fornecedores" : ""], id => {
+    if (!active || !table || !listing || table.key !== tableKey || !["customers","suppliers"].includes(tableKey)) return false;
+    setDialog({kind:"record",mode:"view",id}); return true;
+  });
   const load = useCallback(async () => {
     const params = new URLSearchParams({ q: query, status, origin, sync, store, sort: sort.id, direction: sort.direction, page: String(page), size: String(size) });
     for (const [name, value] of Object.entries(fieldFilters)) if (value) params.set("f_" + name, value);
@@ -125,6 +131,12 @@ export default function TablePage({ tableKey, context, active = true, store = ""
     {error && <Notice className="error" role="alert">{error}</Notice>}
     {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
     {warning && <Notice className="warning" role="status">{warning}</Notice>}
+    <OperationsOverview source={listing} title={`Resumo de ${table.title.toLocaleLowerCase("pt-PT")}`} scope="Contagem do servidor para todos os resultados dos filtros atuais; a grelha mantém a paginação e as permissões da tabela." error={!!error} metrics={[
+      {label:"Resultados filtrados",value:listing.total,description:"Registos de todas as páginas que correspondem à pesquisa",tone:"info"},
+      {label:"Registos nesta página",value:rows.length,description:`Página ${listing.page} de ${listing.pages}`,tone:"neutral"}
+    ]} suggestion={rows.some(r=>r.sync_state === "conflito" || r.sync_state === "erro") && permissions.view ? {
+      title:"Rever o estado de integração",reason:"Consulte a ficha e a origem do conflito antes de sincronizar ou alterar o registo.",evidence:["Há conflitos ou erros entre os registos da página atual.","Origem: estados de sincronização devolvidos pela tabela, sem novas consultas externas por linha."],actionLabel:"Consultar registo com conflito",onReview:()=>{const row=rows.find(r=>r.sync_state === "conflito" || r.sync_state === "erro");if(row)setDialog({kind:"record",mode:"view",id:row.id});}
+    }:null}/>
     {integrated && <section className="panel table-erp-bar" aria-label="Integração com o ERP">
       <div className="table-erp-heading">
         <h2>Integração com o ERP{erp.provider ? ` (${erp.provider === "wintouch" ? "Wintouch" : erp.provider})` : ""}</h2>
