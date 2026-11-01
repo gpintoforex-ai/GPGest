@@ -45,6 +45,9 @@ class Line(Strict):
     quantity: D = Field(gt=0, le=10**9, decimal_places=6)
     rejected: D = Field(default=ZERO, ge=0, le=10**9, decimal_places=6)
     price: D = Field(default=ZERO, ge=0, le=10**9, decimal_places=6)
+    # Preço unitário da fatura (líquido dos descontos indicados), sem repartir unidades oferecidas:
+    # é o «último preço» do artigo; o custo em stock continua a incluir a oferta.
+    document_price: D | None = Field(default=None, ge=0, le=10**9, decimal_places=6)
     discount: D = Field(default=ZERO, ge=0, le=100, decimal_places=4)
     vat: D = Field(default=D(23), ge=0, le=100, decimal_places=3)
     warehouse_id: str | None = None
@@ -86,6 +89,8 @@ class Draft(Strict):
     category_id: str | None = None
     # Fatura original no Arquivo digital (receção a partir de fatura e respetiva correção).
     archive_document_id: str | None = Field(default=None, max_length=36)
+    # PDF anexados ao documento (guia, fatura…), guardados no Arquivo digital.
+    archive_attachment_ids: list[str] = Field(default_factory=list, max_length=10)
     # Tipo de documento de compra (FC, FCD, NCC…): efeito financeiro ao confirmar a receção.
     document_type_id: str | None = Field(default=None, max_length=36)
     payment_method: str | None = Field(default=None, max_length=20)
@@ -116,6 +121,11 @@ class Confirm(Strict):
 class Cancel(Strict):
     revision: int
     reason: str = Field(min_length=3, max_length=2000)
+
+class ExpiryClaim(Strict):
+    revision: int
+    status: Literal['reclamada', 'sem_reclamacao']
+    note: str = Field(min_length=3, max_length=2000)
 
 class EditConfirmed(Draft):
     """Edição de uma receção confirmada: os mesmos campos do lançamento e as autorizações."""
@@ -188,7 +198,7 @@ def document_view(db, row, cost_visible=True, usage=None):
     supplier = db.get(BusinessEntity, row.supplier_id)
     paid_cents = paid_total(db, row.purchase_id) if row.purchase_id else 0
     purchase = db.get(Purchase, row.purchase_id) if row.purchase_id else None
-    has_attachment = bool(payload.get('attachments')) or bool(purchase and (
+    has_attachment = bool(payload.get('attachments')) or bool(payload.get('archive_attachment_ids')) or bool(purchase and (
         db.scalar(select(PurchaseAttachment.id).where(PurchaseAttachment.purchase_id == purchase.id).limit(1)) or
         db.scalar(select(DriveDocumentAttachment.id).where(DriveDocumentAttachment.purchase_id == purchase.id).limit(1))))
     erp = db.scalar(select(DocumentERPLink.id).where(DocumentERPLink.purchase_id == row.purchase_id, DocumentERPLink.undone_at.is_(None))) if row.purchase_id else None
@@ -201,6 +211,9 @@ def document_view(db, row, cost_visible=True, usage=None):
         'payment_status': 'paid' if purchase and paid_cents >= abs(purchase.amount_cents) else 'partial' if paid_cents else 'unpaid',
         'attachment_status': 'present' if has_attachment else 'missing', 'erp_status': 'linked' if erp else 'not_linked',
         'check_status': 'checked' if purchase and purchase.validated else 'pending'}
+    if row.kind == 'order':
+        from .customer_orders import order_customers
+        result['customer_orders'] = order_customers(db, row.id)
     from .models import EmailDispatch
     result['email_history'] = [{'id': e.id, 'status': e.status, 'started_at': e.started_at, 'created_at': e.created_at,
         'error': e.error, 'uncertain': e.uncertain} for identifier in payload.get('email_ids', []) if (e := db.get(EmailDispatch, identifier))]
@@ -261,6 +274,8 @@ def validate(db, user, payload, authorize):
             fail('Documento ERP indisponível ou anulado neste estabelecimento.')
     if payload.archive_document_id and not db.get(ArchiveDocument, payload.archive_document_id):
         fail('A fatura original do arquivo já não existe.')
+    if any(not db.get(ArchiveDocument, identifier) for identifier in payload.archive_attachment_ids):
+        fail('Um dos PDF anexados já não existe no Arquivo digital.')
 
 def resolve_source(db, row, line, allowed):
     source = db.get(Doc, line['source_id'])
@@ -306,6 +321,37 @@ def valuation(db, user, original_entry, quantity, invoice_price, invoice_vat, do
     db.add(adjustment)
     return {'value_delta': str(delta), 'inventory_value_delta': str(residual), 'consumed_value_delta': str(delta-residual)}
 
+# Validades na receção (dias desde a data do documento): aviso a menos de 2 anos, reclamação a menos de 1.
+EXPIRY_WARN_DAYS, EXPIRY_CLAIM_DAYS = 730, 365
+
+def expiry_review(db, payload):
+    """Validade obrigatória nos artigos com lotes; devolve os avisos de validade curta das linhas."""
+    received_on = date.fromisoformat(payload['document_date'])
+    alerts, missing = [], []
+    for index, line in enumerate(payload['lines']):
+        if line.get('nature') != 'goods' or not line.get('article_id') or accepted(line) <= 0:
+            continue
+        article = db.get(StockArticle, line['article_id'])
+        if not article or not json.loads(article.data or '{}').get('lots'):
+            continue
+        expiry, lot = line.get('expiry'), None
+        if line.get('lot_id'):
+            lot = db.get(StockLot, line['lot_id'])
+        elif (line.get('lot_number') or '').strip():
+            lot = db.scalar(select(StockLot).where(StockLot.article_id == article.id, StockLot.number == line['lot_number'].strip()))
+        expiry = expiry or (lot.expiry if lot else None)
+        label = f"«{line.get('description') or article.name}»" + (f" (lote {line.get('lot_number') or lot.number})" if (line.get('lot_number') or lot) else '')
+        if not expiry:
+            missing.append(label)
+            continue
+        days = (date.fromisoformat(str(expiry)[:10]) - received_on).days
+        if days < EXPIRY_WARN_DAYS:
+            alerts.append({'line': index, 'description': line.get('description') or article.name, 'lot': line.get('lot_number') or (lot.number if lot else ''),
+                'expiry': str(expiry)[:10], 'days': days, 'level': 'reclamar' if days < EXPIRY_CLAIM_DAYS else 'aviso'})
+    if missing:
+        fail('Indique a validade dos artigos com lote antes de lançar: ' + ', '.join(missing) + '.')
+    return alerts
+
 def confirm_document(db, user, row, options, authorize, audit):
     if row.confirmed_at:
         return row
@@ -316,6 +362,17 @@ def confirm_document(db, user, row, options, authorize, audit):
         fail('Não pode confirmar movimentos/documentos futuros.')
     if row.kind in ('receipt','return') and policy(db).get('authority',{}).get('stock')=='erp':
         fail('O stock desta empresa é controlado pelo ERP. O conector não suporta escrever estes movimentos.',409)
+    # Rascunhos aceitam fichas incompletas; lançar exige rubrica, prazo e meio de pagamento do fornecedor.
+    from .entities import require_complete_supplier
+    require_complete_supplier(user, db, row.supplier_id, 'lançar o documento')
+    if row.kind == 'receipt':
+        # Antes de qualquer movimento: sem validade nos artigos com lote, a receção não é lançada.
+        payload.pop('expiry_alerts', None)
+        alerts = expiry_review(db, payload)
+        if alerts:
+            payload['expiry_alerts'] = alerts
+            if any(a['level'] == 'reclamar' for a in alerts) and not payload.get('expiry_claim'):
+                payload['expiry_claim'] = {'status': 'pendente'}
     # Serialize with imports and stock writers, before stock/duplicate checks.
     differences = []
     # A direct goods invoice creates an explicit, traceable receipt first; invoice posting
@@ -373,13 +430,17 @@ def confirm_document(db, user, row, options, authorize, audit):
                 fail('Uma compra importada/integrada exige ligação a uma receção local explícita, para evitar duplicar stock.')
             original_entry = original.get('stock_entry_ids', [None])[0] if original and row.kind == 'return' else None
             entry_price=net_price(line)
+            document_price=D(line['document_price']) if line.get('document_price') is not None else None
             if row.kind!='return' and not stock.settings(db)['recoverable_vat']:
                 meta=json.loads(db.get(StockArticle,line['article_id']).data)
-                entry_price=entry_price*(1+D(line['vat'])/100)/(1+D(meta.get('vat_rate',0))/100)
+                factor=(1+D(line['vat'])/100)/(1+D(meta.get('vat_rate',0))/100)
+                entry_price=entry_price*factor
+                document_price=document_price*factor if document_price is not None else None
             outgoing = row.kind == 'return' or credit_note  # Nota de crédito: saída de stock.
             entries = stock.post(db, user, stock.MovementInput(
                 article_id=line['article_id'], warehouse_id=line['warehouse_id'], kind='supplier_return' if outgoing else 'purchase',
                 quantity=q, unit_cost=entry_price.quantize(D('0.00000001')) if not outgoing else None,
+                document_price=document_price.quantize(D('0.00000001')) if document_price is not None and not outgoing else None,
                 occurred_on=payload['document_date'], document=payload['document'] or row.id,
                 reason=line['reason'] or LABELS[row.kind] + ' confirmada', request_key=f'procurement:{row.id}:{i}' + (f":e{payload['edition']}" if payload.get('edition') else ''),
                 supplier_id=row.supplier_id, lot_id=line.get('lot_id'), lot_number=line.get('lot_number',''),
@@ -542,6 +603,72 @@ def replace_confirmed(db, user, row, data, authorize, audit, extra=None):
         row.store_id)
     return row
 
+def next_order_sequence(db):
+    """Próximo número das encomendas a fornecedores (EC-0001, …), chamado sob o bloqueio da empresa."""
+    rows = db.scalars(select(Doc.data).where(Doc.kind == 'order'))
+    return max((json.loads(data).get('order_sequence') or 0 for data in rows), default=0) + 1
+
+def order_label(sequence):
+    return f'EC-{sequence:04d}'
+
+def reserved_for_customers(db, row):
+    """Uma receção já distribuída pelos pedidos dos clientes não se anula nem se reescreve aqui."""
+    from .customer_orders import distributed
+    if distributed(db, row.id):
+        fail('Esta receção reservou produtos para pedidos de clientes. Liberte essas reservas nas '
+             'Encomendas de clientes e corrija com uma devolução ao fornecedor.', 409)
+
+def expiry_return_items(db, stores):
+    """Lotes em stock de fornecedores que aceitam devolver produtos a acabar a validade, dentro do aviso."""
+    import calendar
+    from datetime import timedelta
+
+    from .customer_orders import terms as supplier_terms
+    from .models import StockArticle, StockEntry, StockLot, StockWarehouse
+
+    warehouses = {w.id: w for w in db.scalars(select(StockWarehouse).where(StockWarehouse.store_id.in_(stores)))}
+    today = date.today()
+    # Aviso máximo: 36 meses; cada fornecedor filtra depois pelo seu prazo.
+    horizon = (today + timedelta(days=36 * 31)).isoformat()
+    lots = {lot.id: lot for lot in db.scalars(select(StockLot).where(
+        StockLot.expiry.is_not(None), StockLot.expiry >= today.isoformat(), StockLot.expiry <= horizon))}
+    if not lots or not warehouses:
+        return {'items': []}
+    stock_rows = db.execute(select(StockEntry.lot_id, StockEntry.warehouse_id, func.sum(StockEntry.quantity))
+        .where(StockEntry.lot_id.in_(lots), StockEntry.warehouse_id.in_(warehouses))
+        .group_by(StockEntry.lot_id, StockEntry.warehouse_id)).all()
+    conditions, names, items = {}, {}, []
+    for lot_id, warehouse_id, quantity in stock_rows:
+        if quantity <= 0:
+            continue
+        lot = lots[lot_id]
+        article = db.get(StockArticle, lot.article_id)
+        supplier_id = json.loads(lot.data or '{}').get('supplier_id') or json.loads(article.data).get('supplier_id')
+        if not supplier_id:
+            continue
+        if supplier_id not in conditions:
+            conditions[supplier_id] = supplier_terms(db, supplier_id)
+            entity = db.get(BusinessEntity, supplier_id)
+            names[supplier_id] = entity.name if entity else ''
+        config = conditions[supplier_id]
+        if not config.accepts_expiry_returns:
+            continue
+        expiry = date.fromisoformat(lot.expiry)
+        # Aviso N meses antes: mesmo dia do mês, recuado (fim de mês quando o dia não existe).
+        month = expiry.month - config.expiry_return_months
+        year = expiry.year + (month - 1) // 12
+        month = (month - 1) % 12 + 1
+        warn_from = date(year, month, min(expiry.day, calendar.monthrange(year, month)[1]))
+        if today < warn_from:
+            continue
+        items.append({'article_id': article.id, 'code': article.code, 'description': article.name,
+            'unit': json.loads(article.data).get('unit', 'un'), 'lot_id': lot.id, 'lot_number': lot.number,
+            'expiry': lot.expiry, 'days_left': (expiry - today).days, 'warn_from': warn_from.isoformat(),
+            'quantity': str(quantity), 'warehouse_id': warehouse_id, 'warehouse_name': warehouses[warehouse_id].name,
+            'store_id': warehouses[warehouse_id].store_id, 'supplier_id': supplier_id, 'supplier_name': names[supplier_id],
+            'months': config.expiry_return_months})
+    return {'items': sorted(items, key=lambda i: (i['expiry'], i['description']))}
+
 def register_routes(app, current, authorize, scope, audit):
     def get(db, user, identifier, write=False):
         row = db.get(Doc, identifier)
@@ -561,6 +688,11 @@ def register_routes(app, current, authorize, scope, audit):
         docs = [document_view(db,r,visible,usage) for r in rows]
         return {'documents': docs, 'mode': policy(db), 'can_write': user.role in ('administrador','gestor') and visible,
             'integration_note': 'Circuito local. Não envia encomendas, compras ou stock ao ERP. Nos artigos do ERP, o stock é registado aqui; código, nome e preço vêm do ERP.'}
+
+    @app.get('/api/procurement/expiry-returns')
+    def expiry_returns(user=Depends(current), db: Session=Depends(db_session)):
+        """Lotes em stock de fornecedores que aceitam devolver produtos a acabar a validade."""
+        return expiry_return_items(db, scope(user, db))
 
     @app.get('/api/procurement-ledger')
     def ledger(store_id:str='',start:date|None=None,end:date|None=None,article_id:str='',kind:str='',page:int=1,user=Depends(current),db:Session=Depends(db_session)):
@@ -597,6 +729,10 @@ def register_routes(app, current, authorize, scope, audit):
             return document_view(db,prior)
         raw.update(totals(raw['lines']))
         raw['creation_digest'] = digest
+        if data.kind == 'order' and not data.document.strip():
+            # Encomenda sem número do utilizador: numerador sequencial EC-0001, …
+            raw['order_sequence'] = next_order_sequence(db)
+            raw['document'] = order_label(raw['order_sequence'])
         row = Doc(kind=data.kind,store_id=data.store_id,supplier_id=data.supplier_id,user_id=user.id,request_key=data.request_key,data=stock.dump(raw))
         db.add(row);db.flush()
         audit(db,user,'compra_circuito_rascunho',row.id,{'kind':row.kind},row.store_id)
@@ -629,6 +765,10 @@ def register_routes(app, current, authorize, scope, audit):
                     if key not in Line.model_fields: line.pop(key)
             validate(db,user,Draft(**editable),authorize)
         result=confirm_document(db,user,row,data,authorize,audit)
+        if result.kind=='receipt':
+            # Reserva logo aos clientes o que chega das encomendas feitas para os pedidos deles.
+            from .customer_orders import distribute_receipt
+            distribute_receipt(db,user,result)
         db.commit()
         return document_view(db,result)
 
@@ -649,7 +789,24 @@ def register_routes(app, current, authorize, scope, audit):
         row = get(db, user, identifier, True)
         if row.revision != data.revision:
             fail('A receção mudou entretanto. Atualize antes de gravar.', 409)
+        reserved_for_customers(db, row)
         replace_confirmed(db, user, row, data, authorize, audit)
+        db.commit()
+        return document_view(db, row)
+
+    @app.post('/api/procurement/{identifier}/expiry-claim')
+    def expiry_claim(identifier: str, data: ExpiryClaim, user=Depends(current), db: Session=Depends(db_session)):
+        """Regista a reclamação ao fornecedor (ou a decisão de não reclamar) de uma validade curta."""
+        stock.lock(db)
+        row = get(db, user, identifier, True)
+        payload = json.loads(row.data)
+        if row.kind != 'receipt' or not payload.get('expiry_claim'):
+            fail('Esta receção não tem validades curtas por reclamar.', 409)
+        if row.revision != data.revision:
+            fail('A receção mudou entretanto. Atualize antes de gravar.', 409)
+        payload['expiry_claim'] = {'status': data.status, 'note': data.note.strip(), 'user_id': user.id, 'at': now().isoformat()}
+        row.data, row.revision = stock.dump(payload), row.revision + 1
+        audit(db, user, 'compra_circuito_reclamacao_validade', row.id, {'estado': data.status, 'nota': data.note.strip()}, row.store_id)
         db.commit()
         return document_view(db, row)
 
@@ -662,6 +819,7 @@ def register_routes(app, current, authorize, scope, audit):
             fail('Só uma receção confirmada pode ser anulada.', 409)
         if row.revision != data.revision:
             fail('A receção mudou entretanto. Atualize antes de anular.', 409)
+        reserved_for_customers(db, row)
         payload = json.loads(row.data)
         for index in range(len(payload['lines'])):
             if used(db, row.id, index, 'invoice') or used(db, row.id, index, 'return'):
@@ -752,9 +910,11 @@ def register_routes(app, current, authorize, scope, audit):
         config_row,config=configuration(db)
         if not config_row or not config['enabled']:fail('Ative o SMTP nas configurações de Email.')
         payload=json.loads(row.data)
+        # Encomenda alterada depois do envio: o reenvio é permitido (não com envios em curso/incertos).
+        settled=('accepted','received') if not payload.get('needs_resend') else ()
         for email_id in payload.get('email_ids',[]):
             prior=db.get(EmailDispatch,email_id)
-            if prior and prior.status in ('sending','accepted','received') or prior and prior.uncertain:
+            if prior and prior.status in ('sending',*settled) or prior and prior.uncertain:
                 fail('Já existe um envio aceite, em curso ou de resultado incerto. Consulte o histórico antes de repetir.',409)
         raw=pdf_bytes(db,row);key=f'encomenda-{row.id}.pdf';entity=supplier(db,row.supplier_id)
         dispatch=EmailDispatch(id=str(uuid4()),kind='supplier_order',request_key=str(uuid4()),created_by=user.id,
@@ -774,7 +934,15 @@ def register_routes(app, current, authorize, scope, audit):
         row=get(db,user,identifier,True)
         stock.require(user,stock.settings(db),'view_cost')
         if dispatch_id not in json.loads(row.data).get('email_ids',[]) or row.status=='cancelled':fail('Este envio não pertence à encomenda ativa.',409)
-        return submit_dispatch(db,get_dispatch(db,dispatch_id,True),data,user,audit)
+        result=submit_dispatch(db,get_dispatch(db,dispatch_id,True),data,user,audit)
+        # Reenvio aceite da versão alterada: deixa de estar por reenviar.
+        if result.get('status') in ('accepted','received'):
+            fresh = db.get(Doc, row.id)
+            payload = json.loads(fresh.data)
+            if payload.pop('needs_resend', None) is not None:
+                fresh.data = stock.dump(payload)
+                db.commit()
+        return result
 
 def pdf_bytes(db,row):
     from reportlab.lib import colors

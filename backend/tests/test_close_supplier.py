@@ -2,7 +2,7 @@ import json
 
 import pytest
 from app.models import Audit, BusinessEntity, CashSession
-from conftest import movement, open_cash
+from conftest import movement, open_cash, supplier_fields
 from sqlalchemy import select
 
 
@@ -104,7 +104,8 @@ def test_supplier_selected_from_company_list_is_linked_by_id(setup):
     client, ids, factory = setup
     with factory.begin() as db:
         supplier = BusinessEntity(
-            name="Fornecedor da lista", tax_number="500000000", is_supplier=True
+            name="Fornecedor da lista", tax_number="500000000", is_supplier=True,
+            **supplier_fields(db),
         )
         db.add(supplier)
         db.flush()
@@ -130,8 +131,8 @@ def test_supplier_selected_from_company_list_is_linked_by_id(setup):
 def test_supplier_debit_allocations_save_partial_amounts_without_guessing_movements(setup):
     client, ids, factory = setup
     with factory.begin() as db:
-        first = BusinessEntity(name="Fornecedor A", tax_number="500000001", is_supplier=True)
-        second = BusinessEntity(name="Fornecedor B", tax_number="500000002", is_supplier=True)
+        first = BusinessEntity(name="Fornecedor A", tax_number="500000001", is_supplier=True, **supplier_fields(db))
+        second = BusinessEntity(name="Fornecedor B", tax_number="500000002", is_supplier=True, **supplier_fields(db))
         db.add_all([first, second])
         db.flush()
         first_id, second_id = "local:" + first.id, "local:" + second.id
@@ -168,7 +169,7 @@ def test_supplier_debit_allocations_save_partial_amounts_without_guessing_moveme
 def test_supplier_debit_allocations_cannot_exceed_total(setup):
     client, ids, factory = setup
     with factory.begin() as db:
-        supplier = BusinessEntity(name="Fornecedor A", tax_number="500000001", is_supplier=True)
+        supplier = BusinessEntity(name="Fornecedor A", tax_number="500000001", is_supplier=True, **supplier_fields(db))
         db.add(supplier)
         db.flush()
         supplier_id = "local:" + supplier.id
@@ -193,7 +194,7 @@ def test_supplier_debit_allocations_cannot_exceed_total(setup):
 def test_full_five_euro_allocation_is_accepted_by_close_api(setup):
     client, ids, factory = setup
     with factory.begin() as db:
-        supplier = BusinessEntity(name="Fornecedor do fecho", is_supplier=True)
+        supplier = BusinessEntity(name="Fornecedor do fecho", is_supplier=True, **supplier_fields(db))
         db.add(supplier)
         db.flush()
         supplier_id = "local:" + supplier.id

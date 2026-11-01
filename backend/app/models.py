@@ -825,7 +825,10 @@ class WintouchProduct(WintouchRecord, Base):
     name: Mapped[str] = mapped_column(String(300))
     category_id: Mapped[str | None] = mapped_column(ForeignKey("wt_categories.id"))
     unit: Mapped[str | None] = mapped_column(String(40))
+    # Linha de preço 1 da Wintouch: sem IVA (sale_price) e com IVA, e a taxa de IVA de venda.
     sale_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    sale_price_vat: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    vat_rate: Mapped[Decimal | None] = mapped_column(Numeric(7, 4))
     last_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
     currency: Mapped[str | None] = mapped_column(String(3))
     batches_enabled: Mapped[bool | None] = mapped_column(Boolean)
@@ -1422,6 +1425,9 @@ class ArticleSupplierTerms(Base):
     lead_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     min_quantity: Mapped[Decimal | None] = mapped_column(Numeric(24, 6), nullable=True)
     pack_quantity: Mapped[Decimal | None] = mapped_column(Numeric(24, 6), nullable=True)
+    # Bonificação: na compra de `bonus_buy_quantity`, oferta de `bonus_free_quantity` (migração 0073).
+    bonus_buy_quantity: Mapped[Decimal | None] = mapped_column(Numeric(24, 6), nullable=True)
+    bonus_free_quantity: Mapped[Decimal | None] = mapped_column(Numeric(24, 6), nullable=True)
     notes: Mapped[str] = mapped_column(String(300), default="")
     revision: Mapped[int] = mapped_column(Integer, default=0)
     updated_by: Mapped[str] = mapped_column(ForeignKey("users.id"))

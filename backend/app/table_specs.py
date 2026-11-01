@@ -1208,6 +1208,35 @@ class EntitiesBinding(ErpBinding):
         raise HTTPException(422, "Ação não suportada para entidades.")
 
 
+# Condições de encomenda na ficha do fornecedor: as mesmas das Encomendas de clientes
+# (SupplierOrderTerms), para não as definir em cada simulação.
+SUPPLY_FIELDS = [
+    TableField("order_minimum", "Encomenda mínima aceite (€)", "decimal", column=False,
+               tab="Condições comerciais", group="Encomendas ao fornecedor", span=2,
+               help="Abaixo, o fornecedor recusa. Vazio: sem mínimo."),
+    TableField("shipping", "Portes por encomenda (€)", "decimal", column=False, tab="Condições comerciais",
+               group="Encomendas ao fornecedor", span=2, help="Vazio: sem portes."),
+    TableField("free_shipping", "Portes grátis a partir de (€)", "decimal", column=False, tab="Condições comerciais",
+               group="Encomendas ao fornecedor", span=2, help="Abaixo, paga portes. Vazio: paga sempre."),
+    TableField("lead_days", "Prazo de entrega (dias)", "number", minimum=0, maximum=3650, column=False,
+               tab="Condições comerciais", group="Encomendas ao fornecedor", span=2),
+    TableField("expiry_return_months", "Avisar quantos meses antes da validade", "number", minimum=1, maximum=36,
+               column=False, tab="Validades e devoluções", group="Devolução de produtos a acabar a validade", span=3,
+               help="Só com a devolução aceite: lista os lotes deste fornecedor a devolver."),
+    TableField("accepts_expiry_returns", "Aceita devolução de produtos a acabar a validade", "boolean", column=False,
+               tab="Validades e devoluções", group="Devolução de produtos a acabar a validade"),
+]
+SUPPLY_KEYS = {f.name for f in SUPPLY_FIELDS}
+
+
+def euros(cents):
+    return f"{cents / 100:.2f}" if cents else ""
+
+
+def cents(value):
+    return int((Decimal(str(value)) * 100).to_integral_value()) if value not in (None, "") else None
+
+
 class EntitiesSpec(TableSpec):
     model = BusinessEntity
     code_field = None
@@ -1217,21 +1246,23 @@ class EntitiesSpec(TableSpec):
         TableField("name", "Nome", required=True, min_length=2, max_length=300, tab="Dados gerais", group="Identificação e contactos", span=4),
         TableField("email", "Email", "email", max_length=200, tab="Dados gerais", group="Identificação e contactos", span=4),
         TableField("phone", "Telefone", max_length=60, tab="Dados gerais", group="Identificação e contactos", span=2),
-        TableField("address", "Morada", "textarea", max_length=500, column=False, tab="Dados gerais", group="Localização", span=6),
-        TableField("postal_code", "Código postal", max_length=20, column=False, tab="Dados gerais", group="Localização", span=2),
-        TableField("locality", "Localidade", max_length=120, column=False, tab="Dados gerais", group="Localização", span=4),
+        TableField("address", "Morada", "textarea", max_length=500, column=False, tab="Dados gerais", group="Localização", span=3),
+        TableField("postal_code", "Código postal", max_length=20, column=False, tab="Dados gerais", group="Localização", span=1),
+        TableField("locality", "Localidade", max_length=120, column=False, tab="Dados gerais", group="Localização", span=2),
         # Tipo de entidade assumido pela tabela (Clientes/Fornecedores); quem já tem os dois mantém-nos.
         TableField("is_customer", "Cliente", "boolean", column=False, hidden=True),
         TableField("is_supplier", "Fornecedor", "boolean", column=False, hidden=True),
-        TableField("category_id", "Rubrica", "category", create_required=True, tab="Condições comerciais", span=6),
-        TableField("payment_term_id", "Prazo de pagamento", "payment_term", create_required=True, tab="Condições comerciais", span=3),
-        TableField("payment_method_id", "Meio de pagamento", "payment_method", create_required=True, tab="Condições comerciais", span=3),
+        TableField("category_id", "Rubrica", "category", create_required=True, tab="Condições comerciais", span=2),
+        TableField("payment_term_id", "Prazo de pagamento", "payment_term", create_required=True, tab="Condições comerciais", span=2),
+        TableField("payment_method_id", "Meio de pagamento", "payment_method", create_required=True, tab="Condições comerciais", span=2),
     ]
 
     def __init__(self, key, title, singular, role):
         super().__init__()
         self.key, self.title, self.singular, self.role = key, title, singular, role
         self.description = "Entidades da empresa, importadas da Wintouch ou registadas na IAZELA."
+        if role == "supplier":
+            self.fields = [*EntitiesSpec.fields, *SUPPLY_FIELDS]
         self.erp = EntitiesBinding(self, role)
 
     def describe(self, ctx):
@@ -1270,7 +1301,80 @@ class EntitiesSpec(TableSpec):
     def values(self, ctx, row):
         row = row if "values" in row else self._row(row)
         references = ("category_id", "payment_term_id", "payment_method_id")
-        return {**{k: (v if v is not None else ("" if k not in references else None)) for k, v in row["values"].items()}, "active": row["active"]}
+        result = {**{k: (v if v is not None else ("" if k not in references else None)) for k, v in row["values"].items()}, "active": row["active"]}
+        if self.role == "supplier":
+            terms = self._supply_terms(ctx, row["id"])
+            result.update(
+                order_minimum=euros(terms.minimum_cents),
+                shipping=euros(terms.shipping_cents),
+                free_shipping=f"{terms.free_shipping_cents / 100:.2f}" if terms.free_shipping_cents is not None else "",
+                lead_days=terms.lead_days,
+                accepts_expiry_returns=terms.accepts_expiry_returns,
+                expiry_return_months=terms.expiry_return_months,
+            )
+        return result
+
+    def _supply_cache(self, ctx):
+        """Condições e ligações ERP→ficha local carregadas uma vez por pedido (a listagem lê todas)."""
+        from .models import SupplierOrderTerms
+
+        cache = ctx.db.info.get("supplier_terms_cache")
+        if cache is None:
+            cache = {
+                "terms": {r.supplier_id: r.data for r in ctx.db.scalars(select(SupplierOrderTerms))},
+                "local": dict(ctx.db.execute(
+                    select(BusinessEntity.wintouch_id, BusinessEntity.id).where(BusinessEntity.wintouch_id.is_not(None))
+                ).all()),
+            }
+            ctx.db.info["supplier_terms_cache"] = cache
+        return cache
+
+    def _supply_owner(self, ctx, record_id):
+        """Identificador local que guarda as condições (fornecedor do ERP: a sua ficha local, se existir)."""
+        if record_id.startswith("local:"):
+            return record_id.removeprefix("local:")
+        return self._supply_cache(ctx)["local"].get(record_id.removeprefix("wt:"))
+
+    def _supply_terms(self, ctx, record_id):
+        from .customer_orders import CommercialTerms
+
+        owner = self._supply_owner(ctx, record_id)
+        raw = self._supply_cache(ctx)["terms"].get(owner) if owner else None
+        return CommercialTerms(**json.loads(raw)) if raw else CommercialTerms()
+
+    def _save_supply(self, ctx, record_id, values):
+        """Grava mínimo, portes e prazo nas condições do fornecedor; o resto das condições mantém-se."""
+        if not SUPPLY_KEYS & values.keys():
+            return
+        from .customer_orders import CommercialTerms, supplier
+        from .models import SupplierOrderTerms
+
+        current = self._supply_terms(ctx, record_id)
+        changes = {}
+        if "order_minimum" in values:
+            changes["minimum_cents"] = cents(values["order_minimum"]) or 0
+        if "shipping" in values:
+            changes["shipping_cents"] = cents(values["shipping"]) or 0
+        if "free_shipping" in values:
+            changes["free_shipping_cents"] = cents(values["free_shipping"])
+        if values.get("lead_days") is not None:
+            changes["lead_days"] = values["lead_days"]
+        if "accepts_expiry_returns" in values:
+            changes["accepts_expiry_returns"] = bool(values["accepts_expiry_returns"])
+        if values.get("expiry_return_months") is not None:
+            changes["expiry_return_months"] = values["expiry_return_months"]
+        if all(getattr(current, k) == v for k, v in changes.items()):
+            return
+        owner = self._supply_owner(ctx, record_id) or supplier(ctx.db, record_id).id
+        updated = CommercialTerms(**{**current.model_dump(), **changes})
+        row = ctx.db.get(SupplierOrderTerms, owner)
+        if row is None:
+            row = SupplierOrderTerms(supplier_id=owner)
+            ctx.db.add(row)
+        row.data = json.dumps(updated.model_dump(mode="json"), ensure_ascii=False)
+        row.revision = (row.revision or 0) + 1
+        ctx.db.info.pop("supplier_terms_cache", None)
+        ctx.audit("fornecedor_condicoes_encomenda", record_id, {"depois": changes}, None)
 
     def labels(self, ctx, rows):
         from .cash_local import method_catalog
@@ -1324,14 +1428,20 @@ class EntitiesSpec(TableSpec):
         return None
 
     def _edit(self, values, active):
+        values = {k: v for k, v in values.items() if k not in SUPPLY_KEYS}
         return entity_routes.EntityEdit(**{**values, "active": active, "payment_days": None})
 
     def create(self, ctx, values):
         saved = entity_routes.create_entity(self._edit(values, True), ctx.user, ctx.db)
-        return self._row({**saved, "has_movements": False})
+        created = self._row({**saved, "has_movements": False})
+        if self.role == "supplier":
+            self._save_supply(ctx, created["id"], values)
+        return created
 
     def update(self, ctx, row, values):
         entity_routes.edit_entity(row["id"], self._edit(values, row["active"]), ctx.user, ctx.db)
+        if self.role == "supplier":
+            self._save_supply(ctx, row["id"], values)
 
     def set_active(self, ctx, row, active):
         values = {k: v for k, v in row["values"].items()}
@@ -1405,7 +1515,9 @@ class DocumentTypesSpec(TableSpec):
         return result
 
     def rows(self, ctx):
-        ensure_document_types(ctx.db)
+        # Gravar já: sem commit, cada listagem mostraria tipos novos com identificadores diferentes.
+        if ensure_document_types(ctx.db):
+            ctx.db.commit()
         return super().rows(ctx)
 
     def labels(self, ctx, rows):

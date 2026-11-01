@@ -93,6 +93,20 @@ def test_seeded_types_and_table_rules(money):
     assert again.status_code == 200, again.text
 
 
+def test_removed_types_are_not_seeded_again(case):  # noqa: F811
+    c = case[0][0]
+    # Pré-carregados pela listagem e gravados: a ficha abre com o identificador listado.
+    first = records(c, "document_types")
+    assert {r["id"] for r in records(c, "document_types")} == {r["id"] for r in first}
+    assert c.get(f"/api/tables/document_types/records/{first[0]['id']}/details").status_code == 200
+    for row in first:
+        removed = c.post(f"/api/tables/document_types/records/{row['id']}/remove", json={"scope": "app", "confirmed": True})
+        assert removed.status_code == 200, removed.text
+    # A tabela esvaziada pelo utilizador fica vazia (sem tipos fantasma com identificadores novos).
+    assert records(c, "document_types") == []
+    assert c.get("/api/purchase-document-types/options").json()["types"] == []
+
+
 def test_cash_invoice_fcd_creates_real_cash_outflow(money):
     stock, _, _, session = money
     confirmed, aid = receipt(money, "FCD", "100")

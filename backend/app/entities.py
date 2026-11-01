@@ -332,6 +332,49 @@ def check_payment_method(db, method_id, current=None):
         raise HTTPException(422, f"O meio de pagamento «{method['name']}» está inativo e não pode ser escolhido.")
 
 
+def supplier_missing(view):
+    """Campos da ficha obrigatórios para usar o fornecedor em movimentos (lista vazia = completa).
+
+    Prazo e meio de pagamento da Wintouch contam como preenchidos.
+    """
+    missing = []
+    if not view.get("category_id"):
+        missing.append("Rubrica")
+    if not (view.get("payment_method_id") or view.get("erp_supplier_payment_method")):
+        missing.append("Meio de pagamento")
+    if not (
+        view.get("payment_term_id")
+        or view.get("erp_supplier_payment_term_id")
+        or view.get("erp_supplier_payment_term")
+    ):
+        missing.append("Prazo de pagamento")
+    return missing
+
+
+def require_complete_supplier(user, db, entity, action="usar este fornecedor num movimento"):
+    """Recusa movimentos com fornecedores sem rubrica, meio ou prazo de pagamento na ficha.
+
+    `entity` é a ficha local (`BusinessEntity`) ou o identificador (uuid, `local:…` ou `wt:…`).
+    """
+    if isinstance(entity, str):
+        if entity.startswith(("local:", "wt:")):
+            key = entity
+        else:
+            entity = db.get(BusinessEntity, entity)
+    if isinstance(entity, BusinessEntity):
+        key = "wt:" + entity.wintouch_id if entity.wintouch_id else "local:" + entity.id
+    elif entity is None:
+        return  # A existência do fornecedor é validada por quem chama.
+    view = next((row for row in list_entities(user, db) if row["id"] == key), None)
+    missing = supplier_missing(view) if view else []
+    if missing:
+        raise HTTPException(
+            422,
+            f"Complete a ficha do fornecedor «{view['name']}» antes de {action}: "
+            f"falta {', '.join(missing)}. Use «Editar fornecedor» ou Tabelas → Fornecedores.",
+        )
+
+
 def apply_payment_term(db, data, current=None):
     if data.payment_term_id is None:
         return

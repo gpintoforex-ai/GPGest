@@ -47,6 +47,7 @@ from .models import (
 )
 from .operating_modes import policy
 from .schemas import Strict
+from .supply_terms import article_terms, draft_replenishment, purchase_quantity
 
 router = APIRouter(prefix="/api/order-cycle", tags=["Ciclo de encomendas"])
 ZERO = D(0)
@@ -61,6 +62,7 @@ class Replenishment(orders.Change):
     shelf_days: int | None = Field(default=None, ge=1, le=3650)
     seasonal_factor: D = Field(default=D(1), ge=0, le=10, decimal_places=3)
     budget_cents: int | None = Field(default=None, ge=0, le=10**12)
+    maximum_stock: D | None = Field(default=None, ge=0, le=10**12, decimal_places=6)
 
 
 class LinkOriginal(orders.Change):
@@ -633,9 +635,16 @@ def stock_context(db, user, store_id):
 
 @router.get("/recommendations")
 def recommendations(
-    store_id: str, supplier_id: str = "", user=Depends(current), db: Session = Depends(db_session)
+    store_id: str,
+    supplier_id: str = "",
+    period_days: int = 0,
+    user=Depends(current),
+    db: Session = Depends(db_session),
 ):
+    """`period_days` substitui o histórico de vendas de cada artigo (simulador: período escolhido)."""
     orders.management(db, user, store_id)
+    if period_days and not 7 <= period_days <= 730:
+        orders.fail("O período de vendas deve ter entre 7 e 730 dias.")
     free, incoming, demand, expiring, prices, entries = stock_context(db, user, store_id)
     policies = {
         r.article_id: r
@@ -644,13 +653,17 @@ def recommendations(
         )
     }
     results = []
+    negotiated = article_terms(db)
+    planned = draft_replenishment(db, store_id)
     for article in db.scalars(select(StockArticle).order_by(StockArticle.name)):
         if not article.active:
             continue
         meta = json.loads(article.data)
         preferred = meta.get("supplier_id")
-        if supplier_id and preferred != supplier_id:
+        if supplier_id and preferred != supplier_id and (article.id, supplier_id) not in negotiated:
             continue
+        preferred = supplier_id or preferred
+        agreement = negotiated.get((article.id, preferred))
         row = policies.get(article.id)
         config = (
             Replenishment(**json.loads(row.data), request_key="read-only")
@@ -658,7 +671,13 @@ def recommendations(
             else Replenishment(store_id=store_id, article_id=article.id, request_key="read-only")
         )
         terms = orders.terms(db, preferred)
-        start = (date.today() - timedelta(days=config.history_days)).isoformat()
+        lead_days = (
+            agreement.lead_days
+            if agreement and agreement.lead_days is not None
+            else terms.lead_days
+        )
+        history_days = period_days or (config.history_days if row else terms.sales_period_days)
+        start = (date.today() - timedelta(days=history_days - 1)).isoformat()
         # Only actual sale exits establish demand. Transfers and stock corrections do not.
         sales = sum(
             (
@@ -671,29 +690,44 @@ def recommendations(
             ),
             ZERO,
         )
-        daily = sales / D(config.history_days) * config.seasonal_factor
+        daily = sales / D(history_days) * config.seasonal_factor
+        history = {
+            str(days): sum(
+                (
+                    -e.quantity
+                    for e in entries
+                    if e.article_id == article.id
+                    and e.kind == "sale"
+                    and e.quantity < 0
+                    and (date.today() - timedelta(days=days - 1)).isoformat()
+                    <= e.occurred_on
+                    <= date.today().isoformat()
+                ),
+                ZERO,
+            )
+            for days in (30, 60, 90)
+        }
         minimum = D(str(meta.get("minimum", 0)))
         target = max(
             minimum,
             D(str(meta.get("reorder", 0))),
-            config.safety + daily * (terms.lead_days + config.coverage_days),
+            config.safety + daily * (lead_days + config.coverage_days),
         )
+        projected = incoming.get(article.id, ZERO) + planned.get(article.id, ZERO)
         wanted = max(
             ZERO,
-            target
-            + demand.get(article.id, ZERO)
-            - free.get(article.id, ZERO)
-            - incoming.get(article.id, ZERO),
+            target + demand.get(article.id, ZERO) - free.get(article.id, ZERO) - projected,
         )
         quantum = D(1).scaleb(-meta.get("precision", 0))
         quantity = wanted.quantize(quantum, rounding="ROUND_UP")
         reasons = [
+            f"Reposição adicional já em rascunhos: {planned.get(article.id, ZERO)} (planeamento, sem stock comprometido).",
             f"Stock livre {free.get(article.id, ZERO)}; em trânsito {incoming.get(article.id, ZERO)}; procura de clientes sem reserva física (exclui simulações) {demand.get(article.id, ZERO)}.",
-            f"Vendas físicas nos últimos {config.history_days} dias: {sales}; prazo do fornecedor: {terms.lead_days} dias.",
+            f"Vendas físicas nos últimos {history_days} dias: {sales}; prazo do fornecedor: {lead_days} dias.",
             f"Objetivo de cobertura {target.quantize(D('.000001'))}; mínimo {minimum}; segurança {config.safety}; fator sazonal configurado {config.seasonal_factor}.",
         ]
         warnings = []
-        if article.erp_id or policy(db).get("authority", {}).get("stock") == "erp":
+        if policy(db).get("authority", {}).get("stock") == "erp":
             warnings.append(
                 "Stock ERP não consultável pelo conector atual; recomendação indisponível."
             )
@@ -707,21 +741,46 @@ def recommendations(
         if config.shelf_days:
             cap = max(
                 ZERO,
-                daily * max(0, config.shelf_days - terms.lead_days)
+                daily * max(0, config.shelf_days - lead_days)
                 - free.get(article.id, ZERO)
-                - incoming.get(article.id, ZERO),
+                - projected,
             )
             cap = cap.quantize(quantum, rounding="ROUND_DOWN")
-            customer_need = max(ZERO, demand.get(article.id, ZERO) - free.get(article.id, ZERO))
+            customer_need = max(
+                ZERO,
+                demand.get(article.id, ZERO) - free.get(article.id, ZERO) - projected,
+            )
             if quantity > max(customer_need, cap):
                 quantity = max(customer_need, cap).quantize(quantum, rounding="ROUND_UP")
                 warnings.append("Quantidade limitada pela validade prevista e procura observada.")
         elif meta.get("expiry"):
             warnings.append("Configure dias de validade antes de recomendar reposição extra.")
             quantity = min(
-                quantity, max(ZERO, demand.get(article.id, ZERO) - free.get(article.id, ZERO))
+                quantity,
+                max(
+                    ZERO,
+                    demand.get(article.id, ZERO) - free.get(article.id, ZERO) - projected,
+                ),
             )
-        cost = D(str(terms.prices.get(article.id, prices.get(article.id, 0))))
+        cost = D(
+            str(
+                agreement.agreed_cost
+                if agreement and agreement.agreed_cost is not None
+                else terms.prices.get(article.id, prices.get(article.id, 0))
+            )
+        )
+        if config.maximum_stock is not None:
+            quantity = min(
+                quantity,
+                max(
+                    ZERO,
+                    config.maximum_stock
+                    + demand.get(article.id, ZERO)
+                    - free.get(article.id, ZERO)
+                    - projected,
+                ),
+            )
+            warnings.append("Reposição sujeita ao stock máximo configurado.")
         if not cost:
             warnings.append("Preço de compra desconhecido; indique um custo antes da simulação.")
         capital = buying.money(quantity * cost)
@@ -736,6 +795,43 @@ def recommendations(
         margin = sale - cost if cost and sale else None
         if margin is not None and margin < 0:
             warnings.append("Margem unitária negativa ao preço conhecido; reveja antes de comprar.")
+            quantity = min(
+                quantity,
+                max(
+                    ZERO,
+                    demand.get(article.id, ZERO) - free.get(article.id, ZERO) - projected,
+                ),
+            )
+        ceiling = (
+            quantity
+            if (
+                config.shelf_days
+                or meta.get("expiry")
+                or config.maximum_stock is not None
+                or config.budget_cents is not None
+                or margin is not None
+                and margin < 0
+            )
+            else None
+        )
+        rounded = purchase_quantity(
+            quantity,
+            meta.get("precision", 0),
+            agreement.min_quantity if agreement else None,
+            agreement.pack_quantity if agreement else None,
+            ceiling,
+        )
+        if rounded != quantity:
+            warnings.append(
+                "Quantidade ajustada aos mínimos/múltiplos; reveja quando os limites de risco impedem comprar."
+            )
+        quantity = rounded
+        capital = buying.money(quantity * cost)
+        if not sales:
+            warnings.append(
+                "Sem vendas no período: apenas mínimos configurados e necessidades de clientes; reveja obsolescência."
+            )
+        coverage = free.get(article.id, ZERO) / daily if daily > 0 else None
         results.append(
             {
                 "article_id": article.id,
@@ -744,8 +840,23 @@ def recommendations(
                 "supplier_id": preferred,
                 "free": str(free.get(article.id, ZERO)),
                 "incoming": str(incoming.get(article.id, ZERO)),
+                "draft_replenishment": str(planned.get(article.id, ZERO)),
                 "customer_demand": str(demand.get(article.id, ZERO)),
                 "daily_sales": str(daily.quantize(D(".000001"))),
+                # Reposição automática: stock livre abaixo do mínimo do artigo e com vendas no período.
+                "minimum": str(minimum),
+                "below_minimum": bool(minimum) and free.get(article.id, ZERO) < minimum,
+                "period_days": history_days,
+                "period_sales": str(sales),
+                "sales_history": {key: str(value) for key, value in history.items()},
+                "coverage_days": str(coverage.quantize(D(".1"))) if coverage is not None else None,
+                "lead_days": lead_days,
+                "minimum_quantity": str(agreement.min_quantity)
+                if agreement and agreement.min_quantity
+                else None,
+                "pack_quantity": str(agreement.pack_quantity)
+                if agreement and agreement.pack_quantity
+                else None,
                 "quantity": str(quantity),
                 "unit_cost": str(cost),
                 "capital_cents": capital,
@@ -1560,7 +1671,7 @@ def automated_notifications(db, limit=10):
                 if (
                     not original["contact_allowed"]
                     or original["preferred_channel"] != "email"
-                    or not state["ready"]
+                    or not state["fully_ready"]
                     or state["notified"]
                 ):
                     db.rollback()

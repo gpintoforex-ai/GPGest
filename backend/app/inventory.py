@@ -231,6 +231,12 @@ def availability(history, allowed, lots, holds, active_warehouses=None):
     return {"reserved_quantity": str(reserved), "available_quantity": str(available)}
 
 
+def purchase_price(row):
+    """Preço de compra da entrada: o do documento (sem repartir ofertas) ou, sem ele, o custo."""
+    price = json.loads(row.data or "{}").get("document_price")
+    return D(price) if price is not None else row.unit_cost
+
+
 def average(rows):
     """Unknown inbound cost taints the pool until exhausted. Cost snapshots never change."""
     quantity, cost, last = ZERO, None, None
@@ -242,8 +248,8 @@ def average(rows):
                 cost += D(json.loads(row.data).get("inventory_value_delta", "0")) / quantity
             continue
         if row.quantity > 0:
-            if row.kind == "purchase":
-                last = row.unit_cost
+            if row.kind == "purchase" and row.unit_cost != 0:
+                last = purchase_price(row)
             cost = (
                 row.unit_cost
                 if quantity == 0
@@ -272,6 +278,13 @@ class ArticleAttachment(Strict):
         return value
 
 
+class OpeningLot(Strict):
+    """Lote que fica com o stock existente quando um artigo com movimentos passa a controlar lotes."""
+
+    number: str = Field(min_length=1, max_length=100)
+    expiry: date | None = None
+
+
 class ArticleInput(Strict):
     code: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=300)
@@ -298,6 +311,8 @@ class ArticleInput(Strict):
     location: str = Field(default="", max_length=200)
     lots: bool = False
     expiry: bool = False
+    # Só ao ligar «Controlar lotes» num artigo com movimentos (ver edit_article).
+    opening_lot: OpeningLot | None = None
     # Serviço (portes, mão de obra, assinaturas…): conta nas compras/vendas, mas não movimenta stock.
     service: bool = False
     active: bool = True
@@ -353,6 +368,8 @@ class MovementInput(Strict):
     quantity: Decimal = Field(gt=0, le=10**12, max_digits=18, decimal_places=6)
     adjustment_out: bool = False
     unit_cost: Decimal | None = Field(default=None, ge=0, le=10**9, max_digits=18, decimal_places=8)
+    # Preço unitário do documento de compra (sem repartir ofertas), para o «último preço».
+    document_price: Decimal | None = Field(default=None, ge=0, le=10**9, max_digits=18, decimal_places=8)
     net_sales: Decimal = Field(default=ZERO, ge=0, le=10**12, max_digits=18, decimal_places=6)
     direct_cost: Decimal = Field(default=ZERO, ge=0, le=10**9, max_digits=18, decimal_places=6)
     occurred_on: date = Field(default_factory=date.today)
@@ -395,7 +412,7 @@ def save_article(
                     "sale_net": D(old.get("sale_net", 0)),
                 }
             )
-    payload = data.model_dump(mode="json", exclude={"code", "name", "active", "revision"})
+    payload = data.model_dump(mode="json", exclude={"code", "name", "active", "revision", "opening_lot"})
     if existing:
         if (
             D(old.get("sale_net", 0)) != data.sale_net
@@ -405,11 +422,23 @@ def save_article(
         if (old.get("lots") != data.lots or old.get("expiry") != data.expiry) and entries(
             db, existing.id
         ):
-            field_fail(
-                "lots" if old.get("lots") != data.lots else "expiry",
-                "O controlo de lotes/validades não pode mudar num artigo com histórico.",
-                409,
-            )
+            enabling_lots = data.lots and not old.get("lots")
+            adding_expiry = data.lots and old.get("lots") and data.expiry and not old.get("expiry")
+            if enabling_lots and not data.opening_lot:
+                field_fail(
+                    "lots",
+                    "Este artigo já tem movimentos sem lote. Para passar a controlar lotes, indique o "
+                    "lote (e a validade) que fica com o stock existente.",
+                    409,
+                )
+            if enabling_lots and data.expiry and not data.opening_lot.expiry:
+                field_fail("opening_lot", "Indique a validade do lote que fica com o stock existente.")
+            if not (enabling_lots or adding_expiry):
+                field_fail(
+                    "lots" if old.get("lots") != data.lots else "expiry",
+                    "Num artigo com movimentos não é possível desligar o controlo de lotes ou de validades.",
+                    409,
+                )
         if data.service and not old.get("service") and entries(db, existing.id):
             field_fail(
                 "service", "Um artigo com movimentos de stock não pode passar a serviço.", 409
@@ -526,6 +555,10 @@ def post(db, user, data, authorize, *, source="manual", bypass=False):
         entity = db.get(BusinessEntity, data.supplier_id)
         if not entity or not entity.is_supplier or entity.removed:
             fail("Fornecedor inválido nesta empresa.")
+        if source == "manual":  # As compras já validam a ficha antes de gerar as entradas.
+            from .entities import require_complete_supplier
+
+            require_complete_supplier(user, db, entity, "registar o movimento de stock")
     history = entries(db, product.id)
     cost, _ = average(history)
     inbound = data.kind in INCOMING or data.kind == "adjustment" and not data.adjustment_out
@@ -602,8 +635,11 @@ def post(db, user, data, authorize, *, source="manual", bypass=False):
                 )
                 db.add(lot)
                 db.flush()
-    if not meta.get("lots") and (lot or data.lot_number):
-        fail("Este artigo não utiliza lotes.")
+    if not meta.get("lots") and (lot or data.lot_number or (inbound and data.expiry)):
+        fail(
+            f"«{product.name}» não controla lotes: o lote e a validade não seriam guardados. Ative "
+            "«Controlar lotes» na ficha do artigo (separador Validades e lotes) ou limpe o lote e a validade."
+        )
     allocations = [(lot.id if lot else None, data.quantity)]
     available = balances(history)
     if not inbound:
@@ -699,6 +735,7 @@ def post(db, user, data, authorize, *, source="manual", bypass=False):
                     "override_reason": data.override_reason,
                     "supplier_id": data.supplier_id,
                     "request": request,
+                    **({"document_price": str(data.document_price)} if data.document_price is not None else {}),
                 }
             ),
         }
@@ -788,8 +825,14 @@ def article_view(
         "active": erp.active if erp else row.active,
         "revision": row.revision,
         "sale_net": None if erp else data.get("sale_net", "0"),
-        "erp_price": str(erp.sale_price) if erp and erp.sale_price is not None else None,
-        "erp_price_basis": "IVA não identificado pelo conector" if erp else None,
+        # Linha de preço 1 da Wintouch: mostra-se o preço com IVA quando a API o devolve.
+        "erp_price": str(erp.sale_price_vat if erp.sale_price_vat is not None else erp.sale_price)
+        if erp and (erp.sale_price_vat is not None or erp.sale_price is not None)
+        else None,
+        "erp_price_net": str(erp.sale_price) if erp and erp.sale_price is not None else None,
+        "erp_vat_rate": str(erp.vat_rate) if erp and erp.vat_rate is not None else None,
+        "erp_price_basis": ("Com IVA" if erp.sale_price_vat is not None else "Sem IVA" if erp.sale_price is not None
+                            else "Sem preço no ERP") if erp else None,
         "origin": "ERP" if erp else "Local",
         "erp_id": row.erp_id,
         "synced_at": erp.synced_at if erp else None,
@@ -887,6 +930,7 @@ def register_routes(app, current, authorize, scope, audit):
         page: int | None = Query(None, ge=1),
         size: int = Query(25, ge=1, le=100),
         q: str = Query("", max_length=200),
+        record_id: str = "",
         family: str = "",
         category: str = "",
         brand: str = "",
@@ -920,6 +964,8 @@ def register_routes(app, current, authorize, scope, audit):
         if sort not in expressions:
             fail("Ordenação de artigos inválida.")
         query = select(StockArticle).outerjoin(external, external.id == StockArticle.erp_id)
+        if record_id:
+            query = query.where(StockArticle.id == record_id)
         for key, value in (
             ("family", family),
             ("category", category),
@@ -1262,14 +1308,17 @@ def register_routes(app, current, authorize, scope, audit):
             detail = json.loads(entry.data or "{}")
             group = by_supplier.setdefault(
                 detail.get("supplier_id") or "",
-                {"purchases": 0, "quantity": ZERO, "costs": [], "last": None},
+                {"purchases": 0, "quantity": ZERO, "costs": [], "last": None, "latest": None},
             )
             group["purchases"] += 1
             group["quantity"] += entry.quantity
-            if entry.unit_cost is not None:
-                group["costs"].append((entry.quantity, entry.unit_cost))
-            if group["last"] is None or entry.occurred_on >= group["last"][0].occurred_on:
-                group["last"] = (entry, detail.get("document"))
+            if group["latest"] is None or entry.occurred_on >= group["latest"][0].occurred_on:
+                group["latest"] = (entry, detail.get("document"))
+            # Preços de compra: o do documento (sem repartir ofertas); unidades oferecidas (custo 0) não contam.
+            if entry.unit_cost is not None and entry.unit_cost != 0:
+                group["costs"].append((entry.quantity, purchase_price(entry)))
+                if group["last"] is None or entry.occurred_on >= group["last"][0].occurred_on:
+                    group["last"] = (entry, detail.get("document"))
         supplier_names = {
             e.id: e.name
             for e in db.scalars(
@@ -1279,7 +1328,8 @@ def register_routes(app, current, authorize, scope, audit):
         main_supplier = json.loads(product.data).get("supplier_id")
 
         def supplier_view(supplier_id, group):
-            last, document = group["last"]
+            priced = group["last"]
+            last, document = priced or group["latest"]
             costs = group["costs"] if rights["view_cost"] else []
             weighted = sum((q for q, _ in costs), ZERO)
             return {
@@ -1290,8 +1340,8 @@ def register_routes(app, current, authorize, scope, audit):
                 "quantity": str(group["quantity"]),
                 "last_date": last.occurred_on,
                 "last_document": document,
-                "last_cost": str(last.unit_cost)
-                if rights["view_cost"] and last.unit_cost is not None
+                "last_cost": str(purchase_price(last))
+                if rights["view_cost"] and priced and last.unit_cost is not None
                 else None,
                 "min_cost": str(min(c for _, c in costs)) if costs else None,
                 "max_cost": str(max(c for _, c in costs)) if costs else None,
@@ -1491,10 +1541,36 @@ def register_routes(app, current, authorize, scope, audit):
         db: Session = Depends(db_session),
     ):
         lock(db)
-        row = save_article(db, user, data, article(db, identifier, True, stock=True))
+        current = article(db, identifier, True, stock=True)
+        # Passar a controlar lotes com stock já lançado: o stock sem lote passa para o lote indicado
+        # com dois ajustes registados (saída sem lote antes da mudança, entrada no lote depois, ao
+        # custo médio), sem apagar nem reescrever o histórico.
+        moved, history = [], entries(db, current.id)
+        converting = data.lots and not json.loads(current.data).get("lots") and data.opening_lot and history
+        if converting:
+            require(user, settings(db), "adjust_stock")
+            for (warehouse_id, lot_id), quantity in balances(history).items():
+                if lot_id is None and quantity > 0:
+                    post(db, user, MovementInput(
+                        article_id=current.id, warehouse_id=warehouse_id, kind="adjustment",
+                        adjustment_out=True, quantity=quantity,
+                        reason=f"Passagem a controlo de lotes: o stock sem lote passa para o lote {data.opening_lot.number}",
+                        request_key=f"lots:{current.id}:{current.revision}:{warehouse_id}:out",
+                    ), authorize, source="article_lots", bypass=True)
+                    moved.append((warehouse_id, quantity))
+        cost, _ = average(history)
+        row = save_article(db, user, data, current)
+        for warehouse_id, quantity in moved:
+            post(db, user, MovementInput(
+                article_id=row.id, warehouse_id=warehouse_id, kind="adjustment", quantity=quantity,
+                unit_cost=cost.quantize(Decimal("0.00000001")) if cost is not None else None,
+                lot_number=data.opening_lot.number.strip(), expiry=data.opening_lot.expiry,
+                reason=f"Passagem a controlo de lotes: stock existente no lote {data.opening_lot.number}",
+                request_key=f"lots:{row.id}:{current.revision}:{warehouse_id}:in",
+            ), authorize, source="article_lots", bypass=True)
         audit(db, user, "stock_article_edit", row.id, data.model_dump(mode="json"))
         db.commit()
-        return {"id": row.id}
+        return {"id": row.id, "lot_conversion": [{"warehouse_id": w, "quantity": str(q)} for w, q in moved]}
 
     @app.delete("/api/stock/articles/{identifier}")
     def delete_article(identifier: str, user=Depends(current), db: Session = Depends(db_session)):

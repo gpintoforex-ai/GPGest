@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import uuid4
 
 import httpx
@@ -372,6 +373,15 @@ def test_manual_sync_pagination_deduplication_and_demo_confirmation(platform, mo
             pass
 
         def get(self, target, params, headers):
+            # Preço da linha 1 por artigo e taxa de IVA na lista de alteração de preços.
+            if target.endswith("/prices"):
+                return httpx.Response(200, json=[
+                    {"Row": 2, "PriceWithoutVAT": 9, "PriceWithVAT": 11.07},
+                    {"Row": 1, "PriceWithoutVAT": 1.5, "PriceWithVAT": 1.85},
+                ])
+            if target.endswith("/product_prices_change"):
+                rows = [] if params["skip"] else [{"ID": "p1", "TaxRate": 23.0, "PriceWithVAT": 0}]
+                return httpx.Response(200, json=rows)
             calls.append((target, params, headers))
             if params["skip"] and not mode["fail"]:
                 return httpx.Response(200, json=[])
@@ -405,6 +415,9 @@ def test_manual_sync_pagination_deduplication_and_demo_confirmation(platform, mo
     with Session(engine.execution_options(schema_translate_map={None: schema})) as tenant:
         products = list(tenant.scalars(select(WintouchProduct)))
         assert len(products) == 1 and products[0].name == "Artigo"
+        assert (products[0].sale_price, products[0].sale_price_vat, products[0].vat_rate) == (
+            Decimal("1.5"), Decimal("1.85"), Decimal("23")
+        )
         assert tenant.scalar(select(WintouchSyncState)).last_success_at is not None
     history = c.get(url + "/sync-history")
     assert len(history.json()) == 3

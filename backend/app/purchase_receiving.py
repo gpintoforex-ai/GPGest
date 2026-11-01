@@ -78,7 +78,45 @@ def pdf_layout_text(raw):
         return ""
 
 
-def ocr_text(raw, mime):
+def scanned_page_images(raw):
+    """Fotografias originais de um PDF digitalizado (uma imagem por página, sem texto), ou [].
+
+    É o caso dos PDF da Digitalização de documentos: ler a fotografia original evita redesenhar a
+    página com menos resolução e outra compressão por cima.
+    """
+    from pypdf import PdfReader
+
+    try:
+        reader = PdfReader(io.BytesIO(raw), strict=False)
+        if reader.is_encrypted:
+            return []
+        result = []
+        for page in reader.pages[:5]:
+            if (page.extract_text() or "").strip():
+                return []
+            pictures = list(page.images)
+            if len(pictures) != 1:
+                return []
+            image = pictures[0].image.convert("RGB")
+            if image.width * image.height > 40_000_000 or min(image.size) < 300:
+                return []
+            result.append(image)
+        return result
+    except Exception:
+        return []
+
+
+def enlarged(image, side, grey):
+    """Ampliada até `side` px no lado maior (no máximo 2,5×): o OCR lê melhor algarismos maiores."""
+    from PIL import Image, ImageOps
+
+    factor = min(2.5, side / max(image.size))
+    if factor > 1:
+        image = image.resize((round(image.width * factor), round(image.height * factor)), Image.Resampling.LANCZOS)
+    return ImageOps.autocontrast(ImageOps.grayscale(image)) if grey else image
+
+
+def rendered_ocr_text(raw, mime):
     """OCR à resolução que melhor leu as faturas reais (3×, a cores, até 3500 px)."""
     from PIL import Image, ImageOps
 
@@ -118,17 +156,45 @@ def ocr_text(raw, mime):
             image.close()
 
 
+def ocr_attempts(raw, mime):
+    """Textos OCR por ordem de preferência (gerador: só se faz a tentativa seguinte se for precisa).
+
+    Fotografias da Digitalização (~1500 × 2100 px numa folha A4): primeiro a fotografia original
+    ampliada a 4000 px em cinzento, depois a cores a 3200 px, por fim a página redesenhada.
+    """
+    native = scanned_page_images(raw) if mime == "application/pdf" else []
+    try:
+        for side, grey in ((4000, True), (3200, False)):
+            if native:
+                yield "\n".join(ocr_image(enlarged(image, side, grey)) for image in native)
+        yield rendered_ocr_text(raw, mime)
+    finally:
+        for image in native:
+            image.close()
+
+
 def read_lines(raw, mime, base_cents):
-    """Primeiro o texto do PDF; o OCR só quando o texto não tem linhas legíveis."""
+    """Primeiro o texto do PDF; o OCR só quando o texto não tem linhas legíveis.
+
+    No OCR fica a primeira leitura cuja soma das linhas fecha com a base do documento; sem
+    nenhuma, a que leu mais linhas.
+    """
     warnings = []
     result, source = {"lines": [], "warnings": [], "check": {}}, "texto"
     if mime == "application/pdf":
         result = extract(pdf_layout_text(raw), base_cents)
     if not result["lines"]:
         if ocr_command():
-            scanned = extract(ocr_text(raw, mime), base_cents)
-            if scanned["lines"] or not result["lines"]:
-                result, source = scanned, "ocr"
+            best = None
+            for content in ocr_attempts(raw, mime):
+                scanned = extract(content, base_cents)
+                score = (scanned["check"].get("matches") is True, len(scanned["lines"]))
+                if best is None or score > best[0]:
+                    best = (score, scanned)
+                if score[0]:
+                    break
+            if best and (best[1]["lines"] or not result["lines"]):
+                result, source = best[1], "ocr"
         else:
             warnings.append("OCR indisponível no servidor: só é possível ler PDFs com texto.")
     result["warnings"] = warnings + result["warnings"]
@@ -286,6 +352,8 @@ class ReceiveLine(Strict):
     vat: D = Field(default=D(23), ge=0, le=100, decimal_places=3)
     lot: str = Field(default="", max_length=100)
     expiry: date | None = None
+    # Lote/validade num artigo sem controlo de lotes: ativá-lo na ficha ao lançar (se ainda sem stock).
+    enable_lots: bool = False
 
     @model_validator(mode="after")
     def one_article(self):
@@ -585,6 +653,23 @@ def register_routes(app, current, authorize, scope, audit):
                         discount=discount, vat=line.vat,
                     ))
                 continue
+            if not meta.get("lots") and (line.lot.strip() or line.expiry):
+                # Antes, o lote e a validade eram descartados sem aviso.
+                if not line.enable_lots:
+                    fail(
+                        f"Linha {number}: «{article.name}» não controla lotes; o lote e a validade indicados "
+                        "não seriam guardados. Ative «Controlar lotes e validades» para este artigo neste "
+                        "lançamento, ou limpe o lote e a validade da linha."
+                    )
+                if stock.entries(db, article.id):
+                    fail(
+                        f"Linha {number}: «{article.name}» já tem stock lançado sem lote. Ative os lotes na ficha "
+                        "do artigo, indicando o lote do stock existente, e volte a lançar."
+                    )
+                meta.update(lots=True, expiry=bool(line.expiry or meta.get("expiry")))
+                article.data, article.revision = stock.dump(meta), (article.revision or 0) + 1
+                audit(db, user, "stock_article_edit", article.id,
+                      {"origem": "receção a partir de fatura", "lots": True, "expiry": meta["expiry"]})
             if meta.get("lots") and not line.lot.strip():
                 fail(f"Linha {number}: «{article.name}» controla lotes; indique o lote.")
             learned += learned_here
@@ -599,6 +684,7 @@ def register_routes(app, current, authorize, scope, audit):
                 quantity=units,
                 price=line.price,
                 discount=discount,
+                document_price=(line.price * (1 - line.discount / 100) * (1 - data.global_discount / 100)).quantize(D("0.000001")),
                 vat=line.vat,
                 warehouse_id=warehouse.id,
                 lot_number=line.lot.strip() if meta.get("lots") else "",

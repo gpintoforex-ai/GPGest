@@ -36,7 +36,7 @@ from .cash_sheet import day as sheet_day_of
 from .cash_sheet import summary as sheet_summary
 from .access import authorize, cents, current, record, scope, serial
 from .db import db_session
-from .entities import list_entities
+from .entities import list_entities, supplier_missing
 from .table_rules import ensure_usable
 from .models import (
     Access,
@@ -236,7 +236,8 @@ def balance(db, session):
             next(row["expected_cents"] for row in stored["summary"] if row["key"] == "numerario"),
         )
     if cash_local.is_local(db, session, integration_policy):
-        return next(row["expected_cents"] for row in cash_local.drawer_rows(db, session) if row["key"] == "numerario")
+        expected = next(row["expected_cents"] for row in cash_local.drawer_rows(db, session) if row["key"] == "numerario")
+        return expected + cash_posting.difference_totals(db, session).get("numerario", 0)
     total = session.opening_cents + int(
         db.scalar(
             select(func.sum(Movement.direction * Movement.amount_cents)).where(
@@ -506,7 +507,8 @@ def session_result(db, s, rows=None, context=None):
     return {
         **serial(s),
         "count_data": counting,
-        "balance_cents": next(row["expected_cents"] for row in rows if row["key"] == "numerario") if local else balance(db, s),
+        "balance_cents": (next(row["expected_cents"] for row in rows if row["key"] == "numerario")
+            + cash_posting.difference_totals(db, s).get("numerario", 0)) if local and not s.closed_at else balance(db, s),
         "totals": {row["key"]: row["net_cents"] for row in rows},
         "sheet": {
             "workflow_mode": "local" if local else "integrated",
@@ -745,6 +747,17 @@ def cash_payment_method_status(method_id: str, data: PaymentMethodStatus, user=D
     return {**current_method, "active": data.active}
 
 
+def incomplete_supplier(view):
+    """Os débitos só se atribuem a fornecedores com rubrica, meio e prazo de pagamento na ficha."""
+    missing = supplier_missing(view)
+    if missing:
+        raise HTTPException(
+            422,
+            f"Complete a ficha do fornecedor «{view['name']}» antes de lhe atribuir débitos: "
+            f"falta {', '.join(missing)}. Use Tabelas → Fornecedores.",
+        )
+
+
 @app.post("/api/sessions/{session_id}/close")
 def close_session(
     session_id: str,
@@ -793,6 +806,7 @@ def close_session(
             selected = active_suppliers.get(allocation.supplier_id)
             if not selected:
                 raise HTTPException(404, "Fornecedor ativo não encontrado nesta empresa.")
+            incomplete_supplier(selected)
             supplier_allocations.append({
                 "id": selected["id"],
                 "name": selected["name"],
@@ -821,6 +835,7 @@ def close_session(
         supplier = next((e for e in list_entities(user, db) if e["id"] == data.supplier_id and e["is_supplier"] and e["active"]), None)
         if not supplier:
             raise HTTPException(404, "Fornecedor ativo não encontrado nesta empresa.")
+        incomplete_supplier(supplier)
     supplier_name = supplier["name"] if supplier else data.supplier_name.strip()
     if data.supplier_answer == "indicado" and not supplier_allocations and len(supplier_name) < 2:
         raise HTTPException(422, "Indique o nome do fornecedor dos débitos.")
@@ -890,6 +905,7 @@ def close_session(
         # discrepancy remain separate, so nothing is added a second time.
         rows = cash_local.drawer_rows(db, s)
         ledger_expected = next(row["expected_cents"] for row in rows if row["key"] == "numerario")
+        ledger_expected += counting["posted_movements"]["difference_totals"].get("numerario", 0)
     counting.update(
         final=True,
         summary=rows,
@@ -2237,7 +2253,15 @@ from .customer_orders import router as customer_orders_router
 app.include_router(customer_orders_router)
 from .order_cycle import router as order_cycle_router
 app.include_router(order_cycle_router)
+from .supply_center import router as supply_center_router
+app.include_router(supply_center_router)
+from .order_analytics import router as order_analytics_router
+app.include_router(order_analytics_router)
 from .market_prices import router as market_prices_router
 app.include_router(market_prices_router)
 from .article_suppliers import router as article_suppliers_router
 app.include_router(article_suppliers_router)
+from .alerts import router as alerts_router
+app.include_router(alerts_router)
+from .workspace_search import router as workspace_search_router
+app.include_router(workspace_search_router)

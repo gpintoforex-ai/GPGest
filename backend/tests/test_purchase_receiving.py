@@ -4,6 +4,7 @@ Os textos imitam formatos reais de fornecedores (dados fictícios): colunas dife
 alinhamento, ofertas a 100 %, bónus, desconto global e lote/validade na linha ou na seguinte.
 """
 
+from datetime import date, timedelta
 from decimal import Decimal as D
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from app.models import (
     PaymentTerm,
     PurchaseArticleAlias,
     StockEntry,
+    StockLot,
 )
 from sqlalchemy import select
 from test_inventory import product, stock_case, view  # noqa: F401
@@ -71,6 +73,28 @@ def test_detects_global_discount_and_ignores_bank_details():
     assert turmeric["confidence"] == "desconto_global" and turmeric["global_discount"] == "20.00"
     assert (turmeric["barcode"], turmeric["lot"], turmeric["expiry"]) == ("5600493200380", "20113", "2029-07-16")
     assert turmeric["unit_cost"] == "23.263333"  # 69,79 / 3: o custo já inclui o desconto global.
+
+
+OCR_BONUS = """Referência Designação Lote Qtd. P.Unit Tx IVA Desc. Total
+A100LT | CREME TESTE - 30 AMPOLAS 15 ML 25004300 3 2780 23,00% 82,800
+A100LT | CREME TESTE - 30 AMPOLAS 15 ML 25004300 1 23,00%
+B200LT | BALSAMO TESTE EFEITO QUENTE - 500ml 1820637401 6 925 23,00% 55,500
+8200LT BALSAMO TESTE EFEITO QUENTE - 500mi 1820637401 2 23,00%
+Total Ilíquido : 138,300
+"""
+
+
+def test_scanned_invoice_recovers_ocr_prices_offer_lines_and_lots():
+    """Digitalização: vírgula/algarismo perdidos no preço, linhas de oferta sem preço e lote."""
+    result = extract(OCR_BONUS, 13830)
+    first, second = result["lines"]
+    assert (first["quantity"], first["bonus"], first["price"], first["total"], first["lot"]) == ("3", "1", "27.6", "82.80", "25004300")
+    assert first["description"] == "CREME TESTE - 30 AMPOLAS 15 ML" and first["unit_cost"] == "20.700000"
+    assert (second["quantity"], second["bonus"], second["price"], second["lot"]) == ("6", "2", "9.25", "1820637401")
+    assert result["check"]["matches"] and any("Confirme os preços" in w for w in result["warnings"])
+    # Sem total que confirme, nada é inventado.
+    unconfirmed = "Referência Designação Qtd P.Unit Total\n" + "A1 PRODUTO TESTE 3 2780 999,000\n"
+    assert extract(unconfirmed, None)["lines"] == []
 
 
 def test_unreadable_text_proposes_nothing():
@@ -393,3 +417,39 @@ def test_supplier_refresh_requires_receiving_permissions(receiving):
     login = c.post("/api/auth/login", json={"email": "reader@test.pt", "password": "PasswordTest123!"})
     assert login.status_code == 200
     assert c.get("/api/purchase-receiving/suppliers").status_code == 403
+
+
+def test_lot_on_article_without_lot_control_is_not_dropped_and_can_enable_it(receiving):
+    c, sid, doc_id, warehouse, case = receiving
+    plain = product(case, code="SEMLOTE", name="Artigo sem lotes")
+    expiry = (date.today() + timedelta(days=900)).isoformat()
+    line = {"article_id": plain, "description": "Artigo sem lotes", "quantity": "2", "price": "10", "vat": "23",
+            "lot": "L-77", "expiry": expiry}
+    body = {"supplier_id": sid, "warehouse_id": warehouse, "document": "FA.2026/3208", "document_date": date.today().isoformat(),
+            "request_key": str(uuid4()), "lines": [line]}
+    refused = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert refused.status_code == 422 and "não controla lotes" in refused.json()["detail"]
+    done = c.post(f"/api/purchase-receiving/{doc_id}/confirm",
+                  json={**body, "request_key": str(uuid4()), "lines": [{**line, "enable_lots": True}]})
+    assert done.status_code == 200, done.text
+    article = view(case, plain)
+    assert article["lots"] and article["expiry"] and D(article["quantity"]) == 2
+    with case[2]() as db:
+        lot = db.scalar(select(StockLot).where(StockLot.article_id == plain))
+        assert lot.number == "L-77" and lot.expiry == expiry
+
+
+def test_last_price_is_the_invoice_unit_price_while_stock_cost_spreads_the_offer(receiving):
+    c, sid, doc_id, warehouse, case = receiving
+    pid = product(case, code="BONUS1", name="Artigo com oferta")
+    body = {"supplier_id": sid, "warehouse_id": warehouse, "document": "FA.2026/3208", "document_date": date.today().isoformat(),
+            "request_key": str(uuid4()),
+            "lines": [{"article_id": pid, "description": "Artigo com oferta", "quantity": "3", "bonus": "1", "price": "27.60", "vat": "23"}]}
+    done = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert done.status_code == 200, done.text
+    article = view(case, pid)
+    # Último preço = preço da fatura; custo em stock = 82,80 ÷ 4 unidades.
+    assert D(article["last_cost"]) == D("27.60") and D(article["average_cost"]) == D("20.70")
+    details = c.get(f"/api/stock/articles/{pid}/details").json()
+    supplier = next(s for s in details["purchase_suppliers"] if s["supplier_id"] == sid)
+    assert D(supplier["last_cost"]) == D("27.60")

@@ -11,7 +11,7 @@ import json
 
 from sqlalchemy import func, select
 
-from .models import ProcurementDocument, Purchase, PurchaseDocumentType
+from .models import Audit, ProcurementDocument, Purchase, PurchaseDocumentType
 
 NATURES = {"compra": "Compra", "nota_credito_compra": "Nota de crédito de compra"}
 CONDITIONS = {"credito": "Crédito", "dinheiro": "Dinheiro"}
@@ -34,9 +34,20 @@ def derived_flags(condition):
 
 
 def ensure_defaults(db):
-    """Tipos pré-carregados na primeira utilização (empresas novas incluídas)."""
+    """Tipos pré-carregados na primeira utilização (empresas novas incluídas). Devolve se carregou.
+
+    Uma tabela que o utilizador esvaziou (remoções na auditoria) fica vazia: não volta a carregar.
+    """
     if db.scalar(select(PurchaseDocumentType.id).limit(1)) is not None:
-        return
+        return False
+    emptied = db.scalar(
+        select(Audit.id).where(
+            Audit.action == "tabela_registo_removido",
+            Audit.detail.contains(json.dumps({"tabela": "document_types"})[1:-1]),
+        ).limit(1)
+    )
+    if emptied is not None:
+        return False
     for code, description, nature, condition, method, days in DEFAULTS:
         cash, debt = derived_flags(condition)
         db.add(PurchaseDocumentType(
@@ -45,6 +56,7 @@ def ensure_defaults(db):
             creates_debt=debt, default_due_days=days, active=True,
         ))
     db.flush()
+    return True
 
 
 def purchase_code(kind):

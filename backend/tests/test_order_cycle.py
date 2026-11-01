@@ -158,6 +158,21 @@ def test_replenishment_explains_stock_reservations_pending_orders_and_risk(case)
         assert db.scalar(select(func.count()).select_from(ProcurementDocument)) == 1
 
 
+def test_replenishment_period_and_below_minimum_with_recent_sales(case):
+    from datetime import timedelta
+
+    aid = product(case[0], supplier_id=case[1], minimum="5", reorder="5")
+    move(case[0], aid, quantity="10", occurred_on=(date.today() - timedelta(days=80)).isoformat())
+    move(case[0], aid, kind="sale", quantity="7", occurred_on=(date.today() - timedelta(days=50)).isoformat())
+    path = f"/recommendations?store_id={case[0][4]}&supplier_id={case[1]}&period_days="
+    recent = case[0][0].get(BASE + path + "60").json()["items"][0]
+    assert recent["below_minimum"] and D(recent["free"]) == 3 and D(recent["minimum"]) == 5
+    assert recent["period_days"] == 60 and D(recent["period_sales"]) == 7 and D(recent["quantity"]) > 0
+    quiet = case[0][0].get(BASE + path + "30").json()["items"][0]
+    assert quiet["below_minimum"] and D(quiet["period_sales"]) == 0
+    assert case[0][0].get(BASE + path + "3").status_code == 422
+
+
 def test_replenishment_budget_expiry_and_revision(case):
     aid = product(case[0], supplier_id=case[1], reorder="20", lots=True, expiry=True)
     response = send(

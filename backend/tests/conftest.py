@@ -174,3 +174,18 @@ def movement(c, ids, session, kind="venda", payment="numerario", amount="10", ke
             "request_key": key or str(uuid4()),
         },
     )
+
+
+def supplier_fields(db, category_id=None):
+    """Rubrica, prazo e meio de pagamento: obrigatórios para usar um fornecedor em movimentos."""
+    from app.models import PaymentTerm
+
+    term = PaymentTerm(code="T" + uuid4().hex[:8], name="30 dias", term_type="apos", days=30, active=True)
+    db.add(term)
+    if not category_id:
+        category = Category(name="Fornecedores " + uuid4().hex[:6])
+        db.add(category)
+        db.flush()
+        category_id = category.id
+    db.flush()
+    return {"category_id": category_id, "payment_term_id": term.id, "payment_method_id": "transferencia"}

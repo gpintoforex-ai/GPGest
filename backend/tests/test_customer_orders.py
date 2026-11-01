@@ -265,6 +265,7 @@ def test_partial_receipt_confirmation_never_creates_stock_and_delivery_once(case
 def test_existing_receipt_allocation_does_not_duplicate_stock(case):
     aid = product(case[0])
     row, _ = request(case, aid, "5")
+    receipt_order = row["id"]
     sim, _ = simulation(case, [row], aid)
     sim = prepared(case, sim)
     source = case[0][0].get("/api/procurement").json()["documents"][0]
@@ -276,14 +277,36 @@ def test_existing_receipt_allocation_does_not_duplicate_stock(case):
         "confirmed": True,
         "receipt_id": receipt["id"],
     }
-    sim = post(case[0][0], f"/simulations/{sim['id']}/receive", data)
+    # Confirmar a receção nas Compras já a distribuiu: associá-la outra vez é recusado e o stock não muda.
+    sim = next(s for s in case[0][0].get(BASE).json()["simulations"] if s["id"] == sim["id"])
+    post(case[0][0], f"/simulations/{sim['id']}/receive", {**data, "revision": sim["revision"]}, 409)
     assert view(case[0], aid)["quantity"] == before
-    post(
-        case[0][0],
-        f"/simulations/{sim['id']}/receive",
-        {**data, "revision": sim["revision"], "request_key": str(uuid4())},
-        409,
-    )
+    assert D(order(case, receipt_order)["lines"][0]["quantities"]["reserved"]) == 2
+
+
+def test_receipt_confirmed_in_procurement_reserves_customers_automatically(case):
+    aid = product(case[0])
+    row, _ = request(case, aid, "5")
+    sim, _ = simulation(case, [row], aid)
+    sim = prepared(case, sim)
+    c = case[0][0]
+    source = next(d for d in c.get("/api/procurement").json()["documents"] if d["id"] == sim["procurement_id"])
+    waiting = source["customer_orders"][0]
+    assert waiting["number"] == row["number"] and D(waiting["waiting"]) == 5
+    receipt = confirm(case, from_source(case, source, "receipt", 3))
+    reserved = receipt["customer_reservations"][0]
+    assert reserved["number"] == row["number"] and D(reserved["quantity"]) == 3
+    assert not receipt["customer_warnings"]
+    q = order(case, row["id"])["lines"][0]["quantities"]
+    assert D(q["reserved"]) == 3 and D(q["received"]) == 3 and D(q["available"]) == 3
+    # Repetir a confirmação não reserva outra vez.
+    assert confirm(case, receipt)["customer_reservations"] == receipt["customer_reservations"]
+    assert D(order(case, row["id"])["lines"][0]["quantities"]["reserved"]) == 3
+    source = next(d for d in c.get("/api/procurement").json()["documents"] if d["id"] == sim["procurement_id"])
+    assert D(source["customer_orders"][0]["waiting"]) == 2
+    # Uma receção que reservou para clientes não se anula diretamente.
+    response = c.post(f"/api/procurement/{receipt['id']}/annul", json={"revision": receipt["revision"], "reason": "Teste"})
+    assert response.status_code == 409 and "clientes" in response.json()["detail"]
 
 
 def test_reservations_protect_stock_and_cancel_releases(case):
@@ -408,6 +431,23 @@ def test_supplier_email_pdf_preview_and_explicit_send(case, monkeypatch):
     )
     assert r.status_code == 200 and r.json()["status"] == "accepted" and len(calls) == 1
     assert order(case, row["id"])["lines"][0]["state"] == "sent"
+    # Encomenda alterada depois do envio: fica por reenviar, o reenvio é aceite e limpa o aviso.
+    sim = next(s for s in c.get(BASE).json()["simulations"] if s["id"] == sim["id"])
+    body = {k: sim[k] for k in ("store_id", "supplier_id", "terms", "lines", "notes")}
+    body["lines"][0]["quantity"] = str(D(body["lines"][0]["quantity"]) + 1)
+    edited = c.put(BASE + "/simulations/" + sim["id"],
+                   json={**body, "revision": sim["revision"], "request_key": str(uuid4())})
+    assert edited.status_code == 200, edited.text
+    doc = edited.json()["procurement"]
+    assert doc["needs_resend"]
+    again = c.post(base + "/email-preview", json={"revision": doc["revision"], "to": "supplier@example.test",
+                                                  "subject": "Encomenda alterada", "message": "Nova versão."})
+    assert again.status_code == 200, again.text
+    sent = c.post(base + "/email-send/" + again.json()["id"],
+                  json={"revision": again.json()["revision"], "request_key": str(uuid4()), "confirmed": True})
+    assert sent.status_code == 200 and sent.json()["status"] == "accepted" and len(calls) == 2
+    current = next(d for d in c.get("/api/procurement").json()["documents"] if d["id"] == doc["id"])
+    assert not current.get("needs_resend")
 
 
 def test_customer_email_permissions_preview_and_send(case, monkeypatch):
@@ -572,6 +612,106 @@ def test_update_contacts_quantity_and_stale_revision(case):
         BASE + f"/{row['id']}/details", json={**body, "request_key": str(uuid4())}
     )
     assert response.status_code == 409
+
+
+def edit_body(row, **changes):
+    keys = [
+        "customer_id",
+        "customer_name",
+        "phone",
+        "email",
+        "preferred_channel",
+        "contact_allowed",
+        "requested_at",
+        "due_date",
+        "priority",
+        "notes",
+    ]
+    fields = [
+        "article_id",
+        "supplier_id",
+        "description",
+        "brand",
+        "reference",
+        "ean",
+        "sale_price_cents",
+        "notes",
+    ]
+    lines = [
+        {"id": line["id"], "quantity": line["quantities"]["requested"]}
+        | {k: line.get(k) or ("" if k in ("brand", "reference", "ean", "notes") else None) for k in fields}
+        for line in row["lines"]
+    ]
+    return {
+        **{k: row.get(k) for k in keys},
+        "revision": row["revision"],
+        "request_key": str(uuid4()),
+        "lines": lines,
+        **changes,
+    }
+
+
+def test_edit_order_like_new_order_keeps_committed_quantities(case):
+    aid, other = product(case[0]), product(case[0])
+    move(case[0], aid)
+    c = case[0][0]
+    row, _ = request(
+        case,
+        lines=[
+            {"article_id": aid, "description": "Reservado", "quantity": "4"},
+            {"description": "Provisório", "quantity": "2"},
+        ],
+    )
+    reserved_line = next(line for line in row["lines"] if line["description"] == "Reservado")
+    free_line = next(line for line in row["lines"] if line["description"] == "Provisório")
+    row = post(
+        c,
+        f"/lines/{reserved_line['id']}/reserve",
+        {
+            "revision": row["revision"],
+            "request_key": str(uuid4()),
+            "quantity": "3",
+            "warehouse_id": case[0][3][0],
+        },
+    )
+    body = edit_body(row, customer_name="Cliente corrigido", priority="urgent")
+    held = next(line for line in body["lines"] if line["id"] == reserved_line["id"])
+    free = next(line for line in body["lines"] if line["id"] == free_line["id"])
+    held["quantity"] = "2"
+    assert c.put(BASE + f"/{row['id']}", json=body).status_code == 409  # abaixo do reservado
+    held.update(quantity="3", article_id=other)
+    assert c.put(BASE + f"/{row['id']}", json=body).status_code == 409  # artigo em curso
+    held.update(article_id=aid, quantity="6", notes="Mais duas")
+    free.update(description="Provisório corrigido", article_id=other, quantity="5")
+    body["lines"].append({"description": "Novo produto", "quantity": "1"})
+    response = c.put(BASE + f"/{row['id']}", json=body)
+    assert response.status_code == 200, response.text
+    edited = response.json()
+    assert edited["customer_name"] == "Cliente corrigido" and edited["priority"] == "urgent"
+    assert edited["number"] == row["number"] and edited["requested_at"] == row["requested_at"]
+    lines = {line["id"]: line for line in edited["lines"]}
+    assert D(lines[reserved_line["id"]]["quantities"]["requested"]) == 6
+    assert D(lines[reserved_line["id"]]["quantities"]["reserved"]) == 3
+    assert lines[reserved_line["id"]]["notes"] == "Mais duas"
+    assert lines[free_line["id"]]["article_id"] == other
+    assert lines[free_line["id"]]["description"] == "Provisório corrigido"
+    assert len(edited["lines"]) == 3
+    # Repetir a mesma operação não duplica produtos; revisão antiga é recusada.
+    assert len(c.put(BASE + f"/{row['id']}", json=body).json()["lines"]) == 3
+    stale = {**body, "request_key": str(uuid4())}
+    assert c.put(BASE + f"/{row['id']}", json=stale).status_code == 409
+    # Retirar produtos: livre → cancelado (com motivo); reservado → recusado.
+    body = edit_body(edited)
+    body["lines"] = [line for line in body["lines"] if line["id"] != free_line["id"]]
+    assert c.put(BASE + f"/{row['id']}", json=body).status_code == 422  # sem motivo
+    body["reason"] = "Cliente já não quer"
+    response = c.put(BASE + f"/{row['id']}", json=body)
+    assert response.status_code == 200, response.text
+    removed = next(line for line in response.json()["lines"] if line["id"] == free_line["id"])
+    assert removed["state"] == "cancelled"
+    body = edit_body(response.json(), reason="Retirar reservado")
+    body["lines"] = [line for line in body["lines"] if line["id"] != reserved_line["id"]]
+    assert c.put(BASE + f"/{row['id']}", json=body).status_code == 409
 
 
 def test_receipt_overdelivery_rolls_back_and_foreign_currency_not_converted(case):
@@ -802,3 +942,153 @@ def test_imported_entities_are_reused_without_writing_to_erp(request):
         assert len(references) == 1 and references[0].wintouch_id == imported_id
         assert db.get(WintouchEntity, imported_id).name == "Cliente e fornecedor ERP"
     post(client, "", {**body, "request_key": str(uuid4()), "customer_id": "wt:" + other_id}, 404)
+
+
+def test_supplier_record_holds_order_minimum_shipping_and_lead_time(case):
+    c, sid = case[0][0], case[1]
+    path = f"/api/tables/suppliers/records/local:{sid}"
+    details = c.get(path + "/details").json()["values"]
+    assert details["order_minimum"] == "" and details["shipping"] == "" and details["lead_days"] == 7
+    values = {**details, "order_minimum": "150,00", "shipping": "7.5", "free_shipping": "300", "lead_days": 5}
+    saved = c.post(path, json={"values": values})
+    assert saved.status_code == 200, saved.text
+    supplier = next(s for s in c.get(BASE + "/catalog").json()["suppliers"] if s["id"] == sid)
+    terms = supplier["terms"]
+    assert (terms["minimum_cents"], terms["shipping_cents"], terms["free_shipping_cents"], terms["lead_days"]) == (
+        15000, 750, 30000, 5,
+    )
+    # As restantes condições (Condições dos fornecedores) mantêm-se e aparecem na ficha.
+    post(c, f"/suppliers/{sid}/terms", {"revision": supplier["revision"], "request_key": str(uuid4()),
+                                        "terms": {**terms, "discount": "5"}})
+    details = c.get(path + "/details").json()["values"]
+    assert details["order_minimum"] == "150.00" and details["free_shipping"] == "300.00"
+    saved = c.post(path, json={"values": {**details, "shipping": "", "free_shipping": ""}})
+    assert saved.status_code == 200, saved.text
+    terms = next(s for s in c.get(BASE + "/catalog").json()["suppliers"] if s["id"] == sid)["terms"]
+    assert terms["shipping_cents"] == 0 and terms["free_shipping_cents"] is None
+    assert terms["discount"] == "5" and terms["minimum_cents"] == 15000
+
+
+def test_expiry_returns_follow_supplier_record_and_warning_months(case):
+    from datetime import date, timedelta
+
+    c, sid = case[0][0], case[1]
+    aid = product(case[0], supplier_id=sid, lots=True, expiry=True)
+    expiry = (date.today() + timedelta(days=60)).isoformat()
+    move(case[0], aid, quantity="4", lot_number="L-VAL", expiry=expiry, supplier_id=sid)
+    assert c.get("/api/procurement/expiry-returns").json()["items"] == []  # não aceita devoluções
+    path = f"/api/tables/suppliers/records/local:{sid}"
+    details = c.get(path + "/details").json()["values"]
+    assert details["accepts_expiry_returns"] is False and details["expiry_return_months"] == 3
+    saved = c.post(path, json={"values": {**details, "accepts_expiry_returns": True, "expiry_return_months": 3}})
+    assert saved.status_code == 200, saved.text
+    items = c.get("/api/procurement/expiry-returns").json()["items"]
+    assert len(items) == 1 and items[0]["lot_number"] == "L-VAL" and D(items[0]["quantity"]) == 4
+    assert items[0]["supplier_id"] == sid and items[0]["days_left"] == 60 and items[0]["months"] == 3
+    details = c.get(path + "/details").json()["values"]
+    c.post(path, json={"values": {**details, "expiry_return_months": 1}})
+    assert c.get("/api/procurement/expiry-returns").json()["items"] == []  # aviso só a 1 mês
+
+
+def test_issued_order_is_edited_in_the_simulator_until_goods_arrive(case):
+    aid = product(case[0])
+    row, _ = request(case, aid, "5")
+    sim, data = simulation(case, [row], aid)
+    sim = prepared(case, sim)
+    c = case[0][0]
+    number = sim["procurement"]["document"]
+    data["lines"][0].update(quantity="8", unit_cost="12")  # 5 para o cliente + 3 de reposição
+    data.update(request_key=str(uuid4()), revision=sim["revision"])
+    response = c.put(BASE + "/simulations/" + sim["id"], json=data)
+    assert response.status_code == 200, response.text
+    edited = response.json()
+    doc = edited["procurement"]
+    assert edited["status"] == "prepared" and edited["procurement_id"] == sim["procurement_id"]
+    assert doc["document"] == number and D(doc["lines"][0]["quantity"]) == 8
+    assert D(doc["lines"][0]["price"]) == 12 and len(doc["versions"]) == 1 and not doc.get("needs_resend")
+    q = order(case, row["id"])["lines"][0]["quantities"]
+    assert D(q["ordered"]) == 5 and D(q["to_order"]) == 0
+    # Depois de receber mercadoria, a encomenda já não se edita no simulador.
+    receive(case, edited, 2)
+    current = next(s for s in c.get(BASE).json()["simulations"] if s["id"] == sim["id"])
+    data.update(request_key=str(uuid4()), revision=current["revision"])
+    blocked = c.put(BASE + "/simulations/" + sim["id"], json=data)
+    assert blocked.status_code == 409 and "receções" in blocked.json()["detail"]
+
+
+def test_orders_get_a_short_sequential_number(case):
+    import re
+
+    first, data = request(case)
+    second, _ = request(case)
+    assert re.fullmatch(r"PC-\d{4,}", first["number"]) and re.fullmatch(r"PC-\d{4,}", second["number"])
+    assert int(second["number"][3:]) == int(first["number"][3:]) + 1
+    # Repetir a mesma gravação devolve o mesmo pedido e não gasta número.
+    assert post(case[0][0], "", data)["number"] == first["number"]
+    third, _ = request(case)
+    assert int(third["number"][3:]) == int(second["number"][3:]) + 1
+
+
+def test_supplier_orders_get_a_short_sequential_number(case):
+    import re
+
+    from test_procurement import draft
+
+    def issue():
+        aid = product(case[0])
+        return prepared(case, simulation(case, [request(case, aid)[0]], aid)[0])
+
+    first, second = issue(), issue()
+    numbers = [first["procurement"]["document"], second["procurement"]["document"]]
+    assert all(re.fullmatch(r"EC-\d{4,}", n) for n in numbers)
+    assert int(numbers[1][3:]) == int(numbers[0][3:]) + 1
+    # Encomenda criada nas Compras sem número: mesma série; com número do utilizador, mantém-no.
+    manual = draft(case, document="")
+    assert manual["document"] == f"EC-{int(numbers[1][3:]) + 1:04d}"
+    assert draft(case, document="ENC-FORN-77")["document"] == "ENC-FORN-77"
+
+
+def test_bonus_offer_goes_to_the_issued_order_as_free_line(case):
+    aid = product(case[0])
+    c, sid = case[0][0], case[1]
+    saved = c.put(f"/api/stock/articles/{aid}/supplier-terms/{sid}",
+                  json={"agreed_cost": "10", "bonus_buy_quantity": "5", "bonus_free_quantity": "1"})
+    assert saved.status_code == 200, saved.text
+    bonus = next(s for s in c.get(BASE + "/catalog").json()["suppliers"] if s["id"] == sid)["bonuses"][aid]
+    assert D(bonus["buy"]) == 5 and D(bonus["free"]) == 1
+    row, _ = request(case, aid, "12")
+    sim, _ = simulation(case, [row], aid)
+    doc = prepared(case, sim)["procurement"]
+    goods = [line for line in doc["lines"] if line["nature"] == "goods"]
+    assert D(goods[0]["quantity"]) == 12 and D(goods[0]["price"]) == 10
+    offer = goods[-1]
+    assert offer is not goods[0] and D(offer["quantity"]) == 2 and D(offer["price"]) == 0
+    assert "oferta" in offer["description"] and doc["lines"].index(offer) > doc["lines"].index(goods[0])
+    # A receção da oferta entra em stock geral: o cliente recebe só o que pediu.
+    sim = next(s for s in c.get(BASE).json()["simulations"] if s["id"] == sim["id"])
+    receive(case, sim, 12)
+    q = order(case, row["id"])["lines"][0]["quantities"]
+    assert D(q["reserved"]) == 12
+
+
+def test_menu_bar_alerts_gather_late_orders_and_expiry_claims(case):
+    from datetime import date, timedelta
+
+    c = case[0][0]
+    late, _ = request(case, product(case[0]), due_date=(date.today() - timedelta(days=3)).isoformat())
+    article = product(case[0], lots=True, expiry=True)
+    from test_procurement import draft as procurement_draft
+
+    receipt = procurement_draft(case, "receipt", document_type="FT", lines=[{
+        "article_id": article, "description": "Artigo com lote", "quantity": "2", "price": "3", "vat": "23",
+        "warehouse_id": case[0][3][0], "lot_number": "L-AV", "expiry": (date.today() + timedelta(days=60)).isoformat()}])
+    from test_procurement import confirm as procurement_confirm
+
+    procurement_confirm(case, receipt)
+    data = c.get("/api/alerts").json()
+    groups = {g["id"]: g for g in data["groups"]}
+    assert groups["pedidos_atrasados"]["count"] >= 1 and any(late["number"] in i for i in groups["pedidos_atrasados"]["items"])
+    assert groups["pedidos_atrasados"]["page"] == "Encomendas de clientes" and groups["pedidos_atrasados"]["tone"] == "danger"
+    assert groups["reclamacoes_validade"]["count"] >= 1 and groups["reclamacoes_validade"]["page"] == "Receções de mercadoria"
+    assert groups["lotes_validade"]["count"] >= 1
+    assert data["total"] == sum(g["count"] for g in data["groups"])

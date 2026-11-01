@@ -13,7 +13,6 @@ import unicodedata
 from collections import Counter
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from itertools import combinations
 
 D = Decimal
 MONTHS = {
@@ -154,7 +153,32 @@ def candidates(words):
     found = []
     plain_numbers = [n for n in numbers if not n[2]]
     decimal = {i for i, w in enumerate(words) if re.search(r"\d[.,]\d", w)}
-    for (qi, q, _), (pi, p, _) in combinations(plain_numbers, 2):
+    # OCR de digitalizações: a vírgula do preço unitário às vezes desaparece («2780» por 27,80).
+    # Só conta se fechar a conta quantidade × preço = total, como qualquer outra leitura.
+    restored = [
+        (i, value / 100, True)
+        for i, value, _ in plain_numbers
+        if i not in decimal and re.fullmatch(r"[1-9]\d{2,5}", words[i])
+    ]
+    # Um dígito mal lido no preço («2780» por 27,60): aceita o preço total ÷ quantidade só quando
+    # difere do lido num único algarismo e fecha a conta exatamente.
+    for (qi, q, _), (pi, p, _) in ((a, b) for a in plain_numbers for b in plain_numbers if b[0] > a[0]):
+        token = words[pi]
+        # Zeros à esquerda são códigos (NIB, telefone), nunca preços nem quantidades.
+        if pi in decimal or not re.fullmatch(r"[1-9]\d{2,5}", token) or words[qi].startswith("0"):
+            continue
+        if q <= 0 or q != q.to_integral():
+            continue
+        for ti, t, _ in plain_numbers:
+            if ti <= pi or ti not in decimal or t <= 0:
+                continue
+            derived = (t / q).quantize(D("0.01"))
+            digits = str(int(derived * 100))
+            if q * derived == t and len(digits) == len(token) and sum(a != b for a, b in zip(digits, token)) == 1:
+                restored.append((pi, derived, True))
+    prices = [(i, value, False) for i, value, _ in plain_numbers] + restored
+    pairs = [((qi, q), (pi, p, fixed)) for qi, q, _ in plain_numbers for pi, p, fixed in prices if pi > qi]
+    for (qi, q), (pi, p, fixed) in pairs:
         if q <= 0 or p <= 0 or q > 100000 or p > 100000:
             continue
         for ti, t, _ in plain_numbers:
@@ -167,11 +191,11 @@ def candidates(words):
                 expected = q * p * (1 - d / 100)
                 if expected == 0:
                     if t == 0:
-                        found.append({"q": (qi, q), "p": (pi, p), "d": (di, d), "t": (ti, t), "ratio": D(1)})
+                        found.append({"q": (qi, q), "p": (pi, p), "d": (di, d), "t": (ti, t), "ratio": D(1), "restored": fixed})
                     continue
                 ratio = t / expected
                 if D("0.3") <= ratio <= D("1.01"):
-                    found.append({"q": (qi, q), "p": (pi, p), "d": (di, d), "t": (ti, t), "ratio": ratio})
+                    found.append({"q": (qi, q), "p": (pi, p), "d": (di, d), "t": (ti, t), "ratio": ratio, "restored": fixed})
     return found
 
 
@@ -185,7 +209,8 @@ def best(options, factor):
             # Preferir: menor erro, desconto explícito quando existe, quantidade mais à direita.
             fractional = q != q.to_integral()
             scored.append((money(error, "0.001"), fractional, option["d"][0] is None, -option["q"][0], -option["t"][0], option))
-    return min(scored, key=lambda s: s[:5])[5] if scored else None
+    # Em empate, a leitura tal como impressa prevalece sobre a vírgula reposta.
+    return min(scored, key=lambda s: (s[0], s[5].get("restored", False), *s[1:5]))[5] if scored else None
 
 
 def describe(words, qi, info, marked_lot=""):
@@ -214,6 +239,9 @@ def describe(words, qi, info, marked_lot=""):
         lot = after[-1]
     while description and plain(description[-1]) in UNITS:
         description.pop()
+    # Coluna «Lote» depois da designação: o número longo no fim da descrição é o lote.
+    if "lot" in info and not lot and len(description) > 1 and re.fullmatch(r"[A-Za-z0-9\-/]*\d{5,}[A-Za-z0-9\-/]*", description[-1]):
+        lot = description.pop()
     return reference, barcode, lot, expiry, " ".join(description).strip(" -*+")
 
 
@@ -227,6 +255,40 @@ def extra_lot(line):
         expiry = parse_date(match.group(1).strip(",;"))
     original = re.search(r"[Ll][Oo][Tt][Ee]\s*[:.]?\s*([A-Za-z0-9][A-Za-z0-9\-/]*)", line)
     return (original.group(1) if original else (lot.group(1) if lot else "")), expiry
+
+
+def free_quantity(words):
+    """Linha só com quantidade e IVA (sem preço nem total): unidades de oferta, ou None."""
+    values, vat = [], False
+    # Só os números depois da designação («30 ampolas 15 ml» não são quantidades).
+    last_text = max((i for i, w in enumerate(words) if re.search(r"[A-Za-zÀ-ÿ]", w)), default=-1)
+    for i, word in enumerate(words):
+        if i <= last_text:
+            continue
+        value = number(word)
+        if value is None or parse_date(word):
+            continue
+        if word.endswith("%") or (i + 1 < len(words) and words[i + 1] == "%"):
+            vat = True
+            continue
+        digits = re.sub(r"\D", "", word)
+        if len(digits) >= 7 and "," not in word and "." not in word:
+            continue  # lote, EAN
+        if re.search(r"[A-Za-z]", word):
+            continue
+        values.append(value)
+    if vat and len(values) == 1 and values[0] == values[0].to_integral() and 0 < values[0] <= 100000:
+        return values[0]
+    return None
+
+
+def same_product(first, second):
+    """A mesma designação (o OCR pode trocar letras na referência, ex.: S3007LT / 53007LT)."""
+    def names(words):
+        return {plain(w) for w in words if len(w) >= 3 and re.fullmatch(r"[A-Za-zÀ-ÿ]+", w)}
+
+    a, b = names(first), names(second)
+    return len(a & b) >= 2 and len(a & b) >= 0.6 * min(len(a), len(b))
 
 
 def money(value, places="0.01"):
@@ -254,6 +316,13 @@ def extract(text, base_cents=None):
         if any(first.startswith(f) for f in FOOTER) and not re.search(r"\d{5,}", words[0]):
             continue
         options = candidates(words)
+        if not options and parsed and index - parsed[-1]["index"] <= 2:
+            # Linha seguinte do mesmo produto só com quantidade e IVA: oferta (bonificação).
+            free = free_quantity(words)
+            if free is not None and same_product(parsed[-1]["words"], words):
+                parsed[-1]["free"] = parsed[-1].get("free", D(0)) + free
+                parsed[-1]["line"] += " / " + line.strip()
+                continue
         if options:
             parsed.append({"index": index, "line": line, "words": words, "options": options, "lot": "", "expiry": "", "marked": marked_lot})
     # Desconto comum: a razão mais frequente (≠ 1) partilhada por várias linhas.
@@ -263,7 +332,7 @@ def extract(text, base_cents=None):
         for ratio in {money(o["ratio"], "0.001") for o in item["options"] if o["ratio"] < D("0.995")}
     )
     common = [r for r, n in ratios.most_common(3) if n >= max(2, len(parsed) // 2)]
-    result, warnings = [], []
+    result, warnings, restored = [], [], False
     for item in parsed:
         choice, factor = best(item["options"], D(1)), D(1)
         if not choice:
@@ -286,7 +355,8 @@ def extract(text, base_cents=None):
         bonus = next(
             (b for b in between if "bonus" in info and b is not None and b == b.to_integral() and 0 < b <= q * 10),
             D(0),
-        )
+        ) + item.get("free", D(0))
+        restored = restored or choice.get("restored", False)
         vat = ""
         for word in words[pi + 1 :]:
             value = number(word)
@@ -330,6 +400,11 @@ def extract(text, base_cents=None):
                 f"A soma das linhas lidas ({lines_total:.2f} €) difere da base do documento "
                 f"({D(base_cents) / 100:.2f} €): podem faltar linhas ou existir portes/descontos de rodapé."
             )
+    if restored:
+        warnings.append(
+            "O OCR leu mal alguns preços unitários (vírgula ou um algarismo); foram corrigidos só onde "
+            "fecham a conta quantidade × preço = total. Confirme os preços com o original."
+        )
     if not result:
         warnings.append("Não foi possível ler linhas de artigos com segurança. Preencha-as a partir do original.")
     return {"lines": result, "warnings": warnings, "check": check}

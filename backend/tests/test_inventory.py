@@ -748,3 +748,35 @@ def test_service_articles_never_move_stock(stock_case):
     current = view(stock_case, goods)
     changed = c.put(f"/api/stock/articles/{goods}", json={**{k: current[k] for k in ("code", "name", "revision")}, "service": True})
     assert changed.status_code == 409
+
+
+def test_article_with_stock_switches_to_lots_by_naming_the_lot_of_the_existing_stock(stock_case):
+    c = stock_case[0]
+    pid = product(stock_case, code="LOTE-" + uuid4().hex[:6])
+    move(stock_case, pid, quantity="10", unit_cost="2.5")
+    before = view(stock_case, pid)
+    base = {"code": before["code"], "name": before["name"], "sale_net": "5", "minimum": "2", "reorder": "8"}
+    refused = c.put(f"/api/stock/articles/{pid}", json={**base, "lots": True, "revision": before["revision"]})
+    detail = refused.json()["detail"]
+    assert refused.status_code == 409 and "indique o lote" in str(detail)
+    no_expiry = c.put(f"/api/stock/articles/{pid}", json={**base, "lots": True, "expiry": True, "revision": before["revision"],
+                                                          "opening_lot": {"number": "L-INI"}})
+    assert no_expiry.status_code == 422 and "validade" in str(no_expiry.json()["detail"])
+    saved = c.put(f"/api/stock/articles/{pid}", json={**base, "lots": True, "expiry": True, "revision": before["revision"],
+                                                       "opening_lot": {"number": "L-INI", "expiry": "2028-06-30"}})
+    assert saved.status_code == 200, saved.text
+    assert [D(item["quantity"]) for item in saved.json()["lot_conversion"]] == [D(10)]
+    after = view(stock_case, pid)
+    assert after["lots"] and after["expiry"] and D(after["quantity"]) == 10
+    assert before["average_cost"] is not None and D(after["average_cost"]) == D(before["average_cost"])
+    # Desligar o controlo de lotes num artigo com movimentos continua recusado, com o motivo.
+    off = c.put(f"/api/stock/articles/{pid}", json={**base, "lots": False, "revision": after["revision"]})
+    assert off.status_code == 409 and "desligar" in str(off.json()["detail"])
+
+
+def test_free_units_do_not_become_the_last_purchase_price(stock_case):
+    pid = product(stock_case)
+    move(stock_case, pid, quantity="5", unit_cost="10")
+    move(stock_case, pid, quantity="1", unit_cost="0")  # oferta do fornecedor
+    article = view(stock_case, pid)
+    assert D(article["last_cost"]) == 10 and D(article["average_cost"]) < 10
