@@ -182,28 +182,6 @@ textarea {
   background: #224c42;
   color: white;
 }
-.sidebar-bottom {
-  margin-top: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding-top: 25px;
-  border-top: 1px solid #2f5349;
-}
-.sidebar-bottom strong {
-  display: block;
-  font-size: 12px;
-}
-.sidebar-bottom small {
-  color: #96b1a2;
-}
-.sidebar-bottom button {
-  margin-left: auto;
-  background: transparent;
-  color: #95b19f;
-  border: 0;
-  padding: 6px;
-}
 .avatar {
   background: #d2e6a3;
   color: #254b36;

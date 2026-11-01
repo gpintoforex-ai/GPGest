@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { ActionButton, AppDialog, Notice } from "../components/InteractionUI";
 import { Field } from "../components/Form";
 import Processing from "./Processing";
-import { DIRECTION_LABELS, type Direction, type Plan, type PlanItem, type SyncRun, type TableContext, type TableInfo } from "./types";
+import { DIRECTION_LABELS, type ConflictPolicy, type Direction, type Plan, type PlanItem, type SyncRun, type TableContext, type TableInfo } from "./types";
 
 const SUMMARY: { key: PlanItem["summary"]; label: string; Icon: typeof PlusCircle }[] = [
   { key: "criar", label: "A criar", Icon: PlusCircle },
@@ -76,6 +76,18 @@ export default function SyncDialog({ table, context, direction, ids, onClose, on
   const [error, setError] = useState("");
   const labels = DIRECTION_LABELS[direction];
   const importOptions = table.erp.import_options || [];
+  const [policy, setPolicy] = useState<ConflictPolicy>(table.erp.conflict_policy || "perguntar");
+  const canSetPolicy = table.permissions.erp_remove;
+
+  /** Regra para conflitos da tabela (só administradores); a pré-visualização é refeita com ela. */
+  async function changePolicy(value: ConflictPolicy) {
+    setBusy(true); setError("");
+    try { await api(`/tables/${table.key}/settings`, { conflict_policy: value }); setPolicy(value); }
+    catch (e) { setError((e as Error).message); setBusy(false); return; }
+    setBusy(false);
+    onDone();
+    await preview();
+  }
 
   async function preview(preselect?: string[]) {
     setBusy(true); setError(""); setPlan(null); setRun(null);
@@ -155,6 +167,19 @@ export default function SyncDialog({ table, context, direction, ids, onClose, on
     <div className="panel-title"><h2 id="table-sync-title">{labels.title} — {table.title}</h2></div>
     <Notice className={direction === "import" ? "info" : "warning"} role="status"><b>Destino:</b> {labels.destination}</Notice>
     <p className="footnote">{scope.length ? `Registos selecionados: ${scope.length}.` : "Todos os registos da tabela."} Nada é alterado antes de confirmar.</p>
+    <details className="table-capabilities">
+      <summary>Regra para conflitos e operações do conector</summary>
+      {table.erp.available && <label className="table-policy">Em conflito
+        <select aria-label="Regra para conflitos" value={policy} disabled={!canSetPolicy || busy || !!run} title={canSetPolicy ? undefined : "Só um administrador pode alterar esta regra."} onChange={e => void changePolicy(e.target.value as ConflictPolicy)}>
+          <option value="perguntar">Perguntar em cada registo</option>
+          <option value="erp">Prevalece o ERP</option>
+          <option value="local">Prevalece a IAZELA</option>
+        </select>
+      </label>}
+      <ul aria-label="Operações suportadas pelo conector">{Object.entries(table.erp.operations).map(([key, op]) => op && <li key={key} className={op.supported ? "is-supported" : "is-unsupported"}>
+        <b>{op.label}:</b> {op.supported ? "disponível" : `indisponível — ${op.reason}`}
+      </li>)}</ul>
+    </details>
     {direction !== "export" && importOptions.length > 0 && <div className="table-sync-options">
       {importOptions.map(f => <Field key={f.name} label={f.label}>
         {f.type === "store"

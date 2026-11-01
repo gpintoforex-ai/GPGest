@@ -8,7 +8,7 @@
 :root .sidebar nav button {color:var(--text-primary);background:transparent;box-shadow:none;}
 :root .sidebar nav button:hover:not(:disabled) {background:var(--surface-secondary);color:var(--action-primary-ink);}
 :root .sidebar nav button.active {background:var(--surface-secondary);color:var(--action-primary-ink);box-shadow:inset 3px 0 var(--action-primary-ink);}
-:root .sidebar .brand small,:root .sidebar .sidebar-bottom small {color:var(--text-secondary);}
+:root .sidebar .brand small {color:var(--text-secondary);}
 :root .sidebar .sidebar-collapse,:root[data-theme="dark"] .sidebar .sidebar-collapse {background:var(--surface-primary);color:var(--text-primary);border-color:var(--border-control);box-shadow:none;}
 :root .workspace>header {background:var(--surface-primary);border-color:var(--border-default);}
 .workspace-navigation .workspace-destination {padding-left:20px;min-height:42px;font-size:13px;}
@@ -26,7 +26,6 @@
 .order-center-mode .workspace-navigation .finance-submenu {margin-top:2px;margin-bottom:3px;gap:1px;}
 .order-center-mode .sidebar-footer {padding-top:9px;}
 .order-center-mode .sidebar-mode {min-height:30px;font-size:10px;padding:6px 8px;margin-bottom:8px;}
-.order-center-mode .sidebar-bottom {padding-top:8px;}
 .navigation-help {display:none;position:relative;flex-shrink:0;margin-top:10px;}
 .order-center-mode .navigation-help {display:block;}
 .order-center-mode.sidebar-collapsed .navigation-help {display:none;}

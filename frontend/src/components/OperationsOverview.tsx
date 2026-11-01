@@ -20,9 +20,10 @@ export type OperationSuggestion = {
 };
 
 /** Presentation of already-authorized module data; never fetches or performs business actions. */
-export default function OperationsOverview({ title, scope, metrics, loaded = true, error = false, suggestion, source }: {
+export default function OperationsOverview({ title, scope, metrics, loaded = true, error = false, suggestion, source, heading = true }: {
   title: string;
-  scope: string;
+  scope?: string;
+  heading?: boolean;
   metrics: OperationMetric[];
   loaded?: boolean;
   error?: boolean;
@@ -33,7 +34,7 @@ export default function OperationsOverview({ title, scope, metrics, loaded = tru
   // Only callers holding an actual query response provide a source reference.
   // Filtering or focusing controls does not change the time of that response.
   const receivedAt = useMemo(() => source ? new Date().toISOString() : null, [source]);
-  return <ModuleOverview title={title} description={scope} className="operations-overview">
+  return <ModuleOverview title={title} description={scope} heading={heading} className="operations-overview">
     {receivedAt && loaded && !error && <p className="operations-overview-time">Consulta recebida em {new Date(receivedAt).toLocaleString("pt-PT", {timeZone:"Europe/Lisbon"})} · hora de Lisboa</p>}
     <div className="operations-overview-metrics">
       {metrics.map(metric => <KpiCard key={metric.label} {...metric} state={state} />)}

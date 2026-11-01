@@ -13,40 +13,19 @@
   white-space: nowrap;
 }
 
-.table-erp-bar {
-  display: grid;
-  gap: 12px;
-}
-.table-erp-heading h2 {
-  margin: 0 0 4px;
-  font-size: 1rem;
-}
-.table-erp-heading p {
-  margin: 0;
+.table-sync-reason {
+  display: block;
+  margin-top: 6px;
   color: var(--color-muted);
-  font-size: 0.9rem;
-}
-.table-erp-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 16px;
-  align-items: flex-start;
-}
-.table-erp-action {
-  display: grid;
-  gap: 4px;
-  max-width: 260px;
-}
-.table-erp-action small {
-  color: var(--color-muted);
-  font-size: 0.8rem;
+  font-size: 0.85rem;
 }
 .table-policy {
   display: grid;
   gap: 6px;
+  max-width: 320px;
+  margin-top: 10px;
   color: var(--color-muted);
   font-size: 13px;
-  margin-left: auto;
 }
 .table-capabilities summary {
   cursor: pointer;
@@ -297,9 +276,6 @@
     bottom: -20px;
     margin-bottom: -20px;
     padding-bottom: 20px;
-  }
-  .table-policy {
-    margin-left: 0;
   }
   .table-nif {
     flex-direction: column;

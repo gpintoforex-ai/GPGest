@@ -103,9 +103,6 @@ button:disabled { cursor: not-allowed; }
 .sidebar nav button[aria-current="page"] { box-shadow: inset 3px 0 var(--color-accent); }
 .finance-submenu { border-color: #3b5272; }
 .sidebar-collapse { background: transparent; border-color: #49636d; color: #c6d8de; margin: 20px 12px 0; font-size: 12px; }
-.sidebar-bottom { border-color: #34515c; margin-top: 0; }
-.sidebar-bottom small { color: #aac0c8; }
-.sidebar-bottom button { color: #aac0c8; }
 .avatar { background: #e8effb; color: #254f91; flex-shrink: 0; }
 .workspace { margin-left: var(--sidebar-width); width: calc(100% - var(--sidebar-width)); min-width: 0; }
 .workspace > header { min-height: 96px; height: auto; gap: var(--space-4); padding: 16px 28px; }
@@ -208,7 +205,7 @@ a { color: var(--color-primary); }
 .sidebar-backdrop:hover { background: #14263f88; }
 @media (min-width: 901px) {
   .sidebar-collapsed { --sidebar-width: 82px; }
-  .sidebar-collapsed .nav-label, .sidebar-collapsed .brand-full, .sidebar-collapsed .brand small, .sidebar-collapsed .sidebar-bottom > div, .sidebar-collapsed .sidebar-bottom .avatar { display: none; }
+  .sidebar-collapsed .nav-label, .sidebar-collapsed .brand-full, .sidebar-collapsed .brand small { display: none; }
   .sidebar-collapsed .brand-compact { display: block; font-size: 22px; }
   .sidebar-collapsed .sidebar nav button { justify-content: center; padding: 10px 6px; }
   .sidebar-collapsed .sidebar nav button svg:last-child:not(:first-child) { display: none; }
@@ -272,8 +269,6 @@ input[type="checkbox"], input[type="radio"] { min-height: 0; }
 .sidebar-collapse { margin: 22px 12px 0; color: #c6d8de; border-color: #49636d; background: transparent; }
 .sidebar-collapse:hover:not(:disabled) { color: #fff; background: var(--color-nav-active); }
 .finance-submenu { border-color: #49636d; }
-.sidebar-bottom { border-color: #34515c; }
-.sidebar-bottom small, .sidebar-bottom button { color: #aac0c8; }
 .avatar { color: var(--color-primary); background: #edf2f7; font-size: 12px; }
 .sidebar-mode.local, .sidebar-mode.integrated { color: #d2f5eb; border-color: #3f706a; background: #173b49; font-size: 11px; font-weight: 600; }
 .sidebar-mode.integrated {

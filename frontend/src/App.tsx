@@ -503,33 +503,6 @@ export default function App() {
             <span className="sidebar-mode-label">{operatingMode}</span>
             <span className="sidebar-mode-compact" aria-hidden="true">{integratedMode ? "ERP" : "Local"}</span>
           </div>
-          <div className="sidebar-bottom">
-            <span className="avatar">
-              {boot.user.name.slice(0, 2).toUpperCase()}
-            </span>
-            <div>
-              <strong>{boot.user.name}</strong>
-              <small>{boot.user.role}</small>
-            </div>
-            <ActionButton
-              aria-label="Terminar sessão"
-              onClick={() =>
-                act(async () => {
-                  if (!(await confirmFormExit(document.querySelector(".workspace")))) return;
-                  await api("/auth/logout", {});
-                  pageScroll.current.clear();
-                  invalidateDataRequests();
-                  setBoot(null);
-                  setSessions([]);
-                  setMovements([]);
-                  setAudit([]);
-                  setModal("");
-                })
-              }
-            >
-              <LogOut size={18} />
-            </ActionButton>
-          </div>
         </div>
       </aside>
       <div className="workspace">

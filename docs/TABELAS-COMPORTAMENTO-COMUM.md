@@ -27,8 +27,10 @@ Em todas as tabelas, na mesma posição e com os mesmos ícones e textos:
 - **Novo …** (canto superior direito), **Editar** (lápis), **Desativar/Ativar** e **Remover** (caixote), por linha.
   **Consultar** (olho) só aparece a quem não pode editar; quem edita abre a ficha pelo lápis.
 - Pesquisa, filtro **Estado** (Ativos, Inativos, Todos), ordenação por coluna e paginação (10 a 100 por página).
-- Com integração: filtros **Origem** (IAZELA/ERP) e **Sincronização** e a barra **Integração com o ERP**
-  com um único botão, **Sincronizar**, e a regra para conflitos.
+- Com integração: filtros **Origem** (IAZELA/ERP) e **Sincronização** e o botão **Sincronizar** no
+  cabeçalho, à esquerda de **Novo …**. A regra para conflitos e a lista de operações suportadas pelo
+  conector estão na janela de sincronização (**Regra para conflitos e operações do conector**). Quando o
+  conector não permite sincronizar, o botão fica inativo e o motivo aparece por baixo da descrição da página.
 - Colunas comuns: código e descrição, origem, código no ERP, estado da sincronização e data da última
   sincronização concluída. Não há coluna de estado: um registo inativo mostra a etiqueta «Inativo» junto
   ao nome (e aparece esbatido); o filtro **Estado** escolhe Ativos, Inativos ou Todos. Os estados aparecem com ícone e texto, nunca só por cor.
@@ -127,8 +129,8 @@ Resultado e recuperação:
   códigos repetidos na própria Wintouch aparecem no aviso da sincronização.
 - `base_values` guarda os valores acordados na última sincronização. Alterado só de um lado, a alteração
   segue para o outro; alterado nos dois lados, é **conflito**.
-- A regra **Em conflito** (por tabela, só administrador) pode ser **Perguntar em cada registo**
-  (por omissão), **Prevalece o ERP** ou **Prevalece a IAZELA**. Um conflito sem decisão fica marcado e nada é alterado.
+- A regra **Em conflito** (por tabela, só administrador, na janela **Sincronizar**) pode ser **Perguntar em cada registo**
+  (por omissão), **Prevalece o ERP** ou **Prevalece a IAZELA**. Um conflito sem decisão fica marcado e nada é alterado. Mudar a regra refaz a pré-visualização.
 - Campos geridos pelo ERP (nome e NIF das entidades, com a origem das entidades no ERP) são só de leitura
   na IAZELA e prevalecem sempre do lado do ERP.
 

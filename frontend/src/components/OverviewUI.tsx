@@ -276,14 +276,18 @@ export function ModuleOverview({
   actions,
   children,
   className = "",
+  heading = true,
 }: {
   title: string;
   description?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
+  /** Sem título visível (a página já o diz); o título continua a nomear a secção. */
+  heading?: boolean;
 }) {
   const id = useId();
+  if (!heading) return <section className={`ui-module-overview ${className}`} aria-label={title}>{children}</section>;
   return (
     <section className={`ui-module-overview ${className}`} aria-labelledby={id}>
       <header>
