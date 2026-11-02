@@ -1,4 +1,4 @@
-"""Movimentos de stock: «Sincronizar vendas» com período e barra de progresso.
+"""Movimentos de stock: «Sincronizar movimentos» com período e barra de progresso.
 
 Só APIs intercetadas e fictícias (reaproveita as do teste de inventário); nada é gravado.
 Requer o Vite em 127.0.0.1:5174.
@@ -26,7 +26,7 @@ STAGES = [
 ]
 RESULT = {
     "status": "concluida", "inserted_count": 9, "updated_count": 2,
-    "stock": {"status": "aplicado", "applied": 5, "returns": 1, "reversed": 0, "pending_count": 1, "conflict_count": 0,
+    "stock": {"status": "aplicado", "applied": 5, "entries": 2, "exits": 0, "transfers": 0, "returns": 1, "reversed": 0, "pending_count": 1, "conflict_count": 0,
               "pending": [{"document": "FT 2026/14", "article": "Artigo fictício", "reason": "Artigo do ERP sem ficha local associada."}],
               "conflicts": []},
 }
@@ -65,8 +65,8 @@ with sync_playwright() as p:
         page.goto(os.getenv("GPGEST_UI_URL", "http://127.0.0.1:5174") + "/?pagina=Artigos%20e%20validades")
         page.get_by_role("navigation", name="Artigos e stock", exact=True).get_by_role("button", name="Movimentos", exact=True).click()
         expect(page.get_by_role("heading", name="Histórico de stock", exact=True)).to_be_visible()
-        page.get_by_role("button", name="Sincronizar vendas", exact=True).click()
-        dialog = page.get_by_role("dialog", name="Sincronizar vendas Wintouch", exact=True)
+        page.get_by_role("button", name="Sincronizar movimentos", exact=True).click()
+        dialog = page.get_by_role("dialog", name="Sincronizar movimentos Wintouch", exact=True)
         dialog.get_by_label("De", exact=True).fill("2026-10-01")
         dialog.get_by_label("Até", exact=True).fill("2026-10-20")
         # Empresa de demonstração: a sincronização exige confirmação explícita.
@@ -74,7 +74,7 @@ with sync_playwright() as p:
         dialog.get_by_text("Confirmo a importação Wintouch para esta empresa de demonstração.").click()
         expect(dialog.get_by_label("Confirmo a importação Wintouch para esta empresa de demonstração.")).to_be_checked()
         dialog.get_by_role("button", name="Sincronizar", exact=True).click()
-        progress = dialog.get_by_role("progressbar", name="Sincronização de vendas")
+        progress = dialog.get_by_role("progressbar", name="Sincronização de movimentos")
         expect(progress).to_be_visible()
         expect(dialog.get_by_text("A ler documentos de venda", exact=False)).to_be_visible()
         expect(progress).to_have_attribute("aria-valuetext", "12 de 40")
@@ -82,7 +82,7 @@ with sync_playwright() as p:
         page.screenshot(path=str(OUTPUT / f"sales-sync-progress-{width}.png"))
         expect(dialog.get_by_text("A aplicar as vendas ao stock", exact=False)).to_be_visible()
         expect(dialog.get_by_text("Sincronização concluída: 9 registo(s) novo(s) e 2 atualizado(s).")).to_be_visible()
-        expect(dialog.get_by_text("5 saída(s) de venda, 1 devolução(ões) por nota de crédito", exact=False)).to_be_visible()
+        expect(dialog.get_by_text("5 saída(s) de venda, 2 entrada(s) (compras e entradas de stock), 1 devolução(ões)", exact=False)).to_be_visible()
         dialog.get_by_text("1 linha(s) por aplicar", exact=False).click()
         expect(dialog.get_by_text("Artigo do ERP sem ficha local associada.", exact=False)).to_be_visible()
         page.screenshot(path=str(OUTPUT / f"sales-sync-result-{width}.png"))
@@ -90,5 +90,30 @@ with sync_playwright() as p:
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
         assert not errors, errors
         page.close()
+    # Falha no servidor: só o motivo e «Voltar a tentar»; nunca «Sincronização concluída».
+    failure = {"id": "run-2", "status": "falhou", "stage": "", "done": 0, "total": 0, "error": "A API repetiu IDs entre páginas. A importação foi anulada.",
+               "result": {"status": "falhou", "inserted_count": 0, "updated_count": 0, "error_message": "A API repetiu IDs entre páginas. A importação foi anulada."}}
+
+    def failing(route):
+        path = urlsplit(route.request.url).path
+        if path == "/api/integrations/wintouch/sales/start":
+            return route.fulfill(json={**failure, "status": "em_curso", "result": None})
+        if path.startswith("/api/integrations/wintouch/sales/runs/"):
+            return route.fulfill(json=failure)
+        return intercept(route)
+
+    page = browser.new_page(viewport={"width": 1440, "height": 1000}, locale="pt-PT")
+    page.route("**/api/**", failing)
+    page.goto(os.getenv("GPGEST_UI_URL", "http://127.0.0.1:5174") + "/?pagina=Artigos%20e%20validades")
+    page.get_by_role("navigation", name="Artigos e stock", exact=True).get_by_role("button", name="Movimentos", exact=True).click()
+    page.get_by_role("button", name="Sincronizar movimentos", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Sincronizar movimentos Wintouch", exact=True)
+    dialog.get_by_text("Confirmo a importação Wintouch para esta empresa de demonstração.").click()
+    dialog.get_by_role("button", name="Sincronizar", exact=True).click()
+    expect(dialog.get_by_role("alert")).to_contain_text("A API repetiu IDs entre páginas")
+    expect(dialog.get_by_text("Sincronização concluída", exact=False)).to_have_count(0)
+    dialog.get_by_role("button", name="Voltar a tentar", exact=True).click()
+    expect(dialog.get_by_label("De", exact=True)).to_be_visible()
+    page.close()
     browser.close()
-print("PASS: Sincronizar vendas nos movimentos de stock, com período, progresso e resultado (1440 e 390 px)")
+print("PASS: Sincronizar movimentos Wintouch nos movimentos de stock, com período, progresso e resultado (1440 e 390 px)")

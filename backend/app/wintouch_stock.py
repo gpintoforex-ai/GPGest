@@ -1,11 +1,13 @@
-"""Saídas de stock das vendas Wintouch, aplicadas a seguir à importação de vendas.
+"""Movimentos de stock dos documentos Wintouch, aplicados a seguir à importação de vendas.
 
-A Wintouch não controla stock: as quantidades são locais. Cada linha de artigo de uma fatura,
-fatura-recibo ou fatura simplificada importada gera uma saída «Venda Wintouch»; uma nota de crédito
-devolve ao stock ao custo da venda original, quando essa venda já foi integrada. As regras são as
-das vendas SAF-T: só artigos associados, sem lotes, a partir do início do controlo de stock.
-Movimentos confirmados não se alteram: um documento anulado gera devoluções ligadas às saídas
-(estorno) e um documento alterado depois de integrado fica em conflito para revisão.
+A Wintouch não controla stock: as quantidades são locais. Cada documento cujo tipo a Wintouch marca
+como movimentando stock (`IsStockEnabled`) é aplicado segundo o seu sentido (`StockMode`): vendas e
+saídas baixam o stock, compras e entradas aumentam-no, transferências mudam de armazém. Uma devolução
+(nota de crédito, devolução a fornecedor) volta ao custo do movimento original, quando este já foi
+integrado. Os lotes indicados pela Wintouch são respeitados; sem lote, a saída de um artigo com lotes
+segue o FEFO. Só artigos associados e a partir do início do controlo de stock.
+Movimentos confirmados não se alteram: um documento anulado gera o movimento inverso ligado ao
+original (estorno) e um documento alterado depois de integrado fica em conflito para revisão.
 """
 
 import hashlib
@@ -14,6 +16,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from .inventory import MovementInput, document_key, lock, post, require, settings, stock_from_erp
@@ -21,14 +24,48 @@ from .models import (
     ErpLink,
     StockArticle,
     StockEntry,
+    StockLot,
     StockWarehouse,
     WintouchProduct,
     WintouchSaleRecord,
 )
 
-SALE_CLASSES = (3, 5, 40)
-CREDIT_CLASS = 6
 PREFIX = "wt-stock:"
+ZERO = Decimal(0)
+# Classes de documento Wintouch (validadas na instalação) e a operação local correspondente.
+SALES = {3, 5, 7, 19, 27, 39, 40}  # faturas, guias a cliente, pedidos, amostras, contas de mesa, FS
+CUSTOMER_RETURNS = {4, 6, 8, 28}  # devoluções, notas de crédito, devoluções de guia e de amostra
+PURCHASES = {32, 34, 36}  # faturas de compra e guias de entrada
+SUPPLIER_RETURNS = {33, 35, 37}  # devoluções e notas de crédito de fornecedor
+LABELS = {
+    "sale": "Venda Wintouch",
+    "customer_return": "Devolução de cliente Wintouch",
+    "purchase": "Compra Wintouch",
+    "supplier_return": "Devolução a fornecedor Wintouch",
+    "entry": "Entrada de stock Wintouch",
+    "exit": "Saída de stock Wintouch",
+    "transfer": "Transferência Wintouch",
+}
+# Ordem no mesmo dia: entradas antes das saídas que delas dependem; devoluções no fim.
+ORDER = {"purchase": 0, "entry": 0, "transfer": 1, "sale": 2, "exit": 2, "customer_return": 3, "supplier_return": 3}
+
+
+def operation(document_class, stock_mode):
+    if document_class in SALES:
+        return "sale"
+    if document_class in CUSTOMER_RETURNS:
+        return "customer_return"
+    if document_class in PURCHASES:
+        return "purchase"
+    if document_class in SUPPLIER_RETURNS:
+        return "supplier_return"
+    if stock_mode == 2:
+        return "transfer"
+    if stock_mode == 1:
+        return "entry"
+    if stock_mode == -1:
+        return "exit"
+    return None
 
 
 def line_key(enterprise, line_id, void=False):
@@ -37,19 +74,20 @@ def line_key(enterprise, line_id, void=False):
 
 
 def fingerprint(line, document_class):
-    data = {k: line.get(k) for k in ("product_id", "warehouse_id", "quantity", "net", "batch", "source_line")}
+    keys = ("product_id", "warehouse_id", "quantity", "net", "batch", "batch_number", "source_line")
+    data = {k: line.get(k) for k in keys}
     return hashlib.sha256(json.dumps({**data, "class": document_class}, sort_keys=True).encode()).hexdigest()
 
 
 def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, warehouse_id=None, progress=None):
-    """Aplica ao stock as linhas das vendas Wintouch importadas no período. Devolve o resumo."""
+    """Aplica ao stock as linhas dos documentos Wintouch importados no período. Devolve o resumo."""
     config = settings(db)
     if stock_from_erp(db):
         return {"status": "inativo", "message": "O stock desta empresa é controlado pelo ERP."}
     if not config["control_start"]:
         return {
             "status": "inativo",
-            "message": "Defina a data de início do controlo de stock (Artigos → Parâmetros) para as vendas Wintouch movimentarem o stock.",
+            "message": "Defina a data de início do controlo de stock (Artigos → Parâmetros) para os documentos Wintouch movimentarem o stock.",
         }
     require(user, config, "adjust_stock")
     lock(db)
@@ -76,16 +114,22 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
     for entry in db.scalars(select(StockEntry).where(StockEntry.request_key.like(PREFIX + "%"))):
         posted[entry.request_key].append(entry)
         by_record[json.loads(entry.data).get("source_record")].append(entry)
-    records = list(db.scalars(select(WintouchSaleRecord).where(
+    records = []
+    for record in db.scalars(select(WintouchSaleRecord).where(
         WintouchSaleRecord.enterprise_id == enterprise,
         WintouchSaleRecord.store_id == store_id,
-        WintouchSaleRecord.kind == "documento",
+        WintouchSaleRecord.kind.in_(["documento", "stock"]),
         WintouchSaleRecord.document_date >= max(start.isoformat(), config["control_start"]),
         WintouchSaleRecord.document_date <= end.isoformat(),
-    )))
-    # Vendas antes das notas de crédito do mesmo dia: a devolução precisa da saída original.
-    records.sort(key=lambda r: (r.document_date, json.loads(r.data).get("document_class") == CREDIT_CLASS, r.external_id))
-    result = {"applied": 0, "returns": 0, "reversed": 0, "pending": [], "conflicts": []}
+    )):
+        detail = json.loads(record.data)
+        kind = operation(detail.get("document_class"), detail.get("stock_mode"))
+        if kind:
+            records.append((record, detail, kind))
+    records.sort(key=lambda item: (item[0].document_date, ORDER[item[2]], item[1].get("occurred_at") or "", item[0].external_id))
+    result = {"applied": 0, "entries": 0, "exits": 0, "transfers": 0, "returns": 0, "reversed": 0, "pending": [], "conflicts": []}
+    counters = {"sale": "applied", "purchase": "entries", "entry": "entries", "exit": "exits", "transfer": "transfers",
+                "customer_return": "returns", "supplier_return": "returns"}
 
     def pending(document, line, reason):
         product = articles.get(line.get("product_id")) if line else None
@@ -95,11 +139,20 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
         if not any(c["document"] == document and c["reason"] == reason for c in result["conflicts"]):
             result["conflicts"].append({"document": document, "reason": reason})
 
+    def returned(entry, kind):
+        return sum((abs(e.quantity) for rows in posted.values() for e in rows if e.original_id == entry.id and e.kind == kind), ZERO)
+
+    def warehouse_for(external):
+        return next((w for w in local if w.id == linked.get(external)), None)
+
     def attempt(record, document, line, document_class, data, counter):
         # Cada linha numa subtransação: uma linha recusada (ex.: stock insuficiente) não anula as outras.
+        # `data` pode ser uma lista (ex.: devolução repartida pelos lotes do movimento original).
         try:
             with db.begin_nested():
-                movements = post(db, user, data, authorize, source="Wintouch")
+                movements = []
+                for item in data if isinstance(data, list) else [data]:
+                    movements += post(db, user, item, authorize, source="Wintouch")
                 for movement in movements:
                     detail = json.loads(movement.data)
                     detail.update(source_record=record.id, source_line=line.get("id"), line_fingerprint=fingerprint(line, document_class))
@@ -113,89 +166,146 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
             posted[movement.request_key].append(movement)
             by_record[record.id].append(movement)
 
-    for index, record in enumerate(records):
+    def returns_of(originals, return_kind, amount, base, key):
+        """Devolução repartida pelos movimentos originais (ex.: vários lotes), até à quantidade em falta."""
+        parts, left = [], amount
+        for original in originals:
+            take = min(left, abs(original.quantity) - returned(original, return_kind))
+            if take <= 0:
+                continue
+            parts.append(MovementInput(**base, warehouse_id=original.warehouse_id, kind=return_kind, quantity=take,
+                                       original_id=original.id, request_key=key if not parts else f"{key}~{len(parts)}",
+                                       override_reason="Lote do movimento original Wintouch"))
+            left -= take
+            if left <= 0:
+                break
+        return parts, left
+
+    for index, (record, detail, kind) in enumerate(records):
         if progress:
-            progress("A aplicar as vendas ao stock", index + 1, len(records))
-        detail = json.loads(record.data)
+            progress("A aplicar os documentos ao stock", index + 1, len(records))
         document = detail.get("document") or record.external_id
         document_class = detail.get("document_class")
         own = by_record.get(record.id, [])
         if detail.get("cancelled") or not record.active:
-            # Estorno: cada saída ainda não devolvida volta ao stock, ligada à venda original.
-            for entry in [e for e in own if e.kind == "sale"]:
+            # Estorno: movimento inverso ligado a cada movimento ainda não revertido; os restantes
+            # (devoluções, transferências) ficam para revisão manual.
+            for entry in own:
                 void = line_key(enterprise, entry.id, void=True)
-                returned = sum((e.quantity for rows in posted.values() for e in rows if e.original_id == entry.id and e.kind == "customer_return"), Decimal(0))
-                if void in posted or abs(entry.quantity) - returned <= 0:
+                if ":void:" in entry.request_key or void in posted:
                     continue
                 line = {"id": json.loads(entry.data).get("source_line")}
-                attempt(record, document, line, document_class, MovementInput(
-                    article_id=entry.article_id, warehouse_id=entry.warehouse_id, kind="customer_return",
-                    quantity=abs(entry.quantity) - returned, original_id=entry.id, occurred_on=entry.occurred_on,
-                    document=document, reason="Estorno: documento anulado na Wintouch", request_key=void,
-                ), "reversed")
-            if any(e.kind == "customer_return" and ":void:" not in e.request_key for e in own):
-                conflict(document, "Nota de crédito anulada depois de devolver ao stock: reveja e registe o acerto manualmente.")
-            continue
-        if document_class not in SALE_CLASSES + (CREDIT_CLASS,):
+                common = {"article_id": entry.article_id, "warehouse_id": entry.warehouse_id, "occurred_on": entry.occurred_on,
+                          "document": document, "reason": "Estorno: documento anulado na Wintouch", "request_key": void}
+                if entry.kind == "sale":
+                    left = abs(entry.quantity) - returned(entry, "customer_return")
+                    data = MovementInput(**common, kind="customer_return", quantity=left, original_id=entry.id) if left > 0 else None
+                elif entry.kind == "purchase":
+                    left = abs(entry.quantity) - returned(entry, "supplier_return")
+                    data = MovementInput(**common, kind="supplier_return", quantity=left, original_id=entry.id,
+                                         override_reason="Lote do movimento original Wintouch") if left > 0 else None
+                elif entry.kind == "adjustment":
+                    data = MovementInput(**common, kind="adjustment", quantity=abs(entry.quantity), lot_id=entry.lot_id,
+                                         adjustment_out=entry.quantity > 0, unit_cost=entry.unit_cost if entry.quantity < 0 else None,
+                                         override_reason="Lote do movimento original Wintouch")
+                else:
+                    conflict(document, "Documento anulado na Wintouch depois de integrado no stock: reveja e registe o acerto manualmente.")
+                    continue
+                if data:
+                    attempt(record, document, line, document_class, data, "reversed")
             continue
         lines = detail.get("lines")
         if not isinstance(lines, list):
             pending(document, None, "Linhas do documento por ler: repita a importação.")
             continue
         current = {line_key(enterprise, line["id"]) for line in lines}
-        if any(":void:" not in e.request_key and e.request_key not in current for e in own):
+        if any(":void:" not in e.request_key and e.request_key.split("~")[0] not in current for e in own):
             conflict(document, "Linha removida na Wintouch depois de integrada no stock: reveja e registe o acerto manualmente.")
         for line in lines:
-            key = line_key(enterprise, line["id"])
-            if key in posted:
-                if json.loads(posted[key][0].data).get("line_fingerprint") != fingerprint(line, document_class):
-                    conflict(document, "Linha alterada na Wintouch depois de integrada no stock: reveja e registe o acerto manualmente.")
-                continue
-            product = articles.get(line["product_id"])
-            if not product:
-                pending(document, line, "Artigo do ERP sem ficha local associada.")
-                continue
-            meta = json.loads(product.data)
-            if meta.get("service"):
-                continue
-            if meta.get("lots") or line.get("batch"):
-                pending(document, line, "Artigo com lotes: registe a saída manualmente, com o lote.")
-                continue
-            amount = Decimal(line["quantity"])
-            if amount <= 0:
-                continue
-            if document_class == CREDIT_CLASS:
-                sale = next((e for e in posted.get(line_key(enterprise, line.get("source_line") or ""), []) if e.kind == "sale"), None)
-                if not sale:
-                    pending(document, line, "Nota de crédito sem venda original integrada no stock: registe a devolução manualmente.")
+            try:
+                key = line_key(enterprise, line["id"])
+                if key in posted:
+                    if json.loads(posted[key][0].data).get("line_fingerprint") != fingerprint(line, document_class):
+                        conflict(document, "Linha alterada na Wintouch depois de integrada no stock: reveja e registe o acerto manualmente.")
                     continue
-                attempt(record, document, line, document_class, MovementInput(
-                    article_id=product.id, warehouse_id=sale.warehouse_id, kind="customer_return", quantity=amount,
-                    original_id=sale.id, occurred_on=record.document_date, document=document,
-                    reason="Nota de crédito Wintouch", request_key=key,
-                ), "returns")
-                continue
-            target = chosen or next((w for w in local if w.id == linked.get(line.get("warehouse_id"))), None) or (local[0] if len(local) == 1 else None)
-            if not target:
-                pending(document, line, "Armazém por definir: escolha o armazém na importação ou associe os armazéns ao ERP.")
-                continue
-            if any(
-                document_key(json.loads(e.data).get("document", "")) == document_key(document) and not e.request_key.startswith(PREFIX)
-                for e in db.scalars(select(StockEntry).where(StockEntry.article_id == product.id, StockEntry.kind == "sale"))
-            ):
-                pending(document, line, "Já existe uma venda manual deste documento e artigo: não foi criada uma duplicação.")
-                continue
-            attempt(record, document, line, document_class, MovementInput(
-                article_id=product.id, warehouse_id=target.id, kind="sale", quantity=amount,
-                net_sales=max(Decimal(line["net"]), Decimal(0)), occurred_on=record.document_date,
-                document=document, reason="Venda Wintouch", request_key=key,
-            ), "applied")
+                product = articles.get(line["product_id"])
+                if not product:
+                    pending(document, line, "Artigo do ERP sem ficha local associada.")
+                    continue
+                meta = json.loads(product.data)
+                amount = Decimal(line["quantity"])
+                if meta.get("service") or amount <= 0:
+                    continue
+                inbound = kind in ("purchase", "entry", "customer_return")
+                # Lotes: o da Wintouch quando o artigo controla lotes cá; sem lote, as saídas seguem o FEFO.
+                # Num artigo sem lotes cá, o lote da Wintouch é ignorado (só contam as quantidades).
+                lot = {}
+                if meta.get("lots") and line.get("batch_number"):
+                    if inbound:
+                        lot = {"lot_number": line["batch_number"][:100], "expiry": line.get("batch_expiry")}
+                    else:
+                        found = db.scalar(select(StockLot).where(StockLot.article_id == product.id, StockLot.number == line["batch_number"]))
+                        if not found:
+                            pending(document, line, f"Lote «{line['batch_number']}» sem entrada registada no stock: registe primeiro a entrada desse lote.")
+                            continue
+                        lot = {"lot_id": found.id, "override_reason": "Lote indicado no documento Wintouch"}
+                elif meta.get("lots") and inbound and kind != "customer_return":
+                    pending(document, line, "Artigo com lotes: a entrada Wintouch não indica o lote. Registe a entrada manualmente, com o lote.")
+                    continue
+                net = Decimal(line["net"]).quantize(Decimal("0.000001"))
+                unit_cost = (net / amount).quantize(Decimal("0.00000001")) if net > 0 else None
+                base = {"article_id": product.id, "occurred_on": record.document_date, "document": document, "reason": LABELS[kind]}
+                if kind in ("customer_return", "supplier_return"):
+                    original_kind = "sale" if kind == "customer_return" else "purchase"
+                    originals = [e for e in posted.get(line_key(enterprise, line.get("source_line") or ""), []) if e.kind == original_kind]
+                    if originals:
+                        parts, left = returns_of(originals, kind, amount, base, key)
+                        if left > 0:
+                            pending(document, line, "A devolução excede o movimento original integrado no stock: registe a diferença manualmente.")
+                            continue
+                        attempt(record, document, line, document_class, parts, counters[kind])
+                        continue
+                    if kind == "customer_return":
+                        pending(document, line, "Devolução sem venda original integrada no stock: registe a devolução manualmente.")
+                        continue
+                target = chosen or warehouse_for(line.get("warehouse_id")) or (local[0] if len(local) == 1 else None)
+                if kind == "transfer":
+                    origin = warehouse_for(detail.get("source_warehouse_id"))
+                    destination = warehouse_for(line.get("warehouse_id"))
+                    if not origin or not destination or origin.id == destination.id:
+                        pending(document, line, "Transferência com armazéns por associar ao ERP (Tabelas → Armazéns): registe-a manualmente.")
+                        continue
+                    data = MovementInput(**base, **lot, warehouse_id=origin.id,
+                                         target_id=destination.id, kind="transfer", quantity=amount, request_key=key)
+                    attempt(record, document, line, document_class, data, counters[kind])
+                    continue
+                if not target:
+                    pending(document, line, "Armazém por definir: escolha o armazém na importação ou associe os armazéns ao ERP.")
+                    continue
+                values = base | lot | {"warehouse_id": target.id, "quantity": amount, "request_key": key}
+                if kind == "sale":
+                    if any(
+                        document_key(json.loads(e.data).get("document", "")) == document_key(document) and not e.request_key.startswith(PREFIX)
+                        for e in db.scalars(select(StockEntry).where(StockEntry.article_id == product.id, StockEntry.kind == "sale"))
+                    ):
+                        pending(document, line, "Já existe uma venda manual deste documento e artigo: não foi criada uma duplicação.")
+                        continue
+                    data = MovementInput(**values, kind="sale", net_sales=max(net, ZERO))
+                elif kind == "purchase":
+                    data = MovementInput(**values, kind="purchase", unit_cost=unit_cost)
+                elif kind == "entry":
+                    data = MovementInput(**values, kind="adjustment", unit_cost=unit_cost)
+                elif kind == "exit":
+                    data = MovementInput(**values, kind="adjustment", adjustment_out=True)
+                else:  # supplier_return sem compra original integrada: sai ao custo médio.
+                    data = MovementInput(**values, kind="supplier_return")
+                attempt(record, document, line, document_class, data, counters[kind])
+            except ValidationError:
+                pending(document, line, "Valores da linha fora dos limites aceites pelo stock (quantidade ou valor): registe o movimento manualmente.")
     return {
         "status": "aplicado",
         "control_start": config["control_start"],
-        "applied": result["applied"],
-        "returns": result["returns"],
-        "reversed": result["reversed"],
+        **{k: result[k] for k in ("applied", "entries", "exits", "transfers", "returns", "reversed")},
         "pending_count": len(result["pending"]),
         "pending": result["pending"][:50],
         "conflict_count": len(result["conflicts"]),

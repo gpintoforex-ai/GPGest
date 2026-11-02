@@ -23,7 +23,7 @@ function Progress({ run }: { run: Run }) {
       <div
         className={`stock-sync-progress-bar${percent === null ? " is-indeterminate" : ""}`}
         role="progressbar"
-        aria-label="Sincronização de vendas"
+        aria-label="Sincronização de movimentos"
         aria-valuemin={0}
         aria-valuemax={run.total || undefined}
         aria-valuenow={run.total ? run.done : undefined}
@@ -61,7 +61,9 @@ export default function StockSalesSync({ stores, warehouses, onClose, onDone }: 
   const following = useRef("");
   const storeWarehouses = warehouses.filter((w) => w.store_id === store && w.active !== false);
   const running = run?.status === "em_curso";
-  const result = run && !running ? run.result : null;
+  // Só uma execução concluída mostra resultado; uma falha mostra apenas o motivo.
+  const result = run?.status === "concluida" ? run.result : null;
+  const failed = run?.status === "falhou";
 
   function follow(current: Run) {
     following.current = current.id;
@@ -106,12 +108,13 @@ export default function StockSalesSync({ stores, warehouses, onClose, onDone }: 
 
   return (
     <AppDialog autoOpen busy={busy} className="modal stock-sync-dialog" onRequestClose={onClose} aria-labelledby="stock-sync-title">
-      <div className="panel-title"><h2 id="stock-sync-title">Sincronizar vendas Wintouch</h2></div>
+      <div className="panel-title"><h2 id="stock-sync-title">Sincronizar movimentos Wintouch</h2></div>
       <p className="footnote">
-        Importa os documentos de venda, os pagamentos e os saldos do período. Com o controlo de stock ativo, as linhas
-        de artigo geram as saídas de stock (uma vez por linha) e as notas de crédito devolvem ao custo da venda original.
+        Importa os documentos do período: vendas, pagamentos e saldos, e os documentos que a Wintouch marca como
+        movimentando stock (compras, entradas, saídas, transferências e devoluções). Com o controlo de stock ativo, cada
+        linha de artigo gera o movimento de stock correspondente, uma vez e com o lote indicado pela Wintouch.
       </p>
-      {!running && !result && (
+      {!running && !result && !failed && (
         <div className="stock-sync-form">
           <DatePresets from={from} to={to} onSelect={(start, end) => { setFrom(start); setTo(end); }} disabled={busy} />
           <div className="stock-sync-fields">
@@ -139,7 +142,7 @@ export default function StockSalesSync({ stores, warehouses, onClose, onDone }: 
               Confirmo a importação Wintouch para esta empresa de demonstração.
             </label>
           )}
-          <p className="footnote">Período máximo: um ano. Repetir um período não duplica documentos nem saídas de stock.</p>
+          <p className="footnote">Período máximo: um ano. Repetir um período não duplica documentos nem movimentos de stock.</p>
         </div>
       )}
       {error && <Notice className="error" role="alert">{error}</Notice>}
@@ -156,8 +159,12 @@ export default function StockSalesSync({ stores, warehouses, onClose, onDone }: 
         <ActionButton type="button" onClick={onClose}>
           {running ? "Fechar (continua em segundo plano)" : "Fechar"}
         </ActionButton>
-        {result && <ActionButton type="button" onClick={() => { setRun(null); setError(""); }}>Sincronizar outro período</ActionButton>}
-        {!running && !result && (
+        {(result || failed) && (
+          <ActionButton type="button" onClick={() => { setRun(null); setError(""); }}>
+            {failed ? "Voltar a tentar" : "Sincronizar outro período"}
+          </ActionButton>
+        )}
+        {!running && !result && !failed && (
           <ActionButton
             type="button"
             className="primary"

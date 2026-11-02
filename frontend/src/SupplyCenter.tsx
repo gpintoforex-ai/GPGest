@@ -1,4 +1,5 @@
 import { ContextSuggestion } from "./components/OverviewUI";
+import { formatQuantity } from "./lib/quantity";
 import { useEffect, useRef, useState } from "react";
 import { Package, RefreshCw, Calculator, ShoppingCart } from "lucide-react";
 import { api } from "./lib/api";
@@ -10,12 +11,7 @@ import { useLocationSearch } from "./components/WorkspaceUI";
 import OrderCenterBoard from "./OrderCenterBoard";
 
 type Row = Record<string, any>;
-const quantity = (value: unknown) =>
-  value == null
-    ? "Por confirmar"
-    : new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 6 }).format(
-        Number(value),
-      );
+const quantity = (value: unknown) => formatQuantity(value, "Por confirmar");
 const money = (value: number, currency = "EUR") =>
   new Intl.NumberFormat("pt-PT", { style: "currency", currency }).format(
     value / 100,

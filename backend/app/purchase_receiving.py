@@ -354,6 +354,10 @@ class ReceiveLine(Strict):
     expiry: date | None = None
     # Lote/validade num artigo sem controlo de lotes: ativá-lo na ficha ao lançar (se ainda sem stock).
     enable_lots: bool = False
+    # Ligação à encomenda (`ReceiveInput.order_id`): linha encomendada das unidades faturadas e, quando a
+    # encomenda tem a oferta numa linha própria (preço 0), a linha das unidades de bónus.
+    order_line: int | None = Field(default=None, ge=0)
+    order_bonus_line: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def one_article(self):
@@ -377,6 +381,10 @@ class ReceiveInput(Strict):
     credit_note_purchase_ids: list[str] = Field(default_factory=list, max_length=50)
     # Acerta a base e o IVA aos da fatura do arquivo (diferenças de arredondamento, ver ROUNDING_LIMIT_CENTS).
     match_document_totals: bool = False
+    # Encomenda ao fornecedor recebida com esta fatura: as linhas ligadas dão-na como recebida e o que
+    # vem para pedidos de clientes fica-lhes reservado. Acima do encomendado exige autorização explícita.
+    order_id: str | None = Field(default=None, max_length=36)
+    allow_overdelivery: bool = False
     lines: list[ReceiveLine] = Field(min_length=1, max_length=300)
     request_key: str = Field(min_length=8, max_length=100)
 
@@ -442,6 +450,37 @@ def suggested_document_type(db, code):
     preferred = "FC" if condition == "credito" else "FCD"
     kind = next((k for k in kinds if k.code == preferred), kinds[0] if kinds else None)
     return kind.id if kind else None
+
+
+def open_orders(db, supplier_id, stores, include=None):
+    """Encomendas confirmadas do fornecedor com mercadoria por receber (e a já ligada, `include`)."""
+    if not supplier_id or supplier_id.startswith("wt:"):
+        return []
+    result = []
+    for order in db.scalars(
+        select(Doc)
+        .where(Doc.kind == "order", Doc.supplier_id == supplier_id, Doc.confirmed_at.is_not(None), Doc.status != "cancelled")
+        .order_by(Doc.created_at)
+    ):
+        if order.store_id not in stores:
+            continue
+        payload = json.loads(order.data)
+        lines = []
+        for index, line in enumerate(payload["lines"]):
+            if line.get("nature") != "goods" or not line.get("article_id"):
+                continue
+            pending = buying.accepted(line) - buying.used(db, order.id, index, "receipt")
+            lines.append({
+                "index": index, "article_id": line["article_id"], "description": line["description"],
+                "unit": line.get("unit", "un"), "pending": str(max(D(0), pending)), "price": str(line.get("price", "0")),
+            })
+        if any(D(line["pending"]) > 0 for line in lines) or order.id == include:
+            result.append({
+                "id": order.id, "document": payload.get("document") or order.id[:8],
+                "document_date": payload.get("document_date"), "expected_date": payload.get("expected_date"),
+                "store_id": order.store_id, "lines": lines,
+            })
+    return result
 
 
 def register_routes(app, current, authorize, scope, audit):
@@ -520,11 +559,14 @@ def register_routes(app, current, authorize, scope, audit):
         return suppliers(user, db)
 
     def received(db):
+        """Faturas do arquivo já usadas numa receção: a lançada a partir da fatura e as anexadas
+        (ex.: fatura ou guia lida na receção de uma encomenda), para não serem recebidas duas vezes."""
         result = {}
         for row in db.scalars(select(Doc).where(Doc.kind == "receipt", Doc.status != "cancelled")):
-            archive_id = json.loads(row.data).get("archive_document_id")
-            if archive_id:
-                result[archive_id] = row.id
+            payload = json.loads(row.data)
+            for archive_id in [payload.get("archive_document_id"), *payload.get("archive_attachment_ids", [])]:
+                if archive_id:
+                    result.setdefault(archive_id, row.id)
         return result
 
     @app.get("/api/purchase-receiving/documents")
@@ -609,11 +651,28 @@ def register_routes(app, current, authorize, scope, audit):
                 for w in db.scalars(select(StockWarehouse).where(StockWarehouse.store_id.in_(stores)))
                 if w.active
             ],
+            # Encomendas em aberto deste fornecedor, para associar a receção (e comparar com a fatura).
+            "orders": open_orders(db, supplier["id"] if supplier else None, stores),
         }
+
+    def linked_order(db, data, supplier, warehouse):
+        """Encomenda indicada na receção: confirmada, do mesmo fornecedor e estabelecimento."""
+        if not data.order_id:
+            if any(line.order_line is not None or line.order_bonus_line is not None for line in data.lines):
+                fail("Indique a encomenda das linhas associadas.")
+            return None
+        order = db.get(Doc, data.order_id)
+        if (
+            not order or order.kind != "order" or not order.confirmed_at or order.status == "cancelled"
+            or order.supplier_id != supplier.id or order.store_id != warehouse.store_id
+        ):
+            fail("A encomenda não pertence a este fornecedor e estabelecimento, ou não está confirmada.", 409)
+        return order
 
     def prepare(db, user, doc, data, supplier, warehouse):
         """Artigos (existentes ou novos), correspondências aprendidas e linhas da receção."""
         config = stock.settings(db)
+        order = linked_order(db, data, supplier, warehouse)
         lines, created, learned, snapshot = [], [], 0, []
         for number, line in enumerate(data.lines, 1):
             try:
@@ -676,27 +735,37 @@ def register_routes(app, current, authorize, scope, audit):
             units, discount, _ = received_line(line, data.global_discount)
             if units != units.quantize(D(1).scaleb(-meta.get("precision", 0))):
                 fail(f"Linha {number}: a quantidade não respeita as casas decimais de «{article.name}».")
-            lines.append(buying.Line(
-                article_id=article.id,
-                description=line.description,
-                supplier_reference=line.reference[:100],
-                unit=meta.get("unit", "un"),
-                quantity=units,
-                price=line.price,
-                discount=discount,
-                document_price=(line.price * (1 - line.discount / 100) * (1 - data.global_discount / 100)).quantize(D("0.000001")),
-                vat=line.vat,
-                warehouse_id=warehouse.id,
-                lot_number=line.lot.strip() if meta.get("lots") else "",
-                expiry=line.expiry if meta.get("lots") else None,
-            ))
+            document_price = (line.price * (1 - line.discount / 100) * (1 - data.global_discount / 100)).quantize(D("0.000001"))
+            common = {
+                "article_id": article.id, "description": line.description, "supplier_reference": line.reference[:100],
+                "unit": meta.get("unit", "un"), "vat": line.vat, "warehouse_id": warehouse.id,
+                "lot_number": line.lot.strip() if meta.get("lots") else "",
+                "expiry": line.expiry if meta.get("lots") else None,
+            }
+            linked = {"source_id": order.id, "source_line": line.order_line} if order and line.order_line is not None else {}
+            if order and line.order_bonus_line is not None and line.bonus > 0:
+                # Oferta numa linha própria da encomenda: as unidades faturadas ligam-se à linha paga e o
+                # bónus à linha de oferta (preço 0). O custo total é o mesmo da linha única.
+                paid = (1 - (1 - line.discount / 100) * (1 - data.global_discount / 100)) * 100
+                lines.append(buying.Line(
+                    **common, **linked, quantity=line.quantity, price=line.price,
+                    discount=min(D(100), max(D(0), paid)).quantize(D("0.0001")), document_price=document_price,
+                ))
+                lines.append(buying.Line(
+                    **common, source_id=order.id, source_line=line.order_bonus_line, quantity=line.bonus,
+                    price=D(0), discount=D(0), document_price=D(0),
+                ))
+            else:
+                lines.append(buying.Line(
+                    **common, **linked, quantity=units, price=line.price, discount=discount, document_price=document_price,
+                ))
             # O lançamento tal como foi feito (bónus, desconto da linha), para a edição reabrir igual.
             snapshot.append(snapshot_line)
         if not lines:
             fail("Esta fatura só tem serviços: indique o tipo de documento para a lançar, ou registe-a em Compras.")
         receiving = {
             "global_discount": str(data.global_discount), "warehouse_id": warehouse.id, "lines": snapshot,
-            "match_document_totals": data.match_document_totals,
+            "match_document_totals": data.match_document_totals, "order_id": order.id if order else None,
         }
         return lines, created, learned, receiving
 
@@ -745,11 +814,20 @@ def register_routes(app, current, authorize, scope, audit):
         )
         db.add(row)
         db.flush()
-        buying.confirm_document(db, user, row, buying.Confirm(revision=0, acknowledge_differences=True), authorize, audit)
+        buying.confirm_document(
+            db, user, row,
+            buying.Confirm(revision=0, acknowledge_differences=True, allow_overdelivery=data.allow_overdelivery),
+            authorize, audit,
+        )
+        if data.order_id:
+            # Como em «Receber» nas encomendas: o que chega para pedidos de clientes fica-lhes reservado.
+            from .customer_orders import distribute_receipt
+
+            distribute_receipt(db, user, row)
         audit(
             db, user, "rececao_a_partir_de_fatura", row.id,
             {"arquivo": doc.id, "linhas": len(lines), "artigos_criados": len(created), "correspondencias": learned,
-             "acerto_arredondamento": adjustment},
+             "acerto_arredondamento": adjustment, "encomenda": data.order_id},
             warehouse.store_id,
         )
         db.commit()
@@ -792,6 +870,7 @@ def register_routes(app, current, authorize, scope, audit):
                 "expiry": line.get("expiry") or "", "description": line["description"], "quantity": str(line["quantity"]),
                 "bonus": str(line.get("bonus", "0")), "price": str(line["price"]), "discount": str(line.get("discount", "0")),
                 "vat": str(line.get("vat", "23")), "global_discount": "0", "service": False, "evidence": "",
+                "order_line": line.get("order_line"), "order_bonus_line": line.get("order_bonus_line"),
             }
             # Valor da linha como na fatura (quantidade × preço − desconto da linha).
             net = D(values["quantity"]) * D(values["price"]) * (1 - D(values["discount"]) / 100)
@@ -813,11 +892,13 @@ def register_routes(app, current, authorize, scope, audit):
                         "document_type_id": payload.get("document_type_id"), "payment_method": payload.get("payment_method"),
                         "due_date": payload.get("due_date"), "credit_note_purchase_ids": payload.get("credit_note_purchase_ids", []),
                         "match_document_totals": bool(receiving.get("match_document_totals")),
-                        "rounding_adjustment": payload.get("rounding_adjustment")},
+                        "rounding_adjustment": payload.get("rounding_adjustment"),
+                        "order_id": receiving.get("order_id")},
             "source": "rececao",
             "lines": lines,
             "warnings": [] if not used_invoice else ["Esta receção já tem fatura ou devolução associada: corrija com uma devolução ao fornecedor."],
             "check": {"lines_total_cents": 0, "document_base_cents": doc.base_cents, "matches": None},
+            "orders": open_orders(db, row.supplier_id, stores, receiving.get("order_id")),
             "suppliers": candidates,
             "warehouses": [
                 {"id": w.id, "name": w.name, "store_id": w.store_id}

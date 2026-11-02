@@ -14,6 +14,7 @@ from app.models import (
     Register,
     StockArticle,
     StockEntry,
+    StockLot,
     User,
     WintouchProduct,
     WintouchSaleRecord,
@@ -110,7 +111,8 @@ def test_sale_lines_create_stock_exits_once_and_list_exclusions(case):
     assert stock["status"] == "aplicado" and stock["applied"] == 1
     reasons = {p["reason"] for p in stock["pending"]}
     assert "Artigo do ERP sem ficha local associada." in reasons
-    assert "Artigo com lotes: registe a saída manualmente, com o lote." in reasons
+    # Artigo com lotes sem stock em nenhum lote: o FEFO não encontra unidades e a linha fica listada.
+    assert any(r.startswith("Stock disponível insuficiente") for r in reasons)
     rows = entries(factory, articles["prod-a"])
     sale = next(r for r in rows if r.kind == "sale")
     assert sale.quantity == D(-2) and sale.net_sales == D(10) and sale.unit_cost == D(3)
@@ -285,3 +287,104 @@ def test_background_sync_refuses_a_second_run_and_reader_cannot_follow(endpoint)
     assert running["status"] == "em_curso"
     client.post("/api/auth/login", json={"email": "operator@test.pt", "password": "PasswordTest123!"})
     assert client.get(f"/api/integrations/wintouch/sales/runs/{running['id']}").status_code == 403
+
+
+def test_lot_article_exits_by_fefo_and_credit_note_returns_to_each_lot(case):
+    client, factory, store, warehouse, articles, data, calls = case
+    for lot, quantity, expiry in (("L-TARDE", "5", "2027-12-31"), ("L-CEDO", "1", "2027-01-31")):
+        response = client.post("/api/stock/movements", json={
+            "article_id": articles["prod-lotes"], "warehouse_id": warehouse, "kind": "purchase", "quantity": quantity,
+            "unit_cost": "2", "lot_number": lot, "expiry": expiry, "reason": "Stock inicial com lote",
+            "request_key": str(uuid4()), "occurred_on": "2026-09-30",
+        })
+        assert response.status_code == 200, response.text
+    lines = data["product_documents/sale/withsources"][0]["ProductDocumentDetails"]
+    lines[2] = line("dim-l", "prod-lotes", quantity="3", gross="15.00", row=2)
+    stock = run(case)
+    assert stock["applied"] == 2, stock
+    with factory() as db:
+        lots = {lot.id: lot.number for lot in db.scalars(select(StockLot))}
+    sales = [e for e in entries(factory, articles["prod-lotes"]) if e.kind == "sale"]
+    # FEFO: primeiro a única unidade do lote que expira antes, depois o restante do outro lote.
+    assert sorted((lots[e.lot_id], e.quantity) for e in sales) == [("L-CEDO", D(-1)), ("L-TARDE", D(-2))]
+    credit = {**data["product_documents"][0], "ID": "nc-l", "DocumentTypeID": "nc", "DocumentNumber": 8, "Version": "n1",
+              "Date": "2026-10-02T10:00:00", "Payments": []}
+    data["product_documents"].append(credit)
+    data["product_documents/nc-l/withsources"] = [{"ID": "nc-l", "ProductDocumentDetails": [line("dim-nl", "prod-lotes", quantity="3", gross="15.00", source="dim-l")]}]
+    stock = run(case)
+    assert stock["returns"] == 1 and stock["conflict_count"] == 0, stock
+    returns = [e for e in entries(factory, articles["prod-lotes"]) if e.kind == "customer_return"]
+    assert sorted((lots[e.lot_id], e.quantity) for e in returns) == [("L-CEDO", D(1)), ("L-TARDE", D(2))]
+    assert sum(e.quantity for e in entries(factory, articles["prod-lotes"])) == D(6)
+    assert run(case)["returns"] == 0
+
+
+def stock_document(data, identifier, type_id, number, lines, date="2026-10-01T08:00:00", **extra):
+    base = {k: v for k, v in data["product_documents"][0].items() if k != "Payments"}
+    data["product_documents"].append({**base, "ID": identifier, "DocumentTypeID": type_id, "DocumentNumber": number,
+                                      "Date": date, "Version": "v1", **extra})
+    data[f"product_documents/{identifier}/withsources"] = [{"ID": identifier, "ProductDocumentDetails": lines}]
+
+
+def stock_types(data):
+    data["document_types"] += [
+        {"ID": "ent", "Code": "ENTSTOCK", "Class": 10, "IsStockEnabled": True, "StockMode": 1},
+        {"ID": "out", "Code": "SAIDASTOCK", "Class": 11, "IsStockEnabled": True, "StockMode": -1},
+        {"ID": "trans", "Code": "TRANS", "Class": 12, "IsStockEnabled": True, "StockMode": 2},
+        {"ID": "cmp", "Code": "FTCOMPRA", "Class": 34, "IsStockEnabled": True, "StockMode": 1},
+        {"ID": "orc", "Code": "ORC", "Class": 1, "IsStockEnabled": False},
+    ]
+    # Lotes por artigo: `products/product_batches` ignora a paginação na API real e não é usada.
+    data["products/prod-lotes/batches"] = [{"ID": "b1", "ProductID": "prod-lotes", "Batch1": "L123", "ExpirationDate": "2026-12-30T23:59:59.06"}]
+
+
+def test_stock_entry_with_wintouch_lot_then_sale_from_that_lot(case):
+    client, factory, store, warehouse, articles, data, calls = case
+    stock_types(data)
+    stock_document(data, "ent-1", "ent", 1, [line("dim-e", "prod-lotes", quantity="4", gross="8.00", batch="b1")])
+    stock_document(data, "orc-1", "orc", 1, [line("dim-o", "prod-a", quantity="9")])  # Sem stock na Wintouch: ignorado.
+    data["product_documents/sale/withsources"][0]["ProductDocumentDetails"][2] = line("dim-l", "prod-lotes", quantity="1", gross="5.00", row=2, batch="b1")
+    stock = run(case)
+    assert stock["entries"] == 1 and stock["applied"] == 2 and stock["pending_count"] == 1, stock
+    assert "product_documents/orc-1/withsources" not in calls
+    with factory() as db:
+        lot = db.scalar(select(StockLot).where(StockLot.article_id == articles["prod-lotes"]))
+        assert (lot.number, lot.expiry) == ("L123", "2026-12-30")
+    rows = entries(factory, articles["prod-lotes"])
+    entry = next(r for r in rows if r.kind == "adjustment")
+    sale = next(r for r in rows if r.kind == "sale")
+    assert entry.quantity == D(4) and entry.unit_cost == D(2) and entry.lot_id == lot.id
+    assert sale.quantity == D(-1) and sale.lot_id == lot.id and json.loads(entry.data)["document"] == "ENTSTOCK 2026 1"
+    # Repetir: sem novos movimentos e sem reler linhas nem lotes de documentos com a mesma versão.
+    reads = len(calls)
+    again = run(case)
+    assert again["entries"] == again["applied"] == 0 and len(entries(factory, articles["prod-lotes"])) == 2
+    assert calls.count("products/prod-lotes/batches") == 1 and "products/product_batches" not in calls
+    reread = [c for c in calls[reads:] if c.endswith("/withsources") or c.endswith("/batches")]
+    # Só a fatura do cenário sem versão («credit-sale») é relida; as restantes têm a mesma versão.
+    assert reread == ["product_documents/credit-sale/withsources"], reread
+    # Os documentos só de stock não aparecem como vendas nem pagamentos.
+    assert all(row["kind"] != "stock" for row in client.get("/api/integrations/wintouch/sales").json())
+
+
+def test_purchase_exit_transfer_and_cancelled_purchase(case):
+    client, factory, store, warehouse, articles, data, calls = case
+    stock_types(data)
+    stock_document(data, "cmp-1", "cmp", 1, [line("dim-c", "prod-a", quantity="3", gross="9.00")], date="2026-10-01T07:00:00")
+    stock_document(data, "out-1", "out", 1, [line("dim-s", "prod-a", quantity="1", gross="0")], date="2026-10-01T12:00:00")
+    stock_document(data, "trans-1", "trans", 1, [line("dim-t", "prod-a", quantity="1")], date="2026-10-01T13:00:00", SourceWarehouseID="outro")
+    stock = run(case)
+    assert stock["entries"] == 1 and stock["exits"] == 1 and stock["applied"] == 1, stock
+    assert any("Transferência" in p["reason"] for p in stock["pending"])
+    rows = entries(factory, articles["prod-a"])
+    purchase = next(r for r in rows if r.kind == "purchase" and json.loads(r.data)["origin"] == "Wintouch")
+    assert purchase.quantity == D(3) and purchase.unit_cost == D(3)
+    assert [r.quantity for r in rows if r.kind == "adjustment"] == [D(-1)]
+    # Compra anulada na Wintouch: devolução ao fornecedor ligada à compra (estorno), sem apagar nada.
+    cancelled = next(d for d in data["product_documents"] if d["ID"] == "cmp-1")
+    cancelled.update(DeletedDate="2026-10-02T09:00:00", Version="v2")
+    stock = run(case)
+    assert stock["reversed"] == 1, stock
+    back = next(r for r in entries(factory, articles["prod-a"]) if r.kind == "supplier_return")
+    assert back.quantity == D(-3) and back.original_id == purchase.id
+    assert len([r for r in entries(factory, articles["prod-a"]) if r.kind == "purchase"]) == 2  # Inicial + Wintouch.

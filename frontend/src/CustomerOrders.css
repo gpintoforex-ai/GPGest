@@ -398,4 +398,12 @@
 .co-shipping-goal p { font-weight: 600; }
 .co-bonus {
   margin: 6px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
+.co-bonus p { margin: 0; }
+/* Proposta de reposição: compra, oferta da bonificação e custo efetivo. */
+.co-bonus-plan { display: grid; gap: 2px; }
+.co-bonus-plan small { color: var(--color-muted); font-size: 0.8rem; }

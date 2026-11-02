@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import InvoiceOrderLink, { orderComparison, orderLinks, suggestedOrder } from "./InvoiceOrderLink";
+import { formatQuantity } from "./lib/quantity";
 import { CheckCircle2, CircleAlert, ExternalLink, Eye, EyeOff, FileText, PackagePlus, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
@@ -155,6 +157,8 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           credit_note_purchase_ids: data.receipt.credit_note_purchase_ids || [],
           global_discount: String(global),
           match_document_totals: !!data.receipt.match_document_totals,
+          order_id: data.receipt.order_id || "",
+          allow_overdelivery: false,
         });
         setLines(data.lines.map((line: Row) => initialLine(line, global)));
       }).catch(e => setError(e.message)).finally(() => setBusy(false));
@@ -194,7 +198,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
         match_document_totals: false,
       });
       const global = documentDiscount(data.lines);
-      setHeader(current => ({ ...current, global_discount: String(global) }));
+      setHeader(current => ({ ...current, global_discount: String(global), order_id: suggestedOrder(data.orders || [], data.lines), allow_overdelivery: false }));
       setLines(data.lines.map((line: Row) => initialLine(line, global)));
     } catch (e) {
       setError((e as Error).message);
@@ -268,10 +272,17 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
       setError(`Linha ${lines.indexOf(line) + 1}: ${!line.description.trim() ? "indique a descrição" : Number(line.qty) <= 0 ? "indique a quantidade" : "indique o código e a designação do artigo novo"}.`);
       return;
     }
+    const order = (result?.orders || []).find((o: Row) => o.id === header.order_id);
+    if (orderComparison(order, lines).over && !header.allow_overdelivery) {
+      setError("Há quantidades acima do encomendado: confirme a entrega superior no quadro da encomenda, ou corrija as linhas.");
+      return;
+    }
     setBusy(true); setError("");
     try {
       const body = {
         ...header,
+        order_id: order ? order.id : null,
+        allow_overdelivery: !!(order && header.allow_overdelivery),
         global_discount: String(globalDiscount || 0),
         document_type_id: header.document_type_id || null,
         payment_method: header.payment_method || null,
@@ -292,6 +303,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           lot: line.lotValue,
           expiry: line.expiryValue || null,
           enable_lots: !!line.enableLots,
+          ...orderLinks(order, line),
         })),
       };
       if (editReceipt) {
@@ -429,6 +441,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
         {result.check.matches === true && <li className="has-items invoice-receiving-ok"><CheckCircle2 size={16} aria-hidden="true" />Soma das linhas = base do documento ({euro(result.check.document_base_cents)})</li>}
       </ul>
       {result.warnings.map((w: string) => <Notice key={w} tone="warning">{w}</Notice>)}
+      <InvoiceOrderLink orders={result.orders || []} header={header} lines={lines} onChange={patch => setHeader(current => ({ ...current, ...patch }))} />
       <datalist id="invoice-receiving-articles">{active.map(a => <option key={a.id} value={`${a.code} · ${a.name}`} />)}</datalist>
       {lines.some(needsArticle) && <p className="invoice-receiving-pending" role="status">
         <CircleAlert size={16} aria-hidden="true" /> {plural(lines.filter(needsArticle).length, "linha precisa", "linhas precisam")} de artigo (criar ou associar): assinaladas a vermelho.
@@ -439,7 +452,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
             {line.manual ? <span>Linha {index + 1} (acrescentada)</span> : <b>{line.description}</b>}</label>
           {line.manual && <ActionButton type="button" className="danger" aria-label={`Remover linha ${index + 1}`} onClick={() => setLines(current => current.filter((_, i) => i !== index))}><Trash2 size={16} aria-hidden="true" />Remover</ActionButton>}
           {needsArticle(line) && <span className="invoice-receiving-badge"><CircleAlert size={14} aria-hidden="true" />{line.choice === NEW ? "Artigo por criar" : "Artigo por associar"}</span>}
-          {!line.manual && <small>{[line.reference && `Ref. ${line.reference}`, line.barcode && line.barcode !== line.reference && `EAN ${line.barcode}`, `${line.quantity}${Number(line.bonus) ? ` + ${line.bonus} bónus` : ""} × ${money(line.price)}${Number(line.discount) ? ` − ${line.discount} %` : ""}${Number(line.global_discount) ? ` − ${line.global_discount} % global` : ""} = ${money(line.total)}`].filter(Boolean).join(" · ")}</small>}
+          {!line.manual && <small>{[line.reference && `Ref. ${line.reference}`, line.barcode && line.barcode !== line.reference && `EAN ${line.barcode}`, `${formatQuantity(line.quantity)}${Number(line.bonus) ? ` + ${formatQuantity(line.bonus)} bónus` : ""} × ${money(line.price)}${Number(line.discount) ? ` − ${line.discount} %` : ""}${Number(line.global_discount) ? ` − ${line.global_discount} % global` : ""} = ${money(line.total)}`].filter(Boolean).join(" · ")}</small>}
           {line.service && <small className="invoice-receiving-hint">Parece portes/serviço: não entra em stock salvo se o incluir.</small>}
           {line.include && ((line.choice === NEW && line.newArticle.service) || (line.choice === line.selected?.article_id && line.selected?.service)) && <small className="invoice-receiving-hint">Serviço: conta no valor e no IVA da fatura, mas não entra em stock.</small>}
         </legend>

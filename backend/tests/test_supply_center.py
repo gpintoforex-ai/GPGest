@@ -232,3 +232,77 @@ def test_recommendation_pack_cannot_force_excess_above_maximum(case, monkeypatch
     item = next(r for r in response.json()["items"] if r["article_id"] == aid)
     assert D(item["quantity"]) == 0
     assert any("mínimos/múltiplos" in w for w in item["warnings"])
+
+
+def test_expiry_article_without_shelf_days_is_replenished_up_to_its_levels(case, monkeypatch):
+    # Caso real: artigo com validade, sem dias de validade na política, mínimo 1 e nível de reposição 2,
+    # vendido até zero. Sugere repor até ao nível da ficha, sem cobertura extra pelas vendas.
+    monkeypatch.setattr("app.order_cycle.policy", lambda _: {"mode": "local"})
+    aid = product(case[0], supplier_id=case[1], lots=True, expiry=True, minimum="1", reorder="2")
+    move(case[0], aid, quantity="1", unit_cost="5", lot_number="123",
+         expiry=(date.today() + timedelta(days=60)).isoformat())
+    move(case[0], aid, kind="sale", quantity="1")
+    result = case[0][0].get("/api/order-cycle/recommendations", params={"store_id": case[0][4], "supplier_id": case[1]})
+    assert result.status_code == 200, result.text
+    item = next(r for r in result.json()["items"] if r["article_id"] == aid)
+    assert item["below_minimum"] and D(item["period_sales"]) == 1
+    assert D(item["quantity"]) == 2
+    assert any("sem dias de validade" in w for w in item["warnings"])
+
+
+def recommendation(case, aid, period=90):
+    result = case[0][0].get(
+        "/api/order-cycle/recommendations",
+        params={"store_id": case[0][4], "supplier_id": case[1], "period_days": period},
+    )
+    assert result.status_code == 200, result.text
+    return next(r for r in result.json()["items"] if r["article_id"] == aid)
+
+
+def test_article_without_minimum_is_proposed_from_period_sales(case, monkeypatch):
+    monkeypatch.setattr("app.order_cycle.policy", lambda _: {"mode": "local"})
+    aid = product(case[0], supplier_id=case[1], minimum="0", reorder="0")
+    move(case[0], aid, quantity="3", unit_cost="1")
+    move(case[0], aid, kind="sale", quantity="3", occurred_on=(date.today() - timedelta(days=5)).isoformat())
+    item = recommendation(case, aid, 30)
+    assert not item["below_minimum"] and D(item["minimum"]) == 0 and D(item["period_sales"]) == 3
+    assert D(item["quantity"]) > 0 and item["bonus"] is None
+    # Fora do período escolhido no filtro não há vendas: nada a propor pelas vendas.
+    assert D(recommendation(case, aid, 7)["period_sales"]) == 3
+    old = product(case[0], supplier_id=case[1], minimum="0", reorder="0")
+    move(case[0], old, quantity="2", unit_cost="1")
+    move(case[0], old, kind="sale", quantity="2", occurred_on=(date.today() - timedelta(days=40)).isoformat())
+    assert D(recommendation(case, old, 30)["period_sales"]) == 0
+
+
+def test_expiry_article_without_minimum_replenishes_period_sales(case, monkeypatch):
+    monkeypatch.setattr("app.order_cycle.policy", lambda _: {"mode": "local"})
+    aid = product(case[0], supplier_id=case[1], lots=True, expiry=True, minimum="0", reorder="0")
+    move(case[0], aid, quantity="4", unit_cost="2", lot_number="L1",
+         expiry=(date.today() + timedelta(days=90)).isoformat())
+    move(case[0], aid, kind="sale", quantity="4")
+    item = recommendation(case, aid)
+    # A quantidade segue a cobertura pelas vendas (como nos outros artigos), limitada às vendas do período.
+    assert 0 < D(item["quantity"]) <= 4 and D(item["period_sales"]) == 4
+
+
+def test_bonus_is_simulated_so_the_offer_covers_part_of_the_need(case, monkeypatch):
+    monkeypatch.setattr("app.order_cycle.policy", lambda _: {"mode": "local"})
+    aid = product(case[0], supplier_id=case[1], minimum="0", reorder="12")
+    saved = case[0][0].put(f"/api/stock/articles/{aid}/supplier-terms/{case[1]}",
+                           json={"agreed_cost": "3", "bonus_buy_quantity": "10", "bonus_free_quantity": "2"})
+    assert saved.status_code == 200, saved.text
+    item = recommendation(case, aid)
+    # Necessidade 12: comprar 10 e receber 2 de oferta cobre-a; custo efetivo 3 × 10 / 12 = 2,5.
+    assert D(item["needed_quantity"]) == 12 and D(item["quantity"]) == 10
+    bonus = item["bonus"]
+    assert D(bonus["free_quantity"]) == 2 and D(bonus["received_quantity"]) == 12
+    assert D(bonus["effective_unit_cost"]) == D("2.5") and item["capital_cents"] == 3000
+    # Necessidade abaixo de um bloco: compra só o necessário e indica quanto falta para a oferta.
+    changed = case[0][0].put(f"/api/stock/articles/{aid}/supplier-terms/{case[1]}",
+                             json={"agreed_cost": "3", "bonus_buy_quantity": "20", "bonus_free_quantity": "5",
+                                   "revision": 1})
+    assert changed.status_code == 200, changed.text
+    item = recommendation(case, aid)
+    assert D(item["quantity"]) == 12 and D(item["bonus"]["free_quantity"]) == 0
+    assert D(item["bonus"]["missing_for_bonus"]) == 8

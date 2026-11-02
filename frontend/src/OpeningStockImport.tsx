@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { formatQuantity } from "./lib/quantity";
 import { FileUp } from "lucide-react";
 import { api } from "./lib/api";
 import { ActionButton, Notice, confirmAction } from "./components/InteractionUI";
@@ -60,7 +61,7 @@ export default function OpeningStockImport({ warehouses, rights, run, saved }: {
       {!!preview.errors.length && <Notice tone="error">Corrija o ficheiro: nada é importado enquanto houver erros.<ul>{preview.errors.slice(0, 30).map((e: Row) => <li key={e.line}>Linha {e.line}: {e.message}</li>)}</ul>{preview.errors.length > 30 && <p>… e mais {preview.errors.length - 30}.</p>}</Notice>}
       {!!preview.warnings.length && <Notice tone="warning"><ul>{preview.warnings.slice(0, 15).map((w: Row) => <li key={w.line}>Linha {w.line}: {w.message}</li>)}</ul></Notice>}
       {!!preview.rows.length && <div className="table-wrap"><table><thead><tr><th>Artigo</th><th>Armazém</th><th className="numeric">Quantidade</th><th className="numeric">Custo unitário</th><th className="numeric">Valor</th></tr></thead><tbody>
-        {preview.rows.slice(0, 50).map((r: Row) => <tr key={r.line}><td>{r.code} · {r.name}{r.lot_number && <small> · lote {r.lot_number}</small>}</td><td>{r.warehouse}</td><td className="numeric">{r.quantity}</td><td className="numeric">{money(r.unit_cost)}</td><td className="numeric">{money(r.value)}</td></tr>)}
+        {preview.rows.slice(0, 50).map((r: Row) => <tr key={r.line}><td>{r.code} · {r.name}{r.lot_number && <small> · lote {r.lot_number}</small>}</td><td>{r.warehouse}</td><td className="numeric">{formatQuantity(r.quantity)}</td><td className="numeric">{money(r.unit_cost)}</td><td className="numeric">{money(r.value)}</td></tr>)}
       </tbody></table></div>}
       <ActionButton type="button" className="primary" disabled={!preview.can_confirm} onClick={() => void run(async () => {
         if (!(await confirmAction({ title: "Registar o inventário inicial?", message: `Serão criados ${preview.rows.length} movimentos de stock inicial (${money(preview.total_value)}), com data ${occurredOn.split("-").reverse().join("/")}. Não há anulação automática: correções fazem-se por ajuste justificado.`, confirmLabel: "Registar inventário" }))) return;

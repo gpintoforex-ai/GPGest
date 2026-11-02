@@ -453,3 +453,90 @@ def test_last_price_is_the_invoice_unit_price_while_stock_cost_spreads_the_offer
     details = c.get(f"/api/stock/articles/{pid}/details").json()
     supplier = next(s for s in details["purchase_suppliers"] if s["supplier_id"] == sid)
     assert D(supplier["last_cost"]) == D("27.60")
+
+
+def test_invoice_attached_to_an_order_receipt_is_no_longer_pending(receiving):
+    # Fatura lida e anexada na receção de uma encomenda: deixa de aparecer como «por receber»
+    # na receção a partir de fatura, para não ser recebida duas vezes.
+    import json
+
+    from app.models import ProcurementDocument, User
+
+    c, sid, doc_id, warehouse, case = receiving
+    assert c.get("/api/purchase-receiving/documents").json()["rows"][0]["receipt_id"] is None
+    with case[2].begin() as db:
+        user = db.scalar(select(User).where(User.email == "admin@test.pt"))
+        receipt = ProcurementDocument(kind="receipt", store_id=case[4], supplier_id=sid, user_id=user.id, status="confirmed",
+                                      request_key=str(uuid4()), data=json.dumps({"archive_attachment_ids": [doc_id], "lines": []}))
+        db.add(receipt)
+        db.flush()
+        receipt_id = receipt.id
+    assert c.get("/api/purchase-receiving/documents").json()["rows"][0]["receipt_id"] == receipt_id
+    refused = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=receipt_body(sid, warehouse, case))
+    assert refused.status_code == 409
+
+
+def test_invoice_receipt_linked_to_an_order_receives_it_with_offer_and_overdelivery(receiving):
+    from test_procurement import confirm as confirm_doc
+    from test_procurement import draft as procurement_draft
+
+    c, sid, doc_id, warehouse, case = receiving
+    paid = product(case, code="ENC" + uuid4().hex[:4], name="Artigo encomendado")
+    other = product(case, code="OUT" + uuid4().hex[:4], name="Outro encomendado")
+    order = procurement_draft((case, sid), lines=[
+        {"article_id": paid, "description": "Artigo encomendado", "quantity": "10", "price": "10", "vat": "23", "warehouse_id": warehouse},
+        {"article_id": paid, "description": "Artigo encomendado · oferta", "quantity": "2", "price": "0", "vat": "23", "warehouse_id": warehouse},
+        {"article_id": other, "description": "Outro encomendado", "quantity": "5", "price": "3", "vat": "23", "warehouse_id": warehouse},
+    ], expected_date="2026-11-05")
+    order = confirm_doc((case, sid), order)
+    listed = c.post(f"/api/purchase-receiving/{doc_id}/read").json()["orders"]
+    mine = next(o for o in listed if o["id"] == order["id"])
+    assert [(line["index"], D(line["pending"])) for line in mine["lines"]] == [(0, 10), (1, 2), (2, 5)]
+    body = {
+        "supplier_id": sid, "warehouse_id": warehouse, "document": "FA.2026/3208", "document_date": "2026-10-20",
+        "request_key": str(uuid4()), "order_id": order["id"],
+        "lines": [
+            {"article_id": paid, "description": "Artigo encomendado", "quantity": "10", "bonus": "2", "price": "10", "vat": "23",
+             "order_line": 0, "order_bonus_line": 1},
+            {"article_id": other, "description": "Outro encomendado", "quantity": "7", "price": "3", "vat": "23", "order_line": 2},
+        ],
+    }
+    # 7 recebidos para 5 encomendados: só com autorização explícita da entrega superior.
+    assert c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body).status_code == 409
+    done = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json={**body, "allow_overdelivery": True})
+    assert done.status_code == 200, done.text
+    # A encomenda fica recebida (a oferta na linha de oferta) e deixa de aparecer nas encomendas em aberto.
+    received_order = procurement_row(c, order["id"])
+    assert [D(line["pending"]) for line in received_order["lines"]] == [0, 0, 0]
+    assert order["id"] not in [o["id"] for o in c.post(f"/api/purchase-receiving/{doc_id}/read").json()["orders"]]
+    # Custo em stock: 10 × 10 € pelas 12 unidades (as 2 oferecidas a preço 0).
+    item = view(case, paid)
+    assert D(item["quantity"]) == 12
+    assert D(item["average_cost"]).quantize(D("0.0001")) == (D(100) / 12).quantize(D("0.0001"))
+    # Reaberta, a receção mantém a ligação à encomenda.
+    opened = c.get(f"/api/purchase-receiving/receipts/{done.json()['receipt_id']}").json()
+    assert opened["receipt"]["order_id"] == order["id"]
+    assert [(line["order_line"], line["order_bonus_line"]) for line in opened["lines"]] == [(0, 1), (2, None)]
+
+
+def test_order_of_another_supplier_cannot_be_linked(receiving):
+    from app.models import BusinessEntity
+    from test_procurement import confirm as confirm_doc
+    from test_procurement import draft as procurement_draft
+
+    c, sid, doc_id, warehouse, case = receiving
+    with case[2].begin() as db:
+        base = db.get(BusinessEntity, sid)
+        other = BusinessEntity(name="Outro fornecedor", tax_number="501964843", is_supplier=True, category_id=base.category_id,
+                               payment_term_id=base.payment_term_id, payment_method_id=base.payment_method_id)
+        db.add(other)
+        db.flush()
+        other_id = other.id
+    article = product(case, code="X" + uuid4().hex[:4], name="Artigo X")
+    order = confirm_doc((case, other_id), procurement_draft((case, other_id), lines=[
+        {"article_id": article, "description": "Artigo X", "quantity": "1", "price": "1", "vat": "23", "warehouse_id": warehouse}]))
+    body = {"supplier_id": sid, "warehouse_id": warehouse, "document": "FA.1", "document_date": "2026-10-20",
+            "request_key": str(uuid4()), "order_id": order["id"],
+            "lines": [{"article_id": article, "description": "Artigo X", "quantity": "1", "price": "1", "vat": "23", "order_line": 0}]}
+    refused = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert refused.status_code == 409 and "fornecedor" in refused.text

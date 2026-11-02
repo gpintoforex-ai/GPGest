@@ -780,3 +780,14 @@ def test_free_units_do_not_become_the_last_purchase_price(stock_case):
     move(stock_case, pid, quantity="1", unit_cost="0")  # oferta do fornecedor
     article = view(stock_case, pid)
     assert D(article["last_cost"]) == 10 and D(article["average_cost"]) < 10
+
+
+def test_quantity_decimals_parameter_defaults_to_two_and_is_validated(stock_case):
+    c = stock_case[0]
+    assert c.get("/api/stock/catalog").json()["settings"]["quantity_decimals"] == 2
+    assert c.get("/api/bootstrap").json()["quantity_decimals"] == 2
+    configure(stock_case, quantity_decimals=3)
+    assert c.get("/api/stock/catalog").json()["settings"]["quantity_decimals"] == 3
+    assert c.get("/api/bootstrap").json()["quantity_decimals"] == 3
+    data = c.get("/api/stock/catalog").json()["settings"]
+    assert c.post("/api/stock/settings", json={**data, "quantity_decimals": 7}).status_code == 422

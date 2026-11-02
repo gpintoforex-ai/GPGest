@@ -57,6 +57,8 @@ DEFAULTS = {
     "permissions": {},
     "saft_mapping": {},
     "control_start": None,
+    # Casas decimais das quantidades no ecrã (os valores guardados mantêm a precisão do artigo).
+    "quantity_decimals": 2,
 }
 INCOMING = {"purchase", "opening", "customer_return"}
 OUTGOING = {"sale", "supplier_return", "loss", "expired", "transfer"}
@@ -880,6 +882,7 @@ class SettingsInput(Strict):
     permissions: dict[str, dict[str, bool]] = Field(default_factory=dict)
     saft_mapping: dict[str, str] = Field(default_factory=dict)
     control_start: date | None = None
+    quantity_decimals: int = Field(default=2, ge=0, le=6)
 
 
 class InventoryCreate(Strict):
@@ -1161,7 +1164,7 @@ def register_routes(app, current, authorize, scope, audit):
             if user.role == "administrador"
             else {
                 k: config[k]
-                for k in ("alerts", "allow_negative", "recoverable_vat", "control_start")
+                for k in ("alerts", "allow_negative", "recoverable_vat", "control_start", "quantity_decimals")
             },
             "users": [{"id": u.id, "name": u.name} for u in db.scalars(select(User))]
             if user.role == "administrador"

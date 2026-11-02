@@ -23,8 +23,14 @@ export function StockOutcome({ stock }: { stock: Row }) {
   const issues = [...(stock.conflicts || []), ...(stock.pending || [])];
   return (
     <Notice className={stock.pending_count || stock.conflict_count ? "warning" : "success"} role="status">
-      <strong>Stock:</strong> {stock.applied} saída(s) de venda, {stock.returns} devolução(ões) por nota de crédito
-      {stock.reversed ? ` e ${stock.reversed} estorno(s) de documentos anulados` : ""}.
+      <strong>Stock:</strong> {[
+        `${stock.applied} saída(s) de venda`,
+        stock.entries ? `${stock.entries} entrada(s) (compras e entradas de stock)` : "",
+        stock.exits ? `${stock.exits} saída(s) de stock` : "",
+        stock.transfers ? `${stock.transfers} transferência(s)` : "",
+        `${stock.returns} devolução(ões)`,
+        stock.reversed ? `${stock.reversed} estorno(s) de documentos anulados` : "",
+      ].filter(Boolean).join(", ")}.
       {issues.length > 0 && (
         <details>
           <summary>
@@ -150,9 +156,10 @@ export function SalesImportPanel({ company }: { company: Row }) {
             um ano.
           </p>
           <p className="footnote">
-            Com o controlo de stock ativo, as linhas dos documentos de venda desde a data de início
-            geram saídas de stock dos artigos associados (uma vez por linha); as notas de crédito
-            devolvem ao custo da venda original. As linhas que não podem ser aplicadas ficam listadas.
+            Com o controlo de stock ativo, os documentos que a Wintouch marca como movimentando stock
+            (vendas, compras, entradas, saídas, transferências e devoluções) desde a data de início geram
+            os movimentos de stock dos artigos associados, uma vez por linha e com o lote indicado. As
+            linhas que não podem ser aplicadas ficam listadas.
           </p>
         </Form>
       ) : (

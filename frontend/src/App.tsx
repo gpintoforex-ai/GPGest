@@ -1,4 +1,5 @@
 import TopAlerts from "./components/TopAlerts";
+import { setQuantityDecimals } from "./lib/quantity";
 import WorkspaceNavigation from "./components/WorkspaceNavigation";
 import { ARCHIVE_PAGES, APP_PAGES, PAGE_ALIASES, canViewPage, PROCUREMENT_PAGES, activeNavigation, navigationParams, visibleNavigation, type NavigationItem, type NavigationGroup } from "./navigationCatalog";
 import Info from "./components/InfoIcon";
@@ -254,7 +255,7 @@ export default function App() {
     }));
     for (const { target, version, data } of results) {
       if (dataVersions.current[target] !== version) continue;
-      if (target === "bootstrap") setBoot(data);
+      if (target === "bootstrap") { setQuantityDecimals(data.quantity_decimals); setBoot(data); }
       else if (target === "sessions") setSessions(data);
       else if (target === "movements") setMovements(data);
       else setDashboard(data);

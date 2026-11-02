@@ -187,6 +187,9 @@ class SimLine(Strict):
     unit_cost: D = Field(ge=0, le=10**9, decimal_places=6)
     discount: D | None = Field(default=None, ge=0, le=100, decimal_places=4)
     vat: D | None = Field(default=None, ge=0, le=100, decimal_places=3)
+    # Unidades de oferta do fornecedor; vazio = calculada pela bonificação acordada («na compra de X,
+    # oferta de Y»). Um valor indicado prevalece (ex.: oferta diferente combinada nesta encomenda).
+    bonus_quantity: D | None = Field(default=None, ge=0, le=10**9, decimal_places=6)
     allocations: list[Allocation] = Field(default_factory=list, max_length=200)
 
 
@@ -1584,16 +1587,24 @@ def order_lines(db, raw, config, warehouse_id, supplier_id=None):
             )
         )
         agreement = agreements.get((article.id, supplier_id))
-        free = bonus_quantity(item["quantity"], agreement, meta.get("precision", 0))
+        precision = meta.get("precision", 0)
+        if item.get("bonus_quantity") not in (None, ""):
+            free = D(str(item["bonus_quantity"]))
+            if free != free.quantize(D(1).scaleb(-precision)):
+                fail(f"A quantidade de oferta de «{item['description']}» não respeita a precisão do artigo.")
+        else:
+            free = bonus_quantity(item["quantity"], agreement, precision)
         if free > 0:
+            terms = (
+                f"na compra de {agreement.bonus_buy_quantity.normalize():f}, oferta de "
+                f"{agreement.bonus_free_quantity.normalize():f}"
+                if agreement and agreement.bonus_buy_quantity and agreement.bonus_free_quantity
+                else "indicada na encomenda"
+            )
             bonuses.append(
                 buying.Line(
                     article_id=article.id,
-                    description=(
-                        f"{item['description']} · oferta (na compra de "
-                        f"{agreement.bonus_buy_quantity.normalize():f}, oferta de "
-                        f"{agreement.bonus_free_quantity.normalize():f})"
-                    ),
+                    description=f"{item['description']} · oferta ({terms})",
                     quantity=free,
                     price=ZERO,
                     vat=values["vat"],

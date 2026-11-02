@@ -76,7 +76,8 @@ def run():
                 if path=='/tables/suppliers/records/local%3Asupplier/details':return route.fulfill(json=SUPPLIER_RECORD)
                 if path=='/categories':return route.fulfill(json=[])
                 if path=='/payment-terms':return route.fulfill(json=[])
-                if path=='/customer-orders/catalog':return route.fulfill(json={'customers':[], 'suppliers':[{'id':'supplier','name':'Fornecedor UI','email':'supplier@example.test','terms':TERMS,'revision':0}]})
+                if path=='/customer-orders/catalog':return route.fulfill(json={'customers':[], 'suppliers':[{'id':'supplier','name':'Fornecedor UI','email':'supplier@example.test','terms':TERMS,'revision':0,
+                    'bonuses':{'tea':{'buy':'10','free':'2'}}}]})
                 if path=='/customer-orders/history':return route.fulfill(json=[])
                 if path=='/stock/catalog':return route.fulfill(json={'articles':[ARTICLE],'warehouses':[{'id':'wh','store_id':store,'name':'Principal'}]})
                 if path=='/procurement':return route.fulfill(json={'documents':[]})
@@ -87,7 +88,14 @@ def run():
                 if path=='/order-cycle/recommendations':
                     assert 'period_days=' in route.request.url
                     return route.fulfill(json={'items':[{'article_id':'tea','code':'CHA-01','description':'Chá de teste','free':'1','minimum':'4',
-                        'below_minimum':True,'period_sales':'12','period_days':90,'incoming':'0','quantity':'6','unit_cost':'2','vat':'23'}]})
+                        'below_minimum':True,'period_sales':'12','period_days':90,'incoming':'0','quantity':'6','unit_cost':'2','vat':'23'},
+                        # Sem mínimo na ficha, com vendas: entra pela regra das vendas; bonificação 10+2 simulada.
+                        {'article_id':'honey','code':'MEL-01','description':'Mel sem mínimo','free':'0','minimum':'0','below_minimum':False,
+                         'period_sales':'5','period_days':90,'incoming':'0','quantity':'10','needed_quantity':'12','unit_cost':'3','vat':'6',
+                         'bonus':{'buy':'10','free':'2','free_quantity':'2','received_quantity':'12','effective_unit_cost':'2.5','missing_for_bonus':None}},
+                        # Com mínimo mas acima dele: fica nas outras sugestões.
+                        {'article_id':'jam','code':'DOCE-01','description':'Doce acima do mínimo','free':'9','minimum':'2','below_minimum':False,
+                         'period_sales':'3','period_days':90,'incoming':'0','quantity':'1','unit_cost':'1','vat':'6'}]})
                 if path=='/archive/documents':return route.fulfill(json={'documents':[{'id':'original','original_name':'fatura-original.pdf','document_number':'FT/1'}]})
                 if path=='/order-cycle/reviews':
                     if route.request.method=='POST':
@@ -199,15 +207,31 @@ def run():
             if conditions.count():conditions.click()
             expect(sim.get_by_label('Condições do fornecedor').get_by_role('button',name='Editar na ficha',exact=True)).to_be_visible()
             expect(sim.get_by_text('Ajustar condições só nesta simulação',exact=True)).to_be_visible()
-            # Reposição automática: abaixo do mínimo e com vendas no período do fornecedor.
-            low=sim.get_by_role('table',name='Artigos abaixo do mínimo com vendas',exact=True)
+            # Reposição automática: com mínimo, abaixo dele e com vendas; sem mínimo, basta ter vendas.
+            low=sim.get_by_role('table',name='Artigos a repor com vendas no período',exact=True)
             expect(low).to_contain_text('Chá de teste')
+            expect(low).to_contain_text('Mel sem mínimo')
+            expect(low).not_to_contain_text('Doce acima do mínimo')
+            expect(low.get_by_role('row',name='Mel sem mínimo')).to_contain_text('+ 2,00 oferta = 12,00 · 2,50 €/un. efetivo')
+            expect(low.get_by_role('row',name='Mel sem mínimo')).to_contain_text('Necessidade: 12,00')
+            sim.get_by_label('Incluir Mel sem mínimo',exact=True).evaluate('el => el.click()')
+            expect(sim.get_by_label('Incluir Mel sem mínimo',exact=True)).not_to_be_checked()
             expect(sim.get_by_label('Período de vendas',exact=True)).to_have_value('90')
             with page.expect_response(lambda response: '/order-cycle/recommendations' in response.url and 'days=30' in response.url):
                 sim.get_by_label('Período de vendas',exact=True).select_option('30')
             expect(sim.get_by_role('button',name='Adicionar à encomenda (1)',exact=True)).to_be_enabled()
             sim.get_by_role('button',name='Adicionar à encomenda (1)',exact=True).click()
             expect(sim.get_by_role('group',name='Produto de compra 2',exact=True).get_by_label('Descrição',exact=True)).to_have_value('Chá de teste')
+            # Bonificação 10 + 2: botão que acerta a compra ao bloco; a oferta fica automática (campo vazio).
+            tea=sim.get_by_role('group',name='Produto de compra 2',exact=True)
+            offer=tea.get_by_label('Quantidade de oferta — vazio: bonificação',exact=True)
+            expect(offer).to_have_attribute('placeholder','Automática: 0,00')
+            tea.get_by_role('button',name='Comprar 10,00 e receber 2,00 de oferta',exact=True).click()
+            expect(tea.get_by_label('Quantidade de compra',exact=True)).to_have_value('10')
+            expect(offer).to_have_attribute('placeholder','Automática: 2,00')
+            expect(tea.get_by_text('Nesta quantidade recebe mais 2,00 de oferta',exact=False)).to_be_visible()
+            offer.fill('3')
+            expect(offer).to_have_value('3')
             sim.screenshot(path=str(ROOT/f'.local/customer-orders-replenishment-{width}.png'))
             sim.get_by_role('button',name='Fechar',exact=True).click()
             page.get_by_role('alertdialog',name='Descartar alterações?',exact=True).get_by_role('button',name='Descartar alterações',exact=True).click()

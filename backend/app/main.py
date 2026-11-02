@@ -343,6 +343,12 @@ def change_password(
     return {"ok": True}
 
 
+def stock_quantity_decimals(db):
+    from .inventory import settings as stock_settings
+
+    return stock_settings(db)["quantity_decimals"]
+
+
 @app.get("/api/bootstrap")
 def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
     ids = scope(user, db)
@@ -376,6 +382,8 @@ def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
         "user": serial(user),
         "mode": db.info.get("company", {}).get("mode", os.getenv("APP_MODE", "real")),
         "company": {**profile, **db.info.get("company", {})},
+        # Casas decimais das quantidades (Artigos → Parâmetros), usadas em todos os ecrãs.
+        "quantity_decimals": stock_quantity_decimals(db),
         "stores": [serial(s) for s in db.scalars(select(Store).where(Store.id.in_(ids)))],
         "registers": [
             {**serial(r), "last_opening_cents": opening}
@@ -1797,6 +1805,8 @@ def company_sales_list(user=Depends(current), db: Session = Depends(db_session))
     for r in db.scalars(query.order_by(WintouchSaleRecord.document_date.desc())):
         if r.kind == "previsto" and r.external_id in local_owned:
             continue
+        if r.kind == "stock":
+            continue  # Entradas, saídas e transferências de stock não são vendas nem pagamentos.
         data = json.loads(r.data)
         data.pop("lines", None)  # Linhas de artigo: só para as saídas de stock, não para a lista.
         if r.kind == "real" and not is_real_cash_movement(data):

@@ -1,11 +1,12 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
+import { formatQuantity } from "./lib/quantity";
 import { Field } from "./components/Form";
 import { ActionButton, Notice, confirmAction } from "./components/InteractionUI";
 import { api } from "./lib/api";
 
 type Row = Record<string, any>;
 const money = (v: any) => v === null || v === undefined || v === "" ? "Sem informação" : new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR", maximumFractionDigits: 4 }).format(Number(v));
-const quantity = (v: any) => new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 6 }).format(Number(v));
+const quantity = (v: any) => formatQuantity(v ?? 0);
 const day = (v: string) => v.split("-").reverse().join("/");
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Lisbon" }).format(new Date());
 const blank = { supplier_id: "", revision: 0, supplier_reference: "", agreed_cost: "", valid_until: "", lead_days: "", min_quantity: "", pack_quantity: "", bonus_buy_quantity: "", bonus_free_quantity: "", notes: "" };

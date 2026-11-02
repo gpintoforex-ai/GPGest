@@ -1,4 +1,5 @@
 import { useRecordHandoff } from "./components/useRecordHandoff";
+import { formatQuantity } from "./lib/quantity";
 import { useLocationSearch } from "./components/WorkspaceUI";
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { MoreHorizontal, SlidersHorizontal } from "lucide-react";
@@ -20,12 +21,7 @@ type Column = {
   cost?: boolean;
   render: (row: Row) => ReactNode;
 };
-const number = (value: unknown) =>
-  value == null
-    ? "Sem informação"
-    : new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 6 }).format(
-        Number(value),
-      );
+const number = (value: unknown) => formatQuantity(value);
 const money = (value: unknown) =>
   value == null
     ? "Sem informação"

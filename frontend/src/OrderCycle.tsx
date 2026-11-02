@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { formatQuantity } from "./lib/quantity";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
 import {
@@ -18,10 +19,7 @@ const money = (n: number) =>
   new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(
     (n || 0) / 100,
   );
-const quantity = (n: unknown) =>
-  new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 6 }).format(
-    Number(n || 0),
-  );
+const quantity = (n: unknown) => formatQuantity(n || 0);
 const states: Row = {
   draft: "Por conferir",
   reviewed: "Dados revistos",

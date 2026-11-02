@@ -1092,3 +1092,33 @@ def test_menu_bar_alerts_gather_late_orders_and_expiry_claims(case):
     assert groups["reclamacoes_validade"]["count"] >= 1 and groups["reclamacoes_validade"]["page"] == "Receções de mercadoria"
     assert groups["lotes_validade"]["count"] >= 1
     assert data["total"] == sum(g["count"] for g in data["groups"])
+
+
+def test_indicated_bonus_quantity_prevails_over_the_automatic_offer(case):
+    aid = product(case[0])
+    c, sid = case[0][0], case[1]
+    assert c.put(f"/api/stock/articles/{aid}/supplier-terms/{sid}",
+                 json={"agreed_cost": "10", "bonus_buy_quantity": "5", "bonus_free_quantity": "1"}).status_code == 200
+    row, _ = request(case, aid, "12")
+    data = {
+        "store_id": case[0][4], "supplier_id": sid, "request_key": str(uuid4()),
+        "lines": [{"article_id": aid, "description": "Produto solicitado", "quantity": "12", "unit_cost": "10",
+                   "bonus_quantity": "3",
+                   "allocations": [{"line_id": row["lines"][0]["id"], "quantity": row["lines"][0]["quantities"]["to_order"]}]}],
+    }
+    sim = post(c, "/simulations", data)
+    assert D(sim["lines"][0]["bonus_quantity"]) == 3
+    offer = [line for line in prepared(case, sim)["procurement"]["lines"] if line["nature"] == "goods"][-1]
+    # Automática seria 2 (12 ÷ 5 = 2 blocos); a indicada (3) prevalece, a preço 0.
+    assert D(offer["quantity"]) == 3 and D(offer["price"]) == 0 and "na compra de 5" in offer["description"]
+    # Precisão do artigo (unidades inteiras): uma oferta fracionária é recusada ao preparar.
+    row2, _ = request(case, aid, "5")
+    data["request_key"] = str(uuid4())
+    data["lines"][0].update(quantity="5", bonus_quantity="0.5",
+                            allocations=[{"line_id": row2["lines"][0]["id"], "quantity": row2["lines"][0]["quantities"]["to_order"]}])
+    sim2 = post(c, "/simulations", data)
+    refused = c.post(BASE + f"/simulations/{sim2['id']}/prepare", json={
+        "revision": sim2["revision"], "warehouse_id": case[0][3][0], "request_key": str(uuid4()),
+        "confirmed": True, "allow_below_minimum": True,
+    })
+    assert refused.status_code == 422 and "precisão" in refused.text

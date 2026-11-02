@@ -116,3 +116,10 @@ div.invoice-receiving-result p { margin: 0; flex: 1 1 280px; }
   gap: 4px;
   align-items: center;
 }
+
+/* Encomenda recebida com a fatura: escolha, comparação por linha e entrega superior. */
+.invoice-order-link { margin: 12px 0; padding: 14px 16px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-subtle); display: grid; gap: 10px; }
+.invoice-order-link h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1rem; }
+.invoice-order-link tr.is-different td { background: var(--color-warning-bg, #fff8e8); }
+.invoice-order-link small { display: block; color: var(--color-muted); }
+.invoice-order-over { display: flex; align-items: center; gap: 8px; font-weight: 600; }

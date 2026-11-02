@@ -1,4 +1,5 @@
 import { MetricCard } from "./components/BusinessUI";
+import { formatQuantity, setQuantityDecimals } from "./lib/quantity";
 import OperationsOverview from "./components/OperationsOverview";
 import { currentMonthRange } from "./components/DatePresets";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
@@ -49,12 +50,7 @@ const money = (v: any) =>
         style: "currency",
         currency: "EUR",
       }).format(Number(v));
-const qty = (v: any) =>
-  v === null || v === undefined
-    ? "Indisponível"
-    : new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 6 }).format(
-        Number(v),
-      );
+const qty = (v: any) => formatQuantity(v, "Indisponível");
 const day = (v: any) =>
   v ? String(v).slice(0, 10).split("-").reverse().join("/") : "—";
 const inventoryState = (inv: Row) => (inv.status === "confirmed" ? "Confirmado" : "Rascunho");
@@ -187,6 +183,7 @@ export default function Inventory({
     catalog?.suppliers.find((s: Row) => s.id === id)?.name || "—";
   async function load() {
     const value = await api("/stock/catalog" + (tab === "Artigos" ? "?metadata_only=true" : ""));
+    setQuantityDecimals(value.settings?.quantity_decimals);
     setCatalog(value);
     setConfig(value.settings);
   }
@@ -214,6 +211,7 @@ export default function Inventory({
     api("/stock/catalog" + (tab === "Artigos" ? "?metadata_only=true" : ""))
       .then((data) => {
         if (active) {
+          setQuantityDecimals(data.settings?.quantity_decimals);
           setCatalog(data);
           setConfig(data.settings);
         }
@@ -691,11 +689,11 @@ export default function Inventory({
             {catalog.policy.mode === "integrated" && (
               <ActionButton
                 disabled={!admin}
-                title={admin ? "Importa as vendas Wintouch do período e aplica as linhas ao stock, com barra de progresso." : "Só o administrador pode sincronizar as vendas com o ERP."}
+                title={admin ? "Importa os documentos Wintouch do período (vendas, compras, entradas, saídas e transferências) e aplica-os ao stock, com barra de progresso." : "Só o administrador pode sincronizar os movimentos com o ERP."}
                 onClick={() => setSalesSync(true)}
               >
                 <RefreshCw size={16} aria-hidden="true" />
-                Sincronizar vendas
+                Sincronizar movimentos
               </ActionButton>
             )}
           </div>
@@ -1012,6 +1010,24 @@ export default function Inventory({
             <p className="footnote">
               A configuração só afeta entradas futuras. Os custos históricos
               mantêm-se.
+            </p>
+            <Field label="Casas decimais das quantidades">
+              <select
+                value={config.quantity_decimals ?? 2}
+                onChange={(e) =>
+                  setConfig({ ...config, quantity_decimals: Number(e.target.value) })
+                }
+              >
+                {[0, 1, 2, 3, 4, 5, 6].map((n) => (
+                  <option key={n} value={n}>
+                    {n} ({new Intl.NumberFormat("pt-PT", { minimumFractionDigits: n, maximumFractionDigits: n }).format(1234.5)})
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <p className="footnote">
+              Só muda a apresentação das quantidades em todos os ecrãs de artigos e stock; os valores
+              registados mantêm a precisão de cada artigo.
             </p>
             <Field label="Alertas de validade, em dias (separados por vírgula)">
               <input

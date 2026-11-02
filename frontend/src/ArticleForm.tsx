@@ -1,3 +1,4 @@
+import { formatQuantity } from "./lib/quantity";
 import { MetricCard } from "./components/BusinessUI";
 import { ContextSuggestion } from "./components/OverviewUI";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
@@ -12,7 +13,7 @@ import ArticleSupplierTerms from "./ArticleSupplierTerms";
 const sections = ["Geral", "Preços e rentabilidade", "Stock", "Compras e fornecedores", "Validades e lotes", "Integração ERP", "Histórico", "Descrição e anexos"];
 const fieldSection: Record<string, number> = { sale_net: 1, sale_gross: 1, vat_rate: 1, minimum: 2, reorder: 2, maximum: 2, location: 2, lots: 4, expiry: 4, supplier_id: 3, supplier_reference: 3, description: 7, internal_notes: 7, additional_photos: 7, attachments: 7 };
 const money = (v: any) => v === null || v === undefined ? "Sem informação" : new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(Number(v));
-const quantity = (v: any) => v === null || v === undefined ? "Sem informação" : new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 6 }).format(Number(v));
+const quantity = (v: any) => formatQuantity(v);
 const date = (v: any) => v ? new Intl.DateTimeFormat("pt-PT", { dateStyle: "short", timeZone: "Europe/Lisbon" }).format(new Date(v)) : "Sem informação";
 
 export default function ArticleForm({ initial, catalog, readOnly = false, onSave, onCancel, onNavigate, onSync, canSync }: {

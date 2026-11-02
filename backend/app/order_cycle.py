@@ -754,12 +754,19 @@ def recommendations(
                 quantity = max(customer_need, cap).quantize(quantum, rounding="ROUND_UP")
                 warnings.append("Quantidade limitada pela validade prevista e procura observada.")
         elif meta.get("expiry"):
-            warnings.append("Configure dias de validade antes de recomendar reposição extra.")
+            # Sem dias de validade não se compra cobertura extra pelas vendas (risco de excesso), mas
+            # repõe-se até ao nível que a ficha define (mínimo / nível de reposição) e à procura.
+            # Sem mínimo nem nível de reposição na ficha: repõe o que se vendeu no período.
+            level = max(minimum, D(str(meta.get("reorder", 0)))) or sales
+            warnings.append(
+                "Artigo com validade sem dias de validade configurados: reposição limitada ao mínimo e "
+                "ao nível de reposição da ficha (sem mínimo: às vendas do período), mais os pedidos de clientes."
+            )
             quantity = min(
                 quantity,
                 max(
                     ZERO,
-                    demand.get(article.id, ZERO) - free.get(article.id, ZERO) - projected,
+                    level + demand.get(article.id, ZERO) - free.get(article.id, ZERO) - projected,
                 ),
             )
         cost = D(
@@ -826,6 +833,37 @@ def recommendations(
                 "Quantidade ajustada aos mínimos/múltiplos; reveja quando os limites de risco impedem comprar."
             )
         quantity = rounded
+        # Bonificação «na compra de X, oferta de Y»: a oferta conta para a necessidade, por isso
+        # propõe-se a menor compra que, com a oferta, cobre a quantidade necessária.
+        needed, bonus = quantity, None
+        if agreement and agreement.bonus_buy_quantity and agreement.bonus_free_quantity and quantity > 0:
+            buy, gift = agreement.bonus_buy_quantity, agreement.bonus_free_quantity
+            options = []
+            for blocks in range(int(needed // buy) + 2):
+                candidate = max(blocks * buy, needed - blocks * gift).quantize(quantum, rounding="ROUND_UP")
+                candidate = purchase_quantity(
+                    candidate,
+                    meta.get("precision", 0),
+                    agreement.min_quantity,
+                    agreement.pack_quantity,
+                    ceiling,
+                )
+                if candidate and candidate + orders.bonus_quantity(candidate, agreement, meta.get("precision", 0)) >= needed:
+                    options.append(candidate)
+            if options and min(options) < quantity:
+                quantity = min(options)
+                warnings.append("Quantidade reduzida pela oferta da bonificação, que cobre o restante.")
+            free_units = orders.bonus_quantity(quantity, agreement, meta.get("precision", 0))
+            received = quantity + free_units
+            bonus = {
+                "buy": str(buy),
+                "free": str(gift),
+                "free_quantity": str(free_units),
+                "received_quantity": str(received),
+                "effective_unit_cost": str((cost * quantity / received).quantize(D(".000001"))) if cost and received else None,
+                # Sem oferta nesta quantidade: quanto falta comprar para a receber (informação).
+                "missing_for_bonus": str(buy - quantity % buy) if not free_units else None,
+            }
         capital = buying.money(quantity * cost)
         if not sales:
             warnings.append(
@@ -858,6 +896,9 @@ def recommendations(
                 if agreement and agreement.pack_quantity
                 else None,
                 "quantity": str(quantity),
+                # Necessidade antes da oferta e simulação da bonificação acordada (None se não houver).
+                "needed_quantity": str(needed),
+                "bonus": bonus,
                 "unit_cost": str(cost),
                 "capital_cents": capital,
                 "margin": str(margin) if margin is not None else None,

@@ -224,29 +224,31 @@ def quantity(value):
         raise SyncError("A API devolveu uma quantidade inválida numa linha de venda.") from None
 
 
-def document_lines(reader, document_id):
-    """Linhas de artigo de um documento, com quantidades, para as saídas de stock.
+def document_lines(reader, document_id, batch=None):
+    """Linhas de artigo de um documento, com quantidades, para os movimentos de stock.
 
     Só `product_documents/{id}/withsources` devolve as dimensões com as quantidades (o embed
     encadeado responde 400 na API validada). Uma linha por dimensão; texto (RowType 3) é ignorado.
+    `batch(artigo, lote)` devolve o número e a validade do lote Wintouch indicado na linha.
     """
     rows = reader.get("product_documents/" + string(document_id, 150, True) + "/withsources")
     document = next((r for r in rows if isinstance(r, dict) and r.get("ID") == document_id), None) if isinstance(rows, list) else None
     if not document or not isinstance(document.get("ProductDocumentDetails"), list):
-        raise SyncError("A API não disponibilizou as linhas do documento de venda.")
+        raise SyncError("A API não disponibilizou as linhas de um documento com stock.")
     result = []
     for detail in document["ProductDocumentDetails"]:
         if detail.get("RowType") != 0 or not detail.get("ProductID") or detail.get("ParentProductDocumentDetailID"):
             continue  # Texto, subtotais e componentes de menus não movimentam stock.
         dimensions = detail.get("ProductDocumentDetailsDimensions")
         if not isinstance(dimensions, list):
-            raise SyncError("A API não disponibilizou as quantidades das linhas de venda.")
+            raise SyncError("A API não disponibilizou as quantidades das linhas de um documento.")
         factor = quantity(detail.get("StockUnitFactor") or 1)
         for dimension in dimensions:
             stock = dimension.get("StockQuantity")
             amount_out = (quantity(stock) if stock is not None else quantity(dimension.get("Quantity")) * factor) - quantity(dimension.get("CanceledQuantity") or 0) * factor
             net = quantity(dimension.get("GrossValueWithoutVAT") or 0) - quantity(dimension.get("RowDiscountValueWithoutVAT") or 0) - quantity(dimension.get("HeaderDiscountValueWithoutVAT") or 0)
             sources = [s.get("SourceProductDocumentDetailsDimensionID") for s in dimension.get("Sources") or [] if isinstance(s, dict) and s.get("SourceProductDocumentDetailsDimensionID")]
+            lot = (batch or (lambda *_: None))(detail["ProductID"], dimension["ProductBatchID"]) if dimension.get("ProductBatchID") else None
             result.append({
                 "id": string(dimension.get("ID"), 150, True),
                 "row": detail.get("Row"),
@@ -255,6 +257,8 @@ def document_lines(reader, document_id):
                 "quantity": str(amount_out),
                 "net": str(net),
                 "batch": bool(dimension.get("ProductBatchID")),
+                "batch_number": lot["number"] if lot else None,
+                "batch_expiry": lot["expiry"] if lot else None,
                 "source_line": sources[0] if len(sources) == 1 else None,
             })
     return result
@@ -317,6 +321,32 @@ def sales_snapshot(reader, start, end, lines_from=None, known=None, progress=Non
             "workshift": string(row.get("WorkShift"), 150),
         }
 
+    batches, read_products = {}, set()
+
+    def batch(product, identifier):
+        # Lotes (número e validade) de cada artigo com lote nas linhas, lidos uma vez por artigo.
+        # `products/product_batches` ignora a paginação (devolve sempre a mesma página na API
+        # validada); `products/{id}/batches` devolve a lista completa do artigo.
+        if product not in read_products:
+            read_products.add(product)
+            rows = reader.get("products/" + string(product, 150, True) + "/batches")
+            if not isinstance(rows, list):
+                raise SyncError("A API não disponibilizou os lotes de um artigo.")
+            for row in rows:
+                if isinstance(row, dict) and row.get("ID"):
+                    expiry = row.get("ExpirationDate")
+                    batches[row["ID"]] = {
+                        "number": string(row.get("Batch1"), 100) or string(row["ID"], 150),
+                        "expiry": source_date(expiry) if expiry else None,
+                    }
+        return batches.get(identifier)
+
+    def lines_of(row, version):
+        previous = known.get(row["ID"])
+        if previous and version and previous.get("version") == version and isinstance(previous.get("lines"), list):
+            return previous["lines"]
+        return document_lines(reader, row["ID"], batch)
+
     progress("A ler a lista de documentos", 0, 0)
     documents = list(reader.collection("product_documents", "Payments,DocumentType,DocumentSerie,CEntity"))
     for index, row in enumerate(documents):
@@ -324,6 +354,25 @@ def sales_snapshot(reader, start, end, lines_from=None, known=None, progress=Non
         scanned += 1
         typ = types.get(row.get("DocumentTypeID"), {})
         if typ.get("Class") not in (3, 5, 6, 40):
+            # Outros documentos que a Wintouch marca como movimentando stock (entradas, saídas,
+            # transferências, compras, guias, devoluções): só para os movimentos de stock.
+            day = source_date(row.get("Date"))
+            if lines_from and typ.get("IsStockEnabled") is True and start <= day <= end and day >= lines_from:
+                cancelled = bool(row.get("DeletedDate"))
+                values = {
+                    "document": document_label(row, types, series),
+                    "occurred_at": row["Date"],
+                    "source_document_id": row["ID"],
+                    "type": string(typ.get("Code"), 40, True),
+                    "document_class": typ.get("Class"),
+                    "stock_mode": typ.get("StockMode"),
+                    "source_warehouse_id": string(row.get("SourceWarehouseID"), 150),
+                    "cancelled": cancelled,
+                    "version": string(row.get("Version"), 200),
+                }
+                if not cancelled:
+                    values["lines"] = lines_of(row, values["version"])
+                save("stockdoc", row["ID"], "stock", day, values)
             continue  # Orçamentos, encomendas, guias e compras não são vendas.
         day = source_date(row.get("Date"))
         if not start <= day <= end:
@@ -348,21 +397,17 @@ def sales_snapshot(reader, start, end, lines_from=None, known=None, progress=Non
             cancelled=cancelled,
             type=string(typ.get("Code"), 40, True),
             document_class=typ.get("Class"),
+            stock_mode=typ.get("StockMode"),
             version=string(row.get("Version"), 200),
         )
         if lines_from and day >= lines_from and not cancelled:
-            previous = known.get(row["ID"])
-            values["lines"] = (
-                previous["lines"]
-                if previous and values["version"] and previous.get("version") == values["version"] and isinstance(previous.get("lines"), list)
-                else document_lines(reader, row["ID"])
-            )
+            values["lines"] = lines_of(row, values["version"])
         save("document", row["ID"], "documento", day, values)
         if cancelled:
             continue
         selected.add(row["ID"])
         # Os pagamentos e pendentes herdam os dados do documento, mas não as linhas de artigo.
-        financial = {k: v for k, v in values.items() if k not in ("lines", "version")}
+        financial = {k: v for k, v in values.items() if k not in ("lines", "version", "stock_mode")}
         for payment in row["Payments"]:
             data = payment_record(payment, financial, methods, states)
             if data:
@@ -384,7 +429,7 @@ def sales_snapshot(reader, start, end, lines_from=None, known=None, progress=Non
         if value == 0:
             continue
         if source_id in selected:
-            values = {k: v for k, v in json.loads(result["document:" + source_id]["data"]).items() if k not in ("lines", "version")}
+            values = {k: v for k, v in json.loads(result["document:" + source_id]["data"]).items() if k not in ("lines", "version", "stock_mode")}
         else:
             document = reader.get(
                 "product_documents/" + string(source_id, 150, True),
@@ -517,7 +562,7 @@ def synchronize_sales(bind, enterprise, store_id, start: date, end: date, url, k
             if lines_from:
                 for previous in db.scalars(select(WintouchSaleRecord).where(
                     WintouchSaleRecord.enterprise_id == enterprise,
-                    WintouchSaleRecord.kind == "documento",
+                    WintouchSaleRecord.kind.in_(["documento", "stock"]),
                     WintouchSaleRecord.document_date >= max(start, lines_from).isoformat(),
                     WintouchSaleRecord.document_date <= end.isoformat(),
                 )):

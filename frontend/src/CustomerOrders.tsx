@@ -1,4 +1,5 @@
 import { ProcessSteps } from "./components/OverviewUI";
+import { formatQuantity } from "./lib/quantity";
 import { useRecordHandoff } from "./components/useRecordHandoff";
 import { useEffect, useId, useRef, useState } from "react";
 import { Plus, RefreshCw, Package, Mail, Send, FileText, Pencil, Calculator } from "lucide-react";
@@ -45,10 +46,7 @@ const tabs = [
   ["historico", "Histórico"],
   ["analise", "Indicadores"],
 ];
-const qty = (value: unknown) =>
-  new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 6 }).format(
-    Number(value || 0),
-  );
+const qty = (value: unknown) => formatQuantity(value || 0);
 const money = (value: number, currency = "EUR") =>
   new Intl.NumberFormat("pt-PT", { style: "currency", currency }).format(
     (value || 0) / 100,
@@ -579,21 +577,58 @@ function TermsFields({
   );
 }
 
-/** Bonificação «na compra de X, oferta de Y» do artigo neste fornecedor, para a quantidade da linha. */
-function BonusHint({ bonus, quantity }: { bonus?: Row; quantity: number }) {
+/** Quantidade a comprar e, com bonificação, a oferta, o total recebido e o custo unitário efetivo. */
+function ProposedQuantity({ item }: { item: Row }) {
+  const bonus = item.bonus;
+  if (!bonus) return <b>{qty(item.quantity)}</b>;
+  return (
+    <span className="co-bonus-plan">
+      <b>{qty(item.quantity)}</b>
+      {Number(bonus.free_quantity) > 0 ? (
+        <small>
+          + {qty(bonus.free_quantity)} oferta = {qty(bonus.received_quantity)}
+          {bonus.effective_unit_cost ? ` · ${money(Math.round(Number(bonus.effective_unit_cost) * 100))}/un. efetivo` : ""}
+        </small>
+      ) : (
+        <small>
+          Na compra de {qty(bonus.buy)}, oferta de {qty(bonus.free)}: faltam {qty(bonus.missing_for_bonus)}
+        </small>
+      )}
+      {Number(item.needed_quantity) !== Number(item.quantity) && <small>Necessidade: {qty(item.needed_quantity)}</small>}
+    </span>
+  );
+}
+
+/** Oferta automática da bonificação «na compra de X, oferta de Y» (por cada X completo). */
+const bonusOffer = (bonus: Row | undefined, quantity: number) =>
+  bonus ? Math.floor(quantity / Number(bonus.buy)) * Number(bonus.free) : 0;
+
+/**
+ * Bonificação «na compra de X, oferta de Y» do artigo neste fornecedor, para a quantidade da linha.
+ * O botão acerta a compra ao bloco seguinte da bonificação (a oferta volta a ser automática).
+ */
+function BonusHint({ bonus, quantity, onApply }: { bonus?: Row; quantity: number; onApply?: (quantity: number) => void }) {
   if (!bonus) return null;
   const buy = Number(bonus.buy), free = Number(bonus.free);
-  const offered = Math.floor(quantity / buy) * free;
-  const missing = buy - (quantity % buy);
+  const offered = bonusOffer(bonus, quantity);
+  const missing = quantity % buy ? buy - (quantity % buy) : 0;
+  const target = quantity + missing;
   return (
-    <p className="co-bonus">
-      <StatusBadge tone={offered ? "success" : "info"}>
-        Bonificação: na compra de {qty(buy)}, oferta de {qty(free)}
-      </StatusBadge>{" "}
-      {offered
-        ? `Nesta quantidade recebe mais ${qty(offered)} de oferta (linha a preço 0 na encomenda).`
-        : `Compre mais ${qty(missing)} para receber ${qty(free)} de oferta.`}
-    </p>
+    <div className="co-bonus">
+      <p>
+        <StatusBadge tone={offered ? "success" : "info"}>
+          Bonificação: na compra de {qty(buy)}, oferta de {qty(free)}
+        </StatusBadge>{" "}
+        {offered
+          ? `Nesta quantidade recebe mais ${qty(offered)} de oferta (linha a preço 0 na encomenda).`
+          : `Compre mais ${qty(missing)} para receber ${qty(free)} de oferta.`}
+      </p>
+      {onApply && missing > 0 && (
+        <ActionButton type="button" onClick={() => onApply(target)}>
+          {offered ? `Completar para ${qty(target)} (+${qty(free)} oferta)` : `Comprar ${qty(target)} e receber ${qty(bonusOffer(bonus, target))} de oferta`}
+        </ActionButton>
+      )}
+    </div>
   );
 }
 
@@ -640,8 +675,9 @@ function TermsSummary({ terms, onEdit }: { terms: Row; onEdit?: () => void }) {
 const PERIODS = [30, 60, 90, 180, 365];
 
 /**
- * Reposição automática no simulador: artigos do fornecedor com stock livre abaixo do mínimo e
- * vendas no período escolhido. Ficam todos marcados; adicionar é sempre uma decisão sua.
+ * Reposição automática no simulador: artigos do fornecedor com vendas no período escolhido que
+ * estão abaixo do mínimo da ficha ou não têm mínimo definido. A quantidade já simula a bonificação
+ * acordada (a oferta conta para a necessidade). Ficam todos marcados; adicionar é sempre uma decisão sua.
  */
 function LowStockSuggestions({
   storeId,
@@ -679,12 +715,12 @@ function LowStockSuggestions({
   if (!supplierId) return null;
   const inDraft = (id: string) => lines.some((l) => l.article_id === id);
   const proposed = (items || []).filter((i) => Number(i.quantity) > 0 && !inDraft(i.article_id));
-  const urgent = proposed.filter((i) => i.below_minimum && Number(i.period_sales) > 0);
+  // Com mínimo: abaixo dele e com vendas; sem mínimo: basta ter vendas no período do filtro.
+  const automatic = (i: Row) => Number(i.period_sales) > 0 && (Number(i.minimum) > 0 ? i.below_minimum : true);
+  const urgent = proposed.filter(automatic);
   const rest = proposed.filter((i) => !urgent.includes(i));
   const chosen = urgent.filter((i) => !skip.includes(i.article_id));
-  const added = (items || []).filter(
-    (i) => inDraft(i.article_id) && i.below_minimum && Number(i.period_sales) > 0,
-  ).length;
+  const added = (items || []).filter((i) => inDraft(i.article_id) && automatic(i)).length;
   const row = (i: Row, check: boolean) => (
     <tr key={i.article_id}>
       {check && (
@@ -708,7 +744,7 @@ function LowStockSuggestions({
       <td>{qty(i.period_sales)}</td>
       <td>{qty(i.incoming)}</td>
       <td>
-        <b>{qty(i.quantity)}</b>
+        <ProposedQuantity item={i} />
       </td>
       <td>{money(Math.round(Number(i.unit_cost) * 100))}</td>
     </tr>
@@ -717,7 +753,7 @@ function LowStockSuggestions({
     <thead>
       <tr>
         {check && <th>Incluir</th>}
-        {["Artigo", "Stock livre / mínimo", `Vendas ${period} dias`, "Em trânsito", "Propor", "Custo"].map((h) => (
+        {["Artigo", "Stock livre / mínimo", `Vendas ${period} dias`, "Em trânsito", "Comprar (bonificação)", "Custo"].map((h) => (
           <th key={h}>{h}</th>
         ))}
       </tr>
@@ -726,7 +762,7 @@ function LowStockSuggestions({
   return (
     <section className="co-low-stock" aria-labelledby="co-low-stock-title">
       <div className="co-inline">
-        <h3 id="co-low-stock-title">Reposição: abaixo do mínimo com vendas recentes</h3>
+        <h3 id="co-low-stock-title">Reposição: artigos com vendas no período</h3>
         <Field label="Período de vendas">
           <select value={period} onChange={(e) => setPeriod(Number(e.target.value))}>
             {[...new Set([...PERIODS, defaultPeriod || 90])]
@@ -740,23 +776,24 @@ function LowStockSuggestions({
         </Field>
       </div>
       <p className="footnote">
-        Artigos deste fornecedor com stock livre abaixo do mínimo da ficha e vendas no período. A
-        quantidade proposta já desconta o que está em trânsito e os pedidos dos clientes, e
-        respeita mínimos e múltiplos acordados.
+        Artigos deste fornecedor com vendas no período: os que têm mínimo na ficha entram quando o
+        stock livre está abaixo dele; os que não têm mínimo entram pelas vendas. A quantidade já
+        desconta o que está em trânsito e os pedidos dos clientes, respeita mínimos e múltiplos
+        acordados e simula a bonificação do fornecedor (a oferta conta para a necessidade).
       </p>
       {error && <Notice tone="error">{error}</Notice>}
       {!items && !error && <p role="status">A calcular a reposição…</p>}
       {items && !urgent.length && (
         <p>
           {added
-            ? `Os ${added} artigo(s) abaixo do mínimo com vendas já estão nesta encomenda.`
-            : `Nenhum artigo abaixo do mínimo com vendas nos últimos ${period} dias.`}
+            ? `Os ${added} artigo(s) a repor com vendas já estão nesta encomenda.`
+            : `Nenhum artigo a repor com vendas nos últimos ${period} dias.`}
         </p>
       )}
       {urgent.length > 0 && (
         <>
           <div className="table-wrap">
-            <table aria-label="Artigos abaixo do mínimo com vendas">
+            <table aria-label="Artigos a repor com vendas no período">
               {head(true)}
               <tbody>{urgent.map((i) => row(i, true))}</tbody>
             </table>
@@ -787,7 +824,7 @@ function LowStockSuggestions({
                     <td>{qty(i.period_sales)}</td>
                     <td>{qty(i.incoming)}</td>
                     <td>
-                      <b>{qty(i.quantity)}</b>
+                      <ProposedQuantity item={i} />
                     </td>
                     <td>{money(Math.round(Number(i.unit_cost) * 100))}</td>
                   </tr>
@@ -3098,10 +3135,28 @@ export default function CustomerOrders({
                                 }
                               />
                             </Field>
+                            <Field label="Quantidade de oferta — vazio: bonificação">
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={l.bonus_quantity ?? ""}
+                                placeholder={`Automática: ${qty(bonusOffer(catalog.suppliers.find((x: Row) => x.id === draft.supplier_id)?.bonuses?.[l.article_id], Number(l.quantity)))}`}
+                                onChange={(e) =>
+                                  editLine(i, {
+                                    bonus_quantity:
+                                      e.target.value === ""
+                                        ? null
+                                        : e.target.value,
+                                  })
+                                }
+                              />
+                            </Field>
                           </div>
                           <BonusHint
                             bonus={catalog.suppliers.find((x: Row) => x.id === draft.supplier_id)?.bonuses?.[l.article_id]}
                             quantity={Number(l.quantity)}
+                            onApply={(quantity) => editLine(i, { quantity: String(quantity), bonus_quantity: null })}
                           />
                           <p>
                             Destinado a clientes:{" "}
