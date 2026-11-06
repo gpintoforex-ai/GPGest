@@ -56,6 +56,7 @@ def test_no_sales_source_is_reported_as_no_data_not_zero(setup):
     client = setup[0]
     data = dashboard(client, start=(date.today() - timedelta(days=6)).isoformat(), end=date.today().isoformat())
     assert data["sales"]["status"] == "empty" and "Sem dados de faturação" in data["sales"]["message"]
+    assert data["vat"]["status"] == "empty" and data["top_articles"]["status"] == "empty"
 
 
 def test_roles_cannot_read_costs_or_results_they_are_not_allowed_to_see(setup):
@@ -66,12 +67,14 @@ def test_roles_cannot_read_costs_or_results_they_are_not_allowed_to_see(setup):
     reader = dashboard(client)
     assert reader["permissions"]["costs"] is False
     assert reader["expenses"]["status"] == "restricted" and reader["margin"]["status"] == "restricted"
+    assert reader["vat"]["status"] == "restricted"
     assert "documents_without_attachment" not in reader["operations"]["items"]
     client.post("/api/auth/logout")
     assert client.post("/api/auth/login", json={"email": "operator@test.pt", "password": "PasswordTest123!"}).status_code == 200
     operator = dashboard(client)
     assert operator["permissions"]["finance"] is False
     assert {operator[key]["status"] for key in ("sales", "treasury", "expenses", "margin")} == {"restricted"}
+    assert operator["vat"]["status"] == operator["top_articles"]["status"] == "restricted"
     assert operator["operations"]["status"] == "ok"
 
 
@@ -101,3 +104,121 @@ def test_erp_sales_are_shown_without_vat_only_when_every_document_has_a_base(set
                                   data=json.dumps({"document_group": "vendas", "direction": 1, "amount_cents": 1230, "cancelled": False})))
     sales = dashboard(client, start=today.isoformat(), end=today.isoformat())["sales"]
     assert sales["vat_basis"] == "com IVA" and sales["total_cents"] == 12300 + 6150 + 1230 and sales["missing_base_documents"] == 1
+
+
+def test_dashboard_vat_matches_map_and_top_subtracts_returns(case):
+    import json
+    from sqlalchemy import select
+    from app.models import BusinessEntity, Category, Purchase, WintouchSaleRecord
+    client = case[0]
+    assert client.post("/api/settings/fiscal", json={"vat_regime": "normal", "vat_period": "trimestral"}).status_code == 200
+    p2 = invoice(number=4, value="36.90").replace("<Quantity>1</Quantity>", "<Quantity>3</Quantity>")
+    imported(case, [invoice(number=1, value="24.60"), invoice("NC", 2, value="12.30"), invoice(number=3, status="A"), p2])
+    with case[2].begin() as db:
+        for sale in db.scalars(select(WintouchSaleRecord).where(WintouchSaleRecord.kind == "saft_invoice")):
+            payload = json.loads(sale.data)
+            if payload["document"] == "FT TESTE/4":
+                lines = payload["raw"]["Line"]
+                line = lines[0] if isinstance(lines, list) else lines
+                line["ProductCode"], line["ProductDescription"] = "P2", "Outro artigo"
+                sale.data = json.dumps(payload)
+        category = Category(name="Dedução parcial", vat_deduction_percent=50)
+        db.add(category)
+        db.flush()
+        db.add(BusinessEntity(name="Fornecedor de teste", tax_number="500000009", is_supplier=True, category_id=category.id))
+        db.add(Purchase(store_id=case[3], supplier_nif="500000009", supplier_name="Fornecedor de teste", document="FT COMPRA/1",
+                        document_date="2026-01-12", amount_cents=12300, base_cents=10000, tax_cents=2300))
+    data = dashboard(client, **JANUARY)
+    vat = client.get("/api/management/vat-map", params=JANUARY).json()["periods"][0]
+    assert data["vat"]["status"] == "ok"
+    assert data["vat"]["deductible_cents"] == 1150
+    for key in ("output_cents", "input_cents", "deductible_cents", "balance_cents"):
+        assert data["vat"][key] == vat[key]
+    rows = data["top_articles"]["rows"]
+    assert [r["code"] for r in rows] == ["P2"]  # P1: uma venda e uma devolução, quantidade líquida zero.
+    assert rows[0]["quantity"] == "3" and rows[0]["sales_cents"] == 3000
+    assert dashboard(client, start="2026-02-01", end="2026-02-28")["top_articles"]["status"] == "empty"
+
+
+def test_erp_vat_missing_breakdown_does_not_show_false_balance(setup):
+    import json
+    from app.models import Register, WintouchSaleRecord
+    client, ids, factory = setup
+    client.post("/api/settings/fiscal", json={"vat_regime": "normal", "vat_period": "mensal"})
+    with factory.begin() as db:
+        store = db.get(Register, ids["registers"][0]).store_id
+        db.add(WintouchSaleRecord(enterprise_id="erp", external_id="vat-complete", store_id=store, kind="documento", document_date="2026-01-10",
+                                  data=json.dumps({"document_group": "vendas", "amount_cents": 12300, "net_cents": 10000, "tax_cents": 2300})))
+    assert dashboard(client, **JANUARY)["vat"]["output_cents"] == 2300
+    assert client.get("/api/management/vat-map", params=JANUARY).json()["periods"][0]["output_cents"] == 2300
+    with factory.begin() as db:
+        db.add(WintouchSaleRecord(enterprise_id="erp", external_id="vat-incomplete", store_id=store, kind="documento", document_date="2026-01-11",
+                                  data=json.dumps({"document_group": "vendas", "amount_cents": 1230})))
+    vat = dashboard(client, **JANUARY)["vat"]
+    assert vat["status"] == "empty" and "sem IVA discriminado" in vat["message"] and "balance_cents" not in vat
+    assert client.get("/api/management/vat-map", params=JANUARY).json()["available"] is False
+
+
+def test_erp_top_uses_imported_lines_without_stock_posting_and_scopes_store(setup):
+    import json
+    from sqlalchemy import select
+    from app.models import Register, Store, WintouchProduct, WintouchSaleRecord
+    client, ids, factory = setup
+    with factory.begin() as db:
+        store = db.get(Register, ids["registers"][0]).store_id
+        other = db.scalar(select(Store.id).where(Store.id != store))
+        db.add(WintouchProduct(enterprise_id="erp", external_id="p1", code="P001", name="Artigo ERP"))
+        def add(key, quantity="5", net="50.005", **changes):
+            target = changes.pop("store_id", store)
+            active = changes.pop("active", True)
+            day = changes.pop("document_date", "2026-01-10")
+            payload = {"document_group": "vendas", "document_class": 3, "lines": [{"product_id": "p1", "quantity": quantity, "net": net}], **changes}
+            db.add(WintouchSaleRecord(enterprise_id="erp", external_id=key, store_id=target, kind="documento", document_date=day, active=active, data=json.dumps(payload)))
+        add("sale")
+        add("return", "2", "20", document_class=6)
+        add("cancelled", "90", cancelled=True)
+        add("inactive", "90", active=False)
+        add("purchase", "90", document_group="compras")
+        add("other", "10", "100", store_id=other)
+        add("outside", "90", document_date="2026-02-01")
+        add("unknown-product", lines=[{"product_id": "no-catalogue", "quantity": "1", "net": "5"}])
+    top = dashboard(client, store_id=store, **JANUARY)["top_articles"]
+    assert top["source"] == "erp" and top["status"] == "ok" and top["incomplete_documents"] == 0
+    assert top["rows"][0]["code"] == "P001" and top["rows"][0]["name"] == "Artigo ERP"
+    assert top["rows"][0]["quantity"] == "3" and top["rows"][0]["sales_cents"] == 3001
+    assert len(top["rows"]) == 2  # Includes an ERP product without a local stock/catalogue record.
+    assert dashboard(client, store_id=other, **JANUARY)["top_articles"]["rows"][0]["quantity"] == "10"
+    again = dashboard(client, store_id=store, **JANUARY)["top_articles"]
+    assert again["rows"] == top["rows"]  # Reading the ranking creates no stock movements.
+
+
+def test_erp_top_reports_missing_and_malformed_lines(setup):
+    import json
+    from app.models import Register, WintouchSaleRecord
+    client, ids, factory = setup
+    with factory.begin() as db:
+        store = db.get(Register, ids["registers"][0]).store_id
+        for key, payload in [
+            ("legacy", {"document_group": "vendas"}),
+            ("missing", {"document_group": "vendas", "document_class": 3}),
+            ("partial", {"document_group": "vendas", "document_class": 3, "lines": [
+                {"product_id": "p1", "quantity": "4", "net": "10"},
+                {"product_id": "p1", "quantity": "NaN", "net": "10"},
+            ]}),
+        ]:
+            db.add(WintouchSaleRecord(enterprise_id="erp", external_id=key, kind="documento", store_id=store, document_date="2026-01-10", data=json.dumps(payload)))
+    top = dashboard(client, **JANUARY)["top_articles"]
+    assert top["status"] == "ok" and top["incomplete_documents"] == 3
+    assert top["rows"][0]["quantity"] == "4"
+
+
+def test_top_does_not_add_erp_lines_to_saft_sales(case):
+    import json
+    from app.models import WintouchSaleRecord
+    imported(case, [invoice()])
+    with case[2].begin() as db:
+        db.add(WintouchSaleRecord(enterprise_id="erp", external_id="same-sale", kind="documento", store_id=case[3], document_date="2026-01-10",
+                                  data=json.dumps({"document_group": "vendas", "document_class": 3, "lines": [{"product_id": "P1", "quantity": "100", "net": "1000"}]})))
+    top = dashboard(case[0], **JANUARY)["top_articles"]
+    assert top["source"] == "saft" and top["rows"][0]["quantity"] == "1"
+    assert top["rows"][0]["sales_cents"] == 1000

@@ -13,8 +13,8 @@ import "./ManagementDashboard.css";
 import { OrderCycleSignals } from "./OrderAnalytics";
 
 type Row = Record<string, any>;
-type SectionKey = "summary" | "evolution" | "attention" | "actions" | "operation" | "orders";
-const SECTIONS: [SectionKey, string][] = [["summary", "Resumo do negócio"], ["evolution", "Evolução"], ["attention", "O que precisa da sua atenção"], ["actions", "Ações rápidas"], ["operation", "Operação de caixa"], ["orders", "Encomendas e abastecimento"]];
+type SectionKey = "summary" | "evolution" | "articles" | "attention" | "actions" | "operation" | "orders";
+const SECTIONS: [SectionKey, string][] = [["summary", "Resumo do negócio"], ["evolution", "Evolução"], ["articles", "Artigos mais vendidos"], ["attention", "O que precisa da sua atenção"], ["actions", "Ações rápidas"], ["operation", "Operação de caixa"], ["orders", "Encomendas e abastecimento"]];
 const DUE: [string, string][] = [["vencido", "Vencido"], ["7_dias", "Próx. 7 dias"], ["30_dias", "8–30 dias"], ["mais_30", "> 30 dias"], ["sem_data", "Sem data"]];
 const SEVERITY: Record<string, [string, typeof AlertTriangle]> = { critical: ["Crítico", OctagonAlert], warning: ["Atenção", AlertTriangle], info: ["Informação", CircleDot] };
 const lisbonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Lisbon", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -94,15 +94,32 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
   const open = (page: string, withPeriod = true) => { if (withPeriod) handOffPeriod(page, start, end); navigate(page); };
   const unavailable = error ? { status: "error", message: "Consulta indisponível. Tente atualizar o painel." } : !valid ? { status: "error", message: "Indique um período válido." } : undefined;
   const sales = data?.sales || unavailable, treasury = data?.treasury || unavailable, expenses = data?.expenses || unavailable, margin = data?.margin || unavailable;
+  const vat = data?.vat || unavailable || (data ? { status: "empty", message: "Atualize o servidor para disponibilizar a previsão de IVA." } : undefined);
+  const topArticles = data?.top_articles || unavailable || (data ? { status: "empty", message: "Atualize o servidor para disponibilizar o top de artigos." } : undefined);
   const salesPage = data?.mode === "local" ? "Faturação e recebimentos" : "Movimentos reais";
 
   const sections: Record<SectionKey, ReactNode> = {
     orders: ["administrador", "gestor"].includes(role) ? <OrderCycleSignals store={store} start={start} end={end} revision={version} navigate={navigate} /> : <p>Os indicadores de compras requerem autorização para consultar custos.</p>,
     operation,
+    articles: <section className="panel"><h2>Top 10 de artigos vendidos</h2>
+      <p className="dash-muted">Ordenado por quantidade vendida, descontando devoluções. Respeita o período e a loja selecionados.</p>
+      {!!topArticles?.incomplete_documents && <Notice tone="warning">Top parcial: {topArticles.incomplete_documents} documento(s) sem detalhe completo de artigos. Repita a importação de vendas com o detalhe de stock para o período selecionado.</Notice>}
+      <BlockState block={topArticles}>{topArticles?.rows && <div className="table-wrap"><table>
+        <thead><tr><th>Posição</th><th>Código</th><th>Artigo</th><th className="numeric">Quantidade líquida</th><th className="numeric">Vendas sem IVA</th></tr></thead>
+        <tbody>{topArticles.rows.map((r: Row, index: number) => <tr key={r.id || r.code || r.name}><td>{index + 1}</td><td>{r.code || "—"}</td><td>{r.name}</td><td className="numeric">{Number(r.quantity).toLocaleString("pt-PT", { maximumFractionDigits: 4 })}</td><td className="numeric">{formatEuro(r.sales_cents)}</td></tr>)}</tbody>
+      </table></div>}</BlockState>
+      <MetaInfo meta={topArticles?.meta} />
+    </section>,
     summary: <div className="dash-kpis">
       {data?.permissions?.finance === false && <Notice>Os indicadores financeiros não estão disponíveis para o seu perfil.</Notice>}
       {data?.permissions?.finance !== false && <Kpi label={`Faturação${sales?.vat_basis ? ` (${sales.vat_basis})` : ""}`} meta={sales?.meta} onOpen={() => open(salesPage)}>
         <BlockState block={sales}><strong>{formatEuro(sales?.total_cents)}</strong><Delta value={sales?.change_percent} /><small>{sales?.documents} documento(s)</small></BlockState></Kpi>}
+      {data?.permissions?.costs && <Kpi label="Previsão de IVA" meta={vat?.meta}>
+        <BlockState block={vat}><strong>{formatEuro(Math.abs(vat?.balance_cents || 0))}</strong>
+          <small>{vat?.balance_cents > 0 ? "A pagar estimado" : vat?.balance_cents < 0 ? "Crédito estimado" : "Saldo estimado nulo"} · período selecionado</small>
+          <small>Liquidado: {formatEuro(vat?.output_cents)} · Dedutível: {formatEuro(vat?.deductible_cents)}</small>
+          <ActionButton type="button" className="dash-link" onClick={() => { handOffPeriod("Mapas de gestão", start, end); navigate("Mapas de gestão", { "area.mapas": "vat" }); }}>Ver mapa de IVA</ActionButton>
+        </BlockState></Kpi>}
       {data?.permissions?.finance !== false && <Kpi label="Saldo disponível conhecido" meta={treasury?.meta?.balance} onOpen={() => open("Previsão de liquidez", false)} state={treasury?.balance_complete === false || treasury?.accounts?.some((a: Row) => a.stale) ? "warn" : ""}>
         <BlockState block={treasury}>{treasury?.balance_cents === null ? <strong>Sem dados</strong> : <strong>{formatEuro(treasury?.balance_cents)}</strong>}
           <small>{treasury?.accounts?.length} conta(s)/caixa(s){treasury?.balance_complete === false ? " · saldo incompleto" : ""}{treasury?.accounts?.some((a: Row) => a.stale) ? " · há saldos desatualizados" : ""}</small>
@@ -183,7 +200,7 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
       <ActionButton type="button" onClick={() => navigate("Previsão de liquidez")}>Previsão de liquidez</ActionButton>
     </div>,
   };
-  const order = prefs.order.filter(key => SECTIONS.some(([k]) => k === key)).concat(SECTIONS.map(([k]) => k).filter(k => !prefs.order.includes(k))).filter(key => key !== "orders" || ["administrador", "gestor"].includes(role));
+  const order = prefs.order.filter(key => SECTIONS.some(([k]) => k === key)).concat(SECTIONS.map(([k]) => k).filter(k => !prefs.order.includes(k))).filter(key => (key !== "orders" || ["administrador", "gestor"].includes(role)) && (key !== "articles" || ["administrador", "gestor", "consulta"].includes(role)));
   const move = (key: SectionKey, delta: number) => {
     const next = [...order]; const index = next.indexOf(key); const target = index + delta;
     if (target < 0 || target >= next.length) return;

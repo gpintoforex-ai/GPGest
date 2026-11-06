@@ -5,7 +5,7 @@ Fontes (sem duplicar regras):
 - Recebimentos e pagamentos: `billing_conference.receipts` / `payment_list` (sem transferências internas
   nem estornos; liquidação de TPA não é novo recebimento).
 - Saldos, compromissos e previsão: previsão de liquidez (`app.state.liquidity`).
-- Custos por rubrica: `management_maps.purchase_documents`.
+- Custos por rubrica: `management_maps.cost_documents` (compras e custos sem documento do banco).
 - Margem por artigo: linhas do SAF-T × custo médio das entradas de stock (só quando o custo é conhecido).
 
 Cada bloco é calculado de forma independente: um erro num bloco não impede os restantes.
@@ -15,7 +15,7 @@ import json
 import logging
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -40,6 +40,7 @@ from .models import (
     StockLot,
     StockWarehouse,
     WintouchSaleRecord,
+    WintouchProduct,
     WintouchSyncRun,
 )
 
@@ -223,10 +224,7 @@ def article_costs(db, article_ids):
     return {key: value[1] / value[0] for key, value in totals.items() if value[0] > 0}
 
 
-def margin_block(db, stores, period, can_view_cost):
-    source, updated = sales_source(db)
-    if source != "saft":
-        return {"status": "empty", "message": "A análise por artigo exige o SAF-T de vendas (linhas por artigo).", "meta": meta("Vendas e margem por família de artigo", "—", "SAF-T")}
+def article_sales_lines(db, stores, period):
     from .billing_conference import saft_source
     start, end = period
     lines = []
@@ -246,6 +244,138 @@ def margin_block(db, stores, period, can_view_cost):
             except ArithmeticError:
                 continue
             lines.append((str(line.get("ProductCode") or ""), str(line.get("ProductDescription") or ""), net, quantity))
+    return lines
+
+
+def erp_article_sales_lines(db, stores, period):
+    """Read the imported snapshot, independent of whether stock posting succeeded."""
+    start, end = period
+    lines, missing = [], 0
+    for record in db.scalars(select(WintouchSaleRecord).where(
+            WintouchSaleRecord.kind == "documento", WintouchSaleRecord.active.is_(True),
+            WintouchSaleRecord.store_id.in_(stores), WintouchSaleRecord.document_date >= str(start),
+            WintouchSaleRecord.document_date <= str(end))):
+        data = json.loads(record.data)
+        if data.get("document_group") != "vendas" or data.get("cancelled"):
+            continue
+        if data.get("document_class") is None:
+            missing += 1
+            continue
+        if data["document_class"] not in (3, 5, 6, 40):
+            continue
+        if not isinstance(data.get("lines"), list):
+            missing += 1
+            continue
+        sign = -1 if data["document_class"] == 6 else 1
+        invalid = False
+        for line in data["lines"]:
+            try:
+                product_id = str(line["product_id"])
+                quantity, net = Decimal(line["quantity"]), Decimal(line["net"])
+                if not product_id or not quantity.is_finite() or not net.is_finite():
+                    raise ValueError()
+            except (ArithmeticError, ValueError, KeyError, TypeError):
+                invalid = True
+                continue
+            if quantity > 0:
+                lines.append((record.enterprise_id, product_id, net * 100 * sign, quantity * sign))
+        missing += int(invalid)
+    products = {(p.enterprise_id, p.external_id): p for p in db.scalars(select(WintouchProduct).where(
+        WintouchProduct.enterprise_id.in_({enterprise for enterprise, *_ in lines}),
+        WintouchProduct.external_id.in_({product for _, product, *_ in lines}),
+    ))} if lines else {}
+    result = []
+    for enterprise, product_id, net, quantity in lines:
+        product = products.get((enterprise, product_id))
+        code = product.code if product else f"ERP:{enterprise}:{product_id}"
+        result.append(((enterprise, product_id), code, product.name if product else f"Artigo ERP {product_id}", net, quantity))
+    return result, missing
+
+
+def top_articles_block(db, stores, period):
+    source, updated = sales_source(db)
+    if not source:
+        return {"status": "empty", "message": "Sem linhas de venda importadas neste período."}
+    missing = 0
+    if source == "erp":
+        lines, missing = erp_article_sales_lines(db, stores, period)
+    else:
+        lines = [(code or description, code, description, net, quantity) for code, description, net, quantity in article_sales_lines(db, stores, period)]
+    groups = {}
+    for key, code, description, net, quantity in lines:
+        group = groups.setdefault(key, {"id": json.dumps(key, ensure_ascii=False), "code": code, "name": description or code or "Artigo sem identificação", "quantity": Decimal(0), "sales_cents": Decimal(0)})
+        group["quantity"] += quantity
+        group["sales_cents"] += net
+    rows = sorted((g for g in groups.values() if g["quantity"] > 0), key=lambda g: (-g["quantity"], -g["sales_cents"], g["code"], g["name"]))[:10]
+    return {
+        "status": "ok" if rows else "empty", "source": source,
+        "message": "Há documentos sem linhas de artigo. Repita a importação de vendas com o detalhe de stock para este período." if missing and not rows else "Sem artigos com quantidade líquida vendida positiva neste período.",
+        "incomplete_documents": missing,
+        "rows": [{**row, "quantity": str(row["quantity"]), "sales_cents": int(row["sales_cents"].quantize(Decimal(1), rounding=ROUND_HALF_UP))} for row in rows],
+        "meta": meta("Os dez artigos com maior quantidade líquida vendida no período e nas lojas selecionadas.",
+                     "Quantidade vendida menos devoluções; desempate pelo valor de vendas sem IVA. Documentos anulados excluídos.",
+                     "Linhas de vendas Wintouch importadas" if source == "erp" else "Linhas do SAF-T de vendas", updated,
+                     ("Quantidades em unidades de stock da origem. Só inclui o detalhe já importado; movimentos de stock pendentes não excluem a venda." if source == "erp" else "Quantidades expressas na unidade de venda da origem.")
+                     + " O top não depende da existência de ficha local ou custo de stock. SAF-T e ERP nunca são somados."),
+    }
+
+
+def vat_block(db, user, store_id, period):
+    from .management_maps import context, deductible, purchase_documents
+    from .models import Category
+    from .settings import vat_settings
+    start, end = period
+    stores = context(user, db, start, end, store_id)
+    fiscal = vat_settings(db)
+    if fiscal["vat_regime"] != "normal":
+        return {"status": "empty", "message": "Configure o regime de IVA para consultar a previsão." if not fiscal["vat_regime"] else "A previsão de saldo está disponível para o regime normal de IVA. Consulte o Mapa de IVA para o regime configurado."}
+    source, updated = sales_source(db)
+    if not source:
+        return {"status": "empty", "message": "Sem dados de vendas para estimar o IVA liquidado."}
+    output, documents, missing = 0, 0, 0
+    if source == "saft":
+        from .billing_conference import documents as saft_documents
+        for doc in saft_documents(db, stores, str(start), str(end)):
+            if doc["eligible"]:
+                output += doc["tax_cents"] * doc["direction"]
+                documents += 1
+    else:
+        for row in db.scalars(select(WintouchSaleRecord).where(
+                WintouchSaleRecord.kind == "documento", WintouchSaleRecord.active.is_(True), WintouchSaleRecord.store_id.in_(stores),
+                WintouchSaleRecord.document_date >= str(start), WintouchSaleRecord.document_date <= str(end))):
+            data = json.loads(row.data)
+            if data.get("document_group") != "vendas" or data.get("cancelled"):
+                continue
+            documents += 1
+            if data.get("tax_cents") is None:
+                missing += 1
+            else:
+                output += int(data["tax_cents"]) * (data.get("direction") or 1)
+    percents = {c.id: c.vat_deduction_percent for c in db.scalars(select(Category))}
+    input_tax, deduction, purchases = 0, 0, 0
+    for _, _, shares in purchase_documents(db, stores, start, end):
+        purchases += 1
+        for category, _, tax in shares:
+            input_tax += tax
+            deduction += deductible(tax, category, percents)
+    if missing:
+        return {"status": "empty", "message": f"{missing} documento(s) de venda sem IVA discriminado. Volte a sincronizar as vendas antes de calcular a previsão."}
+    return {
+        "status": "ok" if documents or purchases else "empty", "message": "Sem documentos neste período.",
+        "output_cents": output, "input_cents": input_tax, "deductible_cents": deduction, "balance_cents": output - deduction,
+        "sales_documents": documents, "purchase_documents": purchases, "period": fiscal["vat_period"],
+        "meta": meta("Saldo estimado de IVA dos documentos conhecidos no período selecionado.",
+                     "IVA liquidado nas vendas − IVA dedutível estimado nas compras, segundo a percentagem de dedução de cada rubrica.",
+                     ("SAF-T de vendas" if source == "saft" else "Vendas Wintouch") + " e documentos de compra do Mapa de IVA", updated,
+                     "Inclui compras ainda não lançadas. Não inclui saldos transitados, regularizações ou operações ausentes dos dados. Não projeta vendas futuras nem substitui o apuramento contabilístico."),
+    }
+
+
+def margin_block(db, stores, period, can_view_cost):
+    source, updated = sales_source(db)
+    if source != "saft":
+        return {"status": "empty", "message": "A análise por artigo exige o SAF-T de vendas (linhas por artigo).", "meta": meta("Vendas e margem por família de artigo", "—", "SAF-T")}
+    lines = article_sales_lines(db, stores, period)
     articles = {a.code: a for a in db.scalars(select(StockArticle).where(StockArticle.code.in_({code for code, *_ in lines})))} if lines else {}
     costs = article_costs(db, [a.id for a in articles.values()]) if can_view_cost else {}
     groups = defaultdict(lambda: {"sales_cents": 0, "known_cents": 0, "cost_cents": 0, "articles": set()})
@@ -377,7 +507,7 @@ def treasury_block(request, db, user, store_id, period, compare):
 
 
 def expenses_block(db, stores, period, compare):
-    from .management_maps import UNCLASSIFIED, deductible, purchase_documents
+    from .management_maps import UNCLASSIFIED, cost_documents, deductible
     from .models import Category
     from .settings import vat_settings
     regime = vat_settings(db)["vat_regime"]
@@ -386,7 +516,7 @@ def expenses_block(db, stores, period, compare):
 
     def totals(first, last):
         result = defaultdict(int)
-        for _, _, shares in purchase_documents(db, stores, first, last):
+        for _, _, shares in cost_documents(db, stores, first, last):
             for category, base, tax in shares:
                 result[category] += base + (tax - deductible(tax, category, percents) if regime == "normal" else tax)
         return result
@@ -402,9 +532,9 @@ def expenses_block(db, stores, period, compare):
         "status": "ok" if rows else "empty", "message": "" if rows else "Sem documentos de compra neste período.",
         "rows": top, "total_cents": total, "previous_cents": previous, "change_percent": change(total, previous),
         "unclassified_cents": current_values.get(UNCLASSIFIED, 0), "vat_basis": "sem IVA dedutível" if regime == "normal" else "com IVA",
-        "meta": meta("Despesas e compras por rubrica, pela data do documento.",
+        "meta": meta("Despesas e compras por rubrica, pela data do documento (custos sem documento: pela data do movimento bancário).",
                      "Regime normal: base tributável + IVA não dedutível estimado; restantes regimes: total com IVA. Rubrica das linhas da compra, do documento ERP ou do fornecedor.",
-                     "Documentos de compra (e-Fatura, Compras, ERP)", None,
+                     "Documentos de compra (e-Fatura, Compras, ERP) e registos bancários sem documento com rubrica", None,
                      "Inclui faturas do e-Fatura ainda não lançadas. Compras de mercadoria contam como compras, não como custo das vendas." + ("" if regime else " Configure o regime de IVA.")),
     }
 
@@ -579,6 +709,8 @@ def overview(request: Request, start: date | None = None, end: date | None = Non
     treasury = run(db, "treasury", treasury_block, request, db, user, store_id, period, compared) if finance else restricted
     expenses = run(db, "expenses", expenses_block, db, stores, period, compared) if costs_allowed else restricted
     margin = run(db, "margin", margin_block, db, stores, period, can_view_cost) if costs_allowed else restricted
+    vat = run(db, "vat", vat_block, db, user, store_id, period) if costs_allowed else restricted
+    top_articles = run(db, "top_articles", top_articles_block, db, stores, period) if finance else restricted
     operations = run(db, "operations", operations_block, db, stores, period, costs_allowed)
     label = f"{start.strftime('%d/%m/%Y')} a {end.strftime('%d/%m/%Y')}"
     return {
@@ -587,5 +719,6 @@ def overview(request: Request, start: date | None = None, end: date | None = Non
         "comparison": {"start": str(previous_start), "end": str(previous_end), "method": method, "mode": compare},
         "permissions": {"finance": finance, "costs": costs_allowed, "article_costs": can_view_cost},
         "sales": sales, "treasury": treasury, "expenses": expenses, "margin": margin, "operations": operations,
+        "vat": vat, "top_articles": top_articles,
         "attention": attention(sales, treasury, expenses if costs_allowed else None, operations, mode, label),
     }

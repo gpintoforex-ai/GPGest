@@ -10,12 +10,14 @@ Todos os cálculos são feitos no servidor (`/api/dashboard/overview`, `backend/
 
 | Indicador / gráfico | Fórmula e origem |
 |---|---|
+| Previsão de IVA | No Resumo do negócio: IVA liquidado nas vendas menos IVA dedutível estimado das compras, com as percentagens por rubrica do Mapa de IVA. Respeita período e loja; mostra saldo a pagar ou crédito estimado, sem extrapolar vendas futuras. Usa SAF-T ou, na sua ausência, vendas ERP com IVA discriminado. Só administrador e gestor, no regime normal. Não inclui saldos transitados nem regularizações. |
+| Top 10 de artigos vendidos | Área Artigos mais vendidos: quantidade líquida (vendas menos devoluções), com desempate pelo valor sem IVA. Mostra código, descrição, quantidade e vendas. Usa as linhas do SAF-T ou, quando o ERP é a fonte de faturação, as linhas Wintouch já importadas para o stock. Não soma ambas as fontes. Exclui documentos anulados/inativos; não exige custos, ficha local de stock ou saída de stock aplicada. Disponível para administrador, gestor e consulta. |
 | Faturação | SAF-T: documentos FT, FS, FR, ND, NC normais pela data do documento, **sem IVA**, notas de crédito subtraem, anulados excluídos (`billing_conference.documents`). Sem SAF-T, vendas do ERP **com IVA** (o ERP não fornece a base). Gráfico por dia, semana ou mês, com a série de comparação. |
 | Saldo disponível conhecido | Um saldo por conta/caixa, o mesmo da previsão de liquidez (último extrato ou saldo de referência; caixas: fundo + movimentos). Nunca extrato + livro da mesma conta. Assinala saldos incompletos, estimados ou desatualizados. Outras moedas não são somadas. TPA por liquidar mostrado à parte. |
 | Recebimentos e pagamentos | Recebimentos registados menos reembolsos; pagamentos a fornecedores, despesas, saídas de caixa e encargos bancários (`billing_conference.receipts` / `payment_list`). Excluem transferências entre contas próprias e estornos; a liquidação do TPA não é um novo recebimento. Com IVA. |
 | A pagar / a receber por vencimento | Saldos por liquidar da previsão de liquidez (movimentos previstos, documentos do ERP em aberto, previsões manuais), em vencido, 7 dias, 8–30 dias, mais de 30 dias e sem data. Uma fatura registada não conta como paga. |
 | Saldo previsto (30 dias) | Cenário base da previsão de liquidez: ponto de partida no saldo atual conhecido e projeção tracejada; reserva mínima como referência. |
-| Despesas por rubrica | Documentos de compra pela data do documento (mapas de gestão): regime normal = base + IVA não dedutível estimado; outros regimes = total. Compras de mercadoria não são custo das vendas. Só administrador e gestor. |
+| Despesas por rubrica | Documentos de compra pela data do documento, mais os custos sem documento registados no banco com rubrica, pela data do movimento (mapas de gestão): regime normal = base + IVA não dedutível estimado; outros regimes = total. Compras de mercadoria não são custo das vendas. Só administrador e gestor. |
 | Vendas e margem por família | Linhas do SAF-T por artigo, agrupadas pela família/categoria da ficha do artigo. Margem bruta = vendas com custo conhecido − quantidade × custo médio ponderado das entradas de stock; só é mostrada com custo conhecido em pelo menos 80% das vendas. Margem bruta não é lucro. Só administrador e gestor; custos exigem também a permissão de ver custos de stock. |
 
 ## O que precisa da sua atenção
@@ -27,6 +29,8 @@ Regras verificáveis, cada uma com facto, valores, impacto, ação recomendada e
 Administrador e gestor veem tudo; consulta vê faturação e tesouraria, sem custos nem resultados; operador vê apenas a operação (caixas, reconciliação, stock). As restrições são aplicadas na API.
 
 ## Limitações atuais e como as resolver
+
+- **Top de artigos pelo ERP:** usa o detalhe guardado na importação de vendas, sem nova chamada ao ERP nem novos movimentos de stock. As quantidades são unidades de stock da origem. Documentos sem linhas completas tornam o top parcial, com aviso para repetir a importação do período com o detalhe de stock. O histórico depende das linhas já importadas a partir do início do controlo de stock. Artigos ainda sem catálogo são identificados pelo ID do ERP.
 
 - **Margem bruta:** exige custo conhecido em pelo menos 80% das vendas. O custo vem das entradas de stock com custo: **inventário inicial valorizado** (Compras e Stock → Importações) e, depois, compras de mercadoria confirmadas em Compras. Sem custos, o painel mostra «Indisponível» e a percentagem de vendas com custo conhecido.
 - **Faturação líquida no modo integrado:** a sincronização de vendas Wintouch guarda a base tributável e o IVA de cada documento (`BaseValue1–4`, `VATValue1–4`), quando batem com o total (tolerância de 2 cêntimos). O painel mostra a faturação sem IVA só quando todos os documentos do período e da comparação têm base; caso contrário mostra com IVA e indica quantos documentos faltam — volte a sincronizar as vendas desse período.
