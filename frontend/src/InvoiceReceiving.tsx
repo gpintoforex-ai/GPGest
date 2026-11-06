@@ -108,9 +108,11 @@ function lineValues(line: Row, global: number) {
  * Receção a partir da fatura do fornecedor (PDF no Arquivo digital): lê as linhas (texto ou OCR),
  * relaciona-as com os artigos e propõe fichas novas. Nada entra em stock antes de confirmar.
  */
-export default function InvoiceReceiving({ articles, stores, categories, onClose, onDone, editReceipt }: {
+export default function InvoiceReceiving({ articles, stores, categories, onClose, onDone, editReceipt, startDocument }: {
   // Receção já lançada a partir de fatura: reabre a mesma janela com o lançamento gravado.
   editReceipt?: string;
+  // Fatura do arquivo a ler logo ao abrir (ex.: «Receber mercadoria» na Conferência documental).
+  startDocument?: string;
   articles: Row[];
   stores: Row[];
   categories: Row[];
@@ -129,12 +131,15 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
   const [lines, setLines] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Mensagem repetida na linha a corrigir (o topo do formulário pode ficar fora de vista).
+  const [attention, setAttention] = useState<{ line: number; message: string } | null>(null);
   const [requestKey] = useState(() => crypto.randomUUID());
   // Original da fatura ao lado da conferência (descarregado para um URL local, como no Arquivo).
   const [pdf, setPdf] = useState<{ url: string; mime: string } | null>(null);
   const [pdfError, setPdfError] = useState("");
   const [showPdf, setShowPdf] = useState(() => window.matchMedia("(min-width: 1100px)").matches);
   const pdfUrl = useRef("");
+  const formArea = useRef<HTMLDivElement>(null);
   const active = useMemo(() => articles.filter(a => a.active !== false), [articles]);
   const byLabel = useMemo(() => new Map(active.map(a => [`${a.code} · ${a.name}`, a])), [active]);
 
@@ -164,7 +169,10 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
       }).catch(e => setError(e.message)).finally(() => setBusy(false));
       return;
     }
-    api("/purchase-receiving/documents").then(r => setDocuments(r.rows)).catch(e => setError(e.message));
+    api("/purchase-receiving/documents").then(r => {
+      setDocuments(r.rows);
+      if (startDocument) void read(r.rows.find((row: Row) => row.id === startDocument) || { id: startDocument });
+    }).catch(e => setError(e.message));
   }, [editReceipt]);
 
   useEffect(() => {
@@ -207,7 +215,10 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
     }
   }
 
-  const change = (index: number, patch: Row) => setLines(current => current.map((line, i) => (i === index ? { ...line, ...patch } : line)));
+  const change = (index: number, patch: Row) => {
+    setAttention(current => current?.line === index ? null : current);
+    setLines(current => current.map((line, i) => (i === index ? { ...line, ...patch } : line)));
+  };
   const included = lines.filter(line => line.include);
   const globalDiscount = Number(header.global_discount || 0);
   const total = included.reduce((sum, line) => sum + lineValues(line, globalDiscount).net, 0);
@@ -264,17 +275,93 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
   const adjusting = canAdjust && !!header.match_document_totals;
   const adjustment = adjusting && gap ? { base: gap.base, vat: gap.vat, total: gap.base + gap.vat } : { base: 0, vat: 0, total: 0 };
 
-  async function confirm() {
-    const missing = included.findIndex(line => !line.description.trim() || Number(line.qty) <= 0
-      || (line.choice === NEW && (!String(line.newArticle.code || "").trim() || !String(line.newArticle.name || "").trim())));
-    if (missing >= 0) {
-      const line = included[missing];
-      setError(`Linha ${lines.indexOf(line) + 1}: ${!line.description.trim() ? "indique a descrição" : Number(line.qty) <= 0 ? "indique a quantidade" : "indique o código e a designação do artigo novo"}.`);
-      return;
+  /** Campo com esta etiqueta (Field, ou etiqueta que envolve o controlo), dentro de `scope`. */
+  const control = (label: string, scope: ParentNode | null | undefined = formArea.current) => {
+    const found = [...(scope?.querySelectorAll("label") || [])].find(l => l.textContent?.trim() === label) as HTMLLabelElement | undefined;
+    return (found?.control || found?.querySelector("input, select, textarea") || null) as HTMLElement | null;
+  };
+  const lineBox = (line: Row) => formArea.current?.querySelectorAll("fieldset.invoice-receiving-line")[lines.indexOf(line)] || null;
+  /** Mostra o que falta e leva ao sítio onde se corrige (o campo fica com a mensagem até ser alterado). */
+  function point(target: Element | null | undefined, message: string) {
+    setError(message);
+    const box = target?.closest("fieldset.invoice-receiving-line");
+    const boxes = [...(formArea.current?.querySelectorAll("fieldset.invoice-receiving-line") || [])];
+    setAttention(box ? { line: boxes.indexOf(box), message } : null);
+    requestAnimationFrame(() => {
+      const element = target as HTMLElement | null;
+      if (!element) return;
+      element.scrollIntoView({ block: "center", behavior: "smooth" });
+      element.focus({ preventScroll: true });
+      element.classList.add("needs-attention");
+      const native = element instanceof HTMLInputElement || element instanceof HTMLSelectElement ? element : null;
+      const clear = () => { element.classList.remove("needs-attention"); native?.setCustomValidity(""); };
+      if (native && native.type !== "checkbox") {
+        native.setCustomValidity(message);
+        native.reportValidity();
+      }
+      element.addEventListener("input", clear, { once: true });
+      element.addEventListener("change", clear, { once: true });
+      window.setTimeout(() => element.classList.remove("needs-attention"), 6000);
+    });
+  }
+  /** Primeira informação em falta para lançar, pela ordem do ecrã, com o campo onde se corrige. */
+  function blocker(order: Row | undefined): { target: Element | null; message: string } | null {
+    const editSupplierButton = formArea.current?.querySelector('[aria-label="Editar fornecedor"]') || null;
+    if (!header.supplier_id) return { target: control("Fornecedor"), message: "Escolha o fornecedor do documento." };
+    if (supplierMissing.length) return {
+      target: editSupplierButton,
+      message: `Complete a ficha do fornecedor antes de lançar: falta ${supplierMissing.join(", ")}. Use «Editar fornecedor».`,
+    };
+    if (!String(header.document || "").trim()) return { target: control("Documento do fornecedor"), message: "Indique o número do documento do fornecedor." };
+    if (!header.document_date) return { target: control("Data do documento"), message: "Indique a data do documento." };
+    if (!header.warehouse_id) return { target: control("Armazém de entrada"), message: "Escolha o armazém de entrada." };
+    if (!header.document_type_id) return { target: control("Tipo de documento"), message: "Escolha o tipo de documento (por exemplo FC, a crédito, ou FCD, a dinheiro)." };
+    if (!included.length) return { target: formArea.current?.querySelector("fieldset.invoice-receiving-line input[type=checkbox]") || null, message: "Inclua pelo menos uma linha da fatura." };
+    for (const line of included) {
+      const box = lineBox(line), number = lines.indexOf(line) + 1;
+      const name = line.choice === NEW ? line.newArticle.name || line.description : active.find((x: Row) => x.id === line.choice)?.name || line.description;
+      if (line.choice === OTHER) return { target: box?.querySelector("select") || box, message: `Linha ${number}: escolha o artigo em «Procurar outro artigo…».` };
+      if (!line.description.trim()) return { target: control("Descrição", box) || box, message: `Linha ${number}: indique a descrição.` };
+      if (Number(line.qty) <= 0) return { target: control("Quantidade", box) || box, message: `Linha ${number}: indique a quantidade.` };
+      if (line.choice === NEW && !String(line.newArticle.code || "").trim()) return { target: control("Código", box) || box, message: `Linha ${number}: indique o código do artigo novo.` };
+      if (line.choice === NEW && !String(line.newArticle.name || "").trim()) return { target: control("Designação", box) || box, message: `Linha ${number}: indique a designação do artigo novo.` };
+      const existing = line.choice !== NEW ? active.find((x: Row) => x.id === line.choice) : null;
+      const service = line.choice === NEW ? !!line.newArticle.service : !!existing?.service;
+      const lots = !service && (line.choice === NEW ? !!line.newArticle.lots : !!existing?.lots);
+      if (lots && !String(line.lotValue || "").trim()) return { target: control("Lote", box) || box, message: `Linha ${number}: «${name}» controla lotes; indique o lote.` };
+      if (!lots && !service && existing && (String(line.lotValue || "").trim() || line.expiryValue)) {
+        if (Number(existing.quantity || 0) > 0) return { target: control("Lote", box) || box, message: `Linha ${number}: «${name}» já tem stock sem lotes: limpe o lote e a validade da linha, ou ative os lotes na ficha do artigo.` };
+        if (!line.enableLots) return { target: box?.querySelector(".invoice-receiving-lots input[type=checkbox]") || box, message: `Linha ${number}: «${name}» não controla lotes. Ative «Controlar lotes e validades» para este artigo, ou limpe o lote e a validade.` };
+      }
     }
+    if (orderComparison(order, lines).over && !header.allow_overdelivery) return {
+      target: control("Aceitar as quantidades acima do encomendado (entrega superior)"),
+      message: "Há quantidades acima do encomendado: confirme a entrega superior no quadro da encomenda, ou corrija as linhas.",
+    };
+    return null;
+  }
+  /** Erro devolvido pelo servidor: leva à linha («Linha N: …») ou ao campo do cabeçalho a que se refere. */
+  function pointServerError(message: string) {
+    const number = Number(/^Linha (\d+)/.exec(message)?.[1] || 0);
+    const line = number ? included[number - 1] : undefined;
+    if (line) {
+      const box = lineBox(line);
+      return point((/lote|validade/i.test(message) ? control("Lote", box) : null) || box?.querySelector("input:not([type=checkbox]), select") || box, message);
+    }
+    if (/fornecedor/i.test(message)) return point(formArea.current?.querySelector('[aria-label="Editar fornecedor"]') || control("Fornecedor"), message);
+    if (/tipo de documento/i.test(message)) return point(control("Tipo de documento"), message);
+    if (/vencimento/i.test(message)) return point(control("Vencimento"), message);
+    if (/meio de pagamento/i.test(message)) return point(control("Meio de pagamento"), message);
+    if (/encomenda/i.test(message)) return point(control("Encomenda recebida com esta fatura"), message);
+    setError(message);
+  }
+
+  async function confirm() {
     const order = (result?.orders || []).find((o: Row) => o.id === header.order_id);
-    if (orderComparison(order, lines).over && !header.allow_overdelivery) {
-      setError("Há quantidades acima do encomendado: confirme a entrega superior no quadro da encomenda, ou corrija as linhas.");
+    setAttention(null);
+    const problem = blocker(order);
+    if (problem) {
+      point(problem.target, problem.message);
       return;
     }
     setBusy(true); setError("");
@@ -314,7 +401,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
       const done: Row = await api(`/purchase-receiving/${reading!.id}/confirm`, body);
       onDone(`Receção registada: ${done.lines} linhas em stock${done.created_articles ? `, ${done.created_articles} artigos novos criados` : ""}.`);
     } catch (e) {
-      setError((e as Error).message);
+      pointServerError((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -340,7 +427,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
         : <img src={pdf.url} alt={`Original de ${reading.file || "fatura"}`} />)
         : pdfError ? <Notice tone="warning">{pdfError}</Notice> : <Processing label="A abrir o original" />}
     </aside>}
-    <div className="invoice-receiving-form">
+    <div className="invoice-receiving-form" ref={formArea}>
     {error && <Notice tone="error">{error}</Notice>}
     {!reading && <>
       <p className="footnote">Escolha a fatura do fornecedor guardada no Arquivo digital. As linhas são lidas do PDF (ou por OCR, nas digitalizações) e relacionadas com os artigos; nada entra em stock antes de confirmar.</p>
@@ -456,6 +543,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           {line.service && <small className="invoice-receiving-hint">Parece portes/serviço: não entra em stock salvo se o incluir.</small>}
           {line.include && ((line.choice === NEW && line.newArticle.service) || (line.choice === line.selected?.article_id && line.selected?.service)) && <small className="invoice-receiving-hint">Serviço: conta no valor e no IVA da fatura, mas não entra em stock.</small>}
         </legend>
+        {attention?.line === index && <Notice tone="error">{attention.message}</Notice>}
         {line.manual && <Field label="Descrição"><input required value={line.description} placeholder="Como aparece na fatura"
           onChange={e => {
             const description = e.target.value;
@@ -562,7 +650,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
       <div className="ui-dialog-actions">
         <span className="invoice-receiving-total">{plural(included.length, "linha", "linhas")} · {money(total)} sem IVA</span>
         {!editReceipt && <ActionButton type="button" disabled={busy} onClick={() => { setReading(null); setResult(null); }}><Search size={16} aria-hidden="true" />Outra fatura</ActionButton>}
-        <ActionButton type="button" className="primary" disabled={busy || !included.length || !header.supplier_id || supplierMissing.length > 0 || !header.warehouse_id || !header.document_type_id || unresolved.length > 0 || (!!editReceipt && !result.receipt?.editable)} onClick={confirm}>
+        <ActionButton type="button" className="primary" disabled={busy || (!!editReceipt && !result.receipt?.editable)} onClick={confirm}>
           {busy ? "A registar…" : editReceipt ? `Guardar alterações (${included.length})` : `Confirmar receção (${included.length})`}
         </ActionButton>
       </div>

@@ -17,6 +17,7 @@ from .models import (
     InvoiceEvidenceValidation,
     InvoiceWorkflowCheck,
     PaymentDocumentLine,
+    ProcurementDocument,
     PurchaseAllocation,
     PurchaseAttachment,
     Reconciliation,
@@ -122,6 +123,17 @@ class WorkflowContext(AttachmentContext):
         )
 
 
+def procurement_documents(db, ids):
+    """Receções, compras e notas de crédito do circuito de compras ligadas a cada compra (não anuladas)."""
+    result = defaultdict(list)
+    for row in db.execute(
+        select(ProcurementDocument.id, ProcurementDocument.purchase_id, ProcurementDocument.kind, ProcurementDocument.status)
+        .where(ProcurementDocument.purchase_id.in_(ids), ProcurementDocument.status != "cancelled")
+    ):
+        result[row.purchase_id].append({"id": row.id, "kind": row.kind, "status": row.status})
+    return result
+
+
 class DocumentContext(AttachmentContext):
     def __init__(self, db, purchases):
         ids = [row.id for row in purchases]
@@ -129,8 +141,10 @@ class DocumentContext(AttachmentContext):
         self.states, self.users, self.imports, self.drafts = {}, {}, {}, {}
         self.links, self.erp, self.erp_owners = {}, {}, defaultdict(set)
         self.payments, self.payment_used, self.legacy = defaultdict(list), {}, {}
+        self.procurement = defaultdict(list)
         if not ids:
             return
+        self.procurement = procurement_documents(db, ids)
         self.states = {
             row.purchase_id: row
             for row in db.scalars(select(DocumentState).where(DocumentState.purchase_id.in_(ids)))

@@ -320,7 +320,7 @@ def test_sales_import_is_bound_to_current_company(platform, monkeypatch):
     )
     calls = []
 
-    def sync(bind, enterprise, destination, start, end, url, key):
+    def sync(bind, enterprise, destination, start, end, url, key, *_):
         calls.append((enterprise, destination, key))
         return {"status": "concluida", "read_count": 0, "inserted_count": 0, "updated_count": 0}
 

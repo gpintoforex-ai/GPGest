@@ -25,11 +25,14 @@ from . import inventory as stock
 from . import procurement as buying
 from . import purchase_financials as financials
 from .db import db_session
+from .document_identity import identity
 from .invoice_evidence import nif_key, ocr_command, ocr_image
 from .invoice_lines import ean_valid, extract, plain
 from .models import (
     ArchiveDocument,
+    ArchiveLink,
     BusinessEntity,
+    Purchase,
     PurchaseArticleAlias,
     StockArticle,
     StockWarehouse,
@@ -568,6 +571,54 @@ def register_routes(app, current, authorize, scope, audit):
                 if archive_id:
                     result.setdefault(archive_id, row.id)
         return result
+
+    @app.get("/api/purchase-receiving/purchases/{purchase_id}")
+    def purchase_to_receive(purchase_id: str, user=Depends(current), db: Session = Depends(db_session)):
+        """Conferência documental → «Receber mercadoria»: a fatura do arquivo da compra (para a receção a
+        partir de fatura) ou os dados do cabeçalho para uma receção manual que fica ligada à compra."""
+        authorize(user, db, roles=ROLES)
+        stock.require(user, stock.settings(db), "view_cost")
+        purchase = db.get(Purchase, purchase_id)
+        if not purchase or purchase.store_id not in set(scope(user, db)):
+            fail("Compra não encontrada.", 404)
+        related = [
+            {"id": row.id, "kind": row.kind, "status": row.status, "document": json.loads(row.data).get("document", "")}
+            for row in db.scalars(select(Doc).where(Doc.purchase_id == purchase.id, Doc.status != "cancelled"))
+        ]
+        # Fatura no arquivo: a associada à compra ou, sem associação, a de igual identidade (NIF, tipo, número).
+        invoices = [
+            doc for doc in db.scalars(
+                select(ArchiveDocument).join(ArchiveLink, ArchiveLink.document_id == ArchiveDocument.id).where(
+                    ArchiveLink.target_kind == "purchase", ArchiveLink.target_id == purchase.id,
+                    ArchiveLink.status == "confirmada", ArchiveDocument.doc_type.in_(INVOICE_TYPES),
+                    ArchiveDocument.duplicate_of.is_(None),
+                )
+            )
+        ]
+        if not invoices:
+            target = identity(purchase.supplier_nif, purchase.document_type, purchase.document)
+            invoices = [
+                doc for doc in db.scalars(select(ArchiveDocument).where(
+                    ArchiveDocument.entity_nif == purchase.supplier_nif, ArchiveDocument.doc_type.in_(INVOICE_TYPES),
+                    ArchiveDocument.duplicate_of.is_(None),
+                ))
+                if doc.document_number and identity(doc.entity_nif, doc.document_code or purchase.document_type, doc.document_number) == target
+            ]
+        readable = [doc for doc in invoices if doc.mime in READABLE]
+        invoice = readable[0] if readable else None
+        supplier = next((s for s in suppliers(user, db) if s["tax_number"] and nif_key(s["tax_number"]) == nif_key(purchase.supplier_nif)), None)
+        return {
+            "purchase": {
+                "id": purchase.id, "document": purchase.document, "document_type": purchase.document_type,
+                "document_date": purchase.document_date, "supplier_nif": purchase.supplier_nif,
+                "supplier_name": purchase.supplier_name, "amount_cents": purchase.amount_cents, "store_id": purchase.store_id,
+            },
+            "supplier_id": supplier["id"] if supplier else None,
+            "archive_document_id": invoice.id if invoice else None,
+            "archive_receipt_id": received(db).get(invoice.id) if invoice else None,
+            "suggested_document_type_id": suggested_document_type(db, purchase.document_type),
+            "related": related,
+        }
 
     @app.get("/api/purchase-receiving/documents")
     def documents(user=Depends(current), db: Session = Depends(db_session)):

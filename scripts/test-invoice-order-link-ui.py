@@ -69,8 +69,10 @@ with sync_playwright() as p:
     over = panel.get_by_label("Aceitar as quantidades acima do encomendado (entrega superior)")
     expect(over).not_to_be_checked()
     dialog.get_by_label("Tipo de documento", exact=True).select_option("t-fc")
+    # O lote da fatura num artigo sem lotes: ativar o controlo de lotes ao lançar (validado antes de enviar).
+    dialog.locator("fieldset.invoice-receiving-line").first.locator(".invoice-receiving-lots input[type=checkbox]").evaluate("el => el.click()")
     dialog.get_by_role("button", name="Confirmar receção (2)").click()
-    expect(dialog.get_by_text("Há quantidades acima do encomendado", exact=False)).to_be_visible()
+    expect(dialog.get_by_text("Há quantidades acima do encomendado", exact=False).first).to_be_visible()
     assert not sent
     panel.screenshot(path=str(OUT / "order-panel.png"))
     over.evaluate("el => el.click()")
@@ -88,6 +90,7 @@ with sync_playwright() as p:
     dialog.get_by_role("row").filter(has_text="Fornecedor Natural").get_by_role("button", name="Ler fatura").click()
     dialog.get_by_role("region", name="Encomenda ao fornecedor").get_by_label("Encomenda recebida com esta fatura").select_option("")
     dialog.get_by_label("Tipo de documento", exact=True).select_option("t-fc")
+    dialog.locator("fieldset.invoice-receiving-line").first.locator(".invoice-receiving-lots input[type=checkbox]").evaluate("el => el.click()")
     dialog.get_by_role("button", name="Confirmar receção (2)").click()
     expect(page.get_by_text("Receção registada: 2 linhas em stock", exact=False)).to_be_visible()
     direct = sent[-1]

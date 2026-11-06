@@ -540,3 +540,98 @@ def test_order_of_another_supplier_cannot_be_linked(receiving):
             "lines": [{"article_id": article, "description": "Artigo X", "quantity": "1", "price": "1", "vat": "23", "order_line": 0}]}
     refused = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
     assert refused.status_code == 409 and "fornecedor" in refused.text
+
+
+def purchase_files(case, purchase_id):
+    from app.models import ArchiveLink, PurchaseAttachment
+
+    with case[2]() as db:
+        files = [a.name for a in db.scalars(select(PurchaseAttachment).where(PurchaseAttachment.purchase_id == purchase_id))]
+        links = {(link.target_id, link.status) for link in db.scalars(select(ArchiveLink).where(ArchiveLink.target_kind == "purchase"))}
+    return files, links
+
+
+def test_invoice_pdf_is_attached_to_the_purchase_and_follows_the_edit(receiving):
+    c, sid, doc_id, warehouse, case = receiving
+    types = {t["code"]: t["id"] for t in c.get("/api/purchase-document-types/options").json()["types"]}
+    body = receipt_body(sid, warehouse, case, document_type_id=types["FC"], due_date="2026-11-20")
+    done = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert done.status_code == 200, done.text
+    receipt_id = done.json()["receipt_id"]
+    first = procurement_row(c, receipt_id)["purchase_id"]
+    # A compra gerada pela receção fica com a fatura do arquivo como anexo (associação confirmada).
+    assert purchase_files(case, first) == (["fatura.pdf"], {(first, "confirmada")})
+    # Conferência documental: a compra deixa de aparecer como «sem anexo».
+    assert next(p for p in c.get("/api/documents").json() if p["id"] == first)["attachment_status"] == "com_anexo"
+    # Editar recria a compra: o anexo e a associação passam para a nova, sem duplicar.
+    opened = c.get(f"/api/purchase-receiving/receipts/{receipt_id}").json()
+    edited = {**body, "lines": [{**body["lines"][0], "quantity": "4"}, body["lines"][1]]}
+    saved = c.put(f"/api/purchase-receiving/receipts/{receipt_id}?revision={opened['receipt']['revision']}", json=edited)
+    assert saved.status_code == 200, saved.text
+    second = procurement_row(c, receipt_id)["purchase_id"]
+    assert second and purchase_files(case, second) == (["fatura.pdf"], {(second, "confirmada")})
+    # Anular: a cópia sai com a compra; o original fica no arquivo, com a associação anulada.
+    row = procurement_row(c, receipt_id)
+    annulled = c.post(f"/api/procurement/{receipt_id}/annul", json={"revision": row["revision"], "reason": "Teste de anulação"})
+    assert annulled.status_code == 200, annulled.text
+    assert purchase_files(case, second) == ([], {(second, "anulada")})
+
+
+def test_own_purchase_attachments_are_not_lost_when_the_purchase_goes_away(receiving):
+    from app.models import PurchaseAttachment
+
+    c, sid, doc_id, warehouse, case = receiving
+    types = {t["code"]: t["id"] for t in c.get("/api/purchase-document-types/options").json()["types"]}
+    body = receipt_body(sid, warehouse, case, document_type_id=types["FC"], due_date="2026-11-20")
+    receipt_id = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body).json()["receipt_id"]
+    purchase_id = procurement_row(c, receipt_id)["purchase_id"]
+    with case[2].begin() as db:
+        db.add(PurchaseAttachment(purchase_id=purchase_id, name="guia-de-transporte.pdf", mime="application/pdf", data=b"%PDF-guia"))
+    # Edição que mantém o tipo de documento: os dois anexos passam para a nova compra.
+    opened = c.get(f"/api/purchase-receiving/receipts/{receipt_id}").json()
+    saved = c.put(f"/api/purchase-receiving/receipts/{receipt_id}?revision={opened['receipt']['revision']}", json=body)
+    assert saved.status_code == 200, saved.text
+    purchase_id = procurement_row(c, receipt_id)["purchase_id"]
+    assert sorted(purchase_files(case, purchase_id)[0]) == ["fatura.pdf", "guia-de-transporte.pdf"]
+    # Anular apagaria a guia (anexo próprio da compra): recusado, nada muda.
+    row = procurement_row(c, receipt_id)
+    refused = c.post(f"/api/procurement/{receipt_id}/annul", json={"revision": row["revision"], "reason": "Teste de anulação"})
+    assert refused.status_code == 409 and "guia-de-transporte.pdf" in refused.json()["detail"]
+    assert procurement_row(c, receipt_id)["status"] == "confirmed"
+    assert sorted(purchase_files(case, purchase_id)[0]) == ["fatura.pdf", "guia-de-transporte.pdf"]
+
+
+def test_imported_purchase_without_procurement_document_can_receive_the_goods(receiving):
+    from app.models import Purchase
+
+    c, sid, doc_id, warehouse, case = receiving
+    with case[2].begin() as db:
+        imported = Purchase(store_id=case[4], supplier_nif="507475500", supplier_name="Fornecedor Natural", document="FA.2026/3208",
+                            document_type="FT", document_date="2026-10-20", amount_cents=9954, base_cents=8093, tax_cents=1861,
+                            origin="efatura")
+        other = Purchase(store_id=case[4], supplier_nif="507475500", supplier_name="Fornecedor Natural", document="FA.2026/9999",
+                         document_type="FT", document_date="2026-10-21", amount_cents=500, origin="efatura")
+        db.add_all([imported, other])
+        db.flush()
+        purchase_id, other_id = imported.id, other.id
+    # Conferência documental: sem receção nem compra ligadas, a lista indica-o (botão «Receber mercadoria»).
+    assert next(p for p in c.get("/api/documents").json() if p["id"] == purchase_id)["procurement_documents"] == []
+    # A fatura do arquivo com a mesma identidade (NIF, tipo, número) é proposta para a receção a partir de fatura.
+    types = {t["code"]: t["id"] for t in c.get("/api/purchase-document-types/options").json()["types"]}
+    info = c.get(f"/api/purchase-receiving/purchases/{purchase_id}").json()
+    assert (info["archive_document_id"], info["archive_receipt_id"], info["supplier_id"]) == (doc_id, None, sid)
+    assert info["suggested_document_type_id"] == types["FC"] and info["related"] == []
+    # Sem fatura no arquivo: dados do cabeçalho para a receção manual.
+    plain = c.get(f"/api/purchase-receiving/purchases/{other_id}").json()
+    assert plain["archive_document_id"] is None and plain["purchase"]["document"] == "FA.2026/9999"
+    # Receber com o tipo de documento reutiliza a compra importada: passa a estar ligada.
+    done = c.post(f"/api/purchase-receiving/{doc_id}/confirm",
+                  json=receipt_body(sid, warehouse, case, document_type_id=types["FC"], due_date="2026-11-20"))
+    assert done.status_code == 200, done.text
+    receipt_id = done.json()["receipt_id"]
+    assert procurement_row(c, receipt_id)["purchase_id"] == purchase_id
+    listed = next(p for p in c.get("/api/documents").json() if p["id"] == purchase_id)["procurement_documents"]
+    assert [(d["id"], d["kind"]) for d in listed] == [(receipt_id, "receipt")]
+    again = c.get(f"/api/purchase-receiving/purchases/{purchase_id}").json()
+    assert again["related"][0]["id"] == receipt_id and again["archive_receipt_id"] == receipt_id
+    assert c.get("/api/purchase-receiving/purchases/inexistente").status_code == 404

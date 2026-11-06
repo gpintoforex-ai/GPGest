@@ -89,12 +89,15 @@ export default function DocumentControl({
   manager,
   admin,
   integration,
+  navigate,
 }: {
   stores: Row[];
   store: string;
   manager: boolean;
   admin: boolean;
   integration?: Row;
+  // «Receber mercadoria»: abre as receções com esta compra (fatura do arquivo ou receção preenchida).
+  navigate?: (page: string, parameters?: Record<string, string>) => unknown;
 }) {
   const canReadErp = (integration?.capabilities?.read_documents ?? true) && integration?.resources?.includes("purchase_documents") !== false;
   const [rows, setRows] = useState<Row[]>([]),
@@ -742,6 +745,12 @@ export default function DocumentControl({
                         Conferir
                       </ActionButton>
                       <ActionButton disabled={busy} onClick={() => act(async () => setListPreview(await api(`/documents/${r.id}/detail`)))}>Anexo</ActionButton>
+                      {navigate && manager && r.amount_cents > 0 && !r.procurement_documents?.length && (
+                        <ActionButton disabled={busy} title="Sem receção nem compra no circuito de compras: dar entrada da mercadoria desta fatura no stock"
+                          onClick={() => navigate("Receções de mercadoria", { "rececao.compra": r.id })}>
+                          Receber mercadoria
+                        </ActionButton>
+                      )}
                     </td>
                   </tr>
                 ))}

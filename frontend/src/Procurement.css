@@ -26,6 +26,10 @@
 .invoice-receiving-hint { color: var(--color-warning); }
 .invoice-receiving-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0 12px; align-items: end; }
 .invoice-receiving-grid > .field:first-child { grid-column: 1 / -1; }
+/* Aviso de lotes num artigo sem controlo de lotes: linha inteira da grelha, com a ação ao lado. */
+.invoice-receiving-grid > .invoice-receiving-lots { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 4px 0 12px; }
+.invoice-receiving-lots > :first-child { flex: 1 1 320px; margin: 0; }
+.invoice-receiving-lots > .stock-check { flex: 0 1 auto; margin: 0; }
 .invoice-receiving-new { display: flex; flex-wrap: wrap; align-items: end; gap: 0 12px; margin-top: 4px; padding: 10px 12px; border-radius: 8px; background: var(--color-subtle); }
 .invoice-receiving-new .field { flex: 1; min-width: 150px; }
 .invoice-receiving-new-title { display: inline-flex; align-items: center; gap: 6px; width: 100%; margin-bottom: 6px; font-weight: 600; }
@@ -122,4 +126,10 @@ div.invoice-receiving-result p { margin: 0; flex: 1 1 280px; }
 .invoice-order-link h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1rem; }
 .invoice-order-link tr.is-different td { background: var(--color-warning-bg, #fff8e8); }
 .invoice-order-link small { display: block; color: var(--color-muted); }
+.invoice-order-state { display: inline-flex; align-items: flex-start; gap: 6px; }
+.invoice-order-state svg { flex: 0 0 auto; margin-top: 1px; }
+.invoice-order-state.is-ok svg { color: var(--color-success); }
+.invoice-order-state.is-off svg { color: var(--color-danger); }
 .invoice-order-over { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+/* Campo a corrigir indicado ao confirmar a receção a partir de fatura. */
+.invoice-receiving-form .needs-attention { outline: 3px solid var(--color-danger); outline-offset: 2px; }

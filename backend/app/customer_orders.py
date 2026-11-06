@@ -759,7 +759,7 @@ def free_balances(db, article_id, warehouse_id):
     return available
 
 
-def reserve(db, user, line, warehouse_id, quantity, *, lot_id=None):
+def reserve(db, user, line, warehouse_id, quantity, *, lot_id=None, as_of=None):
     article = stock.article(db, line.article_id, True, stock=True)
     if buying.policy(db).get("authority", {}).get("stock") == "erp":
         fail(
@@ -778,7 +778,7 @@ def reserve(db, user, line, warehouse_id, quantity, *, lot_id=None):
     candidates = []
     for (_, batch), q in available.items():
         lot = db.get(StockLot, batch) if batch else None
-        if q <= 0 or lot and lot.expiry and lot.expiry < date.today().isoformat():
+        if q <= 0 or lot and lot.expiry and lot.expiry < (as_of or date.today()).isoformat():
             continue
         if lot_id is not None and lot_id != batch:
             continue

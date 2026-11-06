@@ -594,6 +594,8 @@ def replace_confirmed(db, user, row, data, authorize, audit, extra=None):
     db.flush()
     confirm_document(db, user, row, Confirm(revision=row.revision, allow_overdelivery=data.allow_overdelivery,
         acknowledge_differences=data.acknowledge_differences), authorize, audit)
+    # Sem tipo de documento na edição, a compra anterior não tem substituta: decide os anexos dela.
+    financials.settle_attachments(db, user, row)
     # Só depois de gerar as entradas novas se retiram as antigas: o stock nunca fica negativo pelo caminho.
     fresh = {entry_id for line in json.loads(row.data)['lines'] for entry_id in line.get('stock_entry_ids', [])}
     removed, reversed_ = undo_entries(db, user, row, old, authorize, keep=fresh)
@@ -825,6 +827,7 @@ def register_routes(app, current, authorize, scope, audit):
             if used(db, row.id, index, 'invoice') or used(db, row.id, index, 'return'):
                 fail('Esta receção já tem fatura ou devolução associada: corrija com uma devolução ao fornecedor.', 409)
         financials.undo(db, user, row, payload, audit, data.reason.strip())
+        financials.settle_attachments(db, user, row)
         removed, reversed_ = undo_entries(db, user, row, payload, authorize, always_reverse=True)
         for link in db.scalars(select(Link).where(Link.document_id == row.id)):
             db.delete(link)

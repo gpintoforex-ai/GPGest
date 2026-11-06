@@ -1,4 +1,4 @@
-import { ClipboardList } from "lucide-react";
+import { CircleCheck, CircleX, ClipboardList } from "lucide-react";
 import { Notice } from "./components/InteractionUI";
 import { Field } from "./components/Form";
 import { formatQuantity } from "./lib/quantity";
@@ -86,7 +86,12 @@ export default function InvoiceOrderLink({ orders, header, lines, onChange }: {
                       <td>{r.description}{Number(r.price) === 0 && <small>Oferta</small>}</td>
                       <td className="numeric">{formatQuantity(pending)}</td>
                       <td className="numeric">{formatQuantity(r.received)}</td>
-                      <td>{!r.received ? "Não vem nesta fatura: fica por receber" : diff > 0 ? `A mais: +${formatQuantity(diff)}` : diff < 0 ? `A menos: fica ${formatQuantity(-diff)} por receber` : "Igual à encomenda"}</td>
+                      <td>
+                        <span className={`invoice-order-state ${r.received && !diff ? "is-ok" : "is-off"}`}>
+                          {r.received && !diff ? <CircleCheck size={18} aria-hidden="true" /> : <CircleX size={18} aria-hidden="true" />}
+                          {!r.received ? "Não vem nesta fatura: fica por receber" : diff > 0 ? `A mais: +${formatQuantity(diff)}` : diff < 0 ? `A menos: fica ${formatQuantity(-diff)} por receber` : "Igual à encomenda"}
+                        </span>
+                      </td>
                     </tr>
                   );
                 })}

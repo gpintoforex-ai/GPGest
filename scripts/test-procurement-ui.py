@@ -49,6 +49,7 @@ with sync_playwright() as p:
         expect(dialog).to_be_visible()
         assert dialog.evaluate('(e)=>e.matches(":modal")')
         dialog.get_by_label('Fornecedor',exact=True).select_option('supplier')
+        dialog.get_by_role('tab',name='Artigos',exact=True).click()
         dialog.get_by_label('Artigo',exact=True).select_option('p1')
         dialog.get_by_label('Quantidade',exact=True).fill('20')
         expect(dialog.get_by_label('Descrição',exact=True)).to_have_value(inv['article']['name'])
@@ -60,6 +61,7 @@ with sync_playwright() as p:
         dialog.get_by_role('button',name='Guardar rascunho',exact=True).click()
         detail=page.get_by_role('dialog',name='Documento de compras')
         expect(detail).to_be_visible()
+        detail.get_by_role('tab',name='Operações',exact=True).click()
         expect(detail.get_by_role('button',name='Confirmar encomenda',exact=True)).to_be_visible()
         assert len(documents)==1 and documents[0]['lines'][0]['quantity']=='20'
         detail.get_by_role('button',name='Fechar',exact=True).click()

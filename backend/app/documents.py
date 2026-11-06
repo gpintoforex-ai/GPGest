@@ -385,6 +385,7 @@ def register_routes(app, current, authorize, scope, record, serial):
         ]
 
     def projection(db, row, detail=False, context=None):
+        from .document_projection import procurement_documents
         from .reconciliation import used
 
         state = context.states.get(row.id) if context is not None else db.get(DocumentState, row.id)
@@ -487,6 +488,10 @@ def register_routes(app, current, authorize, scope, record, serial):
             "erp_link_id": link.id if link else None,
             "attachment_status": "com_anexo" if attachments else "sem_anexo",
             "attachments": attachments,
+            # Documentos do circuito de compras (receção, compra) ligados: sem nenhum, a Conferência
+            # documental propõe «Receber mercadoria».
+            "procurement_documents": (context.procurement[row.id] if context is not None
+                                      else procurement_documents(db, [row.id])[row.id]),
             "pending_days": age,
             "paid_cents": paid,
             "remaining_cents": max(0, abs(row.amount_cents) - paid),
