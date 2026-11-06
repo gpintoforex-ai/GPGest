@@ -97,7 +97,7 @@ export const PAGE_ALIASES: Record<string, string> = {
   Parâmetros: "Configuração inicial",
   "Receitas e despesas": "Mapas de gestão",
 };
-export type NavigationItem = {
+export type NavigationTarget = {
   id: string;
   label: string;
   page: string;
@@ -105,6 +105,7 @@ export type NavigationItem = {
   managerOnly?: boolean;
   localOnly?: boolean;
 };
+export type NavigationItem = NavigationTarget & { relatedTargets?: NavigationTarget[] };
 export type NavigationGroup = {
   id: string;
   label: string;
@@ -329,8 +330,9 @@ const BASE_NAVIGATION: NavigationGroup[] = [
       },
       {
         id: "financeiro:Reconciliação automática",
-        label: "Reconciliação automática",
+        label: "Reconciliação bancária",
         page: "Reconciliação automática",
+        params: { "area.reconciliacao": "movimentos", "area.reconciliacao-modo": "grelha" },
       },
       {
         id: "financeiro:Meios de pagamento",
@@ -523,110 +525,46 @@ const BASE_NAVIGATION: NavigationGroup[] = [
     ],
   },
 ];
-// New visual reference: reorganize existing destinations without changing their identities or access flags.
+// Each main destination owns a task. Related views remain searchable and addressable.
 function referenceNavigation(): NavigationGroup[] {
-  const base = (id: string) =>
-    BASE_NAVIGATION.find((group) => group.id === id)!;
-  const item = (id: string) =>
-    BASE_NAVIGATION.flatMap((group) => group.items).find(
-      (item) => item.id === id,
-    )!;
-  const orderIds = [
-    "compras:Centro de Encomendas",
-    "compras:Necessidades de compra",
-    "compras:Encomendas a fornecedores",
-    "compras:Receções de mercadoria",
-    "comercial:Encomendas de clientes",
-  ];
-  const articleIds = [
-    "comercial:Artigos e preços",
-    "stocks:Artigos e validades",
-    "stocks:Lotes e validades",
-  ];
+  const base = (id: string) => BASE_NAVIGATION.find(group => group.id === id)!;
+  const item = (id: string) => BASE_NAVIGATION.flatMap(group => group.items).find(item => item.id === id)!;
+  const articleIds = ["comercial:Artigos e preços", "stocks:Artigos e validades", "stocks:Lotes e validades"];
+  const orderIds = ["compras:Centro de Encomendas", "compras:Necessidades de compra", "compras:Encomendas a fornecedores", "compras:Simulador de encomendas", "comercial:Encomendas de clientes"];
+  const referenceIds = ["financeiro:Meios de pagamento", "financeiro:Prazos de pagamento", "contabilidade:Rubricas"];
+  const archiveIds = ["contabilidade:Arquivo — Visão geral", "contabilidade:Caixa de entrada", "contabilidade:Todos os documentos", "contabilidade:Associações", "contabilidade:Pendências"];
   return [
     base("dashboard"),
-    {
-      id: "encomendas",
-      label: "Encomendas",
-      description: "Do pedido do cliente ao fornecimento e à entrega.",
-      items: [
-        { ...item(orderIds[0]), label: "Encomendas de clientes" },
-        item(orderIds[1]),
-        item(orderIds[2]),
-        item(orderIds[3]),
-        {
-          id: "encomendas:notificacoes",
-          label: "Notificações a clientes",
-          page: "Encomendas de clientes",
-          params: {
-            "area.pedidos-clientes": "pedidos",
-            "filtro.pedidos": "prontos",
-          },
-        },
-        {
-          id: "encomendas:historico",
-          label: "Histórico e fecho",
-          page: "Encomendas de clientes",
-          params: { "area.pedidos-clientes": "historico" },
-        },
-        {
-          ...item(orderIds[4]),
-          label: "Lista completa de pedidos",
-          params: { ...item(orderIds[4]).params, "filtro.pedidos": "abertos" },
-        },
-      ],
-    },
-    {
-      id: "artigos",
-      label: "Artigos",
-      description: "Catálogo, preços e validades.",
-      items: articleIds.map(item),
-    },
-    {
-      id: "entidades",
-      label: "Entidades",
-      description: "Clientes, fornecedores e condições comerciais.",
-      items: [
-        item("comercial:Clientes"),
-        item("compras:Fornecedores"),
-        {
-          id: "fornecedores:condicoes",
-          label: "Condições comerciais",
-          page: "Encomendas de clientes",
-          params: { "area.pedidos-clientes": "fornecedores" },
-          managerOnly: true,
-        },
-      ],
-    },
-    {
-      ...base("stocks"),
-      items: base("stocks").items.filter(
-        (item) => !articleIds.includes(item.id),
-      ),
-    },
-    {
-      ...base("compras"),
-      label: "Compras",
-      items: base("compras").items.filter(
-        (item) =>
-          !orderIds.includes(item.id) && item.id !== "compras:Fornecedores",
-      ),
-    },
-    {
-      id: "vendas",
-      label: "Vendas",
-      description: "Faturação, recebimentos e importação de vendas.",
-      items: base("comercial").items.filter(
-        (item) =>
-          !articleIds.includes(item.id) &&
-          !orderIds.includes(item.id) &&
-          item.id !== "comercial:Clientes",
-      ),
-    },
-    base("financeiro"),
-    base("contabilidade"),
+    { id: "encomendas", label: "Encomendas", description: "Do pedido do cliente ao fornecimento e à entrega.", items: [
+      { ...item("compras:Centro de Encomendas"), label: "Visão geral" },
+      { ...item("comercial:Encomendas de clientes"), label: "Pedidos de clientes", params: { "area.pedidos-clientes": "pedidos", "filtro.pedidos": "abertos" } },
+      { ...item("compras:Necessidades de compra"), label: "Planeamento de compras", params: { "area.pedidos-clientes": "planeamento", "area.planeamento-compras": "necessidades", "filtro.abastecimento": "buy" }, relatedTargets: [
+        { ...item("compras:Simulador de encomendas"), label: "Simulações de compra", params: { "area.pedidos-clientes": "planeamento", "area.planeamento-compras": "simulacoes" } },
+      ] },
+      item("compras:Encomendas a fornecedores"),
+      { id: "encomendas:notificacoes", label: "Levantamentos e contactos", page: "Encomendas de clientes", params: { "area.pedidos-clientes": "pedidos", "filtro.pedidos": "prontos" } },
+      { id: "encomendas:historico", label: "Histórico", page: "Encomendas de clientes", params: { "area.pedidos-clientes": "historico" } },
+    ] },
+    { id: "artigos", label: "Artigos", description: "Catálogo, preços e validades.", items: [
+      { ...item("comercial:Artigos e preços"), label: "Catálogo de artigos" }, item("stocks:Lotes e validades"),
+    ] },
+    { id: "entidades", label: "Entidades", description: "Clientes, fornecedores e condições comerciais.", items: [
+      item("comercial:Clientes"),
+      { ...item("compras:Fornecedores"), relatedTargets: [{ id: "fornecedores:condicoes", label: "Condições comerciais dos fornecedores", page: "Encomendas de clientes", params: { "area.pedidos-clientes": "fornecedores" }, managerOnly: true }] },
+    ] },
+    { ...base("stocks"), items: base("stocks").items.filter(item => !articleIds.includes(item.id)) },
+    { ...base("compras"), label: "Compras", items: base("compras").items.filter(item => !orderIds.includes(item.id) && item.id !== "compras:Fornecedores").map(entry => entry.id === "compras:Receções de mercadoria" ? { ...entry, relatedTargets: [{ id: "compras:Conferência de receções", label: "Receção e conferência", page: "Encomendas de clientes", params: { "area.pedidos-clientes": "rececoes" } }] } : entry) },
+    { id: "vendas", label: "Vendas", description: "Faturação, recebimentos e importação de vendas.", items: base("comercial").items.filter(item => !articleIds.includes(item.id) && !orderIds.includes(item.id) && item.id !== "comercial:Clientes") },
+    { ...base("financeiro"), items: base("financeiro").items.filter(item => !referenceIds.includes(item.id)) },
+    { ...base("contabilidade"), items: [
+      ...base("contabilidade").items.filter(item => !archiveIds.includes(item.id) && !referenceIds.includes(item.id)),
+      { ...item("contabilidade:Todos os documentos"), label: "Arquivo documental", relatedTargets: archiveIds.filter(id => id !== "contabilidade:Todos os documentos").map(item) },
+    ] },
     { ...base("analise"), label: "Relatórios" },
-    { ...base("admin"), label: "Configurações" },
+    { ...base("admin"), label: "Configurações", items: [
+      ...base("admin").items.map(entry => entry.id === "admin:Arquivo — Configurações" ? { ...entry, label: "Configurações do arquivo" } : entry),
+      ...referenceIds.map(item),
+    ] },
   ];
 }
 export const NAVIGATION = referenceNavigation();
@@ -635,6 +573,8 @@ const defaults: Record<string, string> = {
   "area.stock": "Painel",
   "area.mapas": "costs",
   "filtro.pedidos": "abertos",
+  "filtro.abastecimento": "all",
+  "area.planeamento-compras": "necessidades",
 };
 export const PROCUREMENT_PAGES = [
   "Compras e Stock — Visão geral",
@@ -645,51 +585,26 @@ export const PROCUREMENT_PAGES = [
   "Movimentos de stock",
 ];
 export function visibleNavigation(role: string, mode: string) {
-  return NAVIGATION.map((group) => ({
-    ...group,
-    items: group.items.filter(
-      (item) =>
-        canViewPage(item.page, role) &&
-        (!item.managerOnly || ["administrador", "gestor"].includes(role)) &&
-        (!item.localOnly || mode === "local"),
-    ),
-  })).filter((group) => group.items.length);
+  const permitted = (item: NavigationTarget) => canViewPage(item.page, role) &&
+    (!item.managerOnly || ["administrador", "gestor"].includes(role)) && (!item.localOnly || mode === "local");
+  return NAVIGATION.map(group => ({ ...group, items: group.items.filter(permitted).map(item => ({
+    ...item, relatedTargets: item.relatedTargets?.filter(permitted),
+  })) })).filter(group => group.items.length);
 }
-export function activeNavigation(
-  groups: NavigationGroup[],
-  page: string,
-  search: string,
-) {
+export function activeNavigation(groups: NavigationGroup[], page: string, search: string) {
   const params = new URLSearchParams(search);
-  const candidates = groups.flatMap((group) =>
-    group.items
-      .filter((item) => item.page === (PAGE_ALIASES[page] || page))
-      .map((item) => ({ group, item })),
-  );
-  const matches = candidates.filter(({ item }) =>
-    Object.entries(item.params || {}).every(
-      ([key, value]) => (params.get(key) || defaults[key] || "") === value,
-    ),
-  );
-  return (
-    // A detail handoff may change a list filter without changing its destination.
-    // Structural areas must still match before accepting the explicit menu ID.
-    candidates.find(({ item }) =>
-      item.id === params.get("menu.destino") &&
-      Object.entries(item.params || {})
-        .filter(([key]) => key.startsWith("area."))
-        .every(([key, value]) => (params.get(key) || defaults[key] || "") === value),
-    ) ||
-    matches.find((m) => m.item.id === params.get("menu.destino")) ||
-    matches.find((m) => m.group.id === params.get("menu.area")) ||
-    matches.sort(
-      (a, b) =>
-        Object.keys(b.item.params || {}).length -
-        Object.keys(a.item.params || {}).length,
-    )[0] ||
-    candidates[0]
-  );
+  const candidates = groups.flatMap(group => group.items.flatMap(item => [item, ...(item.relatedTargets || [])]
+    .filter(target => target.page === (PAGE_ALIASES[page] || page)).map(target => ({ group, item, target }))));
+  const matches = candidates.filter(({ target }) => Object.entries(target.params || {}).every(
+    ([key, value]) => (params.get(key) || defaults[key] || "") === value));
+  return candidates.find(({ item, target }) =>
+    (item.id === params.get("menu.destino") || target.id === params.get("menu.destino")) &&
+    Object.entries(target.params || {}).filter(([key]) => key.startsWith("area.")).every(
+      ([key, value]) => (params.get(key) || defaults[key] || "") === value)) ||
+    matches.find(m => m.item.id === params.get("menu.destino") || m.target.id === params.get("menu.destino")) ||
+    matches.find(m => m.group.id === params.get("menu.area")) ||
+    matches.sort((a, b) => Object.keys(b.target.params || {}).length - Object.keys(a.target.params || {}).length)[0] || candidates[0];
 }
-export function navigationParams(group: NavigationGroup, item: NavigationItem) {
+export function navigationParams(group: NavigationGroup, item: NavigationTarget) {
   return { "menu.area": group.id, "menu.destino": item.id, ...item.params };
 }

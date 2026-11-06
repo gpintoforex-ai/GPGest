@@ -22,6 +22,7 @@ const date = (value?: string) =>
     : "Sem prazo";
 
 export default function SupplyCenter({
+  planning = false,
   stores,
   store,
   revision,
@@ -38,6 +39,7 @@ export default function SupplyCenter({
   onStoreChange,
   onReadyOrders,
 }: {
+  planning?: boolean;
   stores: Row[];
   store: string;
   revision: unknown;
@@ -67,11 +69,12 @@ export default function SupplyCenter({
   const [search, setSearch] = useState(""),
     [supplier, setSupplier] = useState("");
   const [customer, setCustomer] = useState(""),
-    [filter, setFilter] = useState("all");
+    [filter, setFilter] = useState(planning ? "buy" : "all");
   const [state, setState] = useState("");
   const location = useLocationSearch();
   const requestedFilter = new URLSearchParams(location).get("filtro.abastecimento");
   useEffect(() => { if (requestedFilter && ["all", "buy", "ready", "urgent"].includes(requestedFilter)) setFilter(requestedFilter); }, [requestedFilter]);
+  useEffect(() => { if (!planning && requestedFilter === "buy" && advancedRef.current) advancedRef.current.open = true; }, [requestedFilter, planning]);
   useEffect(() => {
     setSelectedStore(store || stores[0]?.id || "");
   }, [store, stores]);
@@ -141,22 +144,22 @@ export default function SupplyCenter({
       aria-label="Centro inteligente de encomendas"
       aria-busy={loading}
     >
-      <OrderCenterBoard data={data} loading={loading} error={error} store={selectedStore} stores={stores} orders={orders} simulations={simulations} receipts={receipts}
+      {!planning && <OrderCenterBoard data={data} loading={loading} error={error} store={selectedStore} stores={stores} orders={orders} simulations={simulations} receipts={receipts}
         onStore={changeStore} onReadyOrders={onReadyOrders} onRefresh={() => { setRefresh(value => value + 1); onRefreshData(); }} onArea={onArea}
-        onOrder={onOrder} onSimulate={onSimulate} onSimulation={onSimulation} onNewOrder={onNewOrder} onNewSimulation={onNewSimulation} onAdvanced={showAdvanced} />
-      {data && !loading && !error && data.stock_known && Number(metrics.needs_to_buy)>0 && <ContextSuggestion title="Rever as necessidades antes de comprar"
+        onOrder={onOrder} onSimulate={onSimulate} onSimulation={onSimulation} onNewOrder={onNewOrder} onNewSimulation={onNewSimulation} onAdvanced={showAdvanced} />}
+      {!planning && data && !loading && !error && data.stock_known && Number(metrics.needs_to_buy)>0 && <ContextSuggestion title="Rever as necessidades antes de comprar"
         evidence={[`${metrics.needs_to_buy} artigos com necessidade líquida na loja selecionada`,"Origem: necessidades consolidadas, com reservas e compras em curso descontadas."]}
         actionLabel="Rever necessidades e cobertura" onReview={showAdvanced}>
         Compare a procura por cliente, a cobertura e as condições dos fornecedores. A composição continua a exigir simulação e revisão antes de preparar a compra.
       </ContextSuggestion>}
-      <details className="ocb-advanced" ref={advancedRef}><summary>Detalhes de clientes, stock e cobertura</summary>
+      <details className="ocb-advanced" ref={advancedRef} open={planning || undefined}><summary hidden={planning}>Detalhes de clientes, stock e cobertura</summary>
       <div className="supply-heading">
         <div>
           <span className="supply-eyebrow">
             <Package size={16} aria-hidden="true" /> Encomendas e abastecimento
           </span>
-          <h2>O que falta para entregar?</h2>
-          <p>Clientes, stock e fornecedores num único lugar.</p>
+          <h2>{planning ? "Necessidades de compra" : "O que falta para entregar?"}</h2>
+          <p>{planning ? "Necessidades por artigo, cliente e fornecedor, com stock e encomendas em curso." : "Clientes, stock e fornecedores num único lugar."}</p>
         </div>
         <div className="actions">
           <Field label="Loja do planeamento">
@@ -174,7 +177,7 @@ export default function SupplyCenter({
           </Field>
           <ActionButton
             disabled={loading || !selectedStore}
-            onClick={() => setRefresh((n) => n + 1)}
+            onClick={() => { setRefresh(n => n + 1); if (planning) onRefreshData(); }}
           >
             <RefreshCw size={16} aria-hidden="true" /> Atualizar
           </ActionButton>

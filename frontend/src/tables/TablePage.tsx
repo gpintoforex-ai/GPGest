@@ -1,7 +1,7 @@
 import OperationsOverview from "../components/OperationsOverview";
 import { useRecordHandoff } from "../components/useRecordHandoff";
 import { useCallback, useEffect, useState } from "react";
-import { CircleMinus, Eye, Pencil, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { CircleMinus, Eye, Pencil, RefreshCw, RotateCcw, Settings, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import { ActionButton, Notice, confirmAction } from "../components/InteractionUI";
 import { FilterBar, SearchInput } from "../components/DataTable";
@@ -27,12 +27,13 @@ const SYNC_FILTERS: [string, string][] = [["all", "Todos"], ["apenas_local", "Ap
  * Página comum a todas as tabelas: mesmas ações, posições, mensagens e confirmações.
  * A configuração (campos, permissões, capacidades do ERP) vem de /api/tables/{key}.
  */
-export default function TablePage({ tableKey, context, active = true, store = "", onChanged }: {
+export default function TablePage({ tableKey, context, active = true, store = "", onChanged, onCommercialTerms }: {
   tableKey: string;
   context: TableContext;
   active?: boolean;
   store?: string;
   onChanged?: () => Promise<void> | void;
+  onCommercialTerms?: () => void;
 }) {
   const [table, setTable] = useState<TableInfo | null>(null);
   const [listing, setListing] = useState<Listing | null>(null);
@@ -119,7 +120,8 @@ export default function TablePage({ tableKey, context, active = true, store = ""
     <div className="page-intro">
       <div><h1>{table.title}</h1><p>{table.description}</p>
         {integrated && syncBlocked && <small className="table-sync-reason">Sincronização com o ERP indisponível: {syncBlocked}</small>}</div>
-      {(integrated || table.allow_create && permissions.create) && <div className="table-page-actions">
+      {(integrated || table.allow_create && permissions.create || onCommercialTerms) && <div className="table-page-actions">
+        {onCommercialTerms && <ActionButton type="button" onClick={onCommercialTerms}><Settings size={17} aria-hidden="true" />Condições comerciais</ActionButton>}
         {integrated && <ActionButton type="button" disabled={!!syncReason("sync") || !!busy} title={syncReason("sync") || DIRECTION_LABELS.sync.destination} onClick={() => showSync("sync")}><RefreshCw size={17} aria-hidden="true" />{DIRECTION_LABELS.sync.button}</ActionButton>}
         {table.allow_create && permissions.create && <ActionButton className="primary" onClick={() => setDialog({ kind: "record", mode: "create" })}>{gendered(table, "Novo")} {table.singular}</ActionButton>}
       </div>}

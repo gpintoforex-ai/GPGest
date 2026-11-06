@@ -1,3 +1,6 @@
+import { RecordWorkspace } from "./components/RecordWorkspace";
+import { RecordGroup, RecordIndicator } from "./components/RecordSheet";
+import { User, Phone, History, Truck, CircleAlert, ShoppingCart, Save } from "lucide-react";
 import { ProcessSteps } from "./components/OverviewUI";
 import { formatQuantity } from "./lib/quantity";
 import { useRecordHandoff } from "./components/useRecordHandoff";
@@ -14,12 +17,12 @@ import {
   confirmAction,
 } from "./components/InteractionUI";
 import {
-  DetailDrawer,
   ModuleTabs,
   PageHeader,
   LoadingState,
   useWorkspaceTab,
   useLocationSearch,
+  updateLocationParams,
 } from "./components/WorkspaceUI";
 import { DataTable } from "./components/DataTable";
 import ArticleSearch from "./components/ArticleSearch";
@@ -38,9 +41,9 @@ import {
 
 type Row = Record<string, any>;
 const tabs = [
-  ["centro", "Centro de Encomendas"],
+  ["centro", "Visão geral"],
   ["pedidos", "Pedidos de clientes"],
-  ["simulacoes", "Encomendas a fornecedores"],
+  ["planeamento", "Planeamento de compras"],
   ["rececoes", "Receção e conferência"],
   ["fornecedores", "Condições dos fornecedores"],
   ["historico", "Histórico"],
@@ -154,6 +157,7 @@ function SupplierField({
   onEdit: (id: string) => void;
 }) {
   const chosen = suppliers.find((s) => s.id === value);
+
   return (
     <div className="co-supplier-field">
       <SupplierPicker
@@ -950,8 +954,15 @@ export default function CustomerOrders({
   const [area, setArea] = useWorkspaceTab(
     "pedidos-clientes",
     "centro",
-    tabs.map(([id]) => id),
+    [...tabs.map(([id]) => id), "simulacoes"],
   );
+  const [planningTab, setPlanningTab] = useWorkspaceTab("planeamento-compras", "necessidades", ["necessidades", "simulacoes"]);
+  useEffect(() => {
+    if (area === "simulacoes") updateLocationParams({
+      "area.pedidos-clientes": "planeamento", "area.planeamento-compras": "simulacoes",
+      "menu.area": "encomendas", "menu.destino": "compras:Simulador de encomendas", "filtro.abastecimento": "buy",
+    }, true);
+  }, [area]);
   const [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false);
@@ -1581,1392 +1592,8 @@ export default function CustomerOrders({
     ["concluidos", "Concluídos", orders.filter((o) => o.closed)],
     ["todos", "Todos", orders],
   ];
-  return (
-    <section className="customer-orders">
-      {(area !== "centro" || !canBuy) && <PageHeader
-        title={area === "centro" ? "Do pedido à entrega, num só lugar." : "Encomendas de clientes"}
-        description={area === "centro" ? "Necessidades líquidas por cliente, artigo e fornecedor." : "Do pedido ao fornecedor e ao levantamento, com quantidades e contactos acompanhados."}
-        actions={
-          <>
-            <ActionButton disabled={busy} onClick={() => void run(load)}>
-              <RefreshCw size={16} />
-              Atualizar
-            </ActionButton>
-            {data?.can_write && (
-              <ActionButton className="primary" onClick={newOrder}>
-                <Plus size={16} />
-                Novo pedido
-              </ActionButton>
-            )}
-          </>
-        }
-      />}
-      {feedback}
-      {(area !== "centro" || !canBuy) && <ModuleTabs
-        label="Áreas das encomendas de clientes"
-        tabs={tabs.map(([id, label]) => ({ id, label }))}
-        value={area}
-        onChange={setArea}
-      />}
-      {(area !== "centro" || !canBuy) && <p className="footnote">{data?.integration_note}</p>}
-      {area === "centro" && (canBuy ? <SupplyCenter stores={stores} store={store} revision={data}
-        orders={orders} simulations={simulations} receipts={receipts} onArea={setArea} onSimulation={setSimId} onStoreChange={onStoreChange}
-        onReadyOrders={() => navigate("Encomendas de clientes", {"menu.area":"encomendas","menu.destino":"encomendas:notificacoes","area.pedidos-clientes":"pedidos","filtro.pedidos":"prontos"})}
-        onNewOrder={newOrder} onNewSimulation={newSim} onRefreshData={() => void run(load)}
-        onOrder={setSelected}
-        onSimulate={group => open("simulation", { store_id: group.store_id, supplier_id: group.supplier_id,
-          terms: structuredClone(group.terms), lines: structuredClone(group.lines), notes: "" })}
-      /> : <Notice>O Centro de Encomendas requer autorização para consultar custos e preparar compras. Os pedidos continuam disponíveis nos restantes separadores.</Notice>)}
-      {area === "pedidos" && (
-        <>
-          <div className="co-filters" role="group" aria-label="Filtrar pedidos">
-            {orderFilters.map(([id, label, rows]) => (
-              <ActionButton
-                key={id}
-                aria-pressed={orderFilter === id}
-                onClick={() => setOrderFilter(id)}
-              >
-                {label} ({rows.length})
-              </ActionButton>
-            ))}
-          </div>
-          <details className="panel co-attention">
-            <summary>Precisa de atenção</summary>
-            {!outstanding.length && <p>Sem pedidos pendentes.</p>}
-            {outstanding.map((o) => {
-              const age = Math.floor(
-                (Date.now() - new Date(o.requested_at).getTime()) / 86400000,
-              );
-              const limits = o.lines.map(
-                (l: Row) =>
-                  catalog.suppliers.find((s: Row) => s.id === l.supplier_id)
-                    ?.terms?.pending_days || 7,
-              );
-              const warnings = [
-                o.late && "Entrega em atraso",
-                o.ready &&
-                  !o.notified &&
-                  "Produto disponível; cliente por contactar",
-                o.lines.some(
-                  (l: Row) =>
-                    !l.supplier_id && Number(l.quantities.to_order) > 0,
-                ) && "Produto sem fornecedor",
-                age >= Math.min(...limits) && "Pedido pendente há vários dias",
-                o.ready &&
-                  o.notified &&
-                  age >=
-                    Math.max(
-                      ...o.lines.map(
-                        (l: Row) =>
-                          catalog.suppliers.find(
-                            (s: Row) => s.id === l.supplier_id,
-                          )?.terms?.pickup_days || 7,
-                      ),
-                    ) &&
-                  "Cliente notificado; confirmar levantamento",
-              ].filter(Boolean);
-              return warnings.length ? (
-                <div className="co-alert" key={o.id}>
-                  <div>
-                    <strong>{o.customer_name}</strong>
-                    <p>{warnings.join(" · ")}</p>
-                  </div>
-                  <ActionButton onClick={() => setSelected(o.id)}>
-                    Abrir pedido
-                  </ActionButton>
-                </div>
-              ) : null;
-            })}
-            {simulations
-              .filter(
-                (s) =>
-                  s.status !== "cancelled" &&
-                  (s.totals.missing_cents > 0 ||
-                    (s.procurement_id &&
-                      !s.supplier_confirmation &&
-                      Date.now() - new Date(s.created_at).getTime() >
-                        (s.terms.confirmation_days || 3) * 86400000)),
-              )
-              .map((s) => (
-                <div className="co-alert" key={s.id}>
-                  <p>
-                    {s.supplier_name} ·{" "}
-                    {s.totals.missing_cents
-                      ? `Encomenda abaixo do mínimo: faltam ${money(s.totals.missing_cents, s.terms.currency)}`
-                      : "Fornecedor ainda não confirmou"}
-                  </p>
-                  <ActionButton onClick={() => setSimId(s.id)}>
-                    Abrir simulação
-                  </ActionButton>
-                </div>
-              ))}
-          </details>
-          {display(
-            orderFilters.find(([id]) => id === orderFilter)?.[2] || orders,
-            "orders",
-          )}
-        </>
-      )}
-      {area === "fornecedores" && (
-        <>
-          {canBuy ? (
-            <DataTable<Row>
-              label="condições dos fornecedores"
-              rows={catalog.suppliers}
-              rowKey={(r) => r.id}
-              searchText={(r) => `${r.name} ${r.tax_number || ""} ${r.email || ""}`}
-              columns={[
-                { id: "name", label: "Fornecedor", render: (r) => r.name },
-                {
-                  id: "minimum",
-                  label: "Mínimo",
-                  render: (r) => money(r.terms.minimum_cents, r.terms.currency),
-                },
-                {
-                  id: "lead",
-                  label: "Prazo",
-                  render: (r) => `${r.terms.lead_days} dias`,
-                },
-                {
-                  id: "needs",
-                  label: "Por encomendar",
-                  sortValue: (r) => needs.filter((g) => g.supplier_id === r.id).reduce((n, g) => n + g.lines.length, 0),
-                  render: (r) => {
-                    const mine = needs.filter((g) => g.supplier_id === r.id);
-                    const lines = mine.reduce((n, g) => n + g.lines.length, 0);
-                    return lines ? (
-                      <StatusBadge tone={mine.some((g) => g.state === "pronto") ? "success" : "warning"}>
-                        {lines} produto(s)
-                      </StatusBadge>
-                    ) : (
-                      <span className="co-muted">—</span>
-                    );
-                  },
-                },
-                {
-                  id: "actions",
-                  label: "Ações",
-                  render: (r) => (
-                    <div className="actions">
-                      <ActionButton
-                        onClick={() =>
-                          open("terms", {
-                            supplier_id: r.id,
-                            revision: r.revision,
-                            terms: structuredClone(r.terms),
-                          })
-                        }
-                      >
-                        Condições comerciais
-                      </ActionButton>
-                      <ActionButton
-                        aria-label={`Editar fornecedor ${r.name}`}
-                        onClick={() => editSupplier(r.id)}
-                      >
-                        <Pencil size={16} aria-hidden="true" />
-                        Editar ficha
-                      </ActionButton>
-                    </div>
-                  ),
-                },
-              ]}
-            />
-          ) : (
-            <Notice>
-              As condições comerciais e custos estão reservados à gestão
-              autorizada.
-            </Notice>
-          )}
-          <div className="actions">
-            <ActionButton onClick={() => navigate("Fornecedores")}>
-              Gerir fornecedores
-            </ActionButton>
-          </div>
-        </>
-      )}
-      {area === "simulacoes" && (
-        <>
-          {canBuy ? (
-            <>
-              <section className="co-section" aria-labelledby="co-needed-title">
-                <div className="co-inline">
-                  <h2 id="co-needed-title">Encomendas necessárias para pedidos de clientes</h2>
-                  <ActionButton className="primary" onClick={newSim}>
-                    <Plus size={16} aria-hidden="true" />
-                    Nova simulação
-                  </ActionButton>
-                </div>
-                {needs.length > 0 && (
-                  <div className="co-need-summary" aria-label="Resumo das encomendas necessárias">
-                    <StatusBadge tone="info">{needs.filter((g) => g.supplier_id).length} fornecedor(es)</StatusBadge>
-                    <StatusBadge tone="info">{new Set(pending.map((l) => l.order.id)).size} pedido(s) de clientes</StatusBadge>
-                    {lateOrders > 0 && <StatusBadge tone="danger">{lateOrders} pedido(s) em atraso</StatusBadge>}
-                    {needs.some((g) => !g.supplier_id) && (
-                      <StatusBadge tone="danger">Produtos sem fornecedor</StatusBadge>
-                    )}
-                    {needs.filter((g) => g.state === "pronto").length > 0 && (
-                      <StatusBadge tone="success">
-                        {needs.filter((g) => g.state === "pronto").length} pronta(s) a encomendar
-                      </StatusBadge>
-                    )}
-                  </div>
-                )}
-                <p className="footnote">
-                  O que ainda falta encomendar, por fornecedor e loja; produtos já em simulações ou
-                  encomendas não aparecem. Valor estimado sem IVA e antes de descontos, comparado com o
-                  mínimo de encomenda sem portes. Vermelho: atraso ou sem fornecedor; âmbar: abaixo do
-                  mínimo ou sem custo; verde: pronta a encomendar.
-                </p>
-                {!needs.length ? (
-                  <Notice tone="success">Todos os pedidos de clientes já estão em simulações ou encomendas.</Notice>
-                ) : (
-                  <DataTable<Row>
-                    label="encomendas necessárias por fornecedor"
-                    rows={needs}
-                    rowKey={(g) => g.key}
-                    rowClassName={(g) => `co-need-row co-need-row-${needTone(g)}`}
-                    searchText={(g) => `${g.supplier?.name || "Sem fornecedor"} ${g.lines.map((l: Row) => `${l.description} ${l.order.customer_name} ${l.order.number}`).join(" ")}`}
-                    columns={[
-                      {
-                        id: "supplier",
-                        label: "Fornecedor",
-                        sortValue: (g) => g.supplier?.name || "",
-                        render: (g) => (
-                          <div className="co-need-supplier">
-                            {g.supplier_id ? (
-                              <span className="co-inline-supplier">
-                                <strong>{g.supplier?.name || supplierName(g.supplier_id)}</strong>
-                                <ActionButton
-                                  className="co-icon"
-                                  aria-label={`Editar fornecedor ${g.supplier?.name || supplierName(g.supplier_id)}`}
-                                  title="Editar a ficha do fornecedor"
-                                  onClick={() => editSupplier(g.supplier_id)}
-                                >
-                                  <Pencil size={14} aria-hidden="true" />
-                                </ActionButton>
-                              </span>
-                            ) : (
-                              <StatusBadge tone="danger">Sem fornecedor</StatusBadge>
-                            )}
-                            <small>{stores.find((x) => x.id === g.store_id)?.name || ""}</small>
-                            {g.supplier?.missing?.length > 0 && <MissingSupplierFields supplier={g.supplier} />}
-                          </div>
-                        ),
-                      },
-                      {
-                        id: "products",
-                        label: "Produtos a encomendar",
-                        sortValue: (g) => g.lines.length,
-                        render: (g) => (
-                          <>
-                            {g.lines.map((l: Row) => (
-                              <div key={l.id} className="co-need-line">
-                                <span className="co-qty" aria-label={`Quantidade ${qty(l.quantities.to_order)}`}>
-                                  {qty(l.quantities.to_order)}
-                                </span>
-                                <span>
-                                  <b>{l.description}</b>
-                                  <small title={l.order.number}>
-                                    {shortNumber(l.order.number)} · {l.order.customer_name} · pedido em {day(l.order.requested_at)}
-                                  </small>
-                                </span>
-                              </div>
-                            ))}
-                          </>
-                        ),
-                      },
-                      {
-                        id: "value",
-                        label: "Valor / mínimo sem portes",
-                        sortValue: (g) => g.value_cents,
-                        render: (g) =>
-                          g.supplier_id ? (
-                            <div className="co-need-value">
-                              <strong className="co-amount">{money(g.value_cents)}</strong>
-                              {g.minimum_cents > 0 && (
-                                <progress
-                                  max={g.minimum_cents}
-                                  value={Math.min(g.value_cents, g.minimum_cents)}
-                                  aria-label={`Valor face ao mínimo de ${money(g.minimum_cents)}`}
-                                />
-                              )}
-                              <small>{g.minimum_cents ? `de ${money(g.minimum_cents)} mínimo` : "sem mínimo"}</small>
-                              <StatusBadge tone={g.state === "pronto" ? "success" : "warning"}>
-                                {g.state === "pronto"
-                                  ? g.minimum_cents ? "Mínimo atingido" : "Pronto a encomendar"
-                                  : g.state === "sem_custo"
-                                    ? "Sem custo conhecido"
-                                    : `Faltam ${money(g.missing_cents)}`}
-                              </StatusBadge>
-                              {g.unpriced > 0 && (
-                                <small className="co-text-warning">
-                                  {g.unpriced} produto(s) sem custo: indique o preço na simulação
-                                </small>
-                              )}
-                            </div>
-                          ) : (
-                            <small>Associe um fornecedor no pedido.</small>
-                          ),
-                      },
-                      {
-                        id: "urgency",
-                        label: "Entrega ao cliente",
-                        sortValue: (g) => String(g.oldest),
-                        render: (g) => (
-                          <>
-                            {[...new Map<string, Row>(g.lines.map((l: Row) => [l.order.id, l.order] as [string, Row])).values()].map((o: Row) => (
-                              <div key={o.id} className="co-due">
-                                <DueBadge order={o} />
-                                {o.priority === "urgent" && <StatusBadge tone="danger">Urgente</StatusBadge>}
-                                <small>
-                                  {shortNumber(o.number)}{o.due_date ? ` · entrega pretendida ${day(o.due_date)}` : ""}
-                                </small>
-                              </div>
-                            ))}
-                            {g.drafts.length > 0 && <StatusBadge tone="info">{g.drafts.length} rascunho(s)</StatusBadge>}
-                          </>
-                        ),
-                      },
-                      {
-                        id: "actions",
-                        label: "Ações",
-                        render: (g) => (
-                          <div className="co-need-actions">
-                            {g.supplier_id ? (
-                              <ActionButton className="primary" onClick={() => simulateFor(g)}>
-                                <Calculator size={16} aria-hidden="true" />
-                                Simular encomenda
-                              </ActionButton>
-                            ) : (
-                              <ActionButton onClick={() => setSelected(g.lines[0].order.id)}>
-                                <Pencil size={16} aria-hidden="true" />
-                                Associar no pedido
-                              </ActionButton>
-                            )}
-                            {g.drafts[0] && (
-                              <ActionButton onClick={() => setSimId(g.drafts[0].id)}>
-                                <FileText size={16} aria-hidden="true" />
-                                Abrir rascunho
-                              </ActionButton>
-                            )}
-                          </div>
-                        ),
-                      },
-                    ]}
-                  />
-                )}
-              </section>
-              <section className="co-section" aria-labelledby="co-supplier-orders-title">
-                <h2 id="co-supplier-orders-title">Simulações e encomendas a fornecedores</h2>
-                {display(simulations, "simulations")}
-              </section>
-            </>
-          ) : (
-            <Notice>
-              As simulações de compra estão reservadas à gestão autorizada.
-            </Notice>
-          )}
-        </>
-      )}
-      {area === "rececoes" && (
-        <>
-          {canBuy ? (
-            <>
-              {display(
-                simulations.filter(
-                  (s) =>
-                    s.procurement_id && s.procurement?.status !== "cancelled",
-                ),
-                "simulations",
-              )}
-              <p>
-                Abra a encomenda para registar quantidades efetivamente
-                recebidas ou associar uma receção já confirmada.
-              </p>
-              <ActionButton onClick={() => navigate("Receções de mercadoria")}>
-                Circuito de receções de mercadoria
-              </ActionButton>
-            </>
-          ) : (
-            <Notice>As receções estão reservadas à gestão autorizada.</Notice>
-          )}
-        </>
-      )}
-      {area === "rececoes" && canBuy && (
-        <details>
-          <summary>Originais, OCR e cloud</summary>
-          <OrderCyclePanel
-            mode="receiving"
-            store={store}
-            stores={stores}
-            simulations={simulations}
-            catalog={catalog}
-            navigate={navigate}
-          />
-        </details>
-      )}
-      {area === "rececoes" && canBuy && (
-        <section className="co-section" aria-labelledby="co-conference-title">
-          <h2 id="co-conference-title">Conferência com o ERP</h2>
-          <OrderCyclePanel
-            mode="review"
-            store={store}
-            stores={stores}
-            simulations={simulations}
-            catalog={catalog}
-            navigate={navigate}
-          />
-        </section>
-      )}
-      {area === "historico" && display(history, "history")}
-      {area === "analise" && (canBuy ? <OrderAnalytics store={store} revision={data} onOrder={setSelected} onSimulation={setSimId} navigate={navigate} /> : <Notice>Os indicadores de compras requerem autorização para consultar custos.</Notice>)}
+  const simulationContent = (modal === "simulation" || modal === "terms") ? <>
 
-      {active && (
-        <DetailDrawer
-          aria-label={`Pedido ${active.number}`}
-          onRequestClose={() => setSelected("")}
-          busy={busy}
-        >
-          <h2>
-            {active.number} · {active.customer_name}
-          </h2>
-          <div className="co-flags">
-            {active.closed ? (
-              <StatusBadge tone="success">Concluído</StatusBadge>
-            ) : active.ready ? (
-              <StatusBadge tone="success">
-                {active.fully_ready === false ? "Disponível parcialmente: combinar entrega" : active.notified ? "Cliente notificado" : "Pronto: contactar cliente"}
-              </StatusBadge>
-            ) : (
-              <StatusBadge tone="warning">A aguardar produtos</StatusBadge>
-            )}
-            {active.priority === "urgent" && <StatusBadge tone="danger">Urgente</StatusBadge>}
-            {active.late && <StatusBadge tone="danger">Entrega em atraso</StatusBadge>}
-            {active.lines.some(
-              (l: Row) => !l.supplier_id && Number(l.quantities.to_order) > 0,
-            ) && <StatusBadge tone="danger">Produto sem fornecedor</StatusBadge>}
-            {active.lines.some((l: Row) => l.provisional) && (
-              <StatusBadge tone="warning">Produto provisório</StatusBadge>
-            )}
-          </div>
-          {active.ready && (
-            <p className="co-highlight co-highlight-success">
-              Valor estimado dos produtos disponíveis, sem IVA:{" "}
-              {money(
-                active.lines.reduce(
-                  (total: number, line: Row) =>
-                    total +
-                    (line.sale_price_cents == null
-                      ? 0
-                      : Number(line.sale_price_cents) *
-                        Number(line.quantities.available || 0)),
-                  0,
-                ),
-              )}
-              .{" "}
-              {active.lines.some(
-                (line: Row) =>
-                  Number(line.quantities.available) > 0 &&
-                  line.sale_price_cents == null,
-              )
-                ? "Existem preços por confirmar. "
-                : ""}
-              O pagamento e o documento fiscal seguem o circuito de faturação.
-            </p>
-          )}
-          <StockAvailability
-            storeId={active.store_id}
-            articleIds={active.lines
-              .map((line: Row) => line.article_id)
-              .filter(Boolean)}
-          />
-          <ProcessSteps label="Progresso da encomenda" current={active.closed ? "fecho" : active.notified ? "entrega" : active.fully_ready ? "aviso" : active.ready ? "rececao" : active.lines.some((line: Row)=>Number(line.quantities.ordered)>0) ? "fornecedor" : active.lines.some((line: Row)=>Number(line.quantities.simulated)>0) ? "simulacao" : "necessidades"}
-            steps={[{id:"pedido",label:"Pedido"},{id:"necessidades",label:"Necessidades"},{id:"simulacao",label:"Simulação"},{id:"fornecedor",label:"Fornecedor"},{id:"rececao",label:"Receção"},{id:"aviso",label:"Aviso"},{id:"entrega",label:"Entrega"},{id:"fecho",label:"Fecho"}]} />
-          <dl className="co-facts">
-            <div>
-              <dt>Pedido em</dt>
-              <dd>{day(active.requested_at)}</dd>
-            </div>
-            <div>
-              <dt>Entrega prevista</dt>
-              <dd className={active.late ? "co-text-danger" : undefined}>
-                {day(active.due_date)}
-              </dd>
-            </div>
-            <div>
-              <dt>Telefone</dt>
-              <dd>{active.phone || "—"}</dd>
-            </div>
-            <div>
-              <dt>Email</dt>
-              <dd>{active.email || "—"}</dd>
-            </div>
-            <div>
-              <dt>Contacto</dt>
-              <dd>
-                {active.contact_allowed ? (
-                  <StatusBadge tone="success">
-                    Autorizado · {channelLabel(active.preferred_channel)}
-                  </StatusBadge>
-                ) : (
-                  <StatusBadge tone="warning">Não autorizado</StatusBadge>
-                )}
-              </dd>
-            </div>
-          </dl>
-          {active.notes && <p className="co-notes">{active.notes}</p>}
-          {data?.can_write && (
-            <ActionButton onClick={() => editOrder(active)}>
-              <Pencil size={16} aria-hidden="true" />
-              Editar pedido
-            </ActionButton>
-          )}
-          {feedback}
-          {active.lines.map((l: Row) => (
-            <section className="panel co-product" key={l.id}>
-              <div className="co-need-head">
-                <h3>{l.description}</h3>
-                <StatusBadge tone={stateTone(l.state)}>{l.state_label}</StatusBadge>
-              </div>
-              <p>
-                {l.provisional ? (
-                  <StatusBadge tone="warning">Provisório: associe um artigo</StatusBadge>
-                ) : (
-                  l.article_code
-                )}{" "}
-                ·{" "}
-                {l.supplier_id ? (
-                  supplierName(l.supplier_id)
-                ) : (
-                  <StatusBadge tone="danger">Sem fornecedor</StatusBadge>
-                )}
-              </p>
-              <dl className="co-quantities">
-                {[
-                  ["requested", "Pedida"],
-                  ["reserved", "Reservada"],
-                  ["available", "Disponível válida"],
-                  ["to_order", "Por encomendar"],
-                  ["simulated", "Em simulação"],
-                  ["ordered", "Encomendada"],
-                  ["confirmed", "Confirmada"],
-                  ["received", "Recebida"],
-                  ["delivered", "Entregue"],
-                  ["cancelled", "Cancelada"],
-                ].map(([key, label]) => {
-                  const value = Number(l.quantities[key] || 0);
-                  // Só se destaca o que pede ação: por encomendar (âmbar) e pronto a entregar (verde).
-                  const tone =
-                    !value || key === "requested"
-                      ? ""
-                      : key === "to_order"
-                        ? "warning"
-                        : key === "available"
-                          ? "success"
-                          : key === "cancelled"
-                            ? "muted"
-                            : "";
-                  return (
-                    <div key={key} className={tone ? `co-q-${tone}` : undefined}>
-                      <dt>{label}</dt>
-                      <dd>{qty(value)}</dd>
-                    </div>
-                  );
-                })}
-              </dl>
-              <p>{l.notes}</p>
-              {data?.can_write && (
-                <div className="actions">
-                  <ActionButton
-                    onClick={() =>
-                      open("quantity", {
-                        line_id: l.id,
-                        order_id: active.id,
-                        revision: active.revision,
-                        action: "adjust",
-                        quantity: l.quantities.requested,
-                        reason: "",
-                      })
-                    }
-                  >
-                    Alterar quantidade pedida
-                  </ActionButton>
-                  {(!l.article_id || !l.supplier_id) && (
-                    <ActionButton
-                      onClick={() =>
-                        open("associate", {
-                          line_id: l.id,
-                          revision: active.revision,
-                          article_id: l.article_id || "",
-                          supplier_id: l.supplier_id || "",
-                        })
-                      }
-                    >
-                      Associar artigo / fornecedor
-                    </ActionButton>
-                  )}
-                  {l.article_id && Number(l.quantities.to_order) > 0 && (
-                    <ActionButton
-                      onClick={() =>
-                        open("quantity", {
-                          line_id: l.id,
-                          order_id: active.id,
-                          revision: active.revision,
-                          action: "reserve",
-                          quantity: l.quantities.to_order,
-                          warehouse_id:
-                            warehouses(active.store_id)[0]?.id || "",
-                          reason: "Reserva para o cliente",
-                        })
-                      }
-                    >
-                      Reservar stock
-                    </ActionButton>
-                  )}
-                  {Number(l.quantities.reserved) > 0 && (
-                    <ActionButton
-                      onClick={() =>
-                        open("quantity", {
-                          line_id: l.id,
-                          order_id: active.id,
-                          revision: active.revision,
-                          action: "release",
-                          quantity: l.quantities.reserved,
-                          reason: "",
-                        })
-                      }
-                    >
-                      Libertar reserva
-                    </ActionButton>
-                  )}
-                  {Number(l.quantities.available) > 0 && (
-                    <ActionButton
-                      className="primary"
-                      onClick={() =>
-                        open("quantity", {
-                          line_id: l.id,
-                          order_id: active.id,
-                          revision: active.revision,
-                          action: "deliver",
-                          quantity: l.quantities.available,
-                          reason: "Levantamento no balcão",
-                        })
-                      }
-                    >
-                      Registar entrega
-                    </ActionButton>
-                  )}
-                  {Number(l.quantities.requested) >
-                    Number(l.quantities.delivered) +
-                      Number(l.quantities.cancelled) && (
-                    <ActionButton
-                      className="danger"
-                      onClick={() =>
-                        open("quantity", {
-                          line_id: l.id,
-                          order_id: active.id,
-                          revision: active.revision,
-                          action: "cancel",
-                          quantity: String(
-                            Number(l.quantities.requested) -
-                              Number(l.quantities.delivered) -
-                              Number(l.quantities.cancelled),
-                          ),
-                          reason: "",
-                        })
-                      }
-                    >
-                      Cancelar quantidade
-                    </ActionButton>
-                  )}
-                </div>
-              )}
-            </section>
-          ))}
-          {active.ready && data?.can_write && (
-            <ActionButton onClick={() => contactOrder(active)}>
-              Preparar contacto ao cliente
-            </ActionButton>
-          )}
-          <h3>Histórico deste pedido</h3>
-          {history
-            .filter((h) => h.order_id === active.id)
-            .map((h) => (
-              <p key={h.id}>
-                {day(h.at)} · {h.user} · {h.action}{" "}
-                {h.detail?.channel && `· ${h.detail.channel} · ${h.status}`}
-              </p>
-            ))}
-        </DetailDrawer>
-      )}
-
-      {activeSim && (
-        <DetailDrawer
-          aria-label="Detalhe da simulação"
-          busy={busy}
-          onRequestClose={() => setSimId("")}
-        >
-          <h2>{activeSim.supplier_name}</h2>
-          <div className="co-flags">
-            <SimulationState sim={activeSim} />
-          </div>
-          {feedback}
-          <SimulationTotals totals={activeSim.totals} terms={activeSim.terms} />
-          {activeSim.lines.map((l: Row, i: number) => (
-            <section className="co-product" key={i}>
-              <h3>{l.description}</h3>
-              <p>
-                {qty(l.quantity)} ·{" "}
-                {money(
-                  Math.round(Number(l.unit_cost) * 100),
-                  activeSim.terms.currency,
-                )}{" "}
-                por unidade
-              </p>
-              <p>
-                Clientes:{" "}
-                {qty(
-                  l.allocations.reduce(
-                    (n: number, a: Row) => n + Number(a.quantity),
-                    0,
-                  ),
-                )}{" "}
-                · Reposição:{" "}
-                {qty(
-                  Number(l.quantity) -
-                    l.allocations.reduce(
-                      (n: number, a: Row) => n + Number(a.quantity),
-                      0,
-                    ),
-                )}
-              </p>
-              {l.allocations.map((a: Row) => {
-                const o = orders.find((o) =>
-                  o.lines.some((line: Row) => line.id === a.line_id),
-                );
-                return (
-                  <p key={a.line_id}>
-                    {o?.customer_name || "Pedido"} · {qty(a.quantity)}{" "}
-                    <ActionButton
-                      onClick={() => {
-                        setSimId("");
-                        if (o) setSelected(o.id);
-                      }}
-                    >
-                      Pedido original
-                    </ActionButton>
-                  </p>
-                );
-              })}
-            </section>
-          ))}
-          <div className="actions">
-            {activeSim.status === "draft" && (
-              <>
-                <ActionButton
-                  onClick={() => open("simulation", structuredClone(activeSim))}
-                >
-                  Editar simulação
-                </ActionButton>
-                <ActionButton
-                  className="primary"
-                  onClick={() => void prepareSim(activeSim)}
-                >
-                  Preparar encomenda real
-                </ActionButton>
-                <ActionButton
-                  className="danger"
-                  onClick={() =>
-                    void run(async () => {
-                      if (
-                        !(await confirmAction({
-                          title: "Cancelar simulação?",
-                          message:
-                            "As quantidades deixam de estar atribuídas a esta proposta. Não cancela compras reais.",
-                          confirmLabel: "Cancelar simulação",
-                          tone: "danger",
-                        }))
-                      )
-                        return;
-                      await mutate(
-                        `/customer-orders/simulations/${activeSim.id}/cancel`,
-                        { revision: activeSim.revision },
-                      );
-                      await load();
-                    })
-                  }
-                >
-                  Cancelar simulação
-                </ActionButton>
-              </>
-            )}
-            {activeSim.procurement_id &&
-              activeSim.procurement?.status !== "cancelled" && (
-                <>
-                  {editableSim(activeSim) && (
-                    <ActionButton onClick={() => open("simulation", structuredClone(activeSim))}>
-                      <Pencil size={16} aria-hidden="true" />
-                      Editar encomenda
-                    </ActionButton>
-                  )}
-                  <ActionLink
-                    href={`/api/procurement/${activeSim.procurement_id}/pdf`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <FileText size={16} />
-                    PDF da encomenda
-                  </ActionLink>
-                  <ActionButton onClick={() => supplierEmail(activeSim)}>
-                    <Mail size={16} />
-                    Preparar email ao fornecedor
-                  </ActionButton>
-                  <ActionButton
-                    onClick={() =>
-                      open("supplier-confirm", {
-                        simulation_id: activeSim.id,
-                        revision: activeSim.revision,
-                        quantities: activeSim.lines.map((l: Row) => l.quantity),
-                        note: "",
-                      })
-                    }
-                  >
-                    Registar confirmação do fornecedor
-                  </ActionButton>
-                  <ActionButton
-                    className="primary"
-                    onClick={() =>
-                      open("receive", {
-                        simulation_id: activeSim.id,
-                        revision: activeSim.revision,
-                        document: "",
-                        receipt_id: "",
-                        quantities: activeSim.lines.map(() => "0"),
-                        lots: activeSim.lines.map(() => ""),
-                        expiries: activeSim.lines.map(() => ""),
-                      })
-                    }
-                  >
-                    <Package size={16} />
-                    Receber produtos
-                  </ActionButton>
-                </>
-              )}
-          </div>
-          {activeSim.supplier_confirmation && (
-            <Notice tone="success">
-              Fornecedor confirmou em {day(activeSim.supplier_confirmation.at)}:{" "}
-              {activeSim.supplier_confirmation.note}
-            </Notice>
-          )}
-          {activeSim.procurement?.email_history?.map((e: Row) => (
-            <p key={e.id}>
-              Email · {e.status} · {day(e.created_at)}
-            </p>
-          ))}
-        </DetailDrawer>
-      )}
-
-      {modal && (
-        <AppDialog
-          aria-label={
-            {
-              order: draft.id ? "Editar pedido de cliente" : "Novo pedido de cliente",
-              simulation: "Simulador de compra",
-              terms: "Condições comerciais",
-              prepare: "Preparar encomenda real",
-              quantity: "Atualizar quantidade",
-              associate: "Associar artigo ao pedido",
-              contact: "Contactar cliente",
-              "supplier-email": "Email ao fornecedor",
-              "supplier-confirm": "Confirmação do fornecedor",
-              receive: "Receção de produtos",
-            }[modal]
-          }
-          className={modal === "simulation" ? "co-dialog co-simulation-dialog" : "co-dialog"}
-          busy={busy}
-          onRequestClose={() => setModal("")}
-        >
-          {feedback}
-          <ManagedForm
-            onSubmit={(e) => {
-              e.preventDefault();
-              void run(async () => {
-                if (modal === "order") await saveOrder();
-                else if (modal === "simulation") await saveSim();
-                else if (modal === "terms") {
-                  await mutate(
-                    `/customer-orders/suppliers/${draft.supplier_id}/terms`,
-                    { revision: draft.revision, terms: draft.terms },
-                  );
-                  await load();
-                  setModal("");
-                } else if (modal === "associate") {
-                  await mutate(
-                    `/customer-orders/lines/${draft.line_id}/associate`,
-                    {
-                      revision: draft.revision,
-                      article_id: draft.article_id,
-                      supplier_id: draft.supplier_id || null,
-                    },
-                  );
-                  await load();
-                  setModal("");
-                } else if (modal === "quantity") {
-                  if (
-                    draft.action !== "reserve" &&
-                    !(await confirmAction({
-                      title:
-                        draft.action === "deliver"
-                          ? "Confirmar entrega física?"
-                          : draft.action === "adjust"
-                            ? "Alterar quantidade pedida?"
-                            : draft.action === "release"
-                              ? "Libertar reserva?"
-                              : "Cancelar quantidade?",
-                      message: `${qty(draft.quantity)} unidade(s). ${draft.reason}`,
-                      confirmLabel: "Confirmar",
-                      tone: draft.action === "cancel" ? "danger" : "warning",
-                    }))
-                  )
-                    return;
-                  await mutate(
-                    `/customer-orders/lines/${draft.line_id}/${draft.action}`,
-                    {
-                      revision: draft.revision,
-                      quantity: draft.quantity,
-                      warehouse_id: draft.warehouse_id || null,
-                      reason: draft.reason,
-                    },
-                  );
-                  await load();
-                  setModal("");
-                } else if (modal === "prepare") {
-                  if (
-                    !(await confirmAction({
-                      title: "Criar encomenda real?",
-                      message:
-                        "Será criada uma encomenda no circuito de compras. Não envia emails nem confirma o fornecedor.",
-                      confirmLabel: "Criar encomenda",
-                    }))
-                  )
-                    return;
-                  await mutate(
-                    `/customer-orders/simulations/${draft.simulation_id}/prepare`,
-                    {
-                      revision: draft.revision,
-                      warehouse_id: draft.warehouse_id,
-                      confirmed: true,
-                      allow_below_minimum: draft.allow_below_minimum,
-                    },
-                  );
-                  await load();
-                  setModal("");
-                } else if (modal === "supplier-confirm") {
-                  await mutate(
-                    `/customer-orders/simulations/${draft.simulation_id}/supplier-confirm`,
-                    {
-                      revision: draft.revision,
-                      quantities: draft.quantities,
-                      note: draft.note,
-                    },
-                  );
-                  await load();
-                  setModal("");
-                } else if (modal === "receive") {
-                  if (
-                    !(await confirmAction({
-                      title: "Confirmar receção física?",
-                      message: draft.receipt_id
-                        ? "A receção existente será distribuída pelos clientes sem repetir a entrada de stock."
-                        : "As quantidades indicadas serão registadas no stock local e reservadas aos pedidos relacionados.",
-                      confirmLabel: "Confirmar receção",
-                    }))
-                  )
-                    return;
-                  await mutate(
-                    `/customer-orders/simulations/${draft.simulation_id}/receive`,
-                    {
-                      revision: draft.revision,
-                      confirmed: true,
-                      receipt_id: draft.receipt_id || null,
-                      document: draft.document,
-                      quantities: draft.quantities,
-                      lots: draft.lots,
-                      expiries: draft.expiries.map((v: string) => v || null),
-                    },
-                  );
-                  await load();
-                  setModal("");
-                } else if (modal === "supplier-email") {
-                  const result = await api(
-                    `/procurement/${draft.procurement_id}/email-preview`,
-                    {
-                      revision: draft.revision,
-                      to: draft.to,
-                      subject: draft.subject,
-                      message: draft.message,
-                    },
-                  );
-                  setMail(result);
-                  await load();
-                  setDraft({ ...draft, revision: draft.revision + 1 });
-                } else if (modal === "contact") {
-                  const result = await mutate(
-                    `/customer-orders/${draft.order_id}/contact`,
-                    {
-                      revision: draft.revision,
-                      channel: draft.channel,
-                      subject: draft.subject,
-                      message: draft.message,
-                    },
-                  );
-                  setContact(result);
-                  setMail(result.email);
-                  await load();
-                  setDraft({ ...draft, revision: draft.revision + 1 });
-                }
-              });
-            }}
-          >
-            <fieldset className={modal === "simulation" ? "co-simulator-layout" : undefined} disabled={busy || !!mail || !!contact}>
-              {modal === "order" && (
-                <>
-                  <h2>
-                    {draft.id ? `Editar pedido ${draft.number}` : "Novo pedido de cliente"}
-                  </h2>
-                  {draft.id && (
-                    <Notice tone="info">
-                      Produtos já reservados, em compra ou entregues mantêm o
-                      artigo e não podem descer abaixo da quantidade em curso.
-                      Retirar um produto cancela-o e fica no histórico.
-                      {draft.closed_lines > 0 &&
-                        ` ${draft.closed_lines} produto(s) entregue(s) ou cancelado(s) não aparecem aqui.`}
-                    </Notice>
-                  )}
-                  <div className="co-grid">
-                    <Field label="Estabelecimento">
-                      <select
-                        required
-                        disabled={!!draft.id}
-                        value={draft.store_id}
-                        onChange={(e) =>
-                          setDraft({ ...draft, store_id: e.target.value })
-                        }
-                      >
-                        {stores.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Cliente existente (opcional)">
-                      <CustomerPicker
-                        customers={catalog.customers}
-                        value={draft.customer_id}
-                        onPick={(c) => {
-                          setDraft({
-                            ...draft,
-                            customer_id: c?.id || "",
-                            ...(c
-                              ? {
-                                  customer_name: c.name,
-                                  phone: c.phone,
-                                  email: c.email,
-                                }
-                              : {}),
-                          });
-                        }}
-                      />
-                    </Field>
-                    {[
-                      ["customer_name", "Nome do cliente", "text"],
-                      ["phone", "Telefone (com indicativo)", "tel"],
-                      ["email", "Email", "email"],
-                      [
-                        "requested_at",
-                        "Data e hora do pedido",
-                        "datetime-local",
-                      ],
-                      ["due_date", "Entrega pretendida", "date"],
-                    ].map(([key, label, type]) => (
-                      <Field key={key} label={label}>
-                        <input
-                          type={type}
-                          required={
-                            key === "customer_name" || key === "requested_at"
-                          }
-                          value={draft[key]}
-                          onChange={(e) =>
-                            setDraft({ ...draft, [key]: e.target.value })
-                          }
-                        />
-                      </Field>
-                    ))}
-                    <Field label="Canal preferido">
-                      <select
-                        value={draft.preferred_channel}
-                        onChange={(e) =>
-                          setDraft({
-                            ...draft,
-                            preferred_channel: e.target.value,
-                          })
-                        }
-                      >
-                        <option value="none">Sem contacto autorizado</option>
-                        <option value="email">Email</option>
-                        <option value="whatsapp">WhatsApp</option>
-                        <option value="phone">Telefone</option>
-                      </select>
-                    </Field>
-                    <Field label="Prioridade">
-                      <select
-                        value={draft.priority}
-                        onChange={(e) =>
-                          setDraft({ ...draft, priority: e.target.value })
-                        }
-                      >
-                        <option value="normal">Normal</option>
-                        <option value="urgent">Urgente</option>
-                      </select>
-                    </Field>
-                  </div>
-                  <label className="doc-check">
-                    <input
-                      type="checkbox"
-                      checked={draft.contact_allowed}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          contact_allowed: e.target.checked,
-                        })
-                      }
-                    />
-                    Cliente autorizou contactos sobre este pedido pelo canal
-                    escolhido
-                  </label>
-                  <Field label="Observações do pedido">
-                    <textarea
-                      value={draft.notes}
-                      onChange={(e) =>
-                        setDraft({ ...draft, notes: e.target.value })
-                      }
-                    />
-                  </Field>
-                  {draft.lines.map((l: Row, i: number) => (
-                    <fieldset
-                      className={`co-product${l.committed > 0 ? " co-product-locked" : ""}`}
-                      key={l.key}
-                    >
-                      <legend>Produto {i + 1}</legend>
-                      {l.id && (
-                        <div className="co-flags">
-                          <StatusBadge tone={stateTone(l.state)}>{l.state_label}</StatusBadge>
-                          {l.committed > 0 && (
-                            <StatusBadge tone="info">
-                              {qty(l.committed)} em curso: artigo fixo, mínimo {qty(l.committed)}
-                            </StatusBadge>
-                          )}
-                        </div>
-                      )}
-                      <Field label="Artigo existente">
-                        <ArticleSearch
-                          articles={catalog.articles}
-                          disabled={l.committed > 0}
-                          value={l.article_id}
-                          onPick={(a) =>
-                            editLine(
-                              i,
-                              a
-                                ? {
-                                    article_id: a.id,
-                                    description: a.name,
-                                    supplier_id: a.supplier_id || "",
-                                    brand: a.brand || "",
-                                    reference: a.reference || "",
-                                    ean: a.barcodes?.[0] || "",
-                                    sale_price_cents: a.sale_net
-                                      ? Math.round(Number(a.sale_net) * 100)
-                                      : null,
-                                  }
-                                : { article_id: "" },
-                            )
-                          }
-                        />
-                      </Field>
-                      {!l.article_id && (
-                        <p className="footnote">
-                          Produto provisório: preencha a descrição e os dados
-                          conhecidos. Não cria um artigo no ERP.
-                        </p>
-                      )}
-                      {!(l.committed > 0) && <ERPCatalogPicker
-                        canAttach={!!catalog.permissions?.adjust_stock}
-                        onSelect={(a) => {
-                          editLine(i, {
-                            article_id: a.id,
-                            description: a.name,
-                            supplier_id: a.supplier_id || l.supplier_id || "",
-                          });
-                          setCatalog((c) => ({
-                            ...c,
-                            articles: [
-                              ...c.articles.filter(
-                                (item: Row) => item.id !== a.id,
-                              ),
-                              a,
-                            ],
-                          }));
-                        }}
-                      />}
-                      <div className="co-grid">
-                        {[
-                          ["description", "Descrição"],
-                          ["brand", "Marca"],
-                          ["reference", "Referência"],
-                          ["ean", "EAN"],
-                        ].map(([key, label]) => (
-                          <Field key={key} label={label}>
-                            <input
-                              required={key === "description"}
-                              value={l[key]}
-                              onChange={(e) =>
-                                editLine(i, { [key]: e.target.value })
-                              }
-                            />
-                          </Field>
-                        ))}
-                        <Field label={l.committed > 0 ? `Quantidade pedida (mínimo ${qty(l.committed)})` : "Quantidade pedida"}>
-                          <input
-                            required
-                            type="number"
-                            min={l.committed > 0 ? String(l.committed) : "0.000001"}
-                            step="0.000001"
-                            value={l.quantity}
-                            onChange={(e) =>
-                              editLine(i, { quantity: e.target.value })
-                            }
-                          />
-                        </Field>
-                        <Field label="Preço de venda sem IVA (quando conhecido)">
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={
-                              l.sale_price_cents === null
-                                ? ""
-                                : l.sale_price_cents / 100
-                            }
-                            onChange={(e) =>
-                              editLine(i, {
-                                sale_price_cents:
-                                  e.target.value === ""
-                                    ? null
-                                    : Math.round(Number(e.target.value) * 100),
-                              })
-                            }
-                          />
-                        </Field>
-                        <SupplierField
-                          label="Fornecedor preferencial"
-                          suppliers={catalog.suppliers}
-                          value={l.supplier_id}
-                          onChange={(id) => editLine(i, { supplier_id: id })}
-                          onEdit={editSupplier}
-                        />
-                        <Field label="Notas do produto">
-                          <input
-                            value={l.notes}
-                            onChange={(e) =>
-                              editLine(i, { notes: e.target.value })
-                            }
-                          />
-                        </Field>
-                      </div>
-                      <ActionButton
-                        type="button"
-                        className="danger"
-                        disabled={draft.lines.length === 1 || l.committed > 0}
-                        title={
-                          l.committed > 0
-                            ? "Em curso: use «Cancelar quantidade» no detalhe do pedido."
-                            : undefined
-                        }
-                        onClick={() =>
-                          setDraft({
-                            ...draft,
-                            lines: draft.lines.filter(
-                              (_: Row, n: number) => n !== i,
-                            ),
-                          })
-                        }
-                      >
-                        Remover produto
-                      </ActionButton>
-                    </fieldset>
-                  ))}
-                  <ActionButton
-                    type="button"
-                    onClick={() =>
-                      setDraft({
-                        ...draft,
-                        lines: [...draft.lines, blankLine()],
-                      })
-                    }
-                  >
-                    Adicionar produto
-                  </ActionButton>
-                  {draft.id ? (
-                    (draft.original_ids || []).some(
-                      (id: string) => !draft.lines.some((l: Row) => l.id === id),
-                    ) && (
-                      <>
-                        <Notice tone="warning">
-                          Os produtos retirados ficam cancelados no pedido.
-                        </Notice>
-                        <Field label="Motivo para retirar produtos">
-                          <input
-                            required
-                            minLength={3}
-                            value={draft.reason}
-                            onChange={(e) =>
-                              setDraft({ ...draft, reason: e.target.value })
-                            }
-                          />
-                        </Field>
-                      </>
-                    )
-                  ) : (
-                    <label className="doc-check">
-                      <input
-                        type="checkbox"
-                        checked={!!draft.allow_duplicate}
-                        onChange={(e) =>
-                          setDraft({
-                            ...draft,
-                            allow_duplicate: e.target.checked,
-                          })
-                        }
-                      />
-                      Confirmo a criação de outro pedido igual, caso já exista
-                      um em aberto
-                    </label>
-                  )}
-                </>
-              )}
-              {(modal === "simulation" || modal === "terms") && (
-                <>
-                  <h2>
-                    {modal === "terms"
-                      ? "Condições comerciais do fornecedor"
-                      : draft.status === "prepared"
-                        ? `Editar encomenda ${draft.procurement?.document || ""}`
-                        : draft.id
-                          ? "Editar simulação"
-                          : "Simulador de compra"}
-                  </h2>
                   {modal === "simulation" && draft.status === "prepared" && (
                     <Notice tone="warning">
                       Ao guardar, a encomenda {draft.procurement?.document} é atualizada com o mesmo
@@ -3349,8 +1976,1408 @@ export default function CustomerOrders({
                       </aside>
                     </>
                   )}
+                </> : null;
+  return (
+    <section className="customer-orders">
+      {(area !== "centro" || !canBuy) && <PageHeader
+        title={area === "centro" ? "Do pedido à entrega, num só lugar." : area === "planeamento" ? "Planeamento de compras" : "Encomendas de clientes"}
+        description={area === "centro" ? "Necessidades líquidas por cliente, artigo e fornecedor." : area === "planeamento" ? "Compare necessidades, cobertura de stock e simulações por fornecedor." : "Do pedido ao fornecedor e ao levantamento, com quantidades e contactos acompanhados."}
+        actions={
+          <>
+            {(area !== "planeamento" || planningTab === "simulacoes") && <ActionButton disabled={busy} onClick={() => void run(load)}>
+              <RefreshCw size={16} />
+              Atualizar
+            </ActionButton>}
+            {data?.can_write && area !== "planeamento" && (
+              <ActionButton className="primary" onClick={newOrder}>
+                <Plus size={16} />
+                Novo pedido
+              </ActionButton>
+            )}
+          </>
+        }
+      />}
+      {feedback}
+      {(area !== "centro" || !canBuy) && <ModuleTabs
+        label="Áreas das encomendas de clientes"
+        tabs={tabs.map(([id, label]) => ({ id, label }))}
+        value={area}
+        onChange={setArea}
+      />}
+      {(area !== "centro" || !canBuy) && <p className="footnote">{data?.integration_note}</p>}
+      {area === "planeamento" && <ModuleTabs label="Planeamento de compras" tabs={[{ id: "necessidades", label: "Necessidades" }, { id: "simulacoes", label: "Simulações" }]} value={planningTab} onChange={setPlanningTab} />}
+      {area === "planeamento" && planningTab === "necessidades" && (canBuy ? <SupplyCenter planning stores={stores} store={store} revision={data}
+        orders={orders} simulations={simulations} receipts={receipts} onArea={setArea} onSimulation={setSimId} onStoreChange={onStoreChange}
+        onReadyOrders={() => navigate("Encomendas de clientes", { "menu.area": "encomendas", "menu.destino": "encomendas:notificacoes", "area.pedidos-clientes": "pedidos", "filtro.pedidos": "prontos" })}
+        onNewOrder={newOrder} onNewSimulation={newSim} onRefreshData={() => void run(load)} onOrder={setSelected}
+        onSimulate={group => open("simulation", { store_id: group.store_id, supplier_id: group.supplier_id, terms: structuredClone(group.terms), lines: structuredClone(group.lines), notes: "" })}
+      /> : <Notice>O planeamento de compras requer autorização para consultar custos e preparar compras.</Notice>)}
+      {area === "centro" && (canBuy ? <SupplyCenter stores={stores} store={store} revision={data}
+        orders={orders} simulations={simulations} receipts={receipts} onArea={setArea} onSimulation={setSimId} onStoreChange={onStoreChange}
+        onReadyOrders={() => navigate("Encomendas de clientes", {"menu.area":"encomendas","menu.destino":"encomendas:notificacoes","area.pedidos-clientes":"pedidos","filtro.pedidos":"prontos"})}
+        onNewOrder={newOrder} onNewSimulation={newSim} onRefreshData={() => void run(load)}
+        onOrder={setSelected}
+        onSimulate={group => open("simulation", { store_id: group.store_id, supplier_id: group.supplier_id,
+          terms: structuredClone(group.terms), lines: structuredClone(group.lines), notes: "" })}
+      /> : <Notice>O Centro de Encomendas requer autorização para consultar custos e preparar compras. Os pedidos continuam disponíveis nos restantes separadores.</Notice>)}
+      {area === "pedidos" && (
+        <>
+          <div className="co-filters" role="group" aria-label="Filtrar pedidos">
+            {orderFilters.map(([id, label, rows]) => (
+              <ActionButton
+                key={id}
+                aria-pressed={orderFilter === id}
+                onClick={() => setOrderFilter(id)}
+              >
+                {label} ({rows.length})
+              </ActionButton>
+            ))}
+          </div>
+          <details className="panel co-attention">
+            <summary>Precisa de atenção</summary>
+            {!outstanding.length && <p>Sem pedidos pendentes.</p>}
+            {outstanding.map((o) => {
+              const age = Math.floor(
+                (Date.now() - new Date(o.requested_at).getTime()) / 86400000,
+              );
+              const limits = o.lines.map(
+                (l: Row) =>
+                  catalog.suppliers.find((s: Row) => s.id === l.supplier_id)
+                    ?.terms?.pending_days || 7,
+              );
+              const warnings = [
+                o.late && "Entrega em atraso",
+                o.ready &&
+                  !o.notified &&
+                  "Produto disponível; cliente por contactar",
+                o.lines.some(
+                  (l: Row) =>
+                    !l.supplier_id && Number(l.quantities.to_order) > 0,
+                ) && "Produto sem fornecedor",
+                age >= Math.min(...limits) && "Pedido pendente há vários dias",
+                o.ready &&
+                  o.notified &&
+                  age >=
+                    Math.max(
+                      ...o.lines.map(
+                        (l: Row) =>
+                          catalog.suppliers.find(
+                            (s: Row) => s.id === l.supplier_id,
+                          )?.terms?.pickup_days || 7,
+                      ),
+                    ) &&
+                  "Cliente notificado; confirmar levantamento",
+              ].filter(Boolean);
+              return warnings.length ? (
+                <div className="co-alert" key={o.id}>
+                  <div>
+                    <strong>{o.customer_name}</strong>
+                    <p>{warnings.join(" · ")}</p>
+                  </div>
+                  <ActionButton onClick={() => setSelected(o.id)}>
+                    Abrir pedido
+                  </ActionButton>
+                </div>
+              ) : null;
+            })}
+            {simulations
+              .filter(
+                (s) =>
+                  s.status !== "cancelled" &&
+                  (s.totals.missing_cents > 0 ||
+                    (s.procurement_id &&
+                      !s.supplier_confirmation &&
+                      Date.now() - new Date(s.created_at).getTime() >
+                        (s.terms.confirmation_days || 3) * 86400000)),
+              )
+              .map((s) => (
+                <div className="co-alert" key={s.id}>
+                  <p>
+                    {s.supplier_name} ·{" "}
+                    {s.totals.missing_cents
+                      ? `Encomenda abaixo do mínimo: faltam ${money(s.totals.missing_cents, s.terms.currency)}`
+                      : "Fornecedor ainda não confirmou"}
+                  </p>
+                  <ActionButton onClick={() => setSimId(s.id)}>
+                    Abrir simulação
+                  </ActionButton>
+                </div>
+              ))}
+          </details>
+          {display(
+            orderFilters.find(([id]) => id === orderFilter)?.[2] || orders,
+            "orders",
+          )}
+        </>
+      )}
+      {area === "fornecedores" && (
+        <>
+          {canBuy ? (
+            <DataTable<Row>
+              label="condições dos fornecedores"
+              rows={catalog.suppliers}
+              rowKey={(r) => r.id}
+              searchText={(r) => `${r.name} ${r.tax_number || ""} ${r.email || ""}`}
+              columns={[
+                { id: "name", label: "Fornecedor", render: (r) => r.name },
+                {
+                  id: "minimum",
+                  label: "Mínimo",
+                  render: (r) => money(r.terms.minimum_cents, r.terms.currency),
+                },
+                {
+                  id: "lead",
+                  label: "Prazo",
+                  render: (r) => `${r.terms.lead_days} dias`,
+                },
+                {
+                  id: "needs",
+                  label: "Por encomendar",
+                  sortValue: (r) => needs.filter((g) => g.supplier_id === r.id).reduce((n, g) => n + g.lines.length, 0),
+                  render: (r) => {
+                    const mine = needs.filter((g) => g.supplier_id === r.id);
+                    const lines = mine.reduce((n, g) => n + g.lines.length, 0);
+                    return lines ? (
+                      <StatusBadge tone={mine.some((g) => g.state === "pronto") ? "success" : "warning"}>
+                        {lines} produto(s)
+                      </StatusBadge>
+                    ) : (
+                      <span className="co-muted">—</span>
+                    );
+                  },
+                },
+                {
+                  id: "actions",
+                  label: "Ações",
+                  render: (r) => (
+                    <div className="actions">
+                      <ActionButton
+                        onClick={() =>
+                          open("terms", {
+                            supplier_id: r.id,
+                            revision: r.revision,
+                            terms: structuredClone(r.terms),
+                          })
+                        }
+                      >
+                        Condições comerciais
+                      </ActionButton>
+                      <ActionButton
+                        aria-label={`Editar fornecedor ${r.name}`}
+                        onClick={() => editSupplier(r.id)}
+                      >
+                        <Pencil size={16} aria-hidden="true" />
+                        Editar ficha
+                      </ActionButton>
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          ) : (
+            <Notice>
+              As condições comerciais e custos estão reservados à gestão
+              autorizada.
+            </Notice>
+          )}
+          <div className="actions">
+            <ActionButton onClick={() => navigate("Fornecedores")}>
+              Gerir fornecedores
+            </ActionButton>
+          </div>
+        </>
+      )}
+      {(area === "simulacoes" || area === "planeamento" && planningTab === "simulacoes") && (
+        <>
+          {canBuy ? (
+            <>
+              <section className="co-section" aria-labelledby="co-needed-title">
+                <div className="co-inline">
+                  <h2 id="co-needed-title">Encomendas necessárias para pedidos de clientes</h2>
+                  <ActionButton className="primary" onClick={newSim}>
+                    <Plus size={16} aria-hidden="true" />
+                    Nova simulação
+                  </ActionButton>
+                </div>
+                {needs.length > 0 && (
+                  <div className="co-need-summary" aria-label="Resumo das encomendas necessárias">
+                    <StatusBadge tone="info">{needs.filter((g) => g.supplier_id).length} fornecedor(es)</StatusBadge>
+                    <StatusBadge tone="info">{new Set(pending.map((l) => l.order.id)).size} pedido(s) de clientes</StatusBadge>
+                    {lateOrders > 0 && <StatusBadge tone="danger">{lateOrders} pedido(s) em atraso</StatusBadge>}
+                    {needs.some((g) => !g.supplier_id) && (
+                      <StatusBadge tone="danger">Produtos sem fornecedor</StatusBadge>
+                    )}
+                    {needs.filter((g) => g.state === "pronto").length > 0 && (
+                      <StatusBadge tone="success">
+                        {needs.filter((g) => g.state === "pronto").length} pronta(s) a encomendar
+                      </StatusBadge>
+                    )}
+                  </div>
+                )}
+                <p className="footnote">
+                  O que ainda falta encomendar, por fornecedor e loja; produtos já em simulações ou
+                  encomendas não aparecem. Valor estimado sem IVA e antes de descontos, comparado com o
+                  mínimo de encomenda sem portes. Vermelho: atraso ou sem fornecedor; âmbar: abaixo do
+                  mínimo ou sem custo; verde: pronta a encomendar.
+                </p>
+                {!needs.length ? (
+                  <Notice tone="success">Todos os pedidos de clientes já estão em simulações ou encomendas.</Notice>
+                ) : (
+                  <DataTable<Row>
+                    label="encomendas necessárias por fornecedor"
+                    rows={needs}
+                    rowKey={(g) => g.key}
+                    rowClassName={(g) => `co-need-row co-need-row-${needTone(g)}`}
+                    searchText={(g) => `${g.supplier?.name || "Sem fornecedor"} ${g.lines.map((l: Row) => `${l.description} ${l.order.customer_name} ${l.order.number}`).join(" ")}`}
+                    columns={[
+                      {
+                        id: "supplier",
+                        label: "Fornecedor",
+                        sortValue: (g) => g.supplier?.name || "",
+                        render: (g) => (
+                          <div className="co-need-supplier">
+                            {g.supplier_id ? (
+                              <span className="co-inline-supplier">
+                                <strong>{g.supplier?.name || supplierName(g.supplier_id)}</strong>
+                                <ActionButton
+                                  className="co-icon"
+                                  aria-label={`Editar fornecedor ${g.supplier?.name || supplierName(g.supplier_id)}`}
+                                  title="Editar a ficha do fornecedor"
+                                  onClick={() => editSupplier(g.supplier_id)}
+                                >
+                                  <Pencil size={14} aria-hidden="true" />
+                                </ActionButton>
+                              </span>
+                            ) : (
+                              <StatusBadge tone="danger">Sem fornecedor</StatusBadge>
+                            )}
+                            <small>{stores.find((x) => x.id === g.store_id)?.name || ""}</small>
+                            {g.supplier?.missing?.length > 0 && <MissingSupplierFields supplier={g.supplier} />}
+                          </div>
+                        ),
+                      },
+                      {
+                        id: "products",
+                        label: "Produtos a encomendar",
+                        sortValue: (g) => g.lines.length,
+                        render: (g) => (
+                          <>
+                            {g.lines.map((l: Row) => (
+                              <div key={l.id} className="co-need-line">
+                                <span className="co-qty" aria-label={`Quantidade ${qty(l.quantities.to_order)}`}>
+                                  {qty(l.quantities.to_order)}
+                                </span>
+                                <span>
+                                  <b>{l.description}</b>
+                                  <small title={l.order.number}>
+                                    {shortNumber(l.order.number)} · {l.order.customer_name} · pedido em {day(l.order.requested_at)}
+                                  </small>
+                                </span>
+                              </div>
+                            ))}
+                          </>
+                        ),
+                      },
+                      {
+                        id: "value",
+                        label: "Valor / mínimo sem portes",
+                        sortValue: (g) => g.value_cents,
+                        render: (g) =>
+                          g.supplier_id ? (
+                            <div className="co-need-value">
+                              <strong className="co-amount">{money(g.value_cents)}</strong>
+                              {g.minimum_cents > 0 && (
+                                <progress
+                                  max={g.minimum_cents}
+                                  value={Math.min(g.value_cents, g.minimum_cents)}
+                                  aria-label={`Valor face ao mínimo de ${money(g.minimum_cents)}`}
+                                />
+                              )}
+                              <small>{g.minimum_cents ? `de ${money(g.minimum_cents)} mínimo` : "sem mínimo"}</small>
+                              <StatusBadge tone={g.state === "pronto" ? "success" : "warning"}>
+                                {g.state === "pronto"
+                                  ? g.minimum_cents ? "Mínimo atingido" : "Pronto a encomendar"
+                                  : g.state === "sem_custo"
+                                    ? "Sem custo conhecido"
+                                    : `Faltam ${money(g.missing_cents)}`}
+                              </StatusBadge>
+                              {g.unpriced > 0 && (
+                                <small className="co-text-warning">
+                                  {g.unpriced} produto(s) sem custo: indique o preço na simulação
+                                </small>
+                              )}
+                            </div>
+                          ) : (
+                            <small>Associe um fornecedor no pedido.</small>
+                          ),
+                      },
+                      {
+                        id: "urgency",
+                        label: "Entrega ao cliente",
+                        sortValue: (g) => String(g.oldest),
+                        render: (g) => (
+                          <>
+                            {[...new Map<string, Row>(g.lines.map((l: Row) => [l.order.id, l.order] as [string, Row])).values()].map((o: Row) => (
+                              <div key={o.id} className="co-due">
+                                <DueBadge order={o} />
+                                {o.priority === "urgent" && <StatusBadge tone="danger">Urgente</StatusBadge>}
+                                <small>
+                                  {shortNumber(o.number)}{o.due_date ? ` · entrega pretendida ${day(o.due_date)}` : ""}
+                                </small>
+                              </div>
+                            ))}
+                            {g.drafts.length > 0 && <StatusBadge tone="info">{g.drafts.length} rascunho(s)</StatusBadge>}
+                          </>
+                        ),
+                      },
+                      {
+                        id: "actions",
+                        label: "Ações",
+                        render: (g) => (
+                          <div className="co-need-actions">
+                            {g.supplier_id ? (
+                              <ActionButton className="primary" onClick={() => simulateFor(g)}>
+                                <Calculator size={16} aria-hidden="true" />
+                                Simular encomenda
+                              </ActionButton>
+                            ) : (
+                              <ActionButton onClick={() => setSelected(g.lines[0].order.id)}>
+                                <Pencil size={16} aria-hidden="true" />
+                                Associar no pedido
+                              </ActionButton>
+                            )}
+                            {g.drafts[0] && (
+                              <ActionButton onClick={() => setSimId(g.drafts[0].id)}>
+                                <FileText size={16} aria-hidden="true" />
+                                Abrir rascunho
+                              </ActionButton>
+                            )}
+                          </div>
+                        ),
+                      },
+                    ]}
+                  />
+                )}
+              </section>
+              <section className="co-section" aria-labelledby="co-supplier-orders-title">
+                <h2 id="co-supplier-orders-title">Simulações e encomendas a fornecedores</h2>
+                {display(simulations, "simulations")}
+              </section>
+            </>
+          ) : (
+            <Notice>
+              As simulações de compra estão reservadas à gestão autorizada.
+            </Notice>
+          )}
+        </>
+      )}
+      {area === "rececoes" && (
+        <>
+          {canBuy ? (
+            <>
+              {display(
+                simulations.filter(
+                  (s) =>
+                    s.procurement_id && s.procurement?.status !== "cancelled",
+                ),
+                "simulations",
+              )}
+              <p>
+                Abra a encomenda para registar quantidades efetivamente
+                recebidas ou associar uma receção já confirmada.
+              </p>
+              <ActionButton onClick={() => navigate("Receções de mercadoria")}>
+                Circuito de receções de mercadoria
+              </ActionButton>
+            </>
+          ) : (
+            <Notice>As receções estão reservadas à gestão autorizada.</Notice>
+          )}
+        </>
+      )}
+      {area === "rececoes" && canBuy && (
+        <details>
+          <summary>Originais, OCR e cloud</summary>
+          <OrderCyclePanel
+            mode="receiving"
+            store={store}
+            stores={stores}
+            simulations={simulations}
+            catalog={catalog}
+            navigate={navigate}
+          />
+        </details>
+      )}
+      {area === "rececoes" && canBuy && (
+        <section className="co-section" aria-labelledby="co-conference-title">
+          <h2 id="co-conference-title">Conferência com o ERP</h2>
+          <OrderCyclePanel
+            mode="review"
+            store={store}
+            stores={stores}
+            simulations={simulations}
+            catalog={catalog}
+            navigate={navigate}
+          />
+        </section>
+      )}
+      {area === "historico" && display(history, "history")}
+      {area === "analise" && (canBuy ? <OrderAnalytics store={store} revision={data} onOrder={setSelected} onSimulation={setSimId} navigate={navigate} /> : <Notice>Os indicadores de compras requerem autorização para consultar custos.</Notice>)}
+
+      {active && <AppDialog className="business-record-dialog co-record-dialog" aria-label={`Pedido ${active.number}`} busy={busy} onRequestClose={() => setSelected("")}>
+        <RecordWorkspace key={active.id} title={`Pedido ${active.number}`} subtitle={active.customer_name} icon={ShoppingCart}
+          actions={data?.can_write && <ActionButton onClick={() => editOrder(active)}><Pencil size={16} />Editar pedido</ActionButton>}
+          indicators={<>
+            <RecordIndicator label="Artigos solicitados" value={active.lines.length} icon={Package} />
+            <RecordIndicator label="Linhas disponíveis" value={active.lines.filter((l: Row) => Number(l.quantities.available) > 0).length} tone="success" icon={Package} />
+            <RecordIndicator label="Por encomendar" value={active.lines.filter((l: Row) => Number(l.quantities.to_order) > 0).length} note="Número de linhas" tone="warning" icon={Truck} />
+            <RecordIndicator label="Artigos por criar" value={active.lines.filter((l: Row) => l.provisional).length} tone="warning" icon={CircleAlert} />
+          </>}
+          sections={[
+            { label: "Geral", icon: User, content: <RecordGroup title="Resumo do pedido" icon={ShoppingCart}>          <div className="co-flags">
+            {active.closed ? (
+              <StatusBadge tone="success">Concluído</StatusBadge>
+            ) : active.ready ? (
+              <StatusBadge tone="success">
+                {active.fully_ready === false ? "Disponível parcialmente: combinar entrega" : active.notified ? "Cliente notificado" : "Pronto: contactar cliente"}
+              </StatusBadge>
+            ) : (
+              <StatusBadge tone="warning">A aguardar produtos</StatusBadge>
+            )}
+            {active.priority === "urgent" && <StatusBadge tone="danger">Urgente</StatusBadge>}
+            {active.late && <StatusBadge tone="danger">Entrega em atraso</StatusBadge>}
+            {active.lines.some(
+              (l: Row) => !l.supplier_id && Number(l.quantities.to_order) > 0,
+            ) && <StatusBadge tone="danger">Produto sem fornecedor</StatusBadge>}
+            {active.lines.some((l: Row) => l.provisional) && (
+              <StatusBadge tone="warning">Produto provisório</StatusBadge>
+            )}
+          </div>
+          {active.ready && (
+            <p className="co-highlight co-highlight-success">
+              Valor estimado dos produtos disponíveis, sem IVA:{" "}
+              {money(
+                active.lines.reduce(
+                  (total: number, line: Row) =>
+                    total +
+                    (line.sale_price_cents == null
+                      ? 0
+                      : Number(line.sale_price_cents) *
+                        Number(line.quantities.available || 0)),
+                  0,
+                ),
+              )}
+              .{" "}
+              {active.lines.some(
+                (line: Row) =>
+                  Number(line.quantities.available) > 0 &&
+                  line.sale_price_cents == null,
+              )
+                ? "Existem preços por confirmar. "
+                : ""}
+              O pagamento e o documento fiscal seguem o circuito de faturação.
+            </p>
+          )}
+          <StockAvailability
+            storeId={active.store_id}
+            articleIds={active.lines
+              .map((line: Row) => line.article_id)
+              .filter(Boolean)}
+          />
+          <ProcessSteps label="Progresso da encomenda" current={active.closed ? "fecho" : active.notified ? "entrega" : active.fully_ready ? "aviso" : active.ready ? "rececao" : active.lines.some((line: Row)=>Number(line.quantities.ordered)>0) ? "fornecedor" : active.lines.some((line: Row)=>Number(line.quantities.simulated)>0) ? "simulacao" : "necessidades"}
+            steps={[{id:"pedido",label:"Pedido"},{id:"necessidades",label:"Necessidades"},{id:"simulacao",label:"Simulação"},{id:"fornecedor",label:"Fornecedor"},{id:"rececao",label:"Receção"},{id:"aviso",label:"Aviso"},{id:"entrega",label:"Entrega"},{id:"fecho",label:"Fecho"}]} />
+          <dl className="co-facts">
+            <div>
+              <dt>Pedido em</dt>
+              <dd>{day(active.requested_at)}</dd>
+            </div>
+            <div>
+              <dt>Entrega prevista</dt>
+              <dd className={active.late ? "co-text-danger" : undefined}>
+                {day(active.due_date)}
+              </dd>
+            </div>
+            <div>
+              <dt>Telefone</dt>
+              <dd>{active.phone || "—"}</dd>
+            </div>
+            <div>
+              <dt>Email</dt>
+              <dd>{active.email || "—"}</dd>
+            </div>
+            <div>
+              <dt>Contacto</dt>
+              <dd>
+                {active.contact_allowed ? (
+                  <StatusBadge tone="success">
+                    Autorizado · {channelLabel(active.preferred_channel)}
+                  </StatusBadge>
+                ) : (
+                  <StatusBadge tone="warning">Não autorizado</StatusBadge>
+                )}
+              </dd>
+            </div>
+          </dl>
+          {active.notes && <p className="co-notes">{active.notes}</p>}
+          {feedback}
+</RecordGroup> },
+            { label: "Artigos e disponibilidade", icon: Package, content: <>          {active.lines.map((l: Row) => (
+            <section className="panel co-product" key={l.id}>
+              <div className="co-need-head">
+                <h3>{l.description}</h3>
+                <StatusBadge tone={stateTone(l.state)}>{l.state_label}</StatusBadge>
+              </div>
+              <p>
+                {l.provisional ? (
+                  <StatusBadge tone="warning">Provisório: associe um artigo</StatusBadge>
+                ) : (
+                  l.article_code
+                )}{" "}
+                ·{" "}
+                {l.supplier_id ? (
+                  supplierName(l.supplier_id)
+                ) : (
+                  <StatusBadge tone="danger">Sem fornecedor</StatusBadge>
+                )}
+              </p>
+              <dl className="co-quantities">
+                {[
+                  ["requested", "Pedida"],
+                  ["reserved", "Reservada"],
+                  ["available", "Disponível válida"],
+                  ["to_order", "Por encomendar"],
+                  ["simulated", "Em simulação"],
+                  ["ordered", "Encomendada"],
+                  ["confirmed", "Confirmada"],
+                  ["received", "Recebida"],
+                  ["delivered", "Entregue"],
+                  ["cancelled", "Cancelada"],
+                ].map(([key, label]) => {
+                  const value = Number(l.quantities[key] || 0);
+                  // Só se destaca o que pede ação: por encomendar (âmbar) e pronto a entregar (verde).
+                  const tone =
+                    !value || key === "requested"
+                      ? ""
+                      : key === "to_order"
+                        ? "warning"
+                        : key === "available"
+                          ? "success"
+                          : key === "cancelled"
+                            ? "muted"
+                            : "";
+                  return (
+                    <div key={key} className={tone ? `co-q-${tone}` : undefined}>
+                      <dt>{label}</dt>
+                      <dd>{qty(value)}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
+              <p>{l.notes}</p>
+              {data?.can_write && (
+                <div className="actions">
+                  <ActionButton
+                    onClick={() =>
+                      open("quantity", {
+                        line_id: l.id,
+                        order_id: active.id,
+                        revision: active.revision,
+                        action: "adjust",
+                        quantity: l.quantities.requested,
+                        reason: "",
+                      })
+                    }
+                  >
+                    Alterar quantidade pedida
+                  </ActionButton>
+                  {(!l.article_id || !l.supplier_id) && (
+                    <ActionButton
+                      onClick={() =>
+                        open("associate", {
+                          line_id: l.id,
+                          revision: active.revision,
+                          article_id: l.article_id || "",
+                          supplier_id: l.supplier_id || "",
+                        })
+                      }
+                    >
+                      Associar artigo / fornecedor
+                    </ActionButton>
+                  )}
+                  {l.article_id && Number(l.quantities.to_order) > 0 && (
+                    <ActionButton
+                      onClick={() =>
+                        open("quantity", {
+                          line_id: l.id,
+                          order_id: active.id,
+                          revision: active.revision,
+                          action: "reserve",
+                          quantity: l.quantities.to_order,
+                          warehouse_id:
+                            warehouses(active.store_id)[0]?.id || "",
+                          reason: "Reserva para o cliente",
+                        })
+                      }
+                    >
+                      Reservar stock
+                    </ActionButton>
+                  )}
+                  {Number(l.quantities.reserved) > 0 && (
+                    <ActionButton
+                      onClick={() =>
+                        open("quantity", {
+                          line_id: l.id,
+                          order_id: active.id,
+                          revision: active.revision,
+                          action: "release",
+                          quantity: l.quantities.reserved,
+                          reason: "",
+                        })
+                      }
+                    >
+                      Libertar reserva
+                    </ActionButton>
+                  )}
+                  {Number(l.quantities.available) > 0 && (
+                    <ActionButton
+                      className="primary"
+                      onClick={() =>
+                        open("quantity", {
+                          line_id: l.id,
+                          order_id: active.id,
+                          revision: active.revision,
+                          action: "deliver",
+                          quantity: l.quantities.available,
+                          reason: "Levantamento no balcão",
+                        })
+                      }
+                    >
+                      Registar entrega
+                    </ActionButton>
+                  )}
+                  {Number(l.quantities.requested) >
+                    Number(l.quantities.delivered) +
+                      Number(l.quantities.cancelled) && (
+                    <ActionButton
+                      className="danger"
+                      onClick={() =>
+                        open("quantity", {
+                          line_id: l.id,
+                          order_id: active.id,
+                          revision: active.revision,
+                          action: "cancel",
+                          quantity: String(
+                            Number(l.quantities.requested) -
+                              Number(l.quantities.delivered) -
+                              Number(l.quantities.cancelled),
+                          ),
+                          reason: "",
+                        })
+                      }
+                    >
+                      Cancelar quantidade
+                    </ActionButton>
+                  )}
+                </div>
+              )}
+            </section>
+          ))}
+</> },
+            { label: "Contacto e levantamento", icon: Phone, content: <RecordGroup title="Contacto e levantamento" icon={Phone}><p>{active.fully_ready ? "Encomenda pronta para levantamento." : active.ready ? "Existem artigos disponíveis para entrega parcial." : "A aguardar disponibilidade dos artigos."}</p><p>{active.notified ? "Cliente notificado." : "Cliente ainda não notificado."}</p><p>{active.phone || "Sem telefone"} · {active.email || "Sem email"}</p>          {active.ready && data?.can_write && (
+            <ActionButton onClick={() => contactOrder(active)}>
+              Preparar contacto ao cliente
+            </ActionButton>
+          )}
+</RecordGroup> },
+            { label: "Histórico", icon: History, content: <RecordGroup title="Histórico" icon={History}>          <h3>Histórico deste pedido</h3>
+          {history
+            .filter((h) => h.order_id === active.id)
+            .map((h) => (
+              <p key={h.id}>
+                {day(h.at)} · {h.user} · {h.action}{" "}
+                {h.detail?.channel && `· ${h.detail.channel} · ${h.status}`}
+              </p>
+            ))}
+</RecordGroup> },
+          ]} />
+      </AppDialog>}
+
+      {activeSim && <AppDialog className="business-record-dialog co-record-dialog" aria-label="Detalhe da simulação" busy={busy} onRequestClose={() => setSimId("")}>
+        <RecordWorkspace key={activeSim.id} title={activeSim.procurement?.document ? `Encomenda ${activeSim.procurement.document}` : "Simulação de compra"} subtitle={activeSim.supplier_name} icon={Truck}
+          indicators={<>
+            <RecordIndicator label="Total da simulação" value={activeSim.totals?.total_cents == null ? "—" : money(activeSim.totals.total_cents, activeSim.terms.currency)} icon={Calculator} />
+            <RecordIndicator label="Falta para o mínimo" value={activeSim.totals?.missing_cents == null ? "—" : money(activeSim.totals.missing_cents, activeSim.terms.currency)} tone={activeSim.totals?.missing_cents ? "warning" : "success"} icon={ShoppingCart} />
+            <RecordIndicator label="Linhas de compra" value={activeSim.lines.length} icon={Package} />
+          </>}
+          sections={[
+            { label: "Geral", icon: Truck, content: <RecordGroup title="Condições e valores" icon={Calculator}>          <div className="co-flags">
+            <SimulationState sim={activeSim} />
+          </div>
+          {feedback}
+          <SimulationTotals totals={activeSim.totals} terms={activeSim.terms} />
+</RecordGroup> },
+            { label: "Artigos e clientes", icon: Package, content: <>          {activeSim.lines.map((l: Row, i: number) => (
+            <section className="co-product" key={i}>
+              <h3>{l.description}</h3>
+              <p>
+                {qty(l.quantity)} ·{" "}
+                {money(
+                  Math.round(Number(l.unit_cost) * 100),
+                  activeSim.terms.currency,
+                )}{" "}
+                por unidade
+              </p>
+              <p>
+                Clientes:{" "}
+                {qty(
+                  l.allocations.reduce(
+                    (n: number, a: Row) => n + Number(a.quantity),
+                    0,
+                  ),
+                )}{" "}
+                · Reposição:{" "}
+                {qty(
+                  Number(l.quantity) -
+                    l.allocations.reduce(
+                      (n: number, a: Row) => n + Number(a.quantity),
+                      0,
+                    ),
+                )}
+              </p>
+              {l.allocations.map((a: Row) => {
+                const o = orders.find((o) =>
+                  o.lines.some((line: Row) => line.id === a.line_id),
+                );
+                return (
+                  <p key={a.line_id}>
+                    {o?.customer_name || "Pedido"} · {qty(a.quantity)}{" "}
+                    <ActionButton
+                      onClick={() => {
+                        setSimId("");
+                        if (o) setSelected(o.id);
+                      }}
+                    >
+                      Pedido original
+                    </ActionButton>
+                  </p>
+                );
+              })}
+            </section>
+          ))}
+</> },
+            { label: "Confirmação e receções", icon: ShoppingCart, content: <RecordGroup title="Operações da encomenda" icon={Truck}>          <div className="actions">
+            {activeSim.status === "draft" && (
+              <>
+                <ActionButton
+                  onClick={() => open("simulation", structuredClone(activeSim))}
+                >
+                  Editar simulação
+                </ActionButton>
+                <ActionButton
+                  className="primary"
+                  onClick={() => void prepareSim(activeSim)}
+                >
+                  Preparar encomenda real
+                </ActionButton>
+                <ActionButton
+                  className="danger"
+                  onClick={() =>
+                    void run(async () => {
+                      if (
+                        !(await confirmAction({
+                          title: "Cancelar simulação?",
+                          message:
+                            "As quantidades deixam de estar atribuídas a esta proposta. Não cancela compras reais.",
+                          confirmLabel: "Cancelar simulação",
+                          tone: "danger",
+                        }))
+                      )
+                        return;
+                      await mutate(
+                        `/customer-orders/simulations/${activeSim.id}/cancel`,
+                        { revision: activeSim.revision },
+                      );
+                      await load();
+                    })
+                  }
+                >
+                  Cancelar simulação
+                </ActionButton>
+              </>
+            )}
+            {activeSim.procurement_id &&
+              activeSim.procurement?.status !== "cancelled" && (
+                <>
+                  {editableSim(activeSim) && (
+                    <ActionButton onClick={() => open("simulation", structuredClone(activeSim))}>
+                      <Pencil size={16} aria-hidden="true" />
+                      Editar encomenda
+                    </ActionButton>
+                  )}
+                  <ActionLink
+                    href={`/api/procurement/${activeSim.procurement_id}/pdf`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <FileText size={16} />
+                    PDF da encomenda
+                  </ActionLink>
+                  <ActionButton onClick={() => supplierEmail(activeSim)}>
+                    <Mail size={16} />
+                    Preparar email ao fornecedor
+                  </ActionButton>
+                  <ActionButton
+                    onClick={() =>
+                      open("supplier-confirm", {
+                        simulation_id: activeSim.id,
+                        revision: activeSim.revision,
+                        quantities: activeSim.lines.map((l: Row) => l.quantity),
+                        note: "",
+                      })
+                    }
+                  >
+                    Registar confirmação do fornecedor
+                  </ActionButton>
+                  <ActionButton
+                    className="primary"
+                    onClick={() =>
+                      open("receive", {
+                        simulation_id: activeSim.id,
+                        revision: activeSim.revision,
+                        document: "",
+                        receipt_id: "",
+                        quantities: activeSim.lines.map(() => "0"),
+                        lots: activeSim.lines.map(() => ""),
+                        expiries: activeSim.lines.map(() => ""),
+                      })
+                    }
+                  >
+                    <Package size={16} />
+                    Receber produtos
+                  </ActionButton>
                 </>
               )}
+          </div>
+          {activeSim.supplier_confirmation && (
+            <Notice tone="success">
+              Fornecedor confirmou em {day(activeSim.supplier_confirmation.at)}:{" "}
+              {activeSim.supplier_confirmation.note}
+            </Notice>
+          )}
+</RecordGroup> },
+            { label: "Histórico", icon: History, content: <RecordGroup title="Comunicações com o fornecedor" icon={History}>          {activeSim.procurement?.email_history?.map((e: Row) => (
+            <p key={e.id}>
+              Email · {e.status} · {day(e.created_at)}
+            </p>
+          ))}
+{!activeSim.procurement?.email_history?.length && <p>Sem envios registados.</p>}</RecordGroup> },
+          ]} />
+      </AppDialog>}
+
+      {modal && (
+        <AppDialog
+          aria-label={
+            {
+              order: draft.id ? "Editar pedido de cliente" : "Novo pedido de cliente",
+              simulation: "Simulador de compra",
+              terms: "Condições comerciais",
+              prepare: "Preparar encomenda real",
+              quantity: "Atualizar quantidade",
+              associate: "Associar artigo ao pedido",
+              contact: "Contactar cliente",
+              "supplier-email": "Email ao fornecedor",
+              "supplier-confirm": "Confirmação do fornecedor",
+              receive: "Receção de produtos",
+            }[modal]
+          }
+          className={modal === "order" ? "co-dialog business-record-dialog" : modal === "simulation" ? "co-dialog co-simulation-dialog business-record-dialog" : "co-dialog"}
+          busy={busy}
+          onRequestClose={() => setModal("")}
+        >
+          {feedback}
+          <ManagedForm
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run(async () => {
+                if (modal === "order") await saveOrder();
+                else if (modal === "simulation") await saveSim();
+                else if (modal === "terms") {
+                  await mutate(
+                    `/customer-orders/suppliers/${draft.supplier_id}/terms`,
+                    { revision: draft.revision, terms: draft.terms },
+                  );
+                  await load();
+                  setModal("");
+                } else if (modal === "associate") {
+                  await mutate(
+                    `/customer-orders/lines/${draft.line_id}/associate`,
+                    {
+                      revision: draft.revision,
+                      article_id: draft.article_id,
+                      supplier_id: draft.supplier_id || null,
+                    },
+                  );
+                  await load();
+                  setModal("");
+                } else if (modal === "quantity") {
+                  if (
+                    draft.action !== "reserve" &&
+                    !(await confirmAction({
+                      title:
+                        draft.action === "deliver"
+                          ? "Confirmar entrega física?"
+                          : draft.action === "adjust"
+                            ? "Alterar quantidade pedida?"
+                            : draft.action === "release"
+                              ? "Libertar reserva?"
+                              : "Cancelar quantidade?",
+                      message: `${qty(draft.quantity)} unidade(s). ${draft.reason}`,
+                      confirmLabel: "Confirmar",
+                      tone: draft.action === "cancel" ? "danger" : "warning",
+                    }))
+                  )
+                    return;
+                  await mutate(
+                    `/customer-orders/lines/${draft.line_id}/${draft.action}`,
+                    {
+                      revision: draft.revision,
+                      quantity: draft.quantity,
+                      warehouse_id: draft.warehouse_id || null,
+                      reason: draft.reason,
+                    },
+                  );
+                  await load();
+                  setModal("");
+                } else if (modal === "prepare") {
+                  if (
+                    !(await confirmAction({
+                      title: "Criar encomenda real?",
+                      message:
+                        "Será criada uma encomenda no circuito de compras. Não envia emails nem confirma o fornecedor.",
+                      confirmLabel: "Criar encomenda",
+                    }))
+                  )
+                    return;
+                  await mutate(
+                    `/customer-orders/simulations/${draft.simulation_id}/prepare`,
+                    {
+                      revision: draft.revision,
+                      warehouse_id: draft.warehouse_id,
+                      confirmed: true,
+                      allow_below_minimum: draft.allow_below_minimum,
+                    },
+                  );
+                  await load();
+                  setModal("");
+                } else if (modal === "supplier-confirm") {
+                  await mutate(
+                    `/customer-orders/simulations/${draft.simulation_id}/supplier-confirm`,
+                    {
+                      revision: draft.revision,
+                      quantities: draft.quantities,
+                      note: draft.note,
+                    },
+                  );
+                  await load();
+                  setModal("");
+                } else if (modal === "receive") {
+                  if (
+                    !(await confirmAction({
+                      title: "Confirmar receção física?",
+                      message: draft.receipt_id
+                        ? "A receção existente será distribuída pelos clientes sem repetir a entrada de stock."
+                        : "As quantidades indicadas serão registadas no stock local e reservadas aos pedidos relacionados.",
+                      confirmLabel: "Confirmar receção",
+                    }))
+                  )
+                    return;
+                  await mutate(
+                    `/customer-orders/simulations/${draft.simulation_id}/receive`,
+                    {
+                      revision: draft.revision,
+                      confirmed: true,
+                      receipt_id: draft.receipt_id || null,
+                      document: draft.document,
+                      quantities: draft.quantities,
+                      lots: draft.lots,
+                      expiries: draft.expiries.map((v: string) => v || null),
+                    },
+                  );
+                  await load();
+                  setModal("");
+                } else if (modal === "supplier-email") {
+                  const result = await api(
+                    `/procurement/${draft.procurement_id}/email-preview`,
+                    {
+                      revision: draft.revision,
+                      to: draft.to,
+                      subject: draft.subject,
+                      message: draft.message,
+                    },
+                  );
+                  setMail(result);
+                  await load();
+                  setDraft({ ...draft, revision: draft.revision + 1 });
+                } else if (modal === "contact") {
+                  const result = await mutate(
+                    `/customer-orders/${draft.order_id}/contact`,
+                    {
+                      revision: draft.revision,
+                      channel: draft.channel,
+                      subject: draft.subject,
+                      message: draft.message,
+                    },
+                  );
+                  setContact(result);
+                  setMail(result.email);
+                  await load();
+                  setDraft({ ...draft, revision: draft.revision + 1 });
+                }
+              });
+            }}
+          >
+            <fieldset disabled={busy || !!mail || !!contact}>
+              {modal === "order" && <RecordWorkspace key={draft.id || "new-order"}
+                title={draft.id ? `Editar pedido ${draft.number}` : "Novo pedido de cliente"} subtitle={draft.customer_name || "Encomenda de cliente"} icon={ShoppingCart}
+                actions={<ActionButton type="submit" className="record-save" variant="primary" disabled={busy}><Save size={16} />{draft.id ? "Guardar alterações" : "Guardar"}</ActionButton>}
+                indicators={<><RecordIndicator label="Artigos no pedido" value={draft.lines.length} icon={Package} /><RecordIndicator label="Por associar a artigo" value={draft.lines.filter((l: Row) => !l.article_id).length} tone="warning" icon={CircleAlert} /></>}
+                sections={[
+                  { label: "Geral e contactos", icon: User, content: <RecordGroup title="Cliente e condições do pedido" icon={User}>                  {draft.id && (
+                    <Notice tone="info">
+                      Produtos já reservados, em compra ou entregues mantêm o
+                      artigo e não podem descer abaixo da quantidade em curso.
+                      Retirar um produto cancela-o e fica no histórico.
+                      {draft.closed_lines > 0 &&
+                        ` ${draft.closed_lines} produto(s) entregue(s) ou cancelado(s) não aparecem aqui.`}
+                    </Notice>
+                  )}
+                  <div className="co-grid">
+                    <Field label="Estabelecimento">
+                      <select
+                        required
+                        disabled={!!draft.id}
+                        value={draft.store_id}
+                        onChange={(e) =>
+                          setDraft({ ...draft, store_id: e.target.value })
+                        }
+                      >
+                        {stores.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Cliente existente (opcional)">
+                      <CustomerPicker
+                        customers={catalog.customers}
+                        value={draft.customer_id}
+                        onPick={(c) => {
+                          setDraft({
+                            ...draft,
+                            customer_id: c?.id || "",
+                            ...(c
+                              ? {
+                                  customer_name: c.name,
+                                  phone: c.phone,
+                                  email: c.email,
+                                }
+                              : {}),
+                          });
+                        }}
+                      />
+                    </Field>
+                    {[
+                      ["customer_name", "Nome do cliente", "text"],
+                      ["phone", "Telefone (com indicativo)", "tel"],
+                      ["email", "Email", "email"],
+                      [
+                        "requested_at",
+                        "Data e hora do pedido",
+                        "datetime-local",
+                      ],
+                      ["due_date", "Entrega pretendida", "date"],
+                    ].map(([key, label, type]) => (
+                      <Field key={key} label={label}>
+                        <input
+                          type={type}
+                          required={
+                            key === "customer_name" || key === "requested_at"
+                          }
+                          value={draft[key]}
+                          onChange={(e) =>
+                            setDraft({ ...draft, [key]: e.target.value })
+                          }
+                        />
+                      </Field>
+                    ))}
+                    <Field label="Canal preferido">
+                      <select
+                        value={draft.preferred_channel}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            preferred_channel: e.target.value,
+                          })
+                        }
+                      >
+                        <option value="none">Sem contacto autorizado</option>
+                        <option value="email">Email</option>
+                        <option value="whatsapp">WhatsApp</option>
+                        <option value="phone">Telefone</option>
+                      </select>
+                    </Field>
+                    <Field label="Prioridade">
+                      <select
+                        value={draft.priority}
+                        onChange={(e) =>
+                          setDraft({ ...draft, priority: e.target.value })
+                        }
+                      >
+                        <option value="normal">Normal</option>
+                        <option value="urgent">Urgente</option>
+                      </select>
+                    </Field>
+                  </div>
+                  <label className="doc-check">
+                    <input
+                      type="checkbox"
+                      checked={draft.contact_allowed}
+                      onChange={(e) =>
+                        setDraft({
+                          ...draft,
+                          contact_allowed: e.target.checked,
+                        })
+                      }
+                    />
+                    Cliente autorizou contactos sobre este pedido pelo canal
+                    escolhido
+                  </label>
+                  <Field label="Observações do pedido">
+                    <textarea
+                      value={draft.notes}
+                      onChange={(e) =>
+                        setDraft({ ...draft, notes: e.target.value })
+                      }
+                    />
+                  </Field>
+</RecordGroup> },
+                  { label: "Artigos", icon: Package, content: <RecordGroup title="Artigos solicitados" icon={Package}>                  {draft.lines.map((l: Row, i: number) => (
+                    <fieldset
+                      className={`co-product${l.committed > 0 ? " co-product-locked" : ""}`}
+                      key={l.key}
+                    >
+                      <legend>Produto {i + 1}</legend>
+                      {l.id && (
+                        <div className="co-flags">
+                          <StatusBadge tone={stateTone(l.state)}>{l.state_label}</StatusBadge>
+                          {l.committed > 0 && (
+                            <StatusBadge tone="info">
+                              {qty(l.committed)} em curso: artigo fixo, mínimo {qty(l.committed)}
+                            </StatusBadge>
+                          )}
+                        </div>
+                      )}
+                      <Field label="Artigo existente">
+                        <ArticleSearch
+                          articles={catalog.articles}
+                          disabled={l.committed > 0}
+                          value={l.article_id}
+                          onPick={(a) =>
+                            editLine(
+                              i,
+                              a
+                                ? {
+                                    article_id: a.id,
+                                    description: a.name,
+                                    supplier_id: a.supplier_id || "",
+                                    brand: a.brand || "",
+                                    reference: a.reference || "",
+                                    ean: a.barcodes?.[0] || "",
+                                    sale_price_cents: a.sale_net
+                                      ? Math.round(Number(a.sale_net) * 100)
+                                      : null,
+                                  }
+                                : { article_id: "" },
+                            )
+                          }
+                        />
+                      </Field>
+                      {!l.article_id && (
+                        <p className="footnote">
+                          Produto provisório: preencha a descrição e os dados
+                          conhecidos. Não cria um artigo no ERP.
+                        </p>
+                      )}
+                      {!(l.committed > 0) && <ERPCatalogPicker
+                        canAttach={!!catalog.permissions?.adjust_stock}
+                        onSelect={(a) => {
+                          editLine(i, {
+                            article_id: a.id,
+                            description: a.name,
+                            supplier_id: a.supplier_id || l.supplier_id || "",
+                          });
+                          setCatalog((c) => ({
+                            ...c,
+                            articles: [
+                              ...c.articles.filter(
+                                (item: Row) => item.id !== a.id,
+                              ),
+                              a,
+                            ],
+                          }));
+                        }}
+                      />}
+                      <div className="co-grid">
+                        {[
+                          ["description", "Descrição"],
+                          ["brand", "Marca"],
+                          ["reference", "Referência"],
+                          ["ean", "EAN"],
+                        ].map(([key, label]) => (
+                          <Field key={key} label={label}>
+                            <input
+                              required={key === "description"}
+                              value={l[key]}
+                              onChange={(e) =>
+                                editLine(i, { [key]: e.target.value })
+                              }
+                            />
+                          </Field>
+                        ))}
+                        <Field label={l.committed > 0 ? `Quantidade pedida (mínimo ${qty(l.committed)})` : "Quantidade pedida"}>
+                          <input
+                            required
+                            type="number"
+                            min={l.committed > 0 ? String(l.committed) : "0.000001"}
+                            step="0.000001"
+                            value={l.quantity}
+                            onChange={(e) =>
+                              editLine(i, { quantity: e.target.value })
+                            }
+                          />
+                        </Field>
+                        <Field label="Preço de venda sem IVA (quando conhecido)">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={
+                              l.sale_price_cents === null
+                                ? ""
+                                : l.sale_price_cents / 100
+                            }
+                            onChange={(e) =>
+                              editLine(i, {
+                                sale_price_cents:
+                                  e.target.value === ""
+                                    ? null
+                                    : Math.round(Number(e.target.value) * 100),
+                              })
+                            }
+                          />
+                        </Field>
+                        <SupplierField
+                          label="Fornecedor preferencial"
+                          suppliers={catalog.suppliers}
+                          value={l.supplier_id}
+                          onChange={(id) => editLine(i, { supplier_id: id })}
+                          onEdit={editSupplier}
+                        />
+                        <Field label="Notas do produto">
+                          <input
+                            value={l.notes}
+                            onChange={(e) =>
+                              editLine(i, { notes: e.target.value })
+                            }
+                          />
+                        </Field>
+                      </div>
+                      <ActionButton
+                        type="button"
+                        className="danger"
+                        disabled={draft.lines.length === 1 || l.committed > 0}
+                        title={
+                          l.committed > 0
+                            ? "Em curso: use «Cancelar quantidade» no detalhe do pedido."
+                            : undefined
+                        }
+                        onClick={() =>
+                          setDraft({
+                            ...draft,
+                            lines: draft.lines.filter(
+                              (_: Row, n: number) => n !== i,
+                            ),
+                          })
+                        }
+                      >
+                        Remover produto
+                      </ActionButton>
+                    </fieldset>
+                  ))}
+                  <ActionButton
+                    type="button"
+                    onClick={() =>
+                      setDraft({
+                        ...draft,
+                        lines: [...draft.lines, blankLine()],
+                      })
+                    }
+                  >
+                    Adicionar produto
+                  </ActionButton>
+                  {draft.id ? (
+                    (draft.original_ids || []).some(
+                      (id: string) => !draft.lines.some((l: Row) => l.id === id),
+                    ) && (
+                      <>
+                        <Notice tone="warning">
+                          Os produtos retirados ficam cancelados no pedido.
+                        </Notice>
+                        <Field label="Motivo para retirar produtos">
+                          <input
+                            required
+                            minLength={3}
+                            value={draft.reason}
+                            onChange={(e) =>
+                              setDraft({ ...draft, reason: e.target.value })
+                            }
+                          />
+                        </Field>
+                      </>
+                    )
+                  ) : (
+                    <label className="doc-check">
+                      <input
+                        type="checkbox"
+                        checked={!!draft.allow_duplicate}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            allow_duplicate: e.target.checked,
+                          })
+                        }
+                      />
+                      Confirmo a criação de outro pedido igual, caso já exista
+                      um em aberto
+                    </label>
+                  )}
+</RecordGroup> },
+                ]} />}
+              {(modal === "simulation" || modal === "terms") && (modal === "simulation" ? <RecordWorkspace key={draft.id || "new-simulation"}
+                title={draft.status === "prepared" ? `Editar encomenda ${draft.procurement?.document || ""}` : draft.id ? "Editar simulação" : "Simulador de compra"}
+                subtitle={supplierName(draft.supplier_id)} icon={Truck}
+                actions={<ActionButton type="submit" variant="primary" className="record-save" disabled={busy || !draft.lines.length}><Save size={16} />{draft.status === "prepared" ? "Guardar alterações à encomenda" : "Guardar simulação"}</ActionButton>}
+                indicators={<>
+                  <RecordIndicator label="Total previsto" value={preview?.total_cents == null ? "Por calcular" : money(preview.total_cents, draft.terms.currency)} icon={Calculator} />
+                  <RecordIndicator label="Mínimo da encomenda" value={money(draft.terms.minimum_cents, draft.terms.currency)} icon={ShoppingCart} />
+                  <RecordIndicator label="Falta para portes grátis" value={preview?.shipping_missing_cents == null ? "—" : money(preview.shipping_missing_cents, draft.terms.currency)} tone="warning" icon={Truck} />
+                </>}
+                sections={[
+                  { label: "Simulação e artigos", icon: Calculator, content: <div className="co-simulator-layout">{simulationContent}</div> },
+                  { label: "Clientes associados", icon: User, content: <RecordGroup title="Necessidades dos clientes" icon={User}>{draft.lines.flatMap((l: Row, i: number) => l.allocations.map((a: Row) => { const order = orders.find(o => o.lines.some((line: Row) => line.id === a.line_id)); return <p key={`${i}-${a.line_id}`}>{order?.number || "Pedido associado"} · {order?.customer_name || "Cliente"} · {l.description} · {qty(a.quantity)}</p>; }))}{!draft.lines.some((l: Row) => l.allocations.length) && <p>Sem quantidades atribuídas a pedidos de clientes.</p>}</RecordGroup> },
+                  { label: "Receções e histórico", icon: History, content: <RecordGroup title="Acompanhamento" icon={History}>{draft.procurement ? <><p>Documento: {draft.procurement.document}</p>{draft.procurement.lines?.map((l: Row, i: number) => <p key={i}>{l.description || `Linha ${i + 1}`} · Recebida: {qty(l.received)} · Faturada: {qty(l.invoiced)}</p>)}{draft.procurement.email_history?.map((e: Row) => <p key={e.id}>{day(e.created_at)} · {e.status}</p>)}</> : <p>Rascunho de simulação: ainda sem encomenda real ou receções.</p>}</RecordGroup> },
+                ]} /> : <><h2>Condições comerciais do fornecedor</h2>{simulationContent}</>)}
               {modal === "associate" && (
                 <>
                   <h2>Associar produto e fornecedor</h2>
@@ -3681,7 +3708,7 @@ export default function CustomerOrders({
                   </p>
                 </>
               )}
-              <div className="workspace-savebar">
+              {modal !== "order" && modal !== "simulation" && <div className="workspace-savebar">
                 <ActionButton
                   className="primary"
                   type="submit"
@@ -3703,7 +3730,7 @@ export default function CustomerOrders({
                           ? "Guardar alterações"
                           : "Guardar"}
                 </ActionButton>
-              </div>
+              </div>}
             </fieldset>
           </ManagedForm>
           {mail && (

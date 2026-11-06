@@ -109,6 +109,13 @@ const pageIcons: Record<string, typeof LayoutDashboard> = {
   Relatórios: FileBarChart,
 };
 const taskIcons: Record<string, typeof LayoutDashboard> = {
+  "Visão geral": LayoutDashboard,
+  "Pedidos de clientes": Users,
+  "Planeamento de compras": ClipboardList,
+  "Catálogo de artigos": Package,
+  "Arquivo documental": FolderArchive,
+  "Levantamentos e contactos": Bell,
+  "Histórico": Clock,
   "Simulador de encomendas": Calculator,
   "Necessidades de compra": ClipboardList,
   "Centro de Encomendas": ShoppingCart,
@@ -245,7 +252,7 @@ export default function WorkspaceNavigation({
           {[
             [
               "compras:Necessidades de compra",
-              "Consultar necessidades de compra",
+              "Planear compras e consultar necessidades",
             ],
             [
               "comercial:Encomendas de clientes",

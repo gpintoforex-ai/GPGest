@@ -41,9 +41,10 @@ ARTICLE = {'id':'article','code':'CAF-01','name':'Café de teste','barcodes':['5
 
 
 def run():
+    expect.set_options(timeout=20000)
     with sync_playwright() as p:
         browser=p.chromium.launch()
-        for width in [1440,390]:
+        for width in ([int(sys.argv[1])] if len(sys.argv) > 1 else [1440,390]):
             boot=copy.deepcopy(ns['boot']);boot['company']['id']='isolated-customer-orders'
             store=boot['stores'][0]['id']; orders=[]; simulations=[]; calls=[]; errors=[]; conferences=[]
             conference={'id':'review','revision':0,'status':'reviewed','store_id':store,'simulation_id':'simulation','document_id':'original','document_name':'fatura-original.pdf','supplier_id':'supplier','supplier_name':'Fornecedor UI','processing_status':'processado','file_url':'/api/archive/documents/original/file','cloud_status':'confirmed','cloud_error':'','cloud_id':'cloud-id','jobs':[], 'article_proposals':[], 'erp_operations':[], 'procurement_id':None,'proposal':None,'erp_message':'Wintouch: confirmação explícita e recuperação por consulta.',
@@ -118,12 +119,12 @@ def run():
             if width==390:context.add_init_script("localStorage.setItem('iazela-theme','dark')")
             page=context.new_page();page.route('**/api/**',intercept);page.on('pageerror',lambda e:errors.append(str(e)))
             # O Centro de Encomendas (separador inicial) é um ecrã próprio, com teste próprio: começa nos pedidos.
-            page.goto('http://127.0.0.1:5174/entrar?pagina='+quote('Encomendas de clientes')+'&area.pedidos-clientes=pedidos')
+            page.goto('http://127.0.0.1:5174/?pagina='+quote('Encomendas de clientes')+'&area.pedidos-clientes=pedidos')
             # O Centro de Encomendas (separador inicial) não mostra o cabeçalho da página: espera-se pelo menu.
             navigation=page.get_by_role('navigation',name='Áreas das encomendas de clientes',exact=True)
             expect(navigation).to_be_visible()
             # Menu sem duplicados: o Centro substitui Resumo e Necessidades; Levantamentos é um filtro dos pedidos.
-            labels=['Centro de Encomendas','Pedidos de clientes','Encomendas a fornecedores','Receção e conferência','Condições dos fornecedores','Histórico','Indicadores']
+            labels=['Visão geral','Pedidos de clientes','Planeamento de compras','Receção e conferência','Condições dos fornecedores','Histórico','Indicadores']
             expect(navigation.get_by_role('button')).to_have_count(len(labels))
             for label in labels[1:6]+labels[1:2]:
                 navigation.get_by_role('button',name=label,exact=True).click()
@@ -132,6 +133,7 @@ def run():
             page.get_by_role('button',name='Novo pedido',exact=True).click()
             dialog=page.get_by_role('dialog',name='Novo pedido de cliente',exact=True)
             dialog.get_by_label('Nome do cliente',exact=True).fill('Cliente UI')
+            dialog.get_by_role('tab',name='Artigos',exact=True).click()
             first=dialog.get_by_role('group',name='Produto 1',exact=True)
             first.get_by_role('combobox',name='Pesquisar artigo por código, descrição ou EAN').fill('5600000000000')
             expect(first.get_by_label('Descrição',exact=True)).to_have_value('Café de teste')
@@ -143,19 +145,23 @@ def run():
             dialog.get_by_role('button',name='Guardar',exact=True).click()
             detail=page.get_by_role('dialog',name='Pedido PC-UI',exact=True)
             expect(detail).to_be_visible()
-            expect(detail.get_by_role('heading',name='Produto provisório',exact=True)).to_be_visible()
             expect(detail.get_by_text('Produto sem fornecedor',exact=True)).to_be_visible()
+            detail.get_by_role('tab',name='Artigos e disponibilidade',exact=True).click()
+            expect(detail.get_by_role('heading',name='Produto provisório',exact=True)).to_be_visible()
             # Editar o pedido na mesma janela do registo.
             detail.get_by_role('button',name='Editar pedido',exact=True).click()
             edit=page.get_by_role('dialog',name='Editar pedido de cliente',exact=True)
             expect(edit.get_by_label('Nome do cliente',exact=True)).to_have_value('Cliente UI')
+            edit.get_by_role('tab',name='Artigos',exact=True).click()
             expect(edit.get_by_role('group',name='Produto 2',exact=True).get_by_label('Descrição',exact=True)).to_have_value('Produto provisório')
+            edit.get_by_role('tab',name='Geral e contactos',exact=True).click()
             expect(edit.get_by_label('Estabelecimento',exact=True)).to_be_disabled()
             edit.get_by_label('Telefone (com indicativo)',exact=True).fill('+351910000000')
             edit.get_by_label('Observações do pedido',exact=True).fill('Levantar à tarde')
             edit.screenshot(path=str(ROOT/f'.local/customer-orders-edit-{width}.png'))
             edit.get_by_role('button',name='Guardar alterações',exact=True).click()
             expect(edit).to_be_hidden()
+            detail.get_by_role('tab',name='Geral',exact=True).click()
             expect(detail).to_contain_text('Levantar à tarde')
             expect(detail).to_contain_text('+351910000000')
             detail.get_by_role('button',name='Fechar',exact=True).click()
@@ -171,23 +177,22 @@ def run():
             navigation.get_by_role('button',name='Condições dos fornecedores',exact=True).click()
             page.get_by_role('button',name='Editar fornecedor Fornecedor UI',exact=True).click()
             record=page.get_by_role('dialog',name='Editar fornecedor',exact=True)
-            expect(record.get_by_text('Identificação e contactos',exact=True)).to_be_visible()
+            expect(record.get_by_role('heading',name='Identificação',exact=True)).to_be_visible()
             expect(record.get_by_text('Prazo de pagamento',exact=True)).to_be_hidden()
-            record.get_by_role('tab',name='Condições comerciais',exact=True).click()
+            record.get_by_role('tab',name='Condições de Compra',exact=True).click()
             expect(record.get_by_text('Prazo de pagamento',exact=True)).to_be_visible()
             expect(record.get_by_text('Encomenda mínima aceite (€)',exact=True)).to_be_visible()
             expect(record.get_by_text('Portes grátis a partir de (€)',exact=True)).to_be_visible()
-            expect(record.get_by_text('Avisar quantos meses antes da validade',exact=True)).to_be_hidden()
-            record.get_by_role('tab',name='Validades e devoluções',exact=True).click()
             expect(record.get_by_text('Avisar quantos meses antes da validade',exact=True)).to_be_visible()
             expect(record.get_by_label('Aceita devolução de produtos a acabar a validade')).to_be_visible()
-            expect(record.get_by_text('Encomenda mínima aceite (€)',exact=True)).to_be_hidden()
+            expect(record.get_by_text('Encomenda mínima aceite (€)',exact=True)).to_be_visible()
             record.screenshot(path=str(ROOT/f'.local/customer-orders-supplier-expiry-{width}.png'))
-            expect(record.get_by_text('Identificação e contactos',exact=True)).to_be_hidden()
+            expect(record.get_by_role('heading',name='Identificação',exact=True)).to_be_hidden()
             record.screenshot(path=str(ROOT/f'.local/customer-orders-supplier-terms-{width}.png'))
-            record.get_by_role('button',name='Cancelar',exact=True).click()
+            record.get_by_role('button',name='Fechar',exact=True).click()
             expect(record).to_be_hidden()
-            navigation.get_by_role('button',name='Encomendas a fornecedores',exact=True).click()
+            navigation.get_by_role('button',name='Planeamento de compras',exact=True).click()
+            page.get_by_role('navigation',name='Planeamento de compras',exact=True).get_by_role('button',name='Simulações',exact=True).click()
             # Encomendas necessárias para os pedidos: sem fornecedor primeiro; valor face ao mínimo sem portes.
             needed=page.get_by_role('table',name='encomendas necessárias por fornecedor',exact=True)
             expect(needed.get_by_role('row')).to_have_count(3)

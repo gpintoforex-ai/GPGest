@@ -127,6 +127,10 @@ const InvoiceWorkflowSettings = lazy(() => import("./InvoiceWorkflow").then(modu
 
 
 const requestedPage = () => { const requested = new URLSearchParams(window.location.search).get("pagina") || "Dashboard"; const value = PAGE_ALIASES[requested] || requested; return APP_PAGES.includes(value) ? value : "Dashboard"; };
+const isPlanningNeeds = (search: string) => {
+  const params = new URLSearchParams(search);
+  return params.get("area.pedidos-clientes") === "planeamento" && (params.get("area.planeamento-compras") || "necessidades") === "necessidades";
+};
 type Bootstrap = {
   payment_methods?: Record<string, string>;
   payment_method_catalog?: PaymentMethod[] | null;
@@ -192,7 +196,7 @@ export default function App() {
     else if (new URLSearchParams(locationSearch).get("pagina") !== destination) updateLocationParam("pagina", destination, true);
   }, [locationSearch, cacheScope]);
   useEffect(() => {
-    if (boot && page === "Encomendas de clientes" && requestedPage() === page && (new URLSearchParams(locationSearch).get("area.pedidos-clientes") || "centro") === "centro" && !store && boot.stores[0]) setStore(boot.stores[0].id);
+    if (boot && page === "Encomendas de clientes" && requestedPage() === page && ((new URLSearchParams(locationSearch).get("area.pedidos-clientes") || "centro") === "centro" || isPlanningNeeds(locationSearch)) && !store && boot.stores[0]) setStore(boot.stores[0].id);
   }, [!!boot, page, locationSearch, store]);
   useOverlayFocus(mobile, ".sidebar", () => setMobile(false));
   const pageTitle = page === "Dashboard" ? "Visão geral" : page === "Compras e Stock — Visão geral" ? "Compras e Stock" : page;
@@ -449,12 +453,14 @@ export default function App() {
   const navigationGroups = visibleNavigation(boot.user.role, boot.integration?.mode || '');
   const activeNavigationTarget = activeNavigation(navigationGroups, page, locationSearch);
   const moduleNavigation = activeNavigationTarget?.group;
-  const navigationItems = navigationGroups.flatMap(group => group.items.map(item => ({group,item})));
+  const headerPageTitle = activeNavigationTarget?.target.label || pageTitle;
+  const navigationItems = navigationGroups.flatMap(group => group.items.flatMap(item => [item, ...(item.relatedTargets || [])].map(item => ({group,item}))));
   const searchMenus = navigationItems.map(({group,item}) => ({id:item.id,label:item.label,group:group.label}));
   const navigateTarget = (group:NavigationGroup,item:NavigationItem) => navigatePage(item.page,navigationParams(group,item));
   const navigateSearch = (id:string) => {const target=navigationItems.find(t=>t.item.id===id);return target?navigateTarget(target.group,target.item):navigatePage(id);};
   const activePage = page;
   const orderCenterActive = page === "Encomendas de clientes" && (new URLSearchParams(locationSearch).get("area.pedidos-clientes") || "centro") === "centro";
+  const planningNeedsActive = page === "Encomendas de clientes" && isPlanningNeeds(locationSearch);
   const openModal = async (kind: string, row: Row | null = null) => {
     if (kind === "movement") { setMovementPayment("numerario"); setMovementSession(""); }
     if (kind === "account" || kind === "edit-account") setCustomBank(kind === "edit-account" && !boot.bank_institutions?.some(bank => bank.name === row?.bank));
@@ -518,13 +524,13 @@ export default function App() {
           </ActionButton>
           <div className="header-context">
             <span className="active-company">{boot.company?.name || "IAZELA"}</span><small className="operating-mode-label">{boot.integration?.mode === "integrated" ? `Modo integrado · ${boot.integration.provider} · ${boot.integration.active ? boot.integration.writes ? "Ligação configurada" : "Apenas leitura" : "Ligação desativada"}` : "Modo local autónomo"}</small>
-            <span className="header-page-context">{moduleNavigation?.label || "Gestão"} / {pageTitle}</span>
+            <span className="header-page-context">{moduleNavigation?.label || "Gestão"} / {headerPageTitle}</span>
           </div>
           <Suspense fallback={null}><GlobalSearch key={cacheScope} store={store} menus={searchMenus} onMenu={navigateSearch} onNavigate={navigatePage} /></Suspense>
           <div className="header-tools">
             <TopAlerts key={cacheScope} store={store} page={page} drive={manager} onNavigate={(next, params) => navigatePage(next, params)} />
             <ThemeSettings compact />
-            {!orderCenterActive && <select
+            {!orderCenterActive && !planningNeedsActive && <select
               aria-label="Filtrar loja"
               value={store}
               onChange={event => { void changeWorkspaceStore(event.target.value); }}
@@ -1012,7 +1018,7 @@ export default function App() {
           {page !== "Encomendas de clientes" && PROCUREMENT_PAGES.includes(page) && <Suspense fallback={<p role="status">A carregar compras e stock…</p>}><Procurement key={page} section={page} store={store} stores={boot.stores} categories={boot.categories} navigate={navigatePage} /></Suspense>}
           {page === "Prazos de pagamento" && <TablePage tableKey="payment_terms" context={tableContext} active={activePage === page} />}
           {page === "Tipos de Documentos" && <TablePage tableKey="document_types" context={tableContext} active={activePage === page} />}
-          {(page === "Clientes" || page === "Fornecedores") && <TablePage tableKey={page === "Clientes" ? "customers" : "suppliers"} context={tableContext} active={activePage === page} />}
+          {(page === "Clientes" || page === "Fornecedores") && <TablePage tableKey={page === "Clientes" ? "customers" : "suppliers"} context={tableContext} active={activePage === page} onCommercialTerms={page === "Fornecedores" && manager ? () => { void navigatePage("Encomendas de clientes", { "area.pedidos-clientes": "fornecedores", "menu.area": "entidades", "menu.destino": "fornecedores:condicoes" }); } : undefined} />}
           {page === "Regime de IVA" && manager && <FiscalSettings />}
           {page === "Aparência" && <ThemeSettings />}
           {page === "Configuração inicial" && <CompanySetupPanel boot={boot} reload={reload} hasOpenSession={open.length > 0} onNavigate={navigatePage} onAction={openModal} standalone />}
