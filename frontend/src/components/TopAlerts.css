@@ -23,13 +23,33 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
+/* Toque breve a cada quatro segundos; o contador fica estável e legível. */
+.top-alerts.has-alerts:not([open]) > summary > svg {
+  transform-origin: 50% 15%;
+  animation: top-alerts-ring 4s ease-in-out infinite;
+}
+@keyframes top-alerts-ring {
+  0%, 24%, 100% { transform: rotate(0deg); }
+  4%, 12% { transform: rotate(14deg); }
+  8%, 16% { transform: rotate(-14deg); }
+  20% { transform: rotate(7deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .top-alerts.has-alerts:not([open]) > summary > svg {
+    animation: none;
+  }
+}
 .top-alerts-count {
   position: absolute;
   top: -6px;
   right: -6px;
   min-width: 20px;
   height: 20px;
-  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  background: #24559a;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 700;
@@ -37,19 +57,21 @@
   text-align: center;
   color: #fff;
 }
-.top-alerts-count.is-danger {
+.top-alerts-count > span {
+  padding: 0 5px;
+}
+.top-alerts-count .is-danger {
   background: #b42318;
 }
-.top-alerts-count.is-warning {
+.top-alerts-count .is-warning {
   background: #8a5300;
 }
-/* Ficheiros novos no Google Drive: contador azul à parte; desce quando já há o dos avisos. */
-.top-alerts-count.is-info {
+/* Um único contador: avisos/Drive, com as cores de cada origem. */
+.top-alerts-count .is-info {
   background: #24559a;
 }
-.top-alerts-count.is-second {
-  top: auto;
-  bottom: -6px;
+.top-alerts-count .top-alerts-separator {
+  padding: 0 1px;
 }
 .top-alerts-panel {
   position: absolute;

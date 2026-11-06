@@ -22,7 +22,7 @@ const plural = (count: number, one: string, many: string) =>
 /**
  * Avisos de todos os módulos na barra do menu: total no sino e, ao abrir, cada tema com os primeiros
  * casos e o caminho para os resolver. Atualiza ao mudar de página ou de loja e a cada 2 minutos.
- * Os ficheiros novos no Google Drive (só gestores) têm contador azul próprio, fora do total de avisos.
+ * O contador agrupa avisos/ficheiros do Google Drive (só gestores), mantendo os totais separados.
  */
 export default function TopAlerts({
   store,
@@ -114,7 +114,7 @@ export default function TopAlerts({
   return (
     <details
       ref={root}
-      className={`top-alerts align-${align}`}
+      className={`top-alerts align-${align}${(current?.total || 0) > 0 || driveTotal > 0 ? " has-alerts" : ""}`}
       open={open}
       onToggle={(event) => {
         const box = event.currentTarget.getBoundingClientRect();
@@ -135,18 +135,24 @@ export default function TopAlerts({
     >
       <summary aria-label={label} title="Avisos">
         <Bell size={18} aria-hidden="true" />
-        {current && current.total > 0 && (
+        {((current && current.total > 0) || driveTotal > 0) && (
           <span
-            className={`top-alerts-count ${urgent ? "is-danger" : "is-warning"}`}
+            className="top-alerts-count"
+            aria-hidden="true"
           >
-            {current.total > 99 ? "99+" : current.total}
-          </span>
-        )}
-        {driveTotal > 0 && (
-          <span
-            className={`top-alerts-count is-info${current && current.total > 0 ? " is-second" : ""}`}
-          >
-            {driveTotal > 99 ? "99+" : driveTotal}
+            {current && current.total > 0 && (
+              <span className={urgent ? "is-danger" : "is-warning"}>
+                {current.total > 99 ? "99+" : current.total}
+              </span>
+            )}
+            {current && current.total > 0 && driveTotal > 0 && (
+              <span className="top-alerts-separator">/</span>
+            )}
+            {driveTotal > 0 && (
+              <span className="is-info">
+                {driveTotal > 99 ? "99+" : driveTotal}
+              </span>
+            )}
           </span>
         )}
       </summary>

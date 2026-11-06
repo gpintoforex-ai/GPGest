@@ -19,6 +19,8 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 
 def intercept(route):
+    if urlsplit(route.request.url).path == "/api/drive/pending-imports":
+        return route.fulfill(json={"configured": True, "pending": {"saft": 7, "statement": 3}})
     if urlsplit(route.request.url).path == "/api/alerts":
         return route.fulfill(json=ALERTS)
     return ns["intercept"](route)
@@ -32,8 +34,10 @@ with sync_playwright() as p:
         page.on("pageerror", lambda e: errors.append((e.stack or str(e))[:500]))
         page.route("**/api/**", intercept)
         page.goto("http://127.0.0.1:5174/")
-        bell = page.get_by_label("Avisos: 3")
+        bell = page.get_by_label("Avisos: 3; 10 no Google Drive por importar", exact=True)
         expect(bell).to_be_visible()
+        expect(bell.locator(".top-alerts-count")).to_have_count(1)
+        expect(bell.locator(".top-alerts-count")).to_have_text("3/10")
         bell.click()
         panel = page.get_by_role("region", name="Avisos pendentes")
         expect(panel).to_contain_text("Pedidos de clientes em atraso")

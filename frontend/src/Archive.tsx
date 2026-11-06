@@ -1,8 +1,8 @@
 import { ContextSuggestion } from "./components/OverviewUI";
 import { useRecordHandoff } from "./components/useRecordHandoff";
-import { currentMonthRange } from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
+import { ARCHIVE_PAGES } from "./navigationCatalog";
 import type { ReactNode } from "react";
 import { Archive as ArchiveIcon, CheckCircle2, Download, FileSearch, Link2, RefreshCw, Search, ShieldCheck, Upload, XCircle } from "lucide-react";
 import { api } from "./lib/api";
@@ -17,7 +17,7 @@ import "./Archive.css";
 
 type Row = Record<string, any>;
 type Store = Row;
-export const ARCHIVE_PAGES = ["Arquivo — Visão geral", "Caixa de entrada", "Todos os documentos", "Associações", "Pendências", "Dossiês contabilísticos", "Arquivo — Auditoria", "Arquivo — Configurações"] as const;
+export { ARCHIVE_PAGES } from "./navigationCatalog";
 
 const TYPE_LABELS: Row = { fatura: "Fatura", fatura_recibo: "Fatura-recibo", fatura_simplificada: "Fatura simplificada", nota_credito: "Nota de crédito", nota_debito: "Nota de débito", recibo: "Recibo", comprovativo_pagamento: "Comprovativo de pagamento", extrato_bancario: "Extrato bancário", despesa: "Despesa", documento_caixa: "Documento de caixa", contrato: "Contrato", outro: "Outro", por_classificar: "Por classificar" };
 const STATUS: Row = { pendente: ["A processar", "neutral"], processado: ["Processado", "success"], erro: ["Erro", "danger"], duplicado: ["Duplicado", "warning"] };
@@ -379,14 +379,17 @@ export default function Archive({ page, stores, store, navigate }: { page: strin
   else if (page === "Dossiês contabilísticos") body = <>{header("Dossiês contabilísticos", "Documentos por mês de emissão. O fecho do período e a exportação ou envio continuam em «Entrega à contabilidade».", <ActionButton type="button" onClick={() => navigate("Entrega à contabilidade")}>Abrir Entrega à contabilidade</ActionButton>)}{messages}<Periods navigate={navigate} /></>;
   else if (page === "Arquivo — Auditoria") body = <>{header("Auditoria do arquivo", "Histórico de alterações, decisões e acessos a documentos.")}{messages}<AuditLog open={setOpen} /></>;
   else if (page === "Arquivo — Configurações") body = <>{header("Configurações do arquivo", "Conservação, processamento automático, OCR e verificação de integridade.")}{messages}<Settings admin={!!meta?.is_admin} /></>;
-  return <div className="arc">{body}{detail}</div>;
+  return <div className="arc">{ARCHIVE_PAGES.slice(0, 5).includes(page) && <ModuleTabs label="Arquivo documental" tabs={ARCHIVE_PAGES.slice(0, 5).map(name => ({ id: name, label: name === "Arquivo — Visão geral" ? "Visão geral" : name }))} value={page} onChange={navigate} />}{body}{detail}</div>;
 }
 
+const emptyDocumentFilters = { q: "", doc_type: "", origin: "", status: "", relation: "", start: "", end: "" };
+
 function DocumentList({ inbox, stores, store, canManage, open, onChanged, meta }: { inbox?: boolean; stores: Store[]; store: string; canManage: boolean; open: (id: string) => void; onChanged: () => void; meta?: Row | null }) {
-  const [filters, setFilters] = useState<Row>({ q: "", doc_type: "", origin: "", status: "", relation: "", start: currentMonthRange().from, end: currentMonthRange().to });
+  const [filters, setFilters] = useState<Row>(emptyDocumentFilters);
   const [data, setData] = useState<Row | null>(null), [offset, setOffset] = useState(0), [selected, setSelected] = useState<Set<string>>(new Set()), [error, setError] = useState(""), [notice, setNotice] = useState("");
-  const load = () => {
-    const params = new URLSearchParams({ ...filters, store_id: store, offset: String(offset), limit: "50", ...(inbox ? { inbox: "true" } : {}) });
+  const load = (queryFilters = filters, pageOffset = offset) => {
+    setError("");
+    const params = new URLSearchParams({ ...queryFilters, store_id: store, offset: String(pageOffset), limit: "50", ...(inbox ? { inbox: "true" } : {}) });
     return api("/archive/documents?" + params).then(setData).catch(e => setError((e as Error).message));
   };
   useEffect(() => { void load(); }, [offset, store, inbox]);
@@ -402,7 +405,7 @@ function DocumentList({ inbox, stores, store, canManage, open, onChanged, meta }
     } catch (e) { setError((e as Error).message); }
   }
   return <section className="panel">
-    {!inbox && <ManagedForm className="arc-filters filter-bar" data-ignore-dirty onSubmit={event => { event.preventDefault(); setOffset(0); void load(); }}>
+    {!inbox && <ManagedForm className="arc-filters filter-bar" data-ignore-dirty onSubmit={event => { event.preventDefault(); setOffset(0); setSelected(new Set()); void load(filters, 0); }}>
       <Field label="Pesquisar"><input value={filters.q} placeholder="Nome, entidade, NIF, número…" onChange={e => setFilters({ ...filters, q: e.target.value })} /></Field>
       <Field label="Tipo"><select value={filters.doc_type} onChange={e => setFilters({ ...filters, doc_type: e.target.value })}><option value="">Todos</option>{Object.entries(meta?.types || {}).map(([k, v]) => <option key={k} value={k}>{String(v)}</option>)}</select></Field>
       <Field label="Origem"><select value={filters.origin} onChange={e => setFilters({ ...filters, origin: e.target.value })}><option value="">Todas</option>{Object.entries(meta?.origin_labels || {}).map(([k, v]) => <option key={k} value={k}>{String(v)}</option>)}</select></Field>
@@ -411,6 +414,7 @@ function DocumentList({ inbox, stores, store, canManage, open, onChanged, meta }
       <Field label="Emitido desde"><input type="date" value={filters.start} onChange={e => setFilters({ ...filters, start: e.target.value })} /></Field>
       <Field label="Até"><input type="date" value={filters.end} onChange={e => setFilters({ ...filters, end: e.target.value })} /></Field>
       <ActionButton className="primary"><Search size={16} aria-hidden="true" />Filtrar</ActionButton>
+      <ActionButton type="button" onClick={() => { setFilters(emptyDocumentFilters); setOffset(0); setSelected(new Set()); void load(emptyDocumentFilters, 0); }}>Limpar filtros</ActionButton>
     </ManagedForm>}
     {error && <Notice tone="error">{error}</Notice>}
     {notice && <Notice tone="success">{notice}</Notice>}
