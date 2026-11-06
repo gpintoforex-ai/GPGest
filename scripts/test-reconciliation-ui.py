@@ -5,6 +5,7 @@ import secrets
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,7 +18,8 @@ from sqlalchemy.orm import Session
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / "backend"))
-load_dotenv(root / ".env")
+from app.database_url import load_database_environment
+load_database_environment(root)
 if os.getenv("APP_MODE") != "demonstracao":
     raise RuntimeError("Execute testes apenas na base de demonstração.")
 from app.models import Base, BankAccount, BankTransaction, Register, Store, User, WintouchSaleRecord
@@ -52,7 +54,7 @@ log = (root / ".local" / "reconciliation-ui-backend.log").open("w")
 server = subprocess.Popen([
     str(root / ".venv" / "Scripts" / "python.exe"), "-c",
     "from app import db\nfrom app.main import app\nimport uvicorn\ndb.next_platform_session = db.SessionLocal\ndef core():\n    with db.SessionLocal() as session:\n        yield session\napp.dependency_overrides[db.platform_db] = core\nuvicorn.run(app, host='127.0.0.1', port=8002)",
-], cwd=root / "backend", env={**os.environ, "DATABASE_URL": url.render_as_string(hide_password=False), "APP_MODE": "demonstracao"},
+], cwd=root / "backend", env={**{k: v for k, v in os.environ.items() if k != "GPGEST_ENV_FILE"}, "DATABASE_URL": url.render_as_string(hide_password=False), "APP_MODE": "demonstracao"},
     stdout=log, stderr=log, creationflags=subprocess.CREATE_NO_WINDOW)
 try:
     for _ in range(40):
@@ -67,6 +69,7 @@ try:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
+        page.clock.install(time=datetime(2026, 10, 12, 12, tzinfo=timezone.utc))
         page.route("**/api/**", lambda route: route.fulfill(response=route.fetch(url=route.request.url.replace("127.0.0.1:5174", "127.0.0.1:8002"))))
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
@@ -75,11 +78,13 @@ try:
         page.get_by_label("Email", exact=True).fill("ui@gpgest.local")
         page.get_by_label("Palavra-passe", exact=True).fill(password)
         page.get_by_role("button", name="Entrar", exact=True).click()
-        finance = page.get_by_role("button", name="Bancos", exact=True)
+        finance = page.get_by_role("button", name="Financeiro", exact=True)
         if finance.get_attribute("aria-expanded") != "true":
             finance.click()
-        page.locator("nav[aria-label='Navegação principal']").get_by_role("button", name="Reconciliação automática", exact=True).click()
-        # Por omissão abre nas sugestões; o painel de confirmação só aparece com seleção.
+        page.locator("nav[aria-label='Navegação principal']").get_by_role("button", name="Reconciliação bancária", exact=True).click()
+        expect(page.get_by_role("heading", name="Movimentos do extrato", exact=True)).to_be_visible()
+        page.get_by_role("button", name="Rever propostas", exact=True).click()
+        # A grelha abre por omissão; a confirmação só aparece após revisão da proposta.
         expect(page.get_by_role("heading", name="Sugestões de correspondência")).to_be_visible()
         expect(page.locator(".reconciliation-confirm")).to_have_count(0)
         page.get_by_role("button", name="Selecionar agrupamento").click()

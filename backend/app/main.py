@@ -2404,6 +2404,8 @@ app.include_router(tables_router)
 
 from .bank_balances import router as bank_balances_router
 app.include_router(bank_balances_router)
+from .reconciliation_center import router as reconciliation_center_router
+app.include_router(reconciliation_center_router)
 
 from .rubric_expenses import router as rubric_expenses_router
 app.include_router(rubric_expenses_router)
@@ -2440,5 +2442,8 @@ from .workspace_search import router as workspace_search_router
 app.include_router(workspace_search_router)
 from .assistant import router as assistant_router
 app.include_router(assistant_router)
+from .bank_rules import router as bank_rules_router
+app.include_router(bank_rules_router)
+
 from .webshop import router as webshop_router
 app.include_router(webshop_router)

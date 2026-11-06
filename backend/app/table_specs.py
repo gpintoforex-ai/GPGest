@@ -588,6 +588,8 @@ ENTITY_FIELDS = [
     "payment_method_id",
     "is_customer",
     "is_supplier",
+    "withholding",
+    "withholding_rate",
 ]
 
 
@@ -1255,6 +1257,11 @@ class EntitiesSpec(TableSpec):
         TableField("category_id", "Rubrica", "category", create_required=True, tab="Condições comerciais", span=2),
         TableField("payment_term_id", "Prazo de pagamento", "payment_term", create_required=True, tab="Condições comerciais", span=2),
         TableField("payment_method_id", "Meio de pagamento", "payment_method", create_required=True, tab="Condições comerciais", span=2),
+        TableField("withholding", "Faz retenção na fonte", "boolean", column=False, tab="Condições comerciais",
+                   group="Retenção na fonte"),
+        TableField("withholding_rate", "Taxa de retenção (%)", "decimal", minimum=0, maximum=100, column=False,
+                   tab="Condições comerciais", group="Retenção na fonte", span=2,
+                   help="Percentagem retida sobre o valor sem IVA."),
     ]
 
     def __init__(self, key, title, singular, role):
@@ -1289,7 +1296,10 @@ class EntitiesSpec(TableSpec):
         return self._row(row)
 
     def _row(self, row):
-        return {"id": row["id"], "active": row["active"], "values": {f: row.get(f) for f in ENTITY_FIELDS}, "raw": row}
+        points = row.get("withholding_basis_points")
+        values = {**{f: row.get(f) for f in ENTITY_FIELDS}, "withholding": bool(row.get("withholding")),
+                  "withholding_rate": f"{points / 100:.2f}" if points else None}
+        return {"id": row["id"], "active": row["active"], "values": values, "raw": row}
 
     def store_of(self, row):
         return None
@@ -1411,6 +1421,8 @@ class EntitiesSpec(TableSpec):
             values["is_customer" if self.role == "customer" else "is_supplier"] = True
         if values.get("category_id") and not ctx.db.get(Category, values["category_id"]):
             raise HTTPException(422, "Rubrica não encontrada.")
+        if values.get("withholding") and not (values.get("withholding_rate") and Decimal(values["withholding_rate"]) > 0):
+            raise HTTPException(422, "Indique a taxa de retenção na fonte (%), maior do que zero.")
         from .entities import check_payment_method
 
         check_payment_method(ctx.db, values.get("payment_method_id"), row["values"].get("payment_method_id") if row else None)
@@ -1429,7 +1441,11 @@ class EntitiesSpec(TableSpec):
 
     def _edit(self, values, active):
         values = {k: v for k, v in values.items() if k not in SUPPLY_KEYS}
-        return entity_routes.EntityEdit(**{**values, "active": active, "payment_days": None})
+        rate = values.pop("withholding_rate", None)
+        withholding = bool(values.pop("withholding", False))
+        points = int((Decimal(str(rate)) * 100).to_integral_value()) if withholding and rate not in (None, "") else None
+        return entity_routes.EntityEdit(**{**values, "active": active, "payment_days": None,
+                                           "withholding": withholding, "withholding_basis_points": points})
 
     def create(self, ctx, values):
         saved = entity_routes.create_entity(self._edit(values, True), ctx.user, ctx.db)

@@ -56,6 +56,9 @@ class EntityEdit(Strict):
     payment_term_id: str | None = None
     # Meio de pagamento habitual (tabela «Meios de pagamento»).
     payment_method_id: str | None = Field(default=None, max_length=20)
+    # Retenção na fonte: taxa em centésimas de ponto percentual (2500 = 25 %).
+    withholding: bool = False
+    withholding_basis_points: int | None = Field(default=None, ge=1, le=10000)
 
     @model_validator(mode="after")
     def validate_entity(self):
@@ -69,6 +72,10 @@ class EntityEdit(Strict):
             raise ValueError("Indique nome e tipo de entidade.")
         if self.email and ("@" not in self.email or any(c.isspace() for c in self.email)):
             raise ValueError("Email inválido.")
+        if self.withholding and not self.withholding_basis_points:
+            raise ValueError("Indique a taxa de retenção na fonte (%).")
+        if not self.withholding:
+            self.withholding_basis_points = None
         return self
 
 
@@ -80,6 +87,8 @@ def entity_view(entity, source, key):
         "payment_days": getattr(entity, "payment_days", None),
         "payment_term_id": getattr(entity, "payment_term_id", None),
         "payment_method_id": getattr(entity, "payment_method_id", None),
+        "withholding": bool(getattr(entity, "withholding", False)),
+        "withholding_basis_points": getattr(entity, "withholding_basis_points", None),
         **{
             name: getattr(entity, name, "")
             for name in (
@@ -309,6 +318,8 @@ def list_entities(user=Depends(current), db: Session = Depends(db_session)):
             result[-1]["payment_days"] = overrides[imported.id].payment_days
             result[-1]["payment_term_id"] = overrides[imported.id].payment_term_id
             result[-1]["payment_method_id"] = overrides[imported.id].payment_method_id
+            result[-1]["withholding"] = bool(overrides[imported.id].withholding)
+            result[-1]["withholding_basis_points"] = overrides[imported.id].withholding_basis_points
             local = overrides[imported.id]
             for name in CONTACT_FIELDS:
                 # Contactos alterados na IAZELA (pendentes) ou ainda não recebidos da Wintouch.

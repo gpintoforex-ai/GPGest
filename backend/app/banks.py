@@ -2,8 +2,9 @@
 
 import hashlib
 import json
+import re
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -20,6 +21,7 @@ STATEMENT_MAX_BYTES = 5_000_000
 
 class DriveStatement(Strict):
     drive_id: str = Field(min_length=1, max_length=200)
+    mapping: str = Field(default="", max_length=20000)
 
 
 def bank_accounts(db, bank, lock=False):
@@ -175,7 +177,8 @@ def bank_transactions(account_id: str, user=Depends(current), db: Session = Depe
             BankTransaction.created_at.desc(),
         )
     ).all()
-    return [serial(row) for row in rows]
+    available = dict(db.execute(select(DocumentImport.id, DocumentImport.file_ciphertext.is_not(None)).where(DocumentImport.id.in_({row.import_id for row in rows if row.import_id}))).all())
+    return [{**serial(row), "original_available": bool(available.get(row.import_id))} for row in rows]
 
 
 @router.post("/api/accounts/{account_id}/import-bpi")
@@ -184,6 +187,7 @@ def import_bpi(
     account_id: str,
     confirm: bool = False,
     file: UploadFile = File(...),
+    mapping: str = Form(default=""),
     user=Depends(current),
     db: Session = Depends(db_session),
 ):
@@ -191,7 +195,7 @@ def import_bpi(
     data = file.file.read(STATEMENT_MAX_BYTES + 1)
     if len(data) > STATEMENT_MAX_BYTES:
         raise HTTPException(413, "O limite do ficheiro é 5 MB.")
-    return import_statement(db, user, account, data, file.filename, confirm)
+    return import_statement(db, user, account, data, file.filename, confirm, mapping)
 
 
 @router.get("/api/accounts/{account_id}/drive-statements")
@@ -215,7 +219,7 @@ def import_drive_statement(
     name, _ = download(db, "statement", data.drive_id, STATEMENT_MAX_BYTES, chunks.append)
     # authorized_client pode ter confirmado a sessão ao renovar o token: voltar a bloquear a conta.
     account = statement_account(db, user, account_id)
-    return import_statement(db, user, account, b"".join(chunks), name, confirm)
+    return import_statement(db, user, account, b"".join(chunks), name, confirm, data.mapping)
 
 
 def statement_account(db, user, account_id):
@@ -226,40 +230,95 @@ def statement_account(db, user, account_id):
     return account
 
 
-def import_statement(db, user, account, data, filename, confirm):
+def import_statement(db, user, account, data, filename, confirm, mapping=""):
     from .bpi_import import parse_bpi
     from .viva_import import parse_viva
 
     account_id = account.id
+    details = {}
+    generic = False
+    if len(mapping) > 20000:
+        raise HTTPException(422, "Mapeamento demasiado grande.")
     try:
+        name = (filename or "").lower()
         is_viva = not data.startswith(b"PK")
-        source, rows = parse_viva(data) if is_viva else parse_bpi(data)
+        if mapping or name.endswith((".csv", ".txt", ".xml")):
+            generic = True
+        if not generic:
+            try:
+                source, rows = parse_viva(data) if is_viva else parse_bpi(data)
+            except ValueError:
+                if data.startswith(b"PK"):
+                    generic = True
+                else:
+                    raise
+        if generic:
+            from .statement_import import Mapping, MappingError, parse_mapped, parse_camt
+            from .platform import cipher
+            try:
+                details = parse_camt(data) if name.endswith(".xml") else parse_mapped(data, filename or "", Mapping.model_validate_json(mapping) if mapping else None)
+            except MappingError as exc:
+                if confirm:
+                    raise
+                details = exc.preview
+            if details.get("mapping_required"):
+                if confirm:
+                    raise ValueError("Configure o mapeamento e pré-visualize antes de confirmar.")
+                return {**details, "imported": False}
+            rows = details["rows"]
+            expected_iban = cipher().decrypt(account.iban_ciphertext.encode()).decode() if account.iban_ciphertext else ""
+            for row in rows:
+                identifier = re.sub(r"\s", "", row.pop("mapped_account", "")).upper()
+                currency = row.pop("mapped_currency", "").upper()
+                if currency and currency != account.currency:
+                    raise ValueError("A moeda do extrato não corresponde à conta selecionada.")
+                if identifier and identifier not in {account.id.upper(), expected_iban.upper()}:
+                    raise ValueError("A conta/IBAN do extrato não corresponde à conta selecionada. Configure o IBAN completo para validar ficheiros identificados por IBAN.")
+            source = "mapped:" + account.id
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    format_name = "Viva Wallet" if is_viva else "BPI Net Empresas"
+    format_name = details.get("format") if generic else "Viva Wallet" if is_viva else "BPI Net Empresas"
     existing = db.scalars(
         select(BankTransaction).where(BankTransaction.account_id == account_id)
     ).all()
-    if existing and any(row.source_account != source for row in existing):
+    if not generic and existing and any(row.source_account != source and not row.source_account.startswith("mapped:") for row in existing):
         raise HTTPException(
             409, "Este extrato pertence a outra conta ou banco. Selecione a conta bancária correta."
         )
-    if account.currency != "EUR":
+    if not generic and account.currency != "EUR":
         raise HTTPException(422, "Este formato de extrato só pode ser importado numa conta em euros.")
     seen = {row.fingerprint for row in existing}
+    def economic(row):
+        get = (lambda key: row[key]) if isinstance(row, dict) else (lambda key: getattr(row, key))
+        return (get("movement_date"), get("value_date"), " ".join(get("description").casefold().split()), get("amount_cents"), get("balance_cents"))
+    pool = {}
+    for previous in existing:
+        if previous.balance_cents is not None:
+            pool.setdefault(economic(previous), []).append(previous.reference or "")
     new = []
     for row in rows:
         row["duplicate"] = row["fingerprint"] in seen
+        references = pool.get(economic(row), []) if row["balance_cents"] is not None else []
+        reference = row.get("reference", "")
+        candidate = next((i for i, value in enumerate(references) if value == reference or not value or not reference), None)
+        if candidate is not None:
+            row["duplicate"] = True
+            references.pop(candidate)
         if not row["duplicate"]:
             new.append(row)
             seen.add(row["fingerprint"])
     if confirm:
+        from .reconciliation_center import assert_open
+        from .platform import cipher
+        for row in new:
+            assert_open(db, account.id, row["movement_date"])
         batch = DocumentImport(
             store_id=account.store_id,
             user_id=user.id,
             filename=(filename or ("extrato.xls" if is_viva else "extrato.xlsx")).replace("\\", "/").split("/")[-1][:200],
             fingerprint=hashlib.sha256(data).hexdigest(),
-            source="viva_wallet_xls" if is_viva else "bpi_xlsx",
+            source="bank_mapped" if generic else "viva_wallet_xls" if is_viva else "bpi_xlsx",
+            file_ciphertext=cipher().encrypt(data),
         )
         db.add(batch)
         db.flush()
@@ -275,19 +334,22 @@ def import_statement(db, user, account, data, filename, confirm):
         record(
             db,
             user,
-            "extrato_viva_importado" if is_viva else "extrato_bpi_importado",
+            "extrato_mapeado_importado" if generic else "extrato_viva_importado" if is_viva else "extrato_bpi_importado",
             account_id,
             {"novos": len(new), "duplicados": len(rows) - len(new)},
             account.store_id,
         )
         db.commit()
     return {
+        **{k: v for k, v in details.items() if k != "rows"},
         "rows": rows,
         "new_count": len(new),
         "duplicate_count": len(rows) - len(new),
         "imported": confirm,
+        "import_id": batch.id if confirm else None,
+        "original_url": f"/api/reconciliation/accounts/{account.id}/imports/{batch.id}/original" if confirm and new else None,
         "format": format_name,
-        "warnings": [
+        "warnings": ["Confirme a conta, moeda, separador decimal e ordem das linhas. Os saldos ausentes permanecem desconhecidos; não são substituídos por zero."] if generic else [
             "O extrato Viva Wallet não identifica a conta de origem nem a moeda. "
             "Confirme que pertence à conta selecionada e que os valores estão em euros."
         ] if is_viva else [],

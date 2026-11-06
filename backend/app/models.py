@@ -196,6 +196,40 @@ class BankBookEntry(Base):
     transfer_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     original_id: Mapped[str | None] = mapped_column(ForeignKey("bank_book_entries.id"), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Movimentos sem documento (impostos, vencimentos, encargos): rubrica e funcionário, e se entra
+    # como custo nos mapas de gestão e no Dashboard.
+    category_id: Mapped[str | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    employee_id: Mapped[str | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    counts_as_cost: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class BankRule(Base):
+    """Regra por descrição do extrato: propõe o tratamento de movimentos sem documento.
+
+    Só sugere; o registo é sempre criado pela resolução confirmada (pré-visualização e auditoria).
+    """
+
+    __tablename__ = "bank_rules"
+    __table_args__ = (
+        CheckConstraint("direction IN (-1, 0, 1)", name="bank_rule_direction"),
+        CheckConstraint("kind IN ('receipt', 'payment', 'fee', 'interest', 'transfer')", name="bank_rule_kind"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100))
+    # Texto procurado na descrição (sem acentos nem maiúsculas); conta vazia = todas as contas.
+    pattern: Mapped[str] = mapped_column(String(200))
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("bank_accounts.id"), nullable=True)
+    # 1 = entradas, -1 = saídas, 0 = ambas.
+    direction: Mapped[int] = mapped_column(Integer, default=0)
+    kind: Mapped[str] = mapped_column(String(20))
+    category_id: Mapped[str | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    employee_id: Mapped[str | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    target_account_id: Mapped[str | None] = mapped_column(ForeignKey("bank_accounts.id"), nullable=True)
+    description: Mapped[str] = mapped_column(String(300), default="")
+    counts_as_cost: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
 class BankInstitution(Base):
@@ -216,7 +250,8 @@ class BankTransaction(Base):
     value_date: Mapped[str] = mapped_column(String(10))
     description: Mapped[str] = mapped_column(Text)
     amount_cents: Mapped[int] = mapped_column(BigInteger)
-    balance_cents: Mapped[int] = mapped_column(BigInteger)
+    balance_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reference: Mapped[str] = mapped_column(String(200), default="", server_default="")
     fingerprint: Mapped[str] = mapped_column(String(64))
     source_account: Mapped[str] = mapped_column(String(100))
     exported_at: Mapped[str] = mapped_column(String(19))
@@ -255,6 +290,7 @@ class DocumentImport(Base):
     filename: Mapped[str] = mapped_column(String(200))
     fingerprint: Mapped[str] = mapped_column(String(64))
     source: Mapped[str] = mapped_column(String(30))
+    file_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     # Ficheiro de origem no Google Drive (ID e versão), para detetar reimportações e alterações.
     drive_id: Mapped[str] = mapped_column(String(200), default="", server_default="")
     drive_version: Mapped[str] = mapped_column(String(200), default="", server_default="")
@@ -422,6 +458,20 @@ class ReconciliationLine(Base):
     source: Mapped[str] = mapped_column(String(20))
     source_id: Mapped[str] = mapped_column(String(36), index=True)
     amount_cents: Mapped[int] = mapped_column(BigInteger)
+
+
+class BankReconciliationPeriod(Base):
+    __tablename__ = "bank_reconciliation_periods"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    account_id: Mapped[str] = mapped_column(ForeignKey("bank_accounts.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    start: Mapped[str] = mapped_column(String(10))
+    end: Mapped[str] = mapped_column(String(10))
+    signature: Mapped[str] = mapped_column(String(64))
+    snapshot: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class BillingConference(Base):
@@ -1003,6 +1053,10 @@ class BusinessEntity(Base):
     )
     # Meio de pagamento habitual (identificador da tabela «Meios de pagamento»: base ou pm_…).
     payment_method_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Retenção na fonte (informação local, também em entidades do ERP); taxa em centésimas de ponto
+    # percentual (2500 = 25 %).
+    withholding: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    withholding_basis_points: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class PaymentTerm(Base):

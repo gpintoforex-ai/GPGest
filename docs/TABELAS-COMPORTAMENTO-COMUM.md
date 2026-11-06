@@ -202,6 +202,12 @@ recusa entidades sem exatamente uma morada principal.
   É sincronizado com `PaymentMethodID`/`SupplierPaymentMethodID` através da associação entre os meios da
   Wintouch e os da IAZELA (Configuração inicial). Um meio sem associação única impede o envio, com
   indicação para a rever. Sem meio escolhido, uma entidade da Wintouch segue o meio do ERP.
+- **Retenção na fonte** (migração **0076**): «Faz retenção na fonte» e «Taxa de retenção (%)», na
+  secção de condições.
+  - **Onde se aplica:** clientes e fornecedores.
+  - **Como se guarda:** em centésimas de ponto percentual (`withholding_basis_points`, 2500 = 25 %).
+  - **Validação:** com a retenção ativa, a taxa é obrigatória e tem de ser maior do que zero; sem retenção, a taxa deixa de ficar guardada.
+  - **Wintouch:** é informação só da IAZELA, também nas entidades da Wintouch, e nunca é enviada ao ERP.
 - Ao **criar**, rubrica, prazo e meio de pagamento são obrigatórios (`create_required`); as fichas já
   existentes podem ser editadas sem eles.
 - A janela de criar/editar tem dois separadores (três nos fornecedores): **Dados gerais** (identificação e contactos, localização)

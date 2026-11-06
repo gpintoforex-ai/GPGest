@@ -148,6 +148,34 @@ def term(code="30DIAS", name="30 Dias", **updates):
     return {"values": {"code": code, "name": name, "term_type": "apos", "days": 30, "discount_percent": "0", **updates}}
 
 
+def test_entity_sheet_reference_reads_do_not_create_or_match_by_name(platform, erp):  # noqa: F811
+    client, _ = platform
+    company, _ = company_with_erp(client, "fichas-referencia", writes=False)
+    with tenant(company) as db:
+        local = BusinessEntity(name="Mesmo nome", tax_number="500000000", is_customer=True, is_supplier=True)
+        mirror = WintouchEntity(enterprise_id="demo-erp", external_id="sheet-erp", name="Mesmo nome",
+                                tax_number="500000000", is_supplier=True, is_customer=True)
+        db.add_all([local, mirror])
+        db.commit()
+        local_id, mirror_id = local.id, mirror.id
+    for key in ("customers", "suppliers"):
+        local = client.get(f"/api/tables/{key}/records/local:{local_id}/details")
+        assert local.status_code == 200, local.text
+        assert local.json()["related_entity_id"] == local_id
+        external = client.get(f"/api/tables/{key}/records/wt:{mirror_id}/details")
+        assert external.status_code == 200, external.text
+        assert external.json()["related_entity_id"] is None
+    with tenant(company) as db:
+        assert len(list(db.scalars(select(BusinessEntity)))) == 1
+        linked = BusinessEntity(name="Referência explícita", wintouch_id=mirror_id, is_customer=True, is_supplier=True)
+        db.add(linked)
+        db.commit()
+        linked_id = linked.id
+    for key in ("customers", "suppliers"):
+        assert client.get(f"/api/tables/{key}/records/wt:{mirror_id}/details").json()["related_entity_id"] == linked_id
+    assert not erp.requests, "Consultar a ficha não deve chamar a API ERP."
+
+
 def plan(client, table, direction, **extra):
     response = client.post(f"/api/tables/{table}/sync/plan", json={"direction": direction, "confirm_demo": True, **extra})
     assert response.status_code == 200, response.text
@@ -793,3 +821,32 @@ def test_setup_requires_syncing_erp_tables_and_counts_a_clean_comparison(platfor
     assert all(i["action"] == "ignorar" for i in plan(client, "warehouses", "sync")["items"])
     synced = {t["key"]: t for t in client.get("/api/setup/status").json()["table_sync"]}
     assert synced["warehouses"]["synced_at"] and not synced["suppliers"]["synced_at"]
+
+
+def test_entity_withholding_is_local_and_validated(platform, erp):  # noqa: F811
+    client, _ = platform
+    company, boot = company_with_erp(client, "tabelas-retencao", writes=True)
+    erp.add("entities", ID="e1", Code="F0001", Name="Manuel Gomes Leal", VATNumber="189972971", IsSupplier=True,
+            IsClient=False, Enabled=True)
+    execute(client, "suppliers", plan(client, "suppliers", "import"))
+    row = next(r for r in records(client, "suppliers") if r["description"] == "Manuel Gomes Leal")
+    assert row["values"]["withholding"] is False and not row["values"]["withholding_rate"]
+    fields = {f["name"]: f for f in client.get("/api/tables/suppliers").json()["fields"]}
+    assert fields["withholding"]["type"] == "boolean" and fields["withholding_rate"]["type"] == "decimal"
+    values = {**row["values"], "withholding": True, "withholding_rate": ""}
+    refused = client.post(f"/api/tables/suppliers/records/{row['id']}", json={"values": values})
+    assert refused.status_code == 422 and "taxa de retenção" in refused.json()["detail"]
+    before = len(erp.requests)
+    saved = client.post(f"/api/tables/suppliers/records/{row['id']}", json={"values": {**values, "withholding_rate": "25"}})
+    assert saved.status_code == 200, saved.text
+    # Informação só da IAZELA: nada é enviado à Wintouch.
+    assert not [r for r in erp.requests[before:] if r[0] in ("POST", "PUT", "PATCH")]
+    row = next(r for r in records(client, "suppliers") if r["description"] == "Manuel Gomes Leal")
+    assert row["values"]["withholding"] is True and row["values"]["withholding_rate"] == "25.00"
+    with tenant(company) as db:
+        local = db.scalar(select(BusinessEntity).where(BusinessEntity.wintouch_id.is_not(None)))
+        assert local.withholding is True and local.withholding_basis_points == 2500
+    # Sem retenção, a taxa deixa de ficar guardada.
+    client.post(f"/api/tables/suppliers/records/{row['id']}", json={"values": {**row["values"], "withholding": False}})
+    row = next(r for r in records(client, "suppliers") if r["description"] == "Manuel Gomes Leal")
+    assert row["values"]["withholding"] is False and not row["values"]["withholding_rate"]

@@ -6,9 +6,10 @@ Em **Contabilidade → Mapas de gestão** (gestores e administradores) há dois 
 
 - **Proveitos:** faturação do SAF-T de vendas, líquida de IVA, pela data do documento (documentos normais FT, FS, FR, ND; notas de crédito subtraem).
 - **Custos:** todos os documentos de compra pela data do documento (e-Fatura, compras confirmadas em Compras e registos manuais), uma vez por documento, mais as compras do ERP sem documento correspondente. Inclui faturas do e-Fatura ainda não lançadas.
+- **Custos sem documento:** os pagamentos e comissões do banco registados na reconciliação («Resolver» ou regras por descrição) com rubrica e marcados como «conta como custo», pela data do movimento e sem IVA. Registos corrigidos ficam de fora. Ver [RECONCILIACAO-BANCARIA.md](RECONCILIACAO-BANCARIA.md).
 - **Rubrica de cada custo:** a das linhas da compra lançada; senão, a definida no documento ERP; senão, a do fornecedor; sem nenhuma, *Por classificar*.
 - **Valor do custo:** no regime normal, base tributável mais o IVA não dedutível estimado; nos restantes regimes, o total (o IVA também é custo).
-- Agrupamento por mês ou trimestre, com total de custos e margem (proveitos − custos). Não inclui amortizações, acréscimos e diferimentos nem salários que não estejam registados como compras.
+- Agrupamento por mês ou trimestre, com total de custos e margem (proveitos − custos). Não inclui amortizações, acréscimos e diferimentos, nem custos pagos sem registo com rubrica (por exemplo, vencimentos pagos sem passar pela reconciliação).
 
 ## Mapa de IVA
 

@@ -1156,6 +1156,8 @@ def register_routes(app, current, authorize, scope, record):
                 ):
                     bank = db.get(BankTransaction, link.transaction_id)
                     unlocked(db, [bank.movement_date])
+                    from .reconciliation_center import assert_open
+                    assert_open(db, bank.account_id, bank.movement_date)
                     link.undone_at = now()
                 db.flush()
                 state_after_credit(db, deposit)
@@ -1181,6 +1183,8 @@ def register_routes(app, current, authorize, scope, record):
                         422, "Selecione um movimento e um montante válido da conta de destino."
                     )
                 unlocked(db, [bank.movement_date])
+                from .reconciliation_center import assert_open
+                assert_open(db, bank.account_id, bank.movement_date)
                 from .reconciliation import used
 
                 available_cents = abs(bank.amount_cents) - used(db, "bank", bank.id)

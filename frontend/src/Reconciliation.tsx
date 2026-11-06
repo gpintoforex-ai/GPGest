@@ -1,4 +1,6 @@
-import OperationsOverview from "./components/OperationsOverview";
+import ReconciliationDashboard from "./ReconciliationDashboard";
+import { Landmark } from "lucide-react";
+import BankStatements from "./BankStatements";
 import { currentMonthRange } from "./components/DatePresets";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import DatePresets from "./components/DatePresets";
@@ -32,7 +34,7 @@ const labels: Record<string, string> = {
 function cents(text: string) {
   const value = text.trim().replace(",", ".");
   if (!/^-?\d+(?:\.\d{1,2})?$/.test(value))
-    throw new Error("Indique valores em euros com até duas casas decimais.");
+    throw new Error("Indique valores na moeda selecionada com até duas casas decimais.");
   return Math.round(Number(value) * 100);
 }
 
@@ -42,17 +44,20 @@ export default function Reconciliation({
   manager,
   admin,
   accounts = [],
+  categories = [],
 }: {
   stores: Row[];
   store: string;
   manager: boolean;
   admin: boolean;
   accounts?: Row[];
+  categories?: Row[];
 }) {
   const [tab, setTab] = useWorkspaceTab("reconciliacao", "movimentos", ["movimentos", "faturas", "historico"]);
-  // Vista dentro de «Movimentos»: sugestões automáticas ou seleção manual nas duas colunas. Sem escolha
-  // explícita (URL), abre nas sugestões quando existem e na seleção manual quando não há nenhuma.
-  const [chosenView, setView] = useWorkspaceTab("reconciliacao-modo", "", ["", "sugestoes", "manual"]);
+  // A grelha é a entrada principal; sugestões e seleção manual preservam a revisão explícita.
+  const [chosenView, setView] = useWorkspaceTab("reconciliacao-modo", "", ["", "grelha", "sugestoes", "manual"]);
+  const [importing, setImporting] = useState(false);
+  const [rejecting, setRejecting] = useState<Row | null>(null), [rejectReason, setRejectReason] = useState("");
   const [suggestionLimit, setSuggestionLimit] = useState(10);
   const confirmPanel = useRef<HTMLElement>(null);
   const reviewSelection = () => setTimeout(() => confirmPanel.current?.scrollIntoView({ block: "start", behavior: "smooth" }), 60);
@@ -69,11 +74,11 @@ export default function Reconciliation({
   const [filter, setFilter] = useState("abertos");
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState(currentMonthRange().from);
-  const [to, setTo] = useState(currentMonthRange().to);
+  const [to, setTo] = useState(() => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Lisbon", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()));
   const [account,setAccount]=useState(()=>{const saved=sessionStorage.getItem("iazela-bank-reconciliation-account")||"";return accounts.some(a=>a.id===saved&&(!store||a.store_id===store))?saved:"";});
   const [minimum,setMinimum]=useState(""),[maximum,setMaximum]=useState("");
   const [postCommission,setPostCommission]=useState(false);
-  const [resolution,setResolution]=useState<Row|null>(null);
+  const [resolution,setResolution]=useState<Row|null>(null),[resolutionRule,setResolutionRule]=useState<Row|undefined>();
   const [kind, setKind] = useState("pagamento");
   const [commission, setCommission] = useState("0");
   const [difference, setDifference] = useState("0");
@@ -91,6 +96,11 @@ export default function Reconciliation({
     window.dispatchEvent(new Event("iazela-bank-changed"));
     setLoaded(true);
   }
+  useEffect(() => {
+    const changed = () => { void load().catch(e => setError(e.message)); };
+    window.addEventListener("iazela-reconciliation-rules-changed", changed);
+    return () => window.removeEventListener("iazela-reconciliation-rules-changed", changed);
+  }, []);
   useEffect(() => {
     let active = true;
     api("/reconciliation")
@@ -177,10 +187,11 @@ export default function Reconciliation({
     internals = visible(data.internals);
   // Sugestões cujos movimentos estão todos visíveis com os filtros atuais (critério anterior, calculado uma vez).
   const visibleCards: Row[] = (data.card_suggestions || []).filter((s: Row) => banks.some((b) => b.id === s.bank_id)
+    && (s.bank_lines || []).every((l: Row) => banks.some(b => b.id === l.source_id))
     && s.lines.every((l: Row) => internals.some((i) => i.source === l.source && i.id === l.source_id)));
   const visibleSuggestions: Row[] = data.suggestions.filter((s: Row) => banks.some((b) => b.id === s.bank_id)
     && internals.some((i) => i.source === s.source && i.id === s.source_id));
-  const view = chosenView || (!loaded || visibleCards.length + visibleSuggestions.length ? "sugestoes" : "manual");
+  const view = chosenView || "grelha";
   function toggle(r: Row) {
     setPostCommission(false);
     // Depósitos e transferências próprias são sempre associados como transferência.
@@ -210,15 +221,54 @@ export default function Reconciliation({
       "Sugestão selecionada. Confira os movimentos e os valores antes de confirmar.",
     );
   }
+  // Aceitação em lote a partir da grelha: uma confirmação por proposta, com as mesmas validações e auditoria.
+  async function acceptMany(items: Row[], progress: (done: number) => void) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    const failed: string[] = [];
+    let refused = 0;
+    try {
+      for (const [index, item] of items.entries()) {
+        try {
+          if (item.rule) {
+            // Regra por descrição: o mesmo circuito do «Resolver» (pré-visualização, procura de duplicações e confirmação).
+            const rule = item.rule;
+            const body = { kind: rule.kind, description: rule.description || rule.name, reference: item.row.reference || "",
+              target_account_id: rule.target_account_id, purchase_id: null, category_id: rule.category_id,
+              employee_id: rule.employee_id, counts_as_cost: rule.counts_as_cost, rule: null };
+            const preview = await api(`/bank-transactions/${item.row.id}/resolution-preview`, body);
+            if (preview.candidates.length) throw new Error("existem registos parecidos na aplicação; resolva este movimento individualmente");
+            await api(`/bank-transactions/${item.row.id}/resolve`, { ...body, preview_token: preview.preview_token,
+              request_key: crypto.randomUUID(), confirmed: true, acknowledge_existing: false });
+          } else await api("/reconciliation/confirm", {
+            lines: item.lines,
+            kind: item.kind, commission_cents: 0, difference_cents: 0, reason: "", post_commission: false,
+          });
+        } catch (e) {
+          refused += 1;
+          failed.push(`${item.row.description}: ${e instanceof Error ? e.message : "não foi possível confirmar"}`);
+        }
+        progress(index + 1);
+      }
+    } finally {
+      await load().catch(e => failed.push(e instanceof Error ? e.message : "Não foi possível atualizar a consulta."));
+      setBusy(false);
+    }
+    const accepted = items.length - refused;
+    if (accepted > 0) setNotice(`${accepted} correspondência(s) aceite(s) e registada(s) na auditoria.`);
+    if (failed.length) setError(`Por aceitar: ${failed.join(" · ")}`);
+  }
   function chooseCard(s: Row) {
     setPostCommission(false);
     const next: Record<string, string> = {
       [`bank:${s.bank_id}`]: (s.net_cents / 100).toFixed(2),
     };
+    for (const bank of s.bank_lines || []) next[`bank:${bank.source_id}`] = (bank.amount_cents / 100).toFixed(2);
     for (const l of s.lines)
       next[`${l.source}:${l.source_id}`] = (l.amount_cents / 100).toFixed(2);
     setSelected(next);
-    setKind("cartao");
+    setKind(s.kind || "cartao");
     setView("manual"); reviewSelection();
     setCommission((s.commission_cents / 100).toFixed(2));
     setDifference("0");
@@ -285,7 +335,7 @@ export default function Reconciliation({
                   <strong>Por reconciliar: {money(r.available_cents,r.currency)}</strong>
                   {selected[key(r)] !== undefined && (
                     <label>
-                      Associar (€)
+                      Associar ({r.currency === "EUR" ? "€" : r.currency || "EUR"})
                       <input
                         aria-label={`Valor a associar: ${r.description}`}
                         inputMode="decimal"
@@ -356,22 +406,19 @@ export default function Reconciliation({
     </>
   );
   return (
-    <>
+    <section className="reconciliation-workspace">
       <div className="page-intro">
-        <div>
-          <h1>Reconciliação</h1>
+        <div className="reconciliation-page-heading">
+          <span className="reconciliation-page-icon"><Landmark size={32} /></span><div>
+          <h1>Reconciliação bancária</h1>
           <p>
-            Analise as sugestões automáticas de correspondência entre extratos,
-            movimentos internos e faturas. Cada associação exige confirmação.
+            Confira os extratos com os documentos e movimentos da ZELA e do ERP.
           </p>
+          </div>
         </div>
+        {manager && <ActionButton disabled={busy || !accounts.length} onClick={() => setImporting(true)}>Importar extrato</ActionButton>}
       </div>
-      <AssistantIdentity assistant="nuno" />
-      {tab === "movimentos" && <OperationsOverview source={data} title="Conferência bancária" scope={`${from} a ${to} · conta, loja e filtros atuais · movimentos e propostas são contagens distintas`} loaded={loaded} error={!loaded && !!error} metrics={[
-        {label:"Movimentos do banco",value:banks.length,description:"Linhas do banco incluídas nos filtros",tone:"info"},
-        {label:"Registos internos",value:internals.length,description:"Registos da aplicação incluídos nos filtros",tone:"neutral"},
-        {label:"Propostas para rever",value:visibleCards.length+visibleSuggestions.length,description:"Uma proposta pode conter vários movimentos",tone:"suggestion",onOpen:()=>setView("sugestoes")}
-      ]} suggestion={visibleCards.length+visibleSuggestions.length ? {title:"Rever as correspondências propostas",reason:"Confira conta, moeda, datas e remanescentes. A associação e uma eventual comissão mantêm confirmações distintas.",evidence:[`${visibleSuggestions.length} propostas simples e ${visibleCards.length} propostas de liquidação`,"Só propostas com todos os movimentos visíveis nos filtros atuais."],actionLabel:"Rever sugestões bancárias",onReview:()=>setView("sugestoes")}:null}/>}
+      {(tab !== "movimentos" || view !== "grelha") && <AssistantIdentity assistant="nuno" />}
       <ModuleTabs label="Áreas da reconciliação" value={tab} tabs={[{"id": "movimentos", "label": "Movimentos e sugestões"}, {"id": "faturas", "label": "Faturas e documentos"}, {"id": "historico", "label": "Histórico"}]} onChange={value => { setTab(value); setError(""); }} />
       {error && (
         <Notice className="error" role="alert">
@@ -394,7 +441,7 @@ export default function Reconciliation({
       )}
       {tab === "movimentos" && (
         <>
-          <section className="panel reconciliation-filters">
+          {view !== "grelha" && <section className="panel reconciliation-filters">
             <div className="purchase-filters filter-bar">
               <label>Conta bancária<select aria-label="Conta bancária" value={account} onChange={e=>{setAccount(e.target.value);setSelected({});setLimits({bank:50,internal:50});}}><option value="">Todas as contas</option>{accounts.filter(a=>!store||a.store_id===store).map(a=><option value={a.id} key={a.id}>{a.bank} · {a.name} · {a.currency||"EUR"}</option>)}</select></label>
               <label>Valor absoluto mínimo<input inputMode="decimal" value={minimum} onChange={e=>{setMinimum(e.target.value);setLimits({bank:50,internal:50});}}/></label>
@@ -438,11 +485,29 @@ export default function Reconciliation({
                 />
               </label>
             </div>
-          </section>
-          <ModuleTabs label="Modo de reconciliação" value={view} onChange={setView} tabs={[
+          </section>}
+          {view !== "grelha" && <ModuleTabs label="Modo de reconciliação" value={view} onChange={setView} tabs={[
+            { id: "grelha", label: "Movimentos do extrato" },
             { id: "sugestoes", label: "Sugestões", count: visibleCards.length + visibleSuggestions.length },
             { id: "manual", label: "Seleção manual", count: chosen.length || undefined },
-          ]} />
+          ]} />}
+          {view === "grelha" && <ReconciliationDashboard data={data} accounts={accounts} categories={categories} store={store} account={account} from={from} to={to} loaded={loaded} busy={busy} manager={manager} admin={admin}
+            onAccount={id => { setAccount(id); setSelected({}); }} onDates={(start, end) => { setFrom(start); setTo(end); setSelected({}); }}
+            onSuggestions={() => setView("sugestoes")}
+            onManual={() => setView("manual")}
+            onReviewMultiple={banks => {
+              setSelected(Object.fromEntries(banks.map(bank => [`bank:${bank.id}`, (bank.available_cents / 100).toFixed(2)])));
+              setKind("pagamento"); setCommission("0"); setDifference("0"); setPostCommission(false); setReason(""); setView("manual");
+              setNotice("Movimentos selecionados. Escolha os registos da aplicação e confira os valores antes de confirmar.");
+            }}
+            onAcceptMany={acceptMany}
+            onResolve={(bank, rule) => { setResolutionRule(rule); setResolution(bank); }}
+            onReject={proposal => { setRejecting(proposal); setRejectReason(""); }}
+            onReview={(bank, proposal) => {
+              if (proposal) { if (proposal.lines) chooseCard(proposal); else chooseSuggestion(proposal); return; }
+              setSelected({ [`bank:${bank.id}`]: (bank.available_cents / 100).toFixed(2) });
+              setKind("pagamento"); setCommission("0"); setDifference("0"); setPostCommission(false); setReason(""); setView("manual");
+            }} />}
           {view === "manual" && <>
           <div className="reconciliation-columns">
             <section className="panel">
@@ -495,7 +560,7 @@ export default function Reconciliation({
                   </select>
                 </label>
                 <label>
-                  Comissão (€)
+                  Comissão ({selectedCurrency === "EUR" ? "€" : selectedCurrency})
                   <input
                     inputMode="decimal"
                     disabled={busy}
@@ -504,7 +569,7 @@ export default function Reconciliation({
                   />
                 </label>
                 <label>
-                  Diferença justificada (€)
+                  Diferença justificada ({selectedCurrency === "EUR" ? "€" : selectedCurrency})
                   <input
                     inputMode="decimal"
                     disabled={busy}
@@ -581,16 +646,16 @@ export default function Reconciliation({
               .map((s: Row) => (
                 <div
                   className="setting-row"
-                  key={`card:${s.bank_id}:${s.date}`}
+                  key={s.proposal_id || `card:${s.bank_id}:${s.date}`}
                 >
                   <div>
                     <strong>
-                      Cartão agrupado · {s.date.split("-").reverse().join("/")}
+                      {s.kind === "pagamento" ? "Correspondência agrupada" : "Cartão agrupado"} · {(s.date || all.find(r => r.source === "bank" && r.id === s.bank_id)?.date || "").split("-").reverse().join("/")}
                     </strong>
                     <p>
-                      Bruto: {money(s.gross_cents)} · Comissão sugerida:{" "}
-                      {money(s.commission_cents)} · Líquido:{" "}
-                      {money(s.net_cents)}
+                      Bruto: {money(s.gross_cents, all.find(r => r.source === "bank" && r.id === s.bank_id)?.currency)} · Comissão sugerida:{" "}
+                      {money(s.commission_cents, all.find(r => r.source === "bank" && r.id === s.bank_id)?.currency)} · Líquido:{" "}
+                      {money(s.net_cents, all.find(r => r.source === "bank" && r.id === s.bank_id)?.currency)}
                     </p>
                     <p>
                       Confiança {s.confidence.toLowerCase()} ({s.score}/100)
@@ -623,7 +688,7 @@ export default function Reconciliation({
                         {b.description} ↔ {i.entity || i.description}
                       </strong>
                       <p>
-                        {i.reference} · {money(s.amount_cents)} · Confiança{" "}
+                        {i.reference} · {money(s.amount_cents, b.currency)} · Confiança{" "}
                         {s.confidence.toLowerCase()} ({s.score}/100)
                       </p>
                       <small>{s.reasons.join(" · ")}</small>
@@ -672,14 +737,14 @@ export default function Reconciliation({
                   </strong>
                   <p>
                     {new Date(g.created_at).toLocaleString("pt-PT")} · Comissão:{" "}
-                    {money(g.commission_cents)} · Diferença:{" "}
-                    {money(g.difference_cents)}
+                    {money(g.commission_cents, g.currency)} · Diferença:{" "}
+                    {money(g.difference_cents, g.currency)}
                   </p>
                   <p>{g.reason}</p>
                   <p>Confirmado por: {g.created_by?.name || "Utilizador registado na auditoria"}{g.undone_by&&` · Desfeito por: ${g.undone_by.name}`}</p>
                   <p>
-                    Bruto interno: {money(g.gross_cents)} · Líquido bancário:{" "}
-                    {money(g.net_cents)}
+                    Bruto interno: {money(g.gross_cents, g.currency)} · Líquido bancário:{" "}
+                    {money(g.net_cents, g.currency)}
                   </p>
                   {g.undo_reason && <p>Motivo da reversão: {g.undo_reason}</p>}
                   {g.lines.map((l: Row) => {
@@ -689,7 +754,7 @@ export default function Reconciliation({
                     return (
                       <p key={l.id}>
                         {labels[l.source]}: {r?.description || l.source_id} ·{" "}
-                        {money(l.amount_cents)}
+                        {money(l.amount_cents, r?.currency || g.currency)}
                       </p>
                     );
                   })}
@@ -715,7 +780,9 @@ export default function Reconciliation({
           )}
         </section>
       )}
-      {resolution&&<BankResolution row={resolution} accounts={accounts} onClose={()=>setResolution(null)} onSaved={load} onExisting={candidate=>{
+      {importing && <AppDialog autoOpen className="doc-dialog reconciliation-import-dialog" aria-label="Importar extrato bancário" onRequestClose={() => { setImporting(false); void load().catch(e => setError(e.message)); }}><h2>Importar extrato bancário</h2><BankStatements accounts={account ? accounts.filter(a => a.id === account) : accounts.filter(a => !store || a.store_id === store)} manager={manager} /></AppDialog>}
+      {rejecting && <AppDialog autoOpen busy={busy} aria-label="Rejeitar proposta de reconciliação" onRequestClose={() => setRejecting(null)}><h2>Rejeitar proposta</h2>{error && <Notice tone="error">{error}</Notice>}<p>A rejeição aplica-se apenas a esta proposta e aos seus montantes atuais. O motivo fica na auditoria.</p><label>Motivo da rejeição<input value={rejectReason} maxLength={2000} onChange={e => setRejectReason(e.target.value)} /></label><ActionButton disabled={busy || rejectReason.trim().length < 3} onClick={() => act(async () => { await api("/reconciliation/proposals/reject", { proposal_id: rejecting.proposal_id, reason: rejectReason }); setRejecting(null); await load(); })}>Confirmar rejeição</ActionButton></AppDialog>}
+      {resolution&&<BankResolution key={resolution.id} row={resolution} accounts={accounts} categories={categories} rule={resolutionRule} onClose={()=>{setResolution(null);setResolutionRule(undefined);}} onSaved={load} onExisting={candidate=>{
         const internal=data.internals.find((r:Row)=>(r.source===candidate.source&&r.id===candidate.id)||(r.origin_source===candidate.source&&r.origin_source_id===candidate.id));
         if(!internal){setError("O registo pertence a um circuito próprio, como os depósitos. Consulte o documento de origem para associar o extrato.");setResolution(null);return;}
         const amount=(Math.min(internal.available_cents,resolution.available_cents)/100).toFixed(2);
@@ -767,7 +834,7 @@ export default function Reconciliation({
           </div>
         </AppDialog>
       )}
-    </>
+    </section>
   );
 }
 function centsSafe(value: string) {

@@ -3,7 +3,9 @@
 Proveitos e IVA liquidado: SAF-T de vendas (faturação líquida de IVA; notas de crédito subtraem).
 Custos e IVA suportado: documentos de compra (e-Fatura, Compras e registos manuais), uma vez por
 documento, mais as compras do ERP sem documento correspondente. A rubrica vem das linhas da compra
-lançada, da rubrica definida no documento ERP ou da rubrica do fornecedor.
+lançada, da rubrica definida no documento ERP ou da rubrica do fornecedor. Os custos sem documento
+(impostos, vencimentos, encargos) entram pelos registos bancários aprovados com rubrica e marcados
+como custo, sem IVA.
 
 No regime normal, o custo é a base tributável mais o IVA não dedutível estimado (percentagem de
 dedução da rubrica); nos restantes regimes, o custo é o total. Não substitui a contabilidade nem a
@@ -23,6 +25,8 @@ from .access import authorize, current, scope
 from .db import db_session
 from .invoice_evidence import invoice_key, nif_key
 from .models import (
+    BankAccount,
+    BankBookEntry,
     Category,
     DocumentERPLink,
     ERPDocument,
@@ -118,6 +122,22 @@ def purchase_documents(db, stores, start, end):
     return result
 
 
+def bank_costs(db, stores, start, end):
+    """[(data, id, [(rubrica, valor, 0)])]: pagamentos e comissões do banco sem documento, com rubrica e
+    marcados como custo. Registos corrigidos (com correção posterior) e correções ficam de fora."""
+    corrected = select(BankBookEntry.original_id).where(BankBookEntry.original_id.is_not(None))
+    rows = db.scalars(select(BankBookEntry).join(BankAccount, BankAccount.id == BankBookEntry.account_id).where(
+        BankAccount.store_id.in_(stores), BankBookEntry.counts_as_cost.is_(True), BankBookEntry.category_id.is_not(None),
+        BankBookEntry.amount_cents < 0, BankBookEntry.original_id.is_(None), BankBookEntry.id.not_in(corrected),
+        BankBookEntry.movement_date >= str(start), BankBookEntry.movement_date <= str(end)))
+    return [(row.movement_date, "bank:" + row.id, [(row.category_id, -row.amount_cents, 0)]) for row in rows]
+
+
+def cost_documents(db, stores, start, end):
+    """Documentos de compra e custos sem documento registados no banco."""
+    return [*purchase_documents(db, stores, start, end), *bank_costs(db, stores, start, end)]
+
+
 def deductible(tax, category, percents):
     percent = percents.get(category)
     return tax if percent is None else round(tax * percent / 100)
@@ -152,7 +172,7 @@ def costs_revenues(start: date, end: date, group: str = "month", store_id: str =
             periods.add(key)
             revenue[key] += doc["net_cents"] * doc["direction"]
     costs = defaultdict(lambda: defaultdict(int))
-    for day, _, shares in purchase_documents(db, stores, start, end):
+    for day, _, shares in cost_documents(db, stores, start, end):
         key = period_key(day, group)
         periods.add(key)
         for category, base, tax in shares:
@@ -173,9 +193,9 @@ def costs_revenues(start: date, end: date, group: str = "month", store_id: str =
         "totals": {"revenue_cents": sum(revenue.values()), "costs_cents": sum(total_costs.values()),
                    "margin_cents": sum(revenue.values()) - sum(total_costs.values())},
         "notes": [
-            "Proveitos: faturação SAF-T líquida de IVA, pela data do documento. Custos: todos os documentos de compra pela data do documento, incluindo faturas do e-Fatura ainda não lançadas (com a rubrica do fornecedor).",
+            "Proveitos: faturação SAF-T líquida de IVA, pela data do documento. Custos: todos os documentos de compra pela data do documento, incluindo faturas do e-Fatura ainda não lançadas (com a rubrica do fornecedor), e os custos sem documento (impostos, vencimentos, encargos) registados na reconciliação bancária com rubrica, pela data do movimento.",
             "Custo no regime normal = base tributável + IVA não dedutível estimado; nos restantes regimes, o IVA é custo." if regime else "Configure o regime de IVA para calcular os custos corretamente.",
-            "Mapa de gestão indicativo: não inclui amortizações, acréscimos e diferimentos nem salários não registados como compras.",
+            "Mapa de gestão indicativo: não inclui amortizações, acréscimos e diferimentos, nem custos pagos sem registo com rubrica.",
         ],
     }
 
@@ -194,7 +214,22 @@ def vat_map(start: date, end: date, store_id: str = "", user=Depends(current), d
     categories = {c.id: c for c in db.scalars(select(Category))}
     percents = {c.id: c.vat_deduction_percent for c in categories.values()}
     rows = defaultdict(lambda: {"output_cents": 0, "input_cents": 0, "deductible_cents": 0, "sales_documents": 0, "purchase_documents": 0})
-    for doc in documents(db, stores, str(start), str(end)):
+    from .dashboard import sales_source
+    source, _ = sales_source(db)
+    sales_documents = documents(db, stores, str(start), str(end))
+    if source == "erp":
+        from .models import WintouchSaleRecord
+        sales_documents = []
+        for sale in db.scalars(select(WintouchSaleRecord).where(
+                WintouchSaleRecord.kind == "documento", WintouchSaleRecord.active.is_(True), WintouchSaleRecord.store_id.in_(stores),
+                WintouchSaleRecord.document_date >= str(start), WintouchSaleRecord.document_date <= str(end))):
+            data = json.loads(sale.data)
+            if data.get("document_group") != "vendas" or data.get("cancelled"):
+                continue
+            if data.get("tax_cents") is None:
+                return {"available": False, "message": "Há vendas do ERP sem IVA discriminado. Volte a sincronizar o período."}
+            sales_documents.append({"eligible": True, "date": sale.document_date, "tax_cents": int(data["tax_cents"]), "direction": data.get("direction") or 1})
+    for doc in sales_documents:
         if doc["eligible"]:
             row = rows[period_key(doc["date"], group)]
             row["output_cents"] += doc["tax_cents"] * doc["direction"]
@@ -217,7 +252,7 @@ def vat_map(start: date, end: date, store_id: str = "", user=Depends(current), d
         "rubrics": [{"category_id": c or None, "category_name": categories[c].name if c in categories else "Por classificar",
                      "vat_deduction_percent": percents.get(c), **values} for c, values in sorted(by_rubric.items(), key=lambda item: -item[1]["input_cents"])],
         "notes": [
-            "IVA liquidado: SAF-T de vendas (documentos normais; notas de crédito subtraem). IVA suportado: documentos de compra, incluindo os ainda não lançados.",
+            ("IVA liquidado: vendas Wintouch (anulados excluídos; devoluções subtraem)." if source == "erp" else "IVA liquidado: SAF-T de vendas (documentos normais; notas de crédito subtraem).") + " IVA suportado: documentos de compra, incluindo os ainda não lançados.",
             "Mapa indicativo: a dedutibilidade depende da natureza da despesa e é confirmada pelo contabilista. Não substitui a declaração periódica.",
             "Pequenos retalhistas: o imposto devido segue regras próprias (art. 60.º do CIVA); o saldo apresentado é apenas uma referência." if fiscal["vat_regime"] == "pequenos_retalhistas" else "",
         ],

@@ -129,6 +129,15 @@ def rubric_expenses(start: date, end: date, store_id: str = "", user=Depends(cur
                           "amount_cents": sign * int(payload.get("total_cents") or 0), "rubric_source": "linhas",
                           "allocations": [{"category_id": s["category_id"], "category_name": names.get(s["category_id"]) if s["category_id"] else None,
                                            "amount_cents": sign * int(s["amount_cents"])} for s in split]})
+    # Custos sem documento (impostos, vencimentos, encargos) registados na reconciliação bancária com rubrica.
+    from .management_maps import bank_costs
+    from .models import BankBookEntry
+    for day, identifier, shares in bank_costs(db, stores, start, end):
+        entry = db.get(BankBookEntry, identifier.removeprefix("bank:"))
+        documents.append({"id": identifier, "source": "Banco", "store": "", "document_date": day, "supplier_name": entry.description,
+                          "supplier_nif": "", "document": entry.reference or "", "document_type": "Banco",
+                          "amount_cents": sum(amount for _, amount, _ in shares), "rubric_source": "registo bancário",
+                          "allocations": [{"category_id": c, "category_name": names.get(c), "amount_cents": amount} for c, amount, _ in shares]})
     totals = defaultdict(lambda: {"total_cents": 0, "documents": 0})
     for doc in documents:
         for share in doc["allocations"]:

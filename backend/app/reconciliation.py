@@ -3,6 +3,7 @@
 import json
 import re
 import unicodedata
+from functools import lru_cache
 from datetime import date
 from typing import Literal
 
@@ -65,6 +66,10 @@ class Confirmation(Strict):
 
 class Justification(Strict):
     reason: str = Field(min_length=3, max_length=2000)
+
+
+class ProposalDecision(Justification):
+    proposal_id: str = Field(min_length=64, max_length=64)
 
 
 def used(db, source, source_id):
@@ -196,7 +201,49 @@ def normalized(value):
     )
 
 
-def suggestion(bank, internal):
+# Palavras que não identificam uma entidade: formas jurídicas, termos genéricos e processadores de pagamento.
+GENERIC_TOKENS = {
+    "lda", "limitada", "unipessoal", "sociedade", "comercio", "comercial", "produtos", "portugal",
+    "grupo", "group", "servicos", "service", "distribuicao", "import", "export", "industria",
+    "farmacia", "parafarmacia", "laboratorio", "laboratorios", "natural", "naturais", "saude",
+    "internacional", "nacional", "cliente", "fornecedor", "consumidor", "final",
+    "sepa", "pagserv", "ifthenpay", "hipay", "easypay", "eupago", "paypal", "stripe", "sibs",
+    "multibanco", "transferencia", "pagamento", "compra", "debito", "credito",
+    "trf", "the", "dos", "das", "and",
+}
+
+
+# Textos curtos (descrições, entidades, referências) repetidos em cada par movimento/registo.
+short_normalized = lru_cache(maxsize=50000)(normalized)
+
+
+@lru_cache(maxsize=50000)
+def words_of(text):
+    return frozenset(text.split())
+
+
+@lru_cache(maxsize=20000)
+def iso_day(value):
+    return date.fromisoformat(value)
+
+
+@lru_cache(maxsize=20000)
+def entity_tokens(value):
+    words = short_normalized(value or "").split()
+    tokens = {t for t in words if len(t) >= 4 and t not in GENERIC_TOKENS}
+    # Marcas curtas no início do nome (MEO, EDP, NOS, CTT) também identificam a entidade.
+    if words and len(words[0]) == 3 and words[0].isalpha() and words[0] not in GENERIC_TOKENS:
+        tokens.add(words[0])
+    return frozenset(tokens)
+
+
+def day_label(value):
+    return "/".join(reversed(value.split("-")))
+
+
+def suggestion(bank, internal, tolerance=10, named=frozenset()):
+    """`named`: palavras de entidades conhecidas que a descrição bancária contém. Quando a descrição
+    refere uma entidade e o registo é de outra, não há proposta (salvo referência do documento)."""
     if (
         bank["store_id"] != internal["store_id"]
         or bank["amount_cents"] * internal["amount_cents"] <= 0
@@ -211,24 +258,45 @@ def suggestion(bank, internal):
     elif bank["available_cents"] < internal["available_cents"]:
         score += 10
         reasons.append("Possível pagamento parcial ou comissão")
-    days = abs((date.fromisoformat(bank["date"]) - date.fromisoformat(internal["date"])).days)
-    if days <= 3:
+    elapsed = (iso_day(bank["date"]) - iso_day(internal["date"])).days
+    days = abs(elapsed)
+    # Exclusão rápida antes de comparar textos (a consulta avalia todos os pares movimento/registo).
+    late = days > tolerance
+    if late and not (internal["source"] == "purchase" and 0 < elapsed <= 366
+                     and bank["available_cents"] == internal["available_cents"]):
+        return None
+    description = short_normalized(bank["description"] + " " + bank.get("reference", ""))
+    reference = short_normalized(internal["reference"] or "")
+    entity = short_normalized(internal["entity"] or "")
+    referenced = len(reference) >= 4 and reference in description
+    identified = len(entity) >= 4 and entity in description or bool(entity_tokens(entity) & words_of(description))
+    if late:
+        # Faturas de fornecedor pagas mais tarde: fora da tolerância só com valor igual, entidade ou
+        # referência na descrição e pagamento depois da fatura (até um ano).
+        if not (referenced or identified):
+            return None
+        if elapsed <= 45:
+            score += 10  # Débito direto ou pagamento a 30 dias: a fatura mais recente é a provável.
+        reasons.append(f"Fatura de {day_label(internal['date'])}, paga {elapsed} dias depois")
+    elif days <= 3:
         score += 20
         reasons.append(f"Datas próximas ({days} dias)")
     elif days <= 10:
         score += 10
         reasons.append(f"Datas a {days} dias")
-    description = normalized(bank["description"])
-    reference = normalized(internal["reference"])
-    entity = normalized(internal["entity"])
-    if len(reference) >= 4 and reference in description:
+    if referenced:
         score += 25
         reasons.append("Referência encontrada na descrição bancária")
-    if len(entity) >= 4 and entity in description:
+    if identified:
         score += 20
         reasons.append("Entidade encontrada na descrição bancária")
-    tokens = {t for t in normalized(internal["description"]).split() if len(t) >= 4}
-    if tokens & set(description.split()):
+    elif named and not referenced:
+        return None
+    # Valor diferente só com datas próximas não identifica nada: exige referência ou entidade.
+    if bank["available_cents"] != internal["available_cents"] and not referenced and not identified:
+        return None
+    tokens = {t for t in short_normalized(internal["description"] or "").split() if len(t) >= 4}
+    if tokens & words_of(description):
         score += 10
         reasons.append("Termos comuns na descrição")
     if score < 30:
@@ -244,7 +312,7 @@ def suggestion(bank, internal):
     }
 
 
-def card_suggestions(banks, internals):
+def card_suggestions(banks, internals, rules=None):
     batches = {}
     for item in internals:
         if (
@@ -262,7 +330,8 @@ def card_suggestions(banks, internals):
         for (store, day), batch in batches.items():
             batch=[i for i in batch if (not i.get('account_id') or i.get('account_id')==bank.get('account_id')) and (not i.get('currency') or not bank.get('currency') or i['currency']==bank['currency'])]
             days = (date.fromisoformat(bank["date"]) - date.fromisoformat(day)).days
-            if store != bank["store_id"] or not 0 <= days <= 10 or not 2 <= len(batch) <= 199:
+            tolerance = (rules or {}).get(bank.get("account_id"), {}).get("date_tolerance_days", 10)
+            if store != bank["store_id"] or not 0 <= days <= tolerance or not 2 <= len(batch) <= 199:
                 continue
             gross = sum(i["available_cents"] for i in batch)
             commission = gross - bank["available_cents"]
@@ -308,7 +377,7 @@ def register_routes(app, current, authorize, scope, record, serial):
                 else db.get(BankAccount, row.account_id)
             )
             store, amount, day = account.store_id, row.amount_cents, row.movement_date
-            description, entity, reference, payment = row.description, "", "", ""
+            description, entity, reference, payment = row.description, "", row.reference or "", ""
         elif source == "book":
             if row.original_id or db.scalar(select(BankBookEntry.id).where(BankBookEntry.original_id==row.id)):
                 return None
@@ -317,6 +386,13 @@ def register_routes(app, current, authorize, scope, record, serial):
             description, entity, reference, payment = row.description, "", row.reference, "transferencia"
         elif source == "purchase":
             if row.origin == "efatura_testes":
+                return None
+            from .models import DocumentState, DocumentERPLink, ERPDocument
+            state = db.get(DocumentState, row.id)
+            if state and state.treatment in {"anulado", "anulada", "cancelado", "cancelada"}:
+                return None
+            if db.scalar(select(ERPDocument.id).join(DocumentERPLink, DocumentERPLink.erp_id == ERPDocument.id).where(
+                    DocumentERPLink.purchase_id == row.id, DocumentERPLink.undone_at.is_(None), ERPDocument.cancelled.is_(True)).limit(1)):
                 return None
             store, amount, day = row.store_id, -row.amount_cents, row.document_date
             description, entity, reference, payment = (
@@ -446,6 +522,9 @@ def register_routes(app, current, authorize, scope, record, serial):
         if not projection:
             raise HTTPException(404, "Movimento indisponível para reconciliação.")
         authorize(user, db, projection["store_id"], ["administrador", "gestor"])
+        if source == "bank":
+            from .reconciliation_center import assert_open
+            assert_open(db, row.account_id, row.movement_date)
         return projection
 
     def ignored(db, source, source_id):
@@ -592,10 +671,17 @@ def register_routes(app, current, authorize, scope, record, serial):
                 )
                 (banks if source == "bank" else internals).append(item)
         available = [i for i in internals if i["available_cents"] and i["status"] != "ignorado"]
+        from .reconciliation_center import account_rules
+        rules = {identifier: account_rules(account) for identifier, account in context["accounts"].items()}
         suggestions = []
+        known = set().union(*(entity_tokens(i["entity"]) for i in available))
+        named_by_bank = {}
         for bank in banks:
             if bank["available_cents"] and bank["status"] != "ignorado":
-                matches = [s for i in available if (s := suggestion(bank, i))]
+                named = known & set(normalized(bank["description"] + " " + bank.get("reference", "")).split())
+                # Fora do próprio movimento: o identificador das propostas (e as rejeições) depende dele.
+                named_by_bank[bank["id"]] = named
+                matches = [s for i in available if (s := suggestion(bank, i, rules.get(bank.get("account_id"), {}).get("date_tolerance_days", 10), named))]
                 suggestions.extend(sorted(matches, key=lambda s: -s["score"])[:5])
         details = {}
         undo_reasons = {}
@@ -624,6 +710,9 @@ def register_routes(app, current, authorize, scope, record, serial):
             groups.append(
                 {
                     **serial(r),
+                    "currency": db.scalar(select(BankAccount.currency).join(BankTransaction, BankTransaction.account_id == BankAccount.id).join(
+                        ReconciliationLine, ReconciliationLine.source_id == BankTransaction.id).where(
+                        ReconciliationLine.reconciliation_id == r.id, ReconciliationLine.source == "bank").limit(1)),
                     "gross_cents": details.get(r.id, {}).get("gross_cents", 0),
                     "net_cents": details.get(r.id, {}).get("net_cents", 0),
                     "undo_reason": undo_reasons.get(r.id, ""),
@@ -639,13 +728,38 @@ def register_routes(app, current, authorize, scope, record, serial):
                     ],
                 }
             )
+        from .reconciliation_matching import grouped, classify
+        grouped_banks = [b for b in banks if b["available_cents"] and rules.get(b.get("account_id"), {}).get("grouped_proposals", True)]
+        proposals, limited = grouped(grouped_banks, available, rules, named_by_bank)
+        cards = [p for p in card_suggestions(banks, internals, rules) if any(b["id"] == p["bank_id"] and rules.get(b.get("account_id"), {}).get("grouped_proposals", True) for b in banks)]
+        rejected = set(db.scalars(select(Audit.target_id).where(Audit.store_id.in_(stores), Audit.action == "reconciliacao_proposta_rejeitada")))
+        suggestions, cards = classify(banks, internals, suggestions, [*cards, *proposals], rejected)
+        from .bank_rules import suggestions as rule_suggestions
         return {
+            # Movimentos sem documento (impostos, vencimentos…): tratamento proposto pelas regras por descrição.
+            "rule_suggestions": rule_suggestions(db, user, banks),
             "banks": sorted(banks, key=lambda r: r["date"], reverse=True),
             "internals": sorted(internals, key=lambda r: r["date"], reverse=True),
             "suggestions": suggestions,
-            "card_suggestions": card_suggestions(banks, internals),
+            "card_suggestions": cards,
+            "group_search_limited": limited,
+            "rules": rules,
             "groups": groups,
         }
+
+    @app.post("/api/reconciliation/proposals/reject")
+    def reject_proposal(data: ProposalDecision, user=Depends(current), db: Session = Depends(db_session)):
+        if len(data.reason.strip()) < 3:
+            raise HTTPException(422, "Indique o motivo da rejeição.")
+        current_data = overview(user, db)
+        proposal = next((p for p in [*current_data["suggestions"], *current_data["card_suggestions"]] if p["proposal_id"] == data.proposal_id), None)
+        if not proposal:
+            raise HTTPException(409, "A proposta mudou ou já foi rejeitada. Atualize a consulta.")
+        bank = get_source(db, user, "bank", proposal["bank_id"])
+        record(db, user, "reconciliacao_proposta_rejeitada", data.proposal_id,
+            {"reason": data.reason.strip(), "bank_id": proposal["bank_id"]}, bank["store_id"])
+        db.commit()
+        return {"ok": True}
 
     @app.post("/api/reconciliation/confirm")
     def confirm(data: Confirmation, user=Depends(current), db: Session = Depends(db_session)):
@@ -685,6 +799,10 @@ def register_routes(app, current, authorize, scope, record, serial):
                     409, "O valor excede o montante disponível. Atualize os movimentos."
                 )
         bank_lines = [link for link in ordered if link.source == "bank"]
+        from .reconciliation_center import assert_open
+        for link in bank_lines:
+            item = items[link.source, link.source_id]
+            assert_open(db, item["account_id"], item["date"])
         internal_lines = [link for link in ordered if link.source != "bank"]
         if len({i.get("currency") for i in items.values() if i.get("currency")})>1:
             raise HTTPException(422,"Não pode reconciliar movimentos em moedas diferentes.")
@@ -846,6 +964,10 @@ def register_routes(app, current, authorize, scope, record, serial):
                 .where(MODELS[link.source].id == link.source_id)
                 .with_for_update()
             )
+            if link.source == "bank":
+                from .reconciliation_center import assert_open
+                bank = db.get(BankTransaction, link.source_id)
+                assert_open(db, bank.account_id, bank.movement_date)
         group = db.scalar(
             select(Reconciliation)
             .where(Reconciliation.id == group_id)

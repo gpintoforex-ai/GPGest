@@ -800,7 +800,7 @@ export default function App() {
             </>
           )}
           {page === "Reconciliação automática" && (
-            <Reconciliation accounts={boot.accounts} stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} />
+            <Reconciliation accounts={boot.accounts} categories={boot.categories} stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} />
           )}
           {page === "Conferência documental" && <DocumentControl stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} integration={boot.integration} navigate={navigatePage} />}
           {page === "Despesas por rubrica" && manager && <RubricExpenses stores={boot.stores} store={store} categories={boot.categories} admin={boot.user.role === "administrador"} integrated={integratedMode} />}
