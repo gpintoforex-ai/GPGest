@@ -1835,3 +1835,30 @@ class TableSyncSetting(Base):
     # perguntar, erp ou local.
     conflict_policy: Mapped[str] = mapped_column(String(20), default="perguntar", server_default="perguntar")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class WebshopConnection(Base):
+    __tablename__ = "webshop_connections"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100))
+    store_id: Mapped[str] = mapped_column(ForeignKey("stores.id"))
+    warehouse_id: Mapped[str] = mapped_column(ForeignKey("stock_warehouses.id"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class WebshopOrder(Base):
+    __tablename__ = "webshop_orders"
+    __table_args__ = (UniqueConstraint("connection_id", "external_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("webshop_connections.id"))
+    external_id: Mapped[str] = mapped_column(String(100))
+    order_id: Mapped[str] = mapped_column(ForeignKey("customer_orders.id"), unique=True)
+    sequence: Mapped[int] = mapped_column(BigInteger)
+    digest: Mapped[str] = mapped_column(String(64))
+    content_digest: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

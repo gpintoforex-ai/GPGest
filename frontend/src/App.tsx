@@ -58,6 +58,7 @@ import {
 
 type Row = Record<string, any>;
 import TenantIntegrations from "./TenantIntegrations";
+import WebshopSettings from "./WebshopSettings";
 
 
 
@@ -900,6 +901,7 @@ export default function App() {
                 <TenantIntegrations
                   canManage={boot.user.role === "administrador"}
                 />
+                {manager && <WebshopSettings />}
                 <section className="panel">
                   <Landmark />
                   <h3>Open Banking</h3>
