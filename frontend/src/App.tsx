@@ -87,6 +87,7 @@ import MovementTable from "./MovementTable";
 
 import { CloseButton, confirmFormExit, dismissDisclosure, useOverlayFocus } from "./components/InteractionUI";
 const CashSheetList = lazy(() => import("./CashSheetList"));
+const Assistant = lazy(() => import("./Assistant"));
 const GlobalSearch = lazy(() => import("./components/GlobalSearch"));
 const EmailSettings = lazy(() => import("./EmailSettings"));
 const SaftSales = lazy(() => import("./SaftSales"));
@@ -529,6 +530,7 @@ export default function App() {
           <Suspense fallback={null}><GlobalSearch key={cacheScope} store={store} menus={searchMenus} onMenu={navigateSearch} onNavigate={navigatePage} /></Suspense>
           <div className="header-tools">
             <TopAlerts key={cacheScope} store={store} page={page} drive={manager} onNavigate={(next, params) => navigatePage(next, params)} />
+            {manager && <Suspense fallback={null}><Assistant store={store} /></Suspense>}
             <ThemeSettings compact />
             {!orderCenterActive && !planningNeedsActive && <select
               aria-label="Filtrar loja"

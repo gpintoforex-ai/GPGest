@@ -1,0 +1,35 @@
+/* Assistente IAZELA: painel lateral de conversa (tokens do tema; claro e escuro). */
+.assistant-trigger { display: inline-grid; place-items: center; width: 40px; padding: 0; color: var(--color-accent-ink); }
+.ui-dialog.assistant-dialog {
+  width: min(560px, calc(100vw - 24px));
+  height: calc(100dvh - 24px);
+  margin: 12px 12px 12px auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.assistant-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-right: 44px; }
+.assistant-head h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.15rem; }
+.assistant-head h2 svg { color: var(--color-accent-ink); }
+.assistant-privacy { margin: 0; font-size: .8rem; color: var(--color-muted); }
+.assistant-log { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 10px; padding: 4px 2px; }
+.assistant-suggestions { display: grid; gap: 8px; }
+.assistant-suggestions button { text-align: left; padding: 10px 12px; line-height: 1.35; white-space: normal; }
+.assistant-turn { max-width: 92%; padding: 10px 12px; border-radius: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.assistant-turn p { margin: 0 0 6px; }
+/* Mais específico do que a cor global dos parágrafos (tom secundário): texto legível nas duas bolhas. */
+.assistant-dialog .assistant-turn.is-user p { color: var(--color-surface); }
+.assistant-dialog .assistant-turn.is-assistant p, .assistant-dialog .assistant-turn.is-assistant li { color: var(--color-text); }
+.assistant-turn p:last-child, .assistant-turn ul:last-child { margin-bottom: 0; }
+.assistant-turn ul { margin: 0 0 6px; padding-left: 20px; }
+.assistant-turn.is-user { justify-self: end; background: var(--color-accent-ink); color: var(--color-surface); }
+.assistant-turn.is-assistant { justify-self: start; background: var(--color-subtle); border: 1px solid var(--color-border); color: var(--color-text); }
+.assistant-sources { display: block; margin-top: 6px; font-size: .75rem; color: var(--color-muted); }
+.assistant-thinking { font-style: italic; color: var(--color-muted); }
+.assistant-form { display: flex; gap: 8px; align-items: flex-end; }
+.assistant-form textarea { flex: 1 1 auto; min-width: 0; resize: none; min-height: 44px; max-height: 140px; }
+.assistant-form .ui-action { flex: 0 0 auto; width: 44px; min-height: 44px; padding: 0; display: inline-grid; place-items: center; }
+@media (max-width: 600px) {
+  .ui-dialog.assistant-dialog { width: calc(100vw - 16px); height: calc(100dvh - 16px); margin: 8px; }
+  .assistant-turn { max-width: 100%; }
+}

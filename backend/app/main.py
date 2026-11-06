@@ -2438,5 +2438,7 @@ from .alerts import router as alerts_router
 app.include_router(alerts_router)
 from .workspace_search import router as workspace_search_router
 app.include_router(workspace_search_router)
+from .assistant import router as assistant_router
+app.include_router(assistant_router)
 from .webshop import router as webshop_router
 app.include_router(webshop_router)

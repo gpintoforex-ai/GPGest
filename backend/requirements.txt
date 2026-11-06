@@ -18,3 +18,5 @@ zxing-cpp>=3.1,<4
 pypdfium2>=5,<6
 lxml>=5,<7
 xmlschema>=4,<5
+# Assistente IAZELA (Claude API); só ativo com ANTHROPIC_API_KEY no .env.
+anthropic>=1.17,<2

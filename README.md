@@ -246,3 +246,4 @@ A evolução do [ciclo integrado de encomendas](docs/CICLO-ENCOMENDAS.md) acresc
 
 Loja online Raizpura: [configuração e sincronização de famílias, artigos, stock e encomendas](docs/INTEGRACAO-RAIZPURA.md).
 
+Assistente IAZELA (perguntas sobre validades, reposição, vendas, clientes, IVA e documentos, com a Claude API; só consulta): [ativação, ferramentas e privacidade](docs/ASSISTENTE-IAZELA.md).
