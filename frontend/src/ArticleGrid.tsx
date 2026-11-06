@@ -298,14 +298,14 @@ function RowMenu({ label, children }: { label: string; children: ReactNode }) {
 export default function ArticleGrid({
   catalog,
   revision,
-  onOpen,
+  onOpen: openArticle,
   onDuplicate,
   onPrice,
   onChanged,
 }: {
   catalog: Row;
   revision: number;
-  onOpen: (row: Row, readOnly?: boolean) => void;
+  onOpen: (row: Row, readOnly?: boolean, browse?: import("./articleValues").ArticleBrowse) => void;
   onDuplicate: (row: Row) => void;
   onPrice: (row: Row) => void;
   onChanged: (message: string) => void;
@@ -417,7 +417,7 @@ export default function ArticleGrid({
   }, [search, filters, page, prefs.size, sort, revision, retry]);
   useEffect(() => {
     const params = new URLSearchParams(handoffLocation);
-    if (params.get("pagina") === "Artigos e validades" && params.get("consulta.tipo") === "article") {
+    if (params.get("pagina") === "Artigos e validades" && (params.has("pesquisa.artigos") || params.get("consulta.tipo") === "article")) {
       const text = params.get("pesquisa.artigos") || "";
       setQuery(text); setSearch(text); setFilters(emptyFilters); setPage(1);
     }
@@ -431,6 +431,14 @@ export default function ArticleGrid({
     return true;
   });
   const rows: Row[] = data?.articles || [];
+  function onOpen(row: Row, readOnly = false) {
+    const index = rows.findIndex(item => item.id === row.id);
+    openArticle(row, readOnly, index < 0 ? undefined : {
+      params: { ...filters, q: search, sort: sort.id, direction: sort.direction },
+      position: ((data?.page || page) - 1) * prefs.size + index,
+      total: Number(data?.total ?? rows.length), size: prefs.size,
+    });
+  }
   const visible = columns.filter(
     (c) => !prefs.hidden.includes(c.id) && (!c.cost || rights.view_cost),
   );

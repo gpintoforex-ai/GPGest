@@ -1,4 +1,4 @@
-"""Janela «Editar fornecedor»: três separadores sem deslocação na área útil de um portátil (1366×657). Só fixtures."""
+"""Ficha de fornecedor: separadores comuns e deslocação limitada ao corpo. Só fixtures."""
 
 import sys
 from pathlib import Path
@@ -71,7 +71,7 @@ with sync_playwright() as p:
         dialog = page.get_by_role("dialog", name="Editar fornecedor")
         expect(dialog.get_by_label("Nome", exact=True)).to_have_value("CELEIRO INTEGRAL")
         before = page.evaluate(SIZE)
-        for tab in ["Dados gerais", "Condições comerciais", "Validades e devoluções"]:
+        for tab in ["Geral", "Contactos", "Condições de Compra", "Artigos", "Encomendas", "Compras", "Conta Corrente", "Histórico"]:
             dialog.get_by_role("tab", name=tab).click()
             page.wait_for_timeout(150)
             page.screenshot(path=str(OUT / f"{tab.replace(' ', '-').lower()}-{width}.png"))
@@ -84,4 +84,4 @@ with sync_playwright() as p:
         assert not errors, errors
         page.close()
     browser.close()
-print("Supplier dialog UI passed: three tabs fit without scrolling at 1366×657, 1280×600 and 1440×900. Fixtures only.")
+print("Supplier dialog UI passed: eight tabs with fixed dialog bounds at 1366×657, 1280×600 and 1440×900. Fixtures only.")

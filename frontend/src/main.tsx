@@ -18,6 +18,7 @@ import "./confirmation-windows.css";
 import "./brand-navigation.css";
 import "./menu-current.css";
 import "./components/BusinessUI.css";
+import "./application-visual.css";
 import { initializeTheme } from "./ThemeSettings";
 import { ensureBrowserUUID } from "./lib/browserCrypto";
 ensureBrowserUUID();

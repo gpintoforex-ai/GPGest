@@ -1,4 +1,5 @@
 export type ArticleRow = Record<string, any>;
+export type ArticleBrowse = { params: Record<string, string>; position: number; total: number; size: number };
 export const newArticle: ArticleRow = {
   code: "", name: "", reference: "", barcodes: [], description: "", photo: "",
   internal_notes: "", additional_photos: [], attachments: [],
@@ -9,6 +10,16 @@ export const newArticle: ArticleRow = {
 export const articlePayload = (article: ArticleRow) => Object.fromEntries(
   Object.keys(newArticle).map(key => [key, article[key] ?? newArticle[key]]),
 );
+export function duplicateArticle(article: ArticleRow, articles: ArticleRow[]): ArticleRow {
+  const used = new Set(articles.map(row => String(row.code).trim().toLocaleLowerCase("pt-PT")));
+  const base = `${String(article.code || "ARTIGO").slice(0, 80)}-COPIA`;
+  let code = base, number = 2;
+  while (used.has(code.toLocaleLowerCase("pt-PT"))) code = `${base}-${number++}`;
+  return { ...articlePayload(article), code, barcodes: [], revision: 0,
+    name: `${String(article.name || "Artigo").slice(0, 292)} (cópia)`, active: true,
+    sale_net: article.origin === "ERP" ? article.erp_price_net ?? "0" : article.sale_net ?? "0",
+    vat_rate: article.origin === "ERP" ? article.erp_vat_rate ?? "23" : article.vat_rate ?? "23" };
+}
 export function articlePrices(netValue: unknown, vatValue: unknown, costValue: unknown) {
   const number = (value: unknown) => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? null : Number(value);
   const net = number(netValue), vat = number(vatValue), cost = number(costValue);

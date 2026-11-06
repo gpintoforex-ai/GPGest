@@ -448,7 +448,7 @@ with sync_playwright() as p:
     expect(local_dialog.get_by_label("Venda sem IVA (€)", exact=True)).to_have_value("20")
     local_dialog.get_by_label("Venda sem IVA (€)", exact=True).fill("0")
     expect(local_dialog.get_by_text("O preço sem IVA está abaixo do custo médio.")).to_be_visible()
-    expect(local_dialog.get_by_text("Não calculável", exact=True).first).to_be_visible()
+    expect(local_dialog.get_by_role("tabpanel", name="Preços e rentabilidade", exact=True).get_by_text("Não calculável", exact=True).first).to_be_visible()
     local_dialog.get_by_label("Venda sem IVA (€)", exact=True).fill("10")
     output = Path(".local/stock-ui")
     output.mkdir(parents=True, exist_ok=True)
@@ -464,8 +464,9 @@ with sync_playwright() as p:
         "aria-selected", "true"
     )
     local_dialog.get_by_label("Nível de reposição", exact=True).fill("10")
-    local_dialog.get_by_role("tab", name="Descrição e anexos", exact=True).click()
+    local_dialog.get_by_role("tab", name="Geral", exact=True).click()
     local_dialog.get_by_label("Observações internas", exact=True).fill("Nota interna fictícia")
+    local_dialog.get_by_role("tab", name="Descrição e anexos", exact=True).click()
     local_dialog.get_by_label("Anexos — nome | endereço HTTPS, um por linha", exact=True).fill(
         "Ficha | https://example.com/ficha.pdf"
     )
@@ -519,12 +520,15 @@ with sync_playwright() as p:
     page.get_by_label("Mais ações para Chá da Wintouch", exact=True).click()
     page.get_by_role("menuitem", name="Editar Chá da Wintouch", exact=True).click()
     erp_dialog = page.get_by_role("dialog", name="Editar artigo", exact=True)
+    erp_dialog.get_by_label("Informação da ficha do artigo", exact=True).click()
     expect(erp_dialog.get_by_text("Artigo da Wintouch", exact=False)).to_be_visible()
+    erp_dialog.get_by_label("Informação da ficha do artigo", exact=True).click()
     # Preço da linha 1 da Wintouch: com IVA no resumo.
-    expect(erp_dialog.get_by_label("Resumo do artigo")).to_contain_text("Preço no ERP · Com IVA")
-    expect(erp_dialog.get_by_label("Resumo do artigo")).to_contain_text("5,54 €")
+    expect(erp_dialog.locator(".article-price-overview")).to_contain_text("Preço no ERP · Com IVA")
+    expect(erp_dialog.locator(".article-price-overview")).to_contain_text("5,54 €")
     expect(erp_dialog.get_by_label("Código interno", exact=True)).to_have_attribute("readonly", "")
     erp_dialog.get_by_role("tab", name="Stock", exact=True).click()
+    erp_dialog.get_by_role("tab", name="Geral", exact=True).click()
     expect(erp_dialog.get_by_label("Localização", exact=True)).not_to_have_attribute("readonly", "")
     expect(erp_dialog.get_by_label("Preço sem IVA (€)", exact=True)).to_have_count(0)
     page.keyboard.press("Escape")

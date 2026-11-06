@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from . import db as database
 from .access import authorize, current, record
 from .db import db_session
-from .models import ErpLink, Store, TableSyncSetting, WintouchSyncRun, now
+from .models import BusinessEntity, ErpLink, Store, TableSyncSetting, WintouchSyncRun, now
 from .schemas import Strict
 
 logger = logging.getLogger(__name__)
@@ -779,7 +779,17 @@ def record_details(key: str, record_id: str, user=Depends(current), db: Session 
         "app": spec.blocked_reason(ctx, row, "remove"),
         "both": spec.blocked_reason(ctx, row, "remove_both"),
     }
+    # Stable local identity for related orders; reading a sheet never materializes an ERP entity.
+    related_entity = None
+    if key in ("customers", "suppliers"):
+        if record_id.startswith("local:"):
+            related_entity = db.get(BusinessEntity, record_id.removeprefix("local:"))
+        elif record_id.startswith("wt:"):
+            related_entity = db.scalar(select(BusinessEntity).where(
+                BusinessEntity.wintouch_id == record_id.removeprefix("wt:")))
     return {
+        **({"related_entity_id": related_entity.id if related_entity else None}
+           if key in ("customers", "suppliers") else {}),
         "remove_blocked": blocked,
         "id": record_id,
         "values": spec.values(ctx, row),

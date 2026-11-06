@@ -8,7 +8,7 @@ import InventorySync from "./InventorySync";
 import StockSalesSync from "./StockSalesSync";
 import ArticleForm from "./ArticleForm";
 import ArticleGrid from "./ArticleGrid";
-import { newArticle, articlePayload } from "./articleValues";
+import { newArticle, duplicateArticle } from "./articleValues";
 import DatePresets from "./components/DatePresets";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -263,6 +263,24 @@ export default function Inventory({
     requestKey.current = crypto.randomUUID();
     setError("");
     setDialog({ kind, ...data });
+  }
+  async function moveArticle(delta: number, section: number) {
+    if (!dialog?.articleBrowse || dialog.navigationBusy) return;
+    const browse = dialog.articleBrowse as import("./articleValues").ArticleBrowse;
+    const position = browse.position + delta;
+    if (position < 0 || position >= browse.total) return;
+    if (!await confirmFormExit(document.querySelector(".article-form"))) return;
+    setDialog(previous => previous ? { ...previous, navigationBusy: true, navigationError: "" } : previous);
+    try {
+      const params = new URLSearchParams({ ...browse.params, size: String(browse.size), page: String(Math.floor(position / browse.size) + 1) });
+      const result = await api(`/stock/catalog?${params}`, undefined, { preserveDraft: true });
+      const article = result.articles?.[position % browse.size];
+      if (!article) throw new Error("A lista de artigos mudou. Feche a ficha e atualize a pesquisa para continuar.");
+      await open("article", { article, readOnly: dialog.readOnly, initialSection: section,
+        articleBrowse: { ...browse, position, total: Number(result.total ?? browse.total) } });
+    } catch (e) {
+      setDialog(previous => previous ? { ...previous, navigationBusy: false, navigationError: (e as Error).message } : previous);
+    }
   }
   async function saved(message: string) {
     setDialog(null);
@@ -678,9 +696,9 @@ export default function Inventory({
         </section>
       )}
       {tab === "Artigos" && <ArticleGrid key={catalog.preference_scope || "catalog"} catalog={catalog} revision={revision}
-        onOpen={(article, readOnly = false) => open("article", { article, readOnly })}
+        onOpen={(article, readOnly = false, articleBrowse) => open("article", { article, readOnly, articleBrowse })}
         onPrice={article => open("price", { article })}
-        onDuplicate={article => open("article", { article: { ...articlePayload(article), id: undefined, code: "", barcodes: [], revision: 0, name: `${article.name} (cópia)`, active: true } })}
+        onDuplicate={article => open("article", { article: duplicateArticle(article, catalog.articles) })}
         onChanged={message => { setSuccess(message); setRevision(v => v + 1); }} />}
       {tab === "Movimentos" && (
         <section className="panel">
@@ -1095,6 +1113,7 @@ export default function Inventory({
           key={`${dialog.kind}-${dialog.article?.id || dialog.inventory?.id || dialog.lot?.id || "new"}`}
           className={`modal stock-dialog ${dialog.kind === "article" ? "article-dialog" : ""}`}
           onRequestClose={() => setDialog(null)}
+          busy={!!dialog.navigationBusy}
           aria-labelledby="stock-dialog-title"
         >
           <h2 id="stock-dialog-title">
@@ -1118,7 +1137,23 @@ export default function Inventory({
               initial={dialog.article}
               readOnly={!!dialog.readOnly}
               catalog={catalog}
-              onCancel={() => setDialog(null)}
+              initialSection={dialog.initialSection}
+              recordNavigation={dialog.article?.id ? {
+                position: dialog.articleBrowse?.position, total: dialog.articleBrowse?.total,
+                busy: !!dialog.navigationBusy, error: dialog.navigationError || "", onMove: moveArticle,
+              } : undefined}
+              onDuplicate={async () => {
+                if (!await confirmFormExit(document.querySelector(".article-form"))) return;
+                await open("article", { article: duplicateArticle(dialog.article, catalog.articles) });
+              }}
+              onBarcodeSearch={async code => {
+                if (!await confirmFormExit(document.querySelector(".article-form"))) return;
+                setDialog(null); setTab("Artigos");
+                const url = new URL(window.location.href);
+                url.searchParams.set("pesquisa.artigos", code);
+                window.history.replaceState(null, "", url);
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              }}
               canSync={admin && rights.adjust_stock && catalog.policy.mode === "integrated"}
               onSync={async () => {
                 if (!await confirmFormExit(document.querySelector(".article-form"))) return;

@@ -16,7 +16,13 @@ A ativação/desativação em lote só admite artigos locais, exige confirmaçã
 
 ## Ficha
 
-Separadores (numa só linha; deslizam na horizontal quando não cabem): Geral; Preços e rentabilidade; Stock; Compras e fornecedores; Validades e lotes; Integração ERP; Histórico; Descrição e anexos.
+O cabeçalho fica fixo enquanto o conteúdo da ficha se desloca. «Artigo anterior» e «Artigo seguinte» percorrem a lista filtrada e ordenada do catálogo, incluindo a passagem entre páginas, mostram a posição atual e mantêm o separador e o modo de consulta/edição. Alterações pendentes pedem confirmação antes da troca; uma falha de carregamento conserva o rascunho. Os botões ficam desativados nos limites da lista e durante o carregamento. A navegação está disponível ao abrir um artigo da lista; não aparece em artigos ainda por criar.
+
+As secções aparecem numa navegação lateral à esquerda: Geral, Preços, Stocks, Fornecedores, Vendas, Compras, Documentos, Validades e lotes, Histórico e Integração ERP. Em telemóvel, a navegação fica numa barra compacta. A identificação e a fotografia ocupam o cabeçalho da ficha, com indicadores de stock, mínimo, encomendas, vendas em 30 dias e margem. A câmara abre o campo HTTPS, com **Pesquisar imagens no Google**: abre o Google Imagens num separador novo com a designação e o primeiro código de barras; na imagem escolhida, «Copiar endereço da imagem» e colar o endereço HTTPS na ficha (o mesmo botão existe junto às imagens adicionais, em Documentos). Nada é descarregado nem enviado automaticamente; retirar a associação pede confirmação. Quando a imagem falha, a ficha mostra «Fotografia indisponível».
+
+O «i» no canto superior abre a ajuda e as regras da ficha local/ERP. A navegação suporta setas, Home e End; mantêm-se validação, permissões e proteção de alterações por guardar. Geral agrupa preços, códigos, localização, observações e estados reais. O botão Duplicar prepara uma ficha local com código sugerido (novamente validado na API ao guardar), sem códigos de barras, movimentos ou ligação ERP. A pesquisa por código de barras abre a pesquisa existente do catálogo, protegendo primeiro o rascunho.
+
+Os resumos vêm da API de detalhes existente, sem migração de base de dados. Vendas de 30 dias e evolução usam movimentos de stock autorizados, líquidos de devoluções; não incluem vendas importadas ainda sem movimento de stock aplicado. Em encomenda usa encomendas confirmadas menos receções, pelas regras do Centro de Abastecimento. A ficha atualiza os dados consultados a cada minuto ou pelo botão Atualizar, sem substituir campos em edição. Ver [reformulação e validação](REFORMULACAO-FICHA-ARTIGO.md).
 
 **Preços e rentabilidade:** o preço e o IVA editam-se nos campos (nos artigos locais não se repetem por baixo); custo médio, último custo, margem e markup são calculados quando existem preço e custo válidos; a base de IVA desconhecida dos preços ERP continua a impedir cálculos indevidos. Inclui:
 

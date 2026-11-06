@@ -1180,7 +1180,8 @@ def register_routes(app, current, authorize, scope, audit):
         )
         config = settings(db)
         rights = permissions(user, config)
-        visible = [e for e in entries(db, product.id) if e.warehouse_id in allowed]
+        article_history = entries(db, product.id)
+        visible = [e for e in article_history if e.warehouse_id in allowed]
         unavailable = bool(product.erp_id and stock_from_erp(db))
         quantities = defaultdict(Decimal)
         for entry in visible:
@@ -1359,8 +1360,22 @@ def register_routes(app, current, authorize, scope, audit):
             reverse=True,
         )
 
+        from .article_insights import article_insights
+        insights = article_insights(db, product, visible, authorized_warehouses, rights["view_cost"],
+                                    user.role in ("administrador", "gestor", "consulta"), unavailable)
+        synchronizations = list(db.scalars(select(WintouchSyncRun).where(
+            WintouchSyncRun.enterprise_id == erp.enterprise_id, WintouchSyncRun.resource == "products"
+        ).order_by(WintouchSyncRun.started_at.desc()).limit(5))) if erp else []
+
         return {
             "company_name": db.info.get("company", {}).get("name"),
+            "insights": insights,
+            "current": article_view(db, product, allowed, rights["view_cost"], history=article_history,
+                                    erp=erp, erp_stock=unavailable, available=available),
+            "generated_at": datetime.now(ZoneInfo("Europe/Lisbon")).isoformat(),
+            "synchronizations": [{"id": run.id, "status": run.status, "started_at": run.started_at,
+                                  "finished_at": run.finished_at, "read_count": run.read_count,
+                                  "updated_count": run.updated_count} for run in synchronizations],
             "reserved_quantity": None if unavailable else available["reserved_quantity"],
             "available_quantity": None if unavailable else available["available_quantity"],
             "expiry_alerts": [

@@ -77,6 +77,7 @@ export type TableRow = {
 };
 
 export type RecordDetails = TableRow & {
+  related_entity_id?: string | null;
   dependencies: { label: string; count: number }[];
   managed_fields: string[];
   // Regras próprias da tabela que impedem remover só da aplicação ou de ambos os lados.
