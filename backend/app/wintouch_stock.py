@@ -8,6 +8,12 @@ integrado. Os lotes indicados pela Wintouch são respeitados; sem lote, a saída
 segue o FEFO. Só artigos associados e a partir do início do controlo de stock.
 Movimentos confirmados não se alteram: um documento anulado gera o movimento inverso ligado ao
 original (estorno) e um documento alterado depois de integrado fica em conflito para revisão.
+
+As compras entram no stock só pela receção na aplicação (com lote, validade e custo conferidos): uma compra
+da Wintouch já recebida na aplicação (associação ERP ou mesma identidade NIF + tipo + número) é ignorada
+para o stock; as outras ficam por rever, sem entrada automática, para o mesmo stock não entrar duas vezes.
+Pela mesma razão, uma devolução a fornecedor da Wintouch sem a compra original integrada fica por rever
+(regista-se em «Devolver mercadoria» na aplicação).
 """
 
 import hashlib
@@ -21,7 +27,11 @@ from sqlalchemy import select
 
 from .inventory import MovementInput, document_key, lock, post, require, settings, stock_from_erp
 from .models import (
+    DocumentERPLink,
+    ERPDocument,
     ErpLink,
+    ProcurementDocument,
+    Purchase,
     StockArticle,
     StockEntry,
     StockLot,
@@ -48,6 +58,23 @@ LABELS = {
 }
 # Ordem no mesmo dia: entradas antes das saídas que delas dependem; devoluções no fim.
 ORDER = {"purchase": 0, "entry": 0, "transfer": 1, "sale": 2, "exit": 2, "customer_return": 3, "supplier_return": 3}
+
+
+def received_purchases(db, enterprise):
+    """IDs Wintouch das compras já recebidas na aplicação (receção ou fatura de compras confirmada)."""
+    from .document_identity import identity
+
+    local = set(db.scalars(select(ProcurementDocument.purchase_id).where(
+        ProcurementDocument.kind.in_(("receipt", "invoice")), ProcurementDocument.confirmed_at.is_not(None),
+        ProcurementDocument.status != "cancelled", ProcurementDocument.purchase_id.is_not(None))))
+    if not local:
+        return set()
+    identities = {identity(p.supplier_nif, p.document_type, p.document)
+                  for p in db.scalars(select(Purchase).where(Purchase.id.in_(local)))}
+    linked = set(db.scalars(select(DocumentERPLink.erp_id).where(
+        DocumentERPLink.undone_at.is_(None), DocumentERPLink.purchase_id.in_(local))))
+    return {e.external_id for e in db.scalars(select(ERPDocument).where(ERPDocument.enterprise_id == enterprise))
+            if e.id in linked or identity(e.supplier_nif, e.document_type, e.document) in identities}
 
 
 def operation(document_class, stock_mode):
@@ -109,6 +136,7 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
             .where(WintouchProduct.enterprise_id == enterprise)
         )
     }
+    received = received_purchases(db, enterprise)
     posted = defaultdict(list)  # request_key → movimentos
     by_record = defaultdict(list)  # documento importado → movimentos gerados a partir dele
     for entry in db.scalars(select(StockEntry).where(StockEntry.request_key.like(PREFIX + "%"))):
@@ -127,7 +155,8 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
         if kind:
             records.append((record, detail, kind))
     records.sort(key=lambda item: (item[0].document_date, ORDER[item[2]], item[1].get("occurred_at") or "", item[0].external_id))
-    result = {"applied": 0, "entries": 0, "exits": 0, "transfers": 0, "returns": 0, "reversed": 0, "pending": [], "conflicts": []}
+    result = {"applied": 0, "entries": 0, "exits": 0, "transfers": 0, "returns": 0, "reversed": 0, "pending": [], "conflicts": [],
+              "already_received": []}
     counters = {"sale": "applied", "purchase": "entries", "entry": "entries", "exit": "exits", "transfer": "transfers",
                 "customer_return": "returns", "supplier_return": "returns"}
 
@@ -214,6 +243,13 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
                 if data:
                     attempt(record, document, line, document_class, data, "reversed")
             continue
+        if kind == "purchase" and not own:
+            if detail.get("source_document_id") in received:
+                result["already_received"].append(document)
+            else:
+                pending(document, None, "Compra na Wintouch sem receção na aplicação: as compras entram no stock só pela "
+                        "receção (Compras → Receções de mercadoria), com lote e validade. Registe a receção.")
+            continue
         lines = detail.get("lines")
         if not isinstance(lines, list):
             pending(document, None, "Linhas do documento por ler: repita a importação.")
@@ -268,6 +304,9 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
                     if kind == "customer_return":
                         pending(document, line, "Devolução sem venda original integrada no stock: registe a devolução manualmente.")
                         continue
+                    pending(document, line, "Devolução a fornecedor na Wintouch: registe-a na aplicação («Devolver mercadoria» "
+                            "na receção), para sair o lote recebido.")
+                    continue
                 target = chosen or warehouse_for(line.get("warehouse_id")) or (local[0] if len(local) == 1 else None)
                 if kind == "transfer":
                     origin = warehouse_for(detail.get("source_warehouse_id"))
@@ -297,8 +336,6 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
                     data = MovementInput(**values, kind="adjustment", unit_cost=unit_cost)
                 elif kind == "exit":
                     data = MovementInput(**values, kind="adjustment", adjustment_out=True)
-                else:  # supplier_return sem compra original integrada: sai ao custo médio.
-                    data = MovementInput(**values, kind="supplier_return")
                 attempt(record, document, line, document_class, data, counters[kind])
             except ValidationError:
                 pending(document, line, "Valores da linha fora dos limites aceites pelo stock (quantidade ou valor): registe o movimento manualmente.")
@@ -306,6 +343,8 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
         "status": "aplicado",
         "control_start": config["control_start"],
         **{k: result[k] for k in ("applied", "entries", "exits", "transfers", "returns", "reversed")},
+        "already_received_count": len(result["already_received"]),
+        "already_received": result["already_received"][:50],
         "pending_count": len(result["pending"]),
         "pending": result["pending"][:50],
         "conflict_count": len(result["conflicts"]),

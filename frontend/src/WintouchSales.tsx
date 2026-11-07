@@ -25,7 +25,8 @@ export function StockOutcome({ stock }: { stock: Row }) {
     <Notice className={stock.pending_count || stock.conflict_count ? "warning" : "success"} role="status">
       <strong>Stock:</strong> {[
         `${stock.applied} saída(s) de venda`,
-        stock.entries ? `${stock.entries} entrada(s) (compras e entradas de stock)` : "",
+        stock.entries ? `${stock.entries} entrada(s) de stock` : "",
+        stock.already_received_count ? `${stock.already_received_count} compra(s) já recebida(s) na aplicação (sem nova entrada)` : "",
         stock.exits ? `${stock.exits} saída(s) de stock` : "",
         stock.transfers ? `${stock.transfers} transferência(s)` : "",
         `${stock.returns} devolução(ões)`,

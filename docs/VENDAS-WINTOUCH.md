@@ -37,8 +37,8 @@ importou. O sentido vem do tipo de documento (`StockMode`: entra, sai ou transfe
 |---|---|
 | Faturas, faturas-recibo, FS, guias a cliente, pedidos, amostras, contas de mesa (3, 5, 7, 19, 27, 39, 40) | Venda (saída, com a venda líquida) |
 | Notas de crédito e devoluções de cliente (4, 6, 8, 28) | Devolução de cliente, ao custo da venda original |
-| Faturas de compra e guias de entrada (32, 34, 36) | Compra (entrada, custo = valor líquido ÷ quantidade) |
-| Devoluções e notas de crédito de fornecedor (33, 35, 37) | Devolução a fornecedor |
+| Faturas de compra e guias de entrada (32, 34, 36) | **Nenhum**: as compras entram no stock só pela receção na aplicação (ver abaixo) |
+| Devoluções e notas de crédito de fornecedor (33, 35, 37) | Devolução a fornecedor, só quando a compra original foi integrada; senão, por rever |
 | Entradas de stock (10) e outros tipos que entram | Acerto de entrada, com o custo da linha |
 | Saídas de stock (11), consumo interno (20) e outros que saem | Acerto de saída |
 | Transferências (12) | Transferência entre os armazéns associados ao ERP |
@@ -55,8 +55,13 @@ entradas são aplicadas antes das saídas.
   linha (Tabelas → Armazéns) ou o único armazém ativo da loja.
 - **Devoluções:** a nota de crédito volta ao stock ao custo e no lote da venda original, quando a
   linha de origem (`Sources`) já foi integrada; caso contrário fica listada para registo manual. A
-  devolução a fornecedor liga-se à compra original quando esta foi integrada; sem ela sai ao custo
-  médio.
+  devolução a fornecedor liga-se à compra original quando esta foi integrada; sem ela fica por rever
+  (regista-se em «Devolver mercadoria» na receção da aplicação, para sair o lote recebido).
+- **Compras:** a entrada de stock é a receção de mercadoria na aplicação, com lote, validade e custo
+  conferidos; as vendas da Wintouch são as saídas. Uma compra da Wintouch já recebida na aplicação
+  (associação ao documento ERP, ou o mesmo NIF, tipo e número) é ignorada e contada como «já recebida»;
+  as outras ficam por rever, sem entrada automática, para o mesmo stock não entrar duas vezes. As
+  compras da Wintouch integradas antes desta regra mantêm-se (e os seus estornos e devoluções).
 - **Uma vez por linha:** a identidade é a linha da Wintouch; repetir o período não volta a
   movimentar o stock (as linhas só são relidas quando a versão do documento muda). Uma venda manual do mesmo documento e artigo impede a integração (e vice-versa).
 - **Documento anulado depois de integrado:** movimento inverso ligado a cada movimento (estorno: a

@@ -1,7 +1,7 @@
 """Saídas de stock das vendas Wintouch importadas: só API simulada e esquema temporário."""
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal as D
 from uuid import uuid4
 
@@ -11,6 +11,11 @@ from app.db import db_session
 from app.main import app
 from app.models import (
     Audit,
+    BusinessEntity,
+    DocumentERPLink,
+    ERPDocument,
+    ProcurementDocument,
+    Purchase,
     Register,
     StockArticle,
     StockEntry,
@@ -367,24 +372,38 @@ def test_stock_entry_with_wintouch_lot_then_sale_from_that_lot(case):
     assert all(row["kind"] != "stock" for row in client.get("/api/integrations/wintouch/sales").json())
 
 
-def test_purchase_exit_transfer_and_cancelled_purchase(case):
+def test_purchases_enter_stock_only_by_the_app_receipt_exit_and_transfer(case):
+    """Compras da Wintouch não dão entrada de stock: a entrada é a receção na aplicação (com lote e validade).
+    Uma compra já recebida na aplicação é ignorada; as outras ficam por rever. Saídas e transferências seguem."""
     client, factory, store, warehouse, articles, data, calls = case
     stock_types(data)
     stock_document(data, "cmp-1", "cmp", 1, [line("dim-c", "prod-a", quantity="3", gross="9.00")], date="2026-10-01T07:00:00")
     stock_document(data, "out-1", "out", 1, [line("dim-s", "prod-a", quantity="1", gross="0")], date="2026-10-01T12:00:00")
     stock_document(data, "trans-1", "trans", 1, [line("dim-t", "prod-a", quantity="1")], date="2026-10-01T13:00:00", SourceWarehouseID="outro")
     stock = run(case)
-    assert stock["entries"] == 1 and stock["exits"] == 1 and stock["applied"] == 1, stock
+    assert stock["entries"] == 0 and stock["exits"] == 1 and stock["applied"] == 1, stock
+    assert any("Compra na Wintouch sem receção na aplicação" in p["reason"] for p in stock["pending"])
     assert any("Transferência" in p["reason"] for p in stock["pending"])
     rows = entries(factory, articles["prod-a"])
-    purchase = next(r for r in rows if r.kind == "purchase" and json.loads(r.data)["origin"] == "Wintouch")
-    assert purchase.quantity == D(3) and purchase.unit_cost == D(3)
+    assert [r.kind for r in rows if r.kind == "purchase"] == ["purchase"]  # só o stock inicial
     assert [r.quantity for r in rows if r.kind == "adjustment"] == [D(-1)]
-    # Compra anulada na Wintouch: devolução ao fornecedor ligada à compra (estorno), sem apagar nada.
-    cancelled = next(d for d in data["product_documents"] if d["ID"] == "cmp-1")
-    cancelled.update(DeletedDate="2026-10-02T09:00:00", Version="v2")
+    # A mesma compra recebida na aplicação (receção confirmada ligada ao documento ERP): ignorada, sem pendência.
+    with factory.begin() as db:
+        user = db.scalar(select(User).where(User.email == "admin@test.pt"))
+        supplier = BusinessEntity(name="Fornecedor Wintouch", tax_number="500000001", is_supplier=True)
+        purchase = Purchase(store_id=store, supplier_nif="500000001", supplier_name="Fornecedor Wintouch", document="FT A/1",
+                            document_type="FT", document_date="2026-10-01", amount_cents=900, origin="rececao")
+        db.add_all([supplier, purchase])
+        db.flush()
+        db.add(ProcurementDocument(kind="receipt", store_id=store, supplier_id=supplier.id, user_id=user.id, purchase_id=purchase.id,
+                                   status="confirmed", request_key=str(uuid4()), confirmed_at=datetime.now(UTC), data="{}"))
+        erp = ERPDocument(store_id=store, enterprise_id="tenant", external_id="cmp-1", supplier_nif="500000001",
+                          supplier_name="Fornecedor Wintouch", document="FT A/1", internal_document="FTCOMPRA 1",
+                          document_type="FT", document_date="2026-10-01", amount_cents=900)
+        db.add(erp)
+        db.flush()
+        db.add(DocumentERPLink(purchase_id=purchase.id, erp_id=erp.id, reason="Teste"))
     stock = run(case)
-    assert stock["reversed"] == 1, stock
-    back = next(r for r in entries(factory, articles["prod-a"]) if r.kind == "supplier_return")
-    assert back.quantity == D(-3) and back.original_id == purchase.id
-    assert len([r for r in entries(factory, articles["prod-a"]) if r.kind == "purchase"]) == 2  # Inicial + Wintouch.
+    assert stock["already_received_count"] == 1 and stock["entries"] == 0, stock
+    assert not any("Compra na Wintouch" in p["reason"] for p in stock["pending"])
+    assert [r.kind for r in entries(factory, articles["prod-a"]) if r.kind == "purchase"] == ["purchase"]
