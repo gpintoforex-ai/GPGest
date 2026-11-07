@@ -17,6 +17,7 @@ import hashlib
 import json
 import re
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal as D
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
@@ -114,6 +115,38 @@ def default_category(db, supplier, payload):
     return db.scalar(select(Category.id).where(Category.name == DEFAULT_CATEGORY))
 
 
+def rubric_split(payload, fallback_category, total_cents):
+    """Repartição do documento pelas rubricas das linhas (rubrica da linha, do documento ou a de recurso),
+    IVA incluído. A diferença de cêntimos para o total (desconto global, acerto) vai para a maior rubrica,
+    para a repartição somar sempre o total do documento. Devolve [(rubrica, cêntimos)], da maior para a menor."""
+    from .procurement import allocations  # importação tardia: procurement importa este módulo
+
+    split = [[category or fallback_category, amount] for category, amount in allocations(payload, fallback_category)]
+    merged = {}
+    for category, amount in split:
+        merged[category] = merged.get(category, 0) + amount
+    rows = sorted(([c, a] for c, a in merged.items() if a > 0), key=lambda item: (-item[1], item[0] or ""))
+    if not rows:
+        return [(fallback_category, total_cents)]
+    rows[0][1] += total_cents - sum(amount for _, amount in rows)
+    return [(c, a) for c, a in rows if a > 0] or [(fallback_category, total_cents)]
+
+
+def expense_lines(db, payload):
+    """Linhas da proposta de despesa, com a rubrica de cada uma (como na compra direta)."""
+    from .procurement import money, net_price
+
+    names = {c.id: c.name for c in db.scalars(select(Category))}
+    result = []
+    for line in payload["lines"]:
+        net = D(line["quantity"]) * net_price(line)
+        category = line.get("category_id") or payload.get("category_id")
+        result.append({"category": names.get(category, "Por classificar") if category else "Por classificar",
+                       "description": line.get("description", ""), "base": str(D(money(net)) / 100),
+                       "rate": str(line.get("vat", "0")), "tax": str(D(money(net * D(line.get("vat", 0)) / 100)) / 100)})
+    return result
+
+
 def due_date_of(payload, kind):
     if payload.get("due_date") and payload["due_date"] != payload["document_date"]:
         return payload["due_date"]
@@ -130,6 +163,12 @@ def process(db, user, row, payload, audit):
         fail("O total do documento tem de ser positivo.")
     signed = total * kind.sign
     code = purchase_code(kind)
+    category = default_category(db, supplier, payload)
+    # A receção com documento é um lançamento de compra: a repartição pelas rubricas das linhas alimenta
+    # o previsto (PlannedAllocation), a proposta de despesa e as Despesas por rubrica, como na fatura.
+    split = rubric_split(payload, category, total)
+    payload["allocations"] = [{"category_id": c, "amount_cents": a} for c, a in split]
+    category = split[0][0]
     summary = {"document_type_id": kind.id, "document_type_code": kind.code, "amount_cents": signed, "payment_ids": []}
     # Compra (documento em dívida ou já pago): reutiliza a importada (e-Fatura, ERP) com a mesma identidade.
     target = identity(supplier.tax_number, code, payload["document"])
@@ -152,7 +191,7 @@ def process(db, user, row, payload, audit):
         db.add(ExpenseDraft(purchase_id=purchase.id, status="preparado", payload=json.dumps({
             "supplier_nif": supplier.tax_number, "supplier_name": supplier.name, "document": purchase.document,
             "document_type": code, "document_date": purchase.document_date, "total": f"{abs(signed) / 100:.2f}",
-            "reason": f"Receção de mercadoria confirmada ({kind.code}); proposta por rever", "lines": [],
+            "reason": f"Receção de mercadoria confirmada ({kind.code}); proposta por rever", "lines": expense_lines(db, payload),
         }, ensure_ascii=False)))
     row.purchase_id = purchase.id
     summary["purchase_id"] = purchase.id
@@ -165,7 +204,6 @@ def process(db, user, row, payload, audit):
                 if identity(e.supplier_nif, e.document_type, e.document) == target and e.amount_cents == signed), None)
     if erp and not db.scalar(select(DocumentERPLink).where(DocumentERPLink.erp_id == erp.id, DocumentERPLink.undone_at.is_(None))):
         db.add(DocumentERPLink(purchase_id=purchase.id, erp_id=erp.id, reason=f"Receção confirmada ({kind.code}): identidade e total coincidem"))
-    category = default_category(db, supplier, payload)
     remaining = total
     if kind.creates_debt and payload.get("credit_note_purchase_ids"):
         # NC que abate faturas em aberto: compensação sem dinheiro (fatura e NC ficam saldadas pelo valor).
@@ -198,6 +236,8 @@ def process(db, user, row, payload, audit):
         )
         db.add(planned)
         db.flush()
+        for category_id, amount in split:
+            db.add(PlannedAllocation(planned_id=planned.id, category_id=category_id, amount_cents=amount))
         summary["planned_id"] = planned.id
     if kind.creates_cash_movement:
         movement = real_movement(db, user, row, payload, kind, supplier, category, total)

@@ -304,3 +304,46 @@ def test_old_receipt_gets_document_type_without_touching_stock(money):
         assert {e.id for e in db.scalars(select(StockEntry).where(StockEntry.article_id == aid))} == entries
     again = c.post(f"/api/procurement/{doc['id']}/document-type", json={"revision": result["revision"], "document_type_id": types["FCD"]["id"]})
     assert again.status_code == 409 and "já tem tipo" in again.json()["detail"]
+
+
+def test_typed_receipt_is_a_purchase_posting_split_by_line_rubrics(money):
+    """Receção com documento = lançamento de compra: previsto e proposta de despesa repartidos pelas rubricas
+    das linhas e contada uma vez nas Despesas por rubrica; a receção sem documento fica «por lançar»."""
+    from app.models import Category, ExpenseDraft, PlannedAllocation
+    stock, supplier, _, _ = money
+    c = stock[0]
+    with stock[2].begin() as db:
+        other = Category(name="Embalagens " + uuid4().hex[:6])
+        db.add(other)
+        db.flush()
+        other_id = other.id
+    second = product(stock)
+    confirmed, first = receipt(money, "FC", "100")  # linha 1: 100 € na rubrica do fornecedor
+    assert confirmed.status_code == 200, confirmed.text
+    # Segunda receção com duas linhas de rubricas diferentes (IVA 0 %): 30 € + 20 € na rubrica «Embalagens».
+    body_lines = [{"article_id": first, "description": "Artigo", "quantity": "1", "price": "30", "vat": "0", "warehouse_id": stock[3][0]},
+                  {"article_id": second, "description": "Caixas", "quantity": "2", "price": "10", "vat": "0",
+                   "warehouse_id": stock[3][0], "category_id": other_id}]
+    split_receipt, _ = receipt(money, "FC", "0", lines=body_lines)
+    assert split_receipt.status_code == 200, split_receipt.text
+    doc = split_receipt.json()
+    assert doc["allocations"] == [{"category_id": stock[1]["category"], "amount_cents": 3000}, {"category_id": other_id, "amount_cents": 2000}]
+    with stock[2]() as db:
+        planned = db.scalar(select(PlannedMovement).where(PlannedMovement.purchase_id == doc["purchase_id"]))
+        assert planned.amount_cents == 5000 and planned.category_id == stock[1]["category"]
+        assert sorted(a.amount_cents for a in db.scalars(select(PlannedAllocation).where(PlannedAllocation.planned_id == planned.id))) == [2000, 3000]
+        lines = json.loads(db.get(ExpenseDraft, doc["purchase_id"]).payload)["lines"]
+        assert [line["category"] for line in lines][1].startswith("Embalagens")
+    # Receção sem tipo de documento: ainda não é compra.
+    untyped = c.post("/api/procurement", json={
+        "kind": "receipt", "store_id": stock[4], "supplier_id": supplier, "document": "GR-" + uuid4().hex[:6],
+        "document_date": date.today().isoformat(), "due_date": date.today().isoformat(), "request_key": str(uuid4()),
+        "lines": [{"article_id": first, "description": "Artigo", "quantity": "1", "price": "7", "vat": "0", "warehouse_id": stock[3][0]}]}).json()
+    assert c.post(f"/api/procurement/{untyped['id']}/confirm", json={"revision": untyped["revision"]}).status_code == 200
+    today = date.today().isoformat()
+    report = c.get(f"/api/rubric-expenses?start={today}&end={today}").json()
+    receipts = [d for d in report["documents"] if d["source"] == "Receção"]
+    assert sorted(d["amount_cents"] for d in receipts) == [5000, 10000]
+    split = next(d for d in receipts if d["amount_cents"] == 5000)
+    assert sorted(a["amount_cents"] for a in split["allocations"]) == [2000, 3000]
+    assert report["pending_receipts"] == {"count": 1, "total_cents": 700}

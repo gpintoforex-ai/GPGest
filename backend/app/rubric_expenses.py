@@ -4,11 +4,16 @@ A rubrica de uma compra do ERP é, por esta ordem: a atribuída localmente ao do
 (`ERPDocumentRubric`, que pode repartir o valor) ou a do fornecedor (pelo NIF). O ERP não é
 alterado. As compras locais usam a repartição das suas linhas. Cada documento conta uma vez:
 uma compra local ligada a um documento ERP é contada pelo ERP.
+
+A receção de mercadoria com tipo de documento é um lançamento de compra: conta pela compra que gerou,
+repartida pelas rubricas das linhas. A receção sem tipo de documento ainda não é compra (a fatura pode vir
+depois, por «Associar fatura») e é indicada à parte, fora dos totais.
 """
 
 import json
 from collections import defaultdict
 from datetime import date
+from decimal import Decimal as D
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
@@ -29,6 +34,7 @@ from .models import (
     Purchase,
     Store,
 )
+from .purchase_financials import rubric_split
 from .schemas import Strict
 from .table_rules import ensure_usable
 
@@ -129,6 +135,39 @@ def rubric_expenses(start: date, end: date, store_id: str = "", user=Depends(cur
                           "amount_cents": sign * int(payload.get("total_cents") or 0), "rubric_source": "linhas",
                           "allocations": [{"category_id": s["category_id"], "category_name": names.get(s["category_id"]) if s["category_id"] else None,
                                            "amount_cents": sign * int(s["amount_cents"])} for s in split]})
+    # Receções com documento de compra próprio (FC, FCD, NCC…), uma vez por compra.
+    counted = {d["id"].removeprefix("proc:") for d in documents if d["id"].startswith("proc:")}
+    counted_purchases = {r.purchase_id for r in db.scalars(select(ProcurementDocument).where(
+        ProcurementDocument.id.in_(counted))) if r.purchase_id}
+    supplier_category = supplier_rubrics(db)
+    untyped = {"count": 0, "total_cents": 0}
+    for row in db.scalars(select(ProcurementDocument).where(
+            ProcurementDocument.kind == "receipt", ProcurementDocument.confirmed_at.is_not(None),
+            ProcurementDocument.status != "cancelled", ProcurementDocument.store_id.in_(stores))):
+        payload = json.loads(row.data)
+        if not (str(start) <= payload.get("document_date", "") <= str(end)):
+            continue
+        financial = payload.get("financial") or {}
+        if not row.purchase_id or not financial:
+            if not any(D(line.get("invoiced") or 0) for line in payload.get("lines", [])):
+                untyped["count"] += 1
+                untyped["total_cents"] += int(payload.get("total_cents") or 0)
+            continue
+        if row.purchase_id in linked or row.purchase_id in counted_purchases:
+            continue
+        counted_purchases.add(row.purchase_id)
+        amount = int(financial.get("amount_cents") or 0)
+        sign = -1 if amount < 0 else 1
+        snapshot = payload.get("supplier_snapshot", {})
+        fallback = payload.get("category_id") or supplier_category.get(nif_key(snapshot.get("nif", "")))
+        split = payload.get("allocations") or [{"category_id": c, "amount_cents": a} for c, a in rubric_split(payload, fallback, abs(amount))]
+        documents.append({"id": "proc:" + row.id, "source": "Receção", "store": store_names.get(row.store_id, ""),
+                          "document_date": payload["document_date"], "supplier_name": snapshot.get("name", ""),
+                          "supplier_nif": snapshot.get("nif", ""), "document": payload.get("document", ""),
+                          "document_type": financial.get("document_type_code", ""), "amount_cents": amount,
+                          "rubric_source": "linhas",
+                          "allocations": [{"category_id": x["category_id"], "category_name": names.get(x["category_id"]) if x["category_id"] else None,
+                                           "amount_cents": sign * int(x["amount_cents"])} for x in split]})
     # Custos sem documento (impostos, vencimentos, encargos) registados na reconciliação bancária com rubrica.
     from .management_maps import bank_costs
     from .models import BankBookEntry
@@ -152,6 +191,7 @@ def rubric_expenses(start: date, end: date, store_id: str = "", user=Depends(cur
     pending = [p for p in db.scalars(select(Purchase).where(Purchase.store_id.in_(stores), Purchase.document_date >= str(start), Purchase.document_date <= str(end), Purchase.amount_cents != 0))
                if (p.origin in ("ficheiro", "efatura") or p.import_id in efatura_imports) and p.id not in launched and p.id not in linked]
     return {"pending_efatura": {"count": len(pending), "total_cents": sum(p.amount_cents for p in pending)},
+            "pending_receipts": untyped,
             "rubrics": rubrics, "documents": documents, "total_cents": sum(doc["amount_cents"] for doc in documents),
             "unclassified": sum(1 for doc in documents if any(share["category_id"] is None for share in doc["allocations"])),
             "erp_documents": len(erp_docs)}

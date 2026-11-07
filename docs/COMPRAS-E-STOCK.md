@@ -145,6 +145,7 @@ Em **Contabilidade → Despesas por rubrica** (gestores e administradores), as d
 
 - **Compras do ERP** (cópia só de leitura obtida em «Atualizar compras do ERP», que usa a consulta Wintouch existente). A rubrica é, por esta ordem, a definida localmente no documento ou a do fornecedor (procurado pelo NIF em Tabelas → Fornecedores; um NIF com rubricas diferentes fica por classificar). Um documento pode ser repartido por várias rubricas, com a soma igual ao total. Definir a rubrica não altera o ERP e fica na auditoria (migração **0052**, tabela `erp_document_rubrics`).
 - **Compras confirmadas na IAZELA**, pela repartição das suas linhas.
+- **Receções de mercadoria com tipo de documento** (FC, FCD, NCC…): a receção é o lançamento da compra e conta pela compra que gerou, repartida pelas rubricas das linhas (IVA incluído; a diferença de cêntimos do desconto global ou do acerto vai para a maior rubrica). A mesma repartição alimenta o movimento previsto (`planned_allocations`) e a proposta de despesa. As receções **sem** tipo de documento ainda não são compra (a fatura pode chegar depois, por «Associar fatura»): não entram nos totais e aparecem num aviso com o número e o valor, para lançar com «Definir tipo» ou «Associar fatura».
 
 Notas de crédito subtraem e documentos anulados no ERP não entram. Cada documento conta uma vez: uma compra local ligada a um documento ERP é contada pelo ERP. Documentos e-Fatura ainda não lançados não entram. Os documentos sem rubrica aparecem em **Por classificar**, com a ação **Definir rubrica**.
 
