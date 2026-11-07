@@ -55,6 +55,25 @@ def test_reads_columns_offers_and_next_line_lots():
     assert result["check"]["matches"] is True
 
 
+# Fatura Primavera (texto do PDF com as colunas): Lote e Validade desenhados a meio da linha, mas escritos
+# depois do valor e colados a ele; a oferta é uma linha do mesmo artigo e lote com desconto de 100 %.
+PRIMAVERA = """Artigo            Pr. UniDescrição            Desc.        ValorLote        ValidadeQtd.Un.tárioIVA
+                           ECD 2026D/N.º6492 de 26/10/2026 16:03:55
+11800046            Mg QUATRO 900 60 CAPS.            3,00       UN             13,8500         0,00          23,00            41,55M260500246            06/11/2028
+11800046            Mg QUATRO 900 60 CAPS.            1,00       UN             13,8500     100,00          23,00             0,00M260500246            06/11/2028
+10250001            PRÓPOMAX IMUNIDADE S/ALCOOL - 30ML            6,00       UN             10,4200         0,00          23,00            62,52BIO   350000225                30/06/2028
+"""
+
+
+def test_reads_values_glued_to_lots_and_offer_lines_with_full_discount():
+    result = extract(PRIMAVERA, base_cents=10407)
+    first, second = result["lines"]
+    assert (first["reference"], first["quantity"], first["bonus"], first["total"]) == ("11800046", "3", "1", "41.55")
+    assert (first["lot"], first["expiry"], first["unit_cost"]) == ("M260500246", "2028-11-06", "10.387500")
+    assert (second["quantity"], second["price"], second["lot"], second["expiry"]) == ("6", "10.42", "BIO 350000225", "2028-06-30")
+    assert result["check"]["matches"] is True and not result["warnings"]
+
+
 def test_separates_quantity_from_description_numbers_and_counts_bonus():
     result = extract(BONUS, base_cents=4507)
     oil, pastilles = result["lines"]

@@ -111,7 +111,11 @@ def tokens(line):
             marked_lot = marked_lot or (result[-1] if result else "")
             continue
         token = clean(raw)
-        if token:
+        # Colunas coladas no texto do PDF: valor e lote sem espaço («41,55M260500246»).
+        glued = re.fullmatch(r"(-?\d{1,3}(?:\.\d{3})*,\d{2,4}|-?\d+,\d{2,4})([A-Za-z][A-Za-z0-9\-/]*)", token)
+        if glued:
+            result.extend(glued.groups())
+        elif token:
             result.append(token)
     return result, marked_lot
 
@@ -257,6 +261,25 @@ def extra_lot(line):
     return (original.group(1) if original else (lot.group(1) if lot else "")), expiry
 
 
+def trailing_lot(words, start, info):
+    """Lote e validade impressos depois do total (colunas desenhadas a meio, texto no fim da linha)."""
+    if not {"lot", "expiry"} & info:
+        return "", None
+    parts, expiry = [], None
+    for index, word in enumerate(words[start:], start):
+        when = parse_date(word)
+        if when:
+            expiry = expiry or when
+            continue
+        following = words[index + 1] if index + 1 < len(words) else ""
+        prefix = re.fullmatch(r"[A-Z]{1,4}", word) and re.search(r"\d{4,}", following)
+        if "lot" in info and (prefix or re.fullmatch(r"[A-Za-z0-9\-/]*\d{4,}[A-Za-z0-9\-/]*", word)):
+            parts.append(word)
+        elif parts or number(word) is None:
+            break
+    return " ".join(parts), expiry
+
+
 def free_quantity(words):
     """Linha só com quantidade e IVA (sem preço nem total): unidades de oferta, ou None."""
     values, vat = [], False
@@ -349,6 +372,8 @@ def extract(text, base_cents=None):
         di, d = choice["d"]
         ti, t = choice["t"]
         reference, barcode, lot, expiry, description = describe(words, qi, info, item["marked"])
+        after_lot, after_expiry = trailing_lot(words, ti + 1, info)
+        lot, expiry = lot or after_lot, expiry or after_expiry
         if len(re.sub(r"[^a-zA-Z]", "", description)) < 3:
             continue
         between = [number(w) for w in words[qi + 1 : pi]]
@@ -389,6 +414,17 @@ def extract(text, base_cents=None):
             "confidence": "conferida" if factor == 1 else "desconto_global",
             "evidence": item["line"].strip()[:500],
         })
+        # Oferta impressa como linha do mesmo artigo e lote com desconto de 100 %: é bónus da linha paga.
+        previous = result[-2] if len(result) > 1 else None
+        current = result[-1]
+        if (previous and d == 100 and t == 0 and current["lot"] == previous["lot"]
+                and (current["reference"] and current["reference"] == previous["reference"]
+                     or plain(current["description"]) == plain(previous["description"]))):
+            previous["bonus"] = fmt(D(previous["bonus"]) + q)
+            received_total = D(previous["quantity"]) + D(previous["bonus"])
+            previous["unit_cost"] = str((D(previous["total"]) / received_total).quantize(D("0.000001")))
+            previous["evidence"] = (previous["evidence"] + " / " + current["evidence"])[:500]
+            result.pop()
         if len(result) >= 300:
             break
     lines_total = sum((D(r["total"]) for r in result), D(0))
