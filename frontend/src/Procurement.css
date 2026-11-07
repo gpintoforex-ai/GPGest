@@ -133,3 +133,21 @@ div.invoice-receiving-result p { margin: 0; flex: 1 1 280px; }
 .invoice-order-over { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 /* Campo a corrigir indicado ao confirmar a receção a partir de fatura. */
 .invoice-receiving-form .needs-attention { outline: 3px solid var(--color-danger); outline-offset: 2px; }
+.invoice-order-consult { display: flex; justify-content: flex-end; }
+
+/* Percurso da compra: etapas, documentos ligados e lado financeiro (só consulta). */
+.purchase-process { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--border-default, var(--color-border)); border-radius: var(--radius-panel, 12px); background: var(--surface-primary, #fff); }
+.purchase-process-loading { color: var(--text-secondary, var(--color-muted)); margin: 0; }
+.purchase-process-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 16px; margin: 0; }
+.purchase-process-steps > div { display: grid; gap: 2px; padding-left: 10px; border-left: 3px solid var(--border-default, #d7e8e5); }
+.purchase-process-steps > div[data-state="done"] { border-left-color: var(--context-success, #176b45); }
+.purchase-process-steps > div[data-state="partial"] { border-left-color: var(--context-warning, #805400); }
+.purchase-process-steps > div[data-state="pending"] { border-left-color: var(--context-info, #24559a); }
+.purchase-process-steps dt { font-weight: 650; color: var(--text-primary, inherit); }
+.purchase-process-steps dd { margin: 0; color: var(--text-secondary, var(--color-muted)); font-size: 13px; }
+.purchase-process-documents { display: grid; gap: 8px; }
+.purchase-process-document { border: 1px solid var(--border-default, var(--color-border)); border-radius: var(--radius-control, 8px); padding: 8px 12px; }
+.purchase-process-document > summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; cursor: pointer; }
+.purchase-process-document > summary span { color: var(--text-secondary, var(--color-muted)); font-size: 13px; }
+.purchase-process-document .table-wrap { margin-top: 8px; }
+.purchase-process-financial { margin: 8px 0 0; font-size: 13px; color: var(--text-secondary, var(--color-muted)); }

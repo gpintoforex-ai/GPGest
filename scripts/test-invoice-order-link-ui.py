@@ -23,15 +23,23 @@ ORDERS = [
      "lines": [{"index": 0, "article_id": "a3", "description": "OMEGA 3 ULTRA 60CAPS", "unit": "un", "pending": "4", "price": "13.93"}]},
     {"id": "ec-1", "document": "EC-0001", "document_date": "2026-11-02", "expected_date": "2026-11-05", "store_id": "store-1",
      "lines": [
-         {"index": 0, "article_id": "a1", "description": "ARTHRON 500", "unit": "un", "pending": "3", "price": "29.08"},
-         {"index": 1, "article_id": "a1", "description": "ARTHRON 500 · oferta", "unit": "un", "pending": "1", "price": "0"},
-         {"index": 2, "article_id": "a2", "description": "ARTHRON 250mL", "unit": "un", "pending": "2", "price": "5"},
+         {"index": 0, "article_id": "a1", "description": "ARTHRON 500", "unit": "un", "ordered": "5", "received": "2", "pending": "3", "price": "29.08"},
+         {"index": 1, "article_id": "a1", "description": "ARTHRON 500 · oferta", "unit": "un", "ordered": "1", "received": "0", "pending": "1", "price": "0"},
+         {"index": 2, "article_id": "a2", "description": "ARTHRON 250mL", "unit": "un", "ordered": "2", "received": "0", "pending": "2", "price": "5"},
      ]},
 ]
 LINKED = {**READ, "orders": ORDERS, "lines": [
     line("Arthron 500ml", "3", "29.08", selected=arthron, bonus="1", lot="20113", expiry="2029-07-16"),
     READ["lines"][1],  # Ómega sem artigo associado: artigo novo, fora da encomenda.
 ]}
+PROCESS = {"document_id": "ec-1", "cost_visible": True, "truncated": False,
+           "steps": [{"key": "order", "label": "Encomenda", "state": "done", "detail": "1 confirmada(s)"},
+                     {"key": "receipt", "label": "Receção", "state": "partial", "detail": "Receção parcial: há quantidades por receber"},
+                     {"key": "invoice", "label": "Documento de compra", "state": "pending", "detail": "Sem fatura registada"}],
+           "documents": [{"id": "ec-1", "kind": "order", "label": "Encomenda", "document": "EC-0001", "document_date": "2026-11-02",
+                          "status": "partial", "confirmed_at": "2026-11-02T10:00:00Z", "current": True, "purchase_id": None,
+                          "financial": [], "attachment_status": "missing", "total_cents": 15540,
+                          "lines": [{"description": "ARTHRON 500", "quantity": "5", "received": "2", "invoiced": "0", "pending": "3"}]}]}
 sent = []
 
 
@@ -42,6 +50,8 @@ def intercept(route):
     if path == "/purchase-receiving/d1/confirm":
         sent.append(route.request.post_data_json)
         return route.fulfill(json={"receipt_id": "r1", "lines": 2, "created_articles": 1, "learned": 2})
+    if path == "/procurement/ec-1/process":
+        return route.fulfill(json=PROCESS)
     return ns["intercept"](route)
 
 
@@ -59,10 +69,16 @@ with sync_playwright() as p:
     # Proposta automática: a encomenda com mais artigos em comum com a fatura.
     expect(panel.get_by_label("Encomenda recebida com esta fatura")).to_have_value("ec-1")
     table = panel.get_by_role("table", name="Encomenda e fatura")
-    expect(table.get_by_role("row", name="ARTHRON 500 3,00").first).to_contain_text("Igual à encomenda")
+    # Encomendado, já recebido noutras receções e por receber: 5 − 2 = 3, que vêm nesta fatura.
+    expect(table.get_by_role("row", name="ARTHRON 500 5,00 2,00 3,00 3,00").first).to_contain_text("Igual à encomenda")
     expect(table.get_by_role("row").filter(has_text="Oferta")).to_contain_text("Igual à encomenda")
     expect(table.get_by_role("row").filter(has_text="ARTHRON 250mL")).to_contain_text("Não vem nesta fatura: fica por receber")
     expect(panel.get_by_text("Fora da encomenda (entram em stock sem ligação): Ómega 3 MaxPower 60caps", exact=False)).to_be_visible()
+    # Consulta da encomenda (percurso da compra), sem sair da receção.
+    panel.get_by_role("button", name="Consultar encomenda EC-0001").click()
+    expect(panel.get_by_role("navigation", name="Percurso da compra")).to_be_visible()
+    expect(panel.get_by_text("Encomenda EC-0001", exact=False).first).to_be_visible()
+    panel.get_by_role("button", name="Ocultar encomenda").click()
     # Entrega superior: 5 faturados para 3 encomendados exige autorização explícita.
     dialog.locator("fieldset.invoice-receiving-line").first.get_by_label("Quantidade", exact=True).fill("5")
     expect(table.get_by_role("row").filter(has_text="A mais: +2,00")).to_have_count(1)

@@ -39,6 +39,7 @@ from .models import (
     WintouchProduct,
 )
 from .models import ProcurementDocument as Doc
+from .models import ProcurementLink as Link
 from .payment_terms import term_rule
 from .schemas import Strict
 
@@ -455,8 +456,11 @@ def suggested_document_type(db, code):
     return kind.id if kind else None
 
 
-def open_orders(db, supplier_id, stores, include=None):
-    """Encomendas confirmadas do fornecedor com mercadoria por receber (e a já ligada, `include`)."""
+def open_orders(db, supplier_id, stores, include=None, receipt_id=None):
+    """Encomendas confirmadas do fornecedor com mercadoria por receber (e a já ligada, `include`).
+
+    Ao reabrir uma receção confirmada (`receipt_id`), o que ela própria recebeu não conta como já recebido:
+    a comparação é feita como na gravação, que também a exclui."""
     if not supplier_id or supplier_id.startswith("wt:"):
         return []
     result = []
@@ -472,10 +476,15 @@ def open_orders(db, supplier_id, stores, include=None):
         for index, line in enumerate(payload["lines"]):
             if line.get("nature") != "goods" or not line.get("article_id"):
                 continue
-            pending = buying.accepted(line) - buying.used(db, order.id, index, "receipt")
+            ordered = buying.accepted(line)
+            received = buying.used(db, order.id, index, "receipt")
+            if receipt_id:
+                received -= sum((link.quantity for link in db.scalars(select(Link).where(
+                    Link.document_id == receipt_id, Link.source_id == order.id, Link.source_line == index))), D(0))
             lines.append({
                 "index": index, "article_id": line["article_id"], "description": line["description"],
-                "unit": line.get("unit", "un"), "pending": str(max(D(0), pending)), "price": str(line.get("price", "0")),
+                "unit": line.get("unit", "un"), "ordered": str(ordered), "received": str(max(D(0), received)),
+                "pending": str(max(D(0), ordered - received)), "price": str(line.get("price", "0")),
             })
         if any(D(line["pending"]) > 0 for line in lines) or order.id == include:
             result.append({
@@ -949,7 +958,7 @@ def register_routes(app, current, authorize, scope, audit):
             "lines": lines,
             "warnings": [] if not used_invoice else ["Esta receção já tem fatura ou devolução associada: corrija com uma devolução ao fornecedor."],
             "check": {"lines_total_cents": 0, "document_base_cents": doc.base_cents, "matches": None},
-            "orders": open_orders(db, row.supplier_id, stores, receiving.get("order_id")),
+            "orders": open_orders(db, row.supplier_id, stores, receiving.get("order_id"), row.id),
             "suppliers": candidates,
             "warehouses": [
                 {"id": w.id, "name": w.name, "store_id": w.store_id}

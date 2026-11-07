@@ -1,6 +1,6 @@
 import { RecordWorkspace } from "./components/RecordWorkspace";
 import { RecordGroup, RecordIndicator } from "./components/RecordSheet";
-import { Truck, Package, FileText, History, User, ShoppingCart, Save, Euro } from "lucide-react";
+import { Truck, Package, FileText, History, User, ShoppingCart, Save, Euro, Route } from "lucide-react";
 import OperationsOverview from "./components/OperationsOverview";
 import { formatQuantity } from "./lib/quantity";
 import { currentMonthRange } from "./components/DatePresets";
@@ -15,6 +15,7 @@ import { procurementAttachments } from "./procurementAttachments";
 import InvoiceReceiving from "./InvoiceReceiving";
 import ReceiptFinance from "./ReceiptFinance";
 import ExpiryHint from "./components/ExpiryHint";
+import PurchaseProcess from "./PurchaseProcess";
 import "./Procurement.css";
 
 type Row = Record<string, any>;
@@ -397,9 +398,11 @@ export default function Procurement({ section, store, stores, categories, naviga
 </RecordGroup> },
           { label: "Documentos", icon: FileText, content: <RecordGroup title="Documentos e observações" icon={FileText}>      {selected.notes && <p>{selected.notes}</p>}{selected.differences?.map((s: string) => <Notice tone="warning" key={s}>{s}</Notice>)}<div className="actions">{procurementAttachments(selected, purchases).map(attachment => <ActionLink href={attachment.url} target="_blank" rel="noopener noreferrer" key={attachment.url}><Paperclip size={16} />{attachment.name}</ActionLink>)}<a href={`/api/procurement/${selected.id}/pdf`} target="_blank" rel="noreferrer">Imprimir / PDF</a></div>
 </RecordGroup> },
+          { label: "Percurso", icon: Route, content: <RecordGroup title="Percurso da compra" icon={Route}><PurchaseProcess documentId={selected.id} onOpen={id => { const next = docs.find((d: Row) => d.id === id); if (next) openDoc(next); }} /></RecordGroup> },
           { label: "Histórico", icon: History, content: <RecordGroup title="Histórico de envio" icon={History}>      {!!selected.email_history?.length && <><h3>Histórico de envio</h3>{selected.email_history.map((e: Row) => <p key={e.id}>{day(e.started_at || e.created_at)} · {({ prepared: "Preparado, não enviado", sending: "Envio em curso", accepted: "Aceite pelo SMTP", failed: "Falhou", received: "Receção confirmada" } as Row)[e.status] || e.status}{e.uncertain ? " · Resultado incerto — verificar entrega antes de repetir" : ""}{e.error ? ` · ${e.error}` : ""}</p>)}</>}
 {!selected.email_history?.length && <p>Sem envios registados.</p>}</RecordGroup> },
         ]} /> : <><h2>{kinds[selected.kind]} · {selected.document || selected.id.slice(0, 8)}</h2>{error && <Notice tone="error">{error}</Notice>}<p>{selected.supplier_name} · NIF {selected.supplier_nif} · {day(selected.document_date)} · {states[selected.status]}</p><p>Total: <b>{euro(selected.total_cents)}</b>{selected.purchase_id && <> · Por pagar: <b>{euro(selected.remaining_cents)}</b> · Vencimento: {day(selected.due_date)}</>}</p>
+      {selected.status !== "draft" && <section className="procurement-process-section" aria-label="Percurso da compra"><h3>Percurso da compra</h3><PurchaseProcess documentId={selected.id} onOpen={id => { const next = docs.find((d: Row) => d.id === id); if (next) openDoc(next); }} /></section>}
       <div className="table-wrap"><table><thead><tr>{["Artigo / descrição", "Quantidade", "Rejeitada", "Aceite", "Recebida", "Faturada", "Devolvida", "Pendente", "Preço / IVA"].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{selected.lines.map((l: Row, i: number) => <tr key={i}><td>{l.description}<small>{l.supplier_reference} · {l.unit}</small></td><td>{formatQuantity(l.quantity)}</td><td>{formatQuantity(l.rejected || 0)}</td><td>{formatQuantity(l.accepted ?? Number(l.quantity) - Number(l.rejected || 0))}</td><td>{formatQuantity(l.received || 0)}</td><td>{formatQuantity(l.invoiced || 0)}</td><td>{formatQuantity(l.returned || 0)}</td><td>{formatQuantity(l.pending || 0)}</td><td>{l.price === undefined ? "—" : euro(Number(l.price) * 100)} · {l.vat}%{l.valuation && <small>Ajuste de custo: {euro(Number(l.valuation.value_delta) * 100)}</small>}</td></tr>)}</tbody></table></div>
       {selected.kind === "receipt" && selected.status === "draft" && (() => { const origin = docs.find((d: Row) => selected.lines.some((l: Row) => l.source_id === d.id) && d.kind === "order"); const waiting = origin ? waitingCustomers(origin) : []; return waiting.length ? <Notice tone="info">Ao confirmar, as quantidades recebidas ficam reservadas para: {waiting.map((c: Row) => `${c.number} · ${c.customer} (${Number(c.waiting).toLocaleString("pt-PT")} ${c.description})`).join("; ")}. O excedente fica em stock geral.</Notice> : null; })()}
       {selected.kind === "order" && waitingCustomers(selected).length > 0 && <Notice tone="info">Clientes à espera desta encomenda: {waitingCustomers(selected).map((c: Row) => `${c.number} · ${c.customer} (${Number(c.waiting).toLocaleString("pt-PT")} ${c.description})`).join("; ")}.</Notice>}

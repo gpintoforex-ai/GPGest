@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { CircleCheck, CircleX, ClipboardList } from "lucide-react";
-import { Notice } from "./components/InteractionUI";
+import { ActionButton, Notice } from "./components/InteractionUI";
+import PurchaseProcess from "./PurchaseProcess";
 import { Field } from "./components/Form";
 import { formatQuantity } from "./lib/quantity";
 
@@ -40,7 +42,8 @@ export function orderComparison(order: Row | undefined, lines: Row[]) {
     received.set(link.order_line, (received.get(link.order_line) || 0) + Number(line.qty || 0) + (link.order_bonus_line === null ? bonus : 0));
     if (link.order_bonus_line !== null) received.set(link.order_bonus_line, (received.get(link.order_bonus_line) || 0) + bonus);
   }
-  const rows = order.lines.map((l: Row) => ({ ...l, received: received.get(l.index) || 0 }));
+  // «received» passa a ser o que vem nesta fatura; o já recebido noutras receções fica em «received_before».
+  const rows = order.lines.map((l: Row) => ({ ...l, received_before: Number(l.received || 0), received: received.get(l.index) || 0 }));
   return { rows, outside, over: rows.some((r: Row) => r.received > Number(r.pending)) };
 }
 
@@ -57,6 +60,7 @@ export default function InvoiceOrderLink({ orders, header, lines, onChange }: {
   lines: Row[];
   onChange: (patch: Row) => void;
 }) {
+  const [consulting, setConsulting] = useState(false);
   if (!orders.length) return null;
   const order = orders.find((o) => o.id === header.order_id);
   const { rows, outside, over } = orderComparison(order, lines);
@@ -64,7 +68,7 @@ export default function InvoiceOrderLink({ orders, header, lines, onChange }: {
     <section className="invoice-order-link" aria-labelledby="invoice-order-link-title">
       <h3 id="invoice-order-link-title"><ClipboardList size={18} aria-hidden="true" /> Encomenda ao fornecedor</h3>
       <Field label="Encomenda recebida com esta fatura">
-        <select value={header.order_id || ""} onChange={(e) => onChange({ order_id: e.target.value, allow_overdelivery: false })}>
+        <select value={header.order_id || ""} onChange={(e) => { setConsulting(false); onChange({ order_id: e.target.value, allow_overdelivery: false }); }}>
           <option value="">Sem encomenda (receção direta)</option>
           {orders.map((o) => (
             <option key={o.id} value={o.id}>
@@ -75,15 +79,23 @@ export default function InvoiceOrderLink({ orders, header, lines, onChange }: {
       </Field>
       {order && (
         <>
+          <div className="invoice-order-consult">
+            <ActionButton aria-expanded={consulting} onClick={() => setConsulting(value => !value)}>
+              {consulting ? "Ocultar encomenda" : `Consultar encomenda ${order.document}`}
+            </ActionButton>
+          </div>
+          {consulting && <PurchaseProcess documentId={order.id} />}
           <div className="table-wrap">
             <table aria-label="Encomenda e fatura">
-              <thead><tr><th>Artigo da encomenda</th><th className="numeric">Por receber</th><th className="numeric">Nesta fatura</th><th>Situação</th></tr></thead>
+              <thead><tr><th>Artigo da encomenda</th><th className="numeric">Encomendado</th><th className="numeric">Já recebido</th><th className="numeric">Por receber</th><th className="numeric">Nesta fatura</th><th>Situação</th></tr></thead>
               <tbody>
                 {rows.map((r: Row) => {
                   const pending = Number(r.pending), diff = r.received - pending;
                   return (
                     <tr key={r.index} className={diff ? "is-different" : undefined}>
                       <td>{r.description}{Number(r.price) === 0 && <small>Oferta</small>}</td>
+                      <td className="numeric">{r.ordered === undefined ? "—" : formatQuantity(r.ordered)}</td>
+                      <td className="numeric">{r.ordered === undefined ? "—" : formatQuantity(r.received_before)}</td>
                       <td className="numeric">{formatQuantity(pending)}</td>
                       <td className="numeric">{formatQuantity(r.received)}</td>
                       <td>
