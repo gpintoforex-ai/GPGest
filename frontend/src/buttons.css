@@ -8,7 +8,7 @@
    Só ícone ............. quadrado com a altura do botão; mais compacto dentro de tabelas.
 
    Ficam de fora os controlos com aparência própria (ligações, separadores, chips, navegação, câmara,
-   ordenação nos cabeçalhos das tabelas),
+   ordenação nos cabeçalhos das tabelas e componentes com tom próprio, como etapas e cartões: [data-tone]),
    identificados pelas classes abaixo. As cores vêm dos tokens de contrast.css/application-visual.css,
    por isso os temas claro e escuro mantêm os contrastes verificados. */
 
@@ -30,7 +30,7 @@
 
 /* ---------- Forma comum ---------- */
 :root :is(.workspace, .platform-page, dialog) .ui-action:not(:is(
-  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [class*="toggle"], [class*="backdrop"],
+  th *, [data-tone], .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [class*="toggle"], [class*="backdrop"],
   .sidebar-collapse, .qs-shutter, .qs-icon, .live-auto, .article-sort, .article-name, .assistant-trigger,
   .workspace-group, .workspace-destination, .step, .item, .command, .cash-count-trigger, .local-cash-value-box,
   .tone, .value, .key, .row, .filter, .index, .id, .t
@@ -47,17 +47,17 @@
   letter-spacing: 0;
   transition: background-color .12s ease, border-color .12s ease, color .12s ease, box-shadow .12s ease;
 }
-:root :is(.workspace, .platform-page, dialog) .ui-action:not(:is(th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"])) > svg {
+:root :is(.workspace, .platform-page, dialog) .ui-action:not(:is(th *, [data-tone], .text-button, [class*="-link"], [class*="tab"], [class*="chip"])) > svg {
   width: 17px;
   height: 17px;
 }
 
 /* ---------- Secundário (por omissão) ---------- */
 :root :is(.workspace, .platform-page, dialog) .ui-action[data-action-tone]:not(:disabled):not(.primary):not([data-variant]):not(:is(
-  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [role="tab"]
+  th *, [data-tone], .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [role="tab"]
 )),
 :root :is(.workspace, .platform-page, dialog) .ui-action:not([data-action-tone]):not(:disabled):not(.primary):not(.danger):not([data-variant]):not(:is(
-  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [class*="toggle"], [class*="backdrop"], [role="tab"],
+  th *, [data-tone], .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [class*="toggle"], [class*="backdrop"], [role="tab"],
   .qs-shutter, .qs-icon, .live-auto, .workspace-group, .workspace-destination, .step, .item, .command, .article-sort,
   .article-name, .assistant-trigger, .cash-count-trigger, .local-cash-value-box, .tone, .value, .key, .row, .index, .id, .t
 )),
@@ -68,12 +68,12 @@
   box-shadow: var(--btn-shadow);
 }
 :root :is(.workspace, .platform-page, dialog) .ui-action[data-action-tone]:not(:disabled):not(.primary):not([data-variant]):not(:is(
-  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [role="tab"]
+  th *, [data-tone], .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [role="tab"]
 )) > svg {
   color: var(--button-ink, currentColor);
 }
 :root :is(.workspace, .platform-page, dialog) .ui-action:not(.primary):not([data-variant="primary"]):not([data-variant="quiet"]):not([data-action-tone="danger"]):not(.danger):not(:is(
-  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [role="tab"]
+  th *, [data-tone], .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [role="tab"]
 )):hover:not(:disabled) {
   color: var(--text-primary);
   background: var(--context-accent-bg);
@@ -106,7 +106,7 @@
 
 /* ---------- Destrutivo ---------- */
 :root :is(.workspace, .platform-page, dialog) :is(.ui-action[data-action-tone="danger"], .ui-action.danger, .ui-action[data-variant="danger"]):not(:disabled):not(:is(
-  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"]
+  th *, [data-tone], .text-button, [class*="-link"], [class*="tab"], [class*="chip"]
 )) {
   color: var(--action-danger);
   background: var(--surface-primary);
@@ -114,7 +114,7 @@
   box-shadow: var(--btn-shadow);
 }
 :root :is(.workspace, .platform-page, dialog) :is(.ui-action[data-action-tone="danger"], .ui-action.danger, .ui-action[data-variant="danger"]):not(:disabled):not(:is(
-  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"]
+  th *, [data-tone], .text-button, [class*="-link"], [class*="tab"], [class*="chip"]
 )):hover {
   color: var(--action-danger);
   background: var(--context-danger-bg);
@@ -144,20 +144,20 @@
 
 /* ---------- Só ícone ---------- */
 :root :is(.workspace, .platform-page, dialog) .ui-action[data-icon-only]:not(:is(
-  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], .qs-shutter, .qs-icon, .live-auto
+  th *, [data-tone], .text-button, [class*="-link"], [class*="tab"], [class*="chip"], .qs-shutter, .qs-icon, .live-auto
 )) {
   width: var(--btn-height);
   min-width: var(--btn-height);
   padding: 0;
 }
 /* Ações por linha nas tabelas: mais compactas, sem sombra. */
-:root :is(.workspace, .platform-page, dialog) :is(td, .table-actions, .row-actions) .ui-action:not(:is(th *, .text-button, [class*="-link"], [class*="chip"])) {
+:root :is(.workspace, .platform-page, dialog) :is(td, .table-actions, .row-actions) .ui-action:not(:is(th *, [data-tone], .text-button, [class*="-link"], [class*="chip"])) {
   min-height: var(--btn-height-compact);
   padding: 0 12px;
   font-size: 13px;
   box-shadow: none;
 }
-:root :is(.workspace, .platform-page, dialog) :is(td, .table-actions, .row-actions) .ui-action[data-icon-only]:not(:is(th *, .text-button, [class*="-link"], [class*="chip"])) {
+:root :is(.workspace, .platform-page, dialog) :is(td, .table-actions, .row-actions) .ui-action[data-icon-only]:not(:is(th *, [data-tone], .text-button, [class*="-link"], [class*="chip"])) {
   width: var(--btn-height-compact);
   min-width: var(--btn-height-compact);
   padding: 0;
