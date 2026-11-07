@@ -26,7 +26,7 @@ Um leitor de códigos de barras que funcione como teclado pode preencher o campo
 
 Um lote é identificado pelo artigo e pelo número e pode existir em vários armazéns. As entradas conservam fornecedor, documento, data e custo. A ficha do lote conserva os dados da primeira entrada; as compras posteriores com custos diferentes permanecem rastreáveis no histórico.
 
-As saídas propõem **FEFO**, primeiro a validade mais próxima. Lotes sem data ficam por último. Escolher outro lote exige permissão específica e justificação. Inventários ajustam a posição contada, sem substituir o lote escolhido por FEFO.
+As saídas propõem **FEFO**, primeiro a validade mais próxima; entre lotes com a mesma validade, sai primeiro o que entrou primeiro no armazém (**FIFO**). Lotes sem data ficam por último. É esta regra que escolhe o lote das vendas da Wintouch sem lote indicado; lotes caducados não são propostos para venda. Escolher outro lote exige permissão específica e justificação. Inventários ajustam a posição contada, sem substituir o lote escolhido por FEFO.
 
 Lotes expirados não podem sair por venda ou transferência normal, mesmo se a data do movimento for anterior. Podem ser tratados como perda, devolução ao fornecedor ou ajuste justificado. A data atual e a data do documento são consideradas; mudar de dia nunca remove stock. A entrada de uma devolução pode receber um lote expirado, que continua bloqueado para uma nova venda.
 

@@ -1,4 +1,4 @@
-"""Stock is an append-only ledger. FEFO allocation and moving average are independent."""
+"""Stock is an append-only ledger. FEFO allocation (FIFO between equal expiries) and moving average are independent."""
 
 import json
 from collections import defaultdict
@@ -214,6 +214,17 @@ def balances(rows):
     for row in rows:
         values[(row.warehouse_id, row.lot_id)] += row.quantity
     return values
+
+
+def arrivals(rows):
+    """Primeira entrada de cada lote em cada armazém (data do movimento e da gravação): desempate FIFO."""
+    first = {}
+    for row in rows:
+        if row.quantity > 0:
+            key = (row.warehouse_id, row.lot_id)
+            stamp = (row.occurred_on, row.created_at.isoformat() if row.created_at else "")
+            first[key] = min(first.get(key, stamp), stamp)
+    return first
 
 
 def availability(history, allowed, lots, holds, active_warehouses=None):
@@ -670,6 +681,7 @@ def post(db, user, data, authorize, *, source="manual", bypass=False):
                 409,
             )
         candidates = []
+        arrived = arrivals(history)
         for (wh, lot_id), quantity in available.items():
             if wh != origin.id or quantity <= 0:
                 continue
@@ -685,7 +697,10 @@ def post(db, user, data, authorize, *, source="manual", bypass=False):
             candidates.append(
                 (batch.expiry if batch and batch.expiry else "9999-12-31", lot_id, quantity)
             )
-        candidates.sort(key=lambda value: (value[0], value[1] or ""))
+        # FEFO: primeiro o que expira primeiro; com a mesma validade, o lote que entrou primeiro (FIFO).
+        candidates.sort(
+            key=lambda value: (value[0], arrived.get((origin.id, value[1]), ("9999-12-31", "")), value[1] or "")
+        )
         if lot:
             if candidates and candidates[0][1] != lot.id and not (bypass and source == "inventory"):
                 require(user, config, "override_fefo")

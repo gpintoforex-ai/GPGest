@@ -13,6 +13,7 @@ from app.models import (
     Register,
     StockEntry,
     StockInventory,
+    StockLot,
     StockWarehouse,
     WintouchProduct,
     WintouchSaleRecord,
@@ -315,6 +316,20 @@ def test_multilot_fefo_override_and_expired_stock(stock_case):
     assert D(view(stock_case, expired_pid)["quantity"]) == 2
     move(stock_case, expired_pid, "expired", "2")
     assert D(view(stock_case, expired_pid)["quantity"]) == 0
+
+
+def test_fefo_ties_go_to_the_lot_that_arrived_first(stock_case):
+    """Mesma validade: sai primeiro o lote que entrou primeiro no armazém (FIFO), mesmo registado depois."""
+    c, _, factory, _, _ = stock_case
+    pid = product(stock_case, lots=True, expiry=True)
+    expiry = (date.today() + timedelta(days=200)).isoformat()
+    move(stock_case, pid, quantity="4", unit_cost="2", lot_number="RECENTE", expiry=expiry)
+    move(stock_case, pid, quantity="4", unit_cost="2", lot_number="ANTIGO", expiry=expiry,
+         occurred_on=(date.today() - timedelta(days=10)).isoformat())
+    sale = move(stock_case, pid, "sale", "5", net_sales="25")
+    with factory() as db:
+        lots = [db.get(StockLot, db.get(StockEntry, i).lot_id).number for i in sale]
+        assert lots == ["ANTIGO", "RECENTE"] and [db.get(StockEntry, i).quantity for i in sale] == [D(-4), D(-1)]
 
 
 def test_unknown_cost_missing_expiry_zero_denominators_and_recoverable_vat(stock_case):
