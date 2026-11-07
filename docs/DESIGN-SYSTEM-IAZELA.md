@@ -62,3 +62,26 @@ Passaram para o `DataTable` comum: auditoria do Arquivo digital, histórico da p
 Artigos e stock: relatório por artigo (mantém a ordem por prioridade; colunas de custo só com permissão), lotes com stock (filtro de validade na barra de filtros), inventários físicos e artigos sincronizados do ERP (filtro Por associar / Associados). Operadores / funcionários: a pesquisa própria passa a ser a da grelha; o filtro Tipo de registo mantém-se. Verificação de faturas e-Fatura: os filtros rápidos mantêm-se e a paginação própria passa para a grelha, que acrescenta pesquisa, ordenação e CSV. O seletor de linhas por página tem o mesmo nome acessível das Tabelas («Registos por página»).
 
 Ficam com controlos próprios: movimentos de stock (paginados no servidor), pré-visualizações de importação, editores de associação e os passos do assistente e-Fatura. Testes: `test-inventory-ui.py`, `test-invoice-workflow-ui.py` e `test-employees-ui.py` (este último atualizado para a navegação por endereço e para a confirmação de inativação; a secção final de fecho de caixa ainda falha com 422 do servidor e está por investigar).
+
+## Botões — hierarquia comum
+
+`frontend/src/buttons.css` é a última camada (carregada em `main.tsx` depois de `application-visual.css`) e aplica a
+todos os `ActionButton` uma só hierarquia. A cor deixa de depender da palavra do botão e passa a indicar a importância:
+
+| Nível | Quando | Aparência |
+|---|---|---|
+| Principal | `className="primary"` ou `variant="primary"`; uma por área (ex.: «Novo registo», «Clara · Verificar documentos») | turquesa da marca sólido (`--action-primary`) |
+| Gravar/confirmar | principal com «Guardar», «Confirmar», «Aplicar», «Conferir»… | verde sólido (`--save-solid`), como nas fichas |
+| Secundário | todas as outras ações | fundo branco, contorno neutro; o ícone conserva a cor da ação (`data-action-tone`) |
+| Destrutivo | «Eliminar», «Anular», «Desfazer», `className="danger"` | contorno e texto vermelhos; fundo vermelho claro ao passar |
+| Sugestão | `variant="suggestion"` (assistentes) | contorno e texto violeta |
+| Discreto | `variant="quiet"` | sem contorno, texto turquesa |
+
+Medidas comuns: 40 px de altura (44 px em ecrãs tácteis e até 760 px), 16 px de margem lateral, 14 px/600, raio
+`--radius-control`. Botões só com ícone (`data-icon-only`, definido pelo `ActionButton`) são quadrados; dentro de
+tabelas (`td`) ficam com 34 px. Criar/adicionar tem o tom próprio `create` (ícone turquesa), separado do verde de gravar.
+
+Ficam fora da camada os controlos com aparência própria: ligações (`*-link`, `.text-button`), separadores, chips,
+alternadores, navegação lateral, câmara e ordenação nos cabeçalhos das tabelas (`th`). As cores vêm dos tokens de
+`contrast.css`/`application-visual.css`, nos dois temas. Verificação: `scripts/test-application-visual-ui.py`
+(auditoria de contraste, 1440/390 px, claro e escuro) e `scripts/test-business-ui.py`.

@@ -486,7 +486,7 @@ const actions: [RegExp, LucideIcon, string, string?][] = [
   [/^(voltar|anterior|regressar)\b/i, ArrowLeft, "Voltar"],
   [/^editar\b/i, Pencil, "Editar", "warning"],
   [/^(guardar|gravar)\b/i, Save, "Guardar", "success"],
-  [/^(adicionar|acrescentar|criar|novo|nova|registar)\b/i, Plus, "Adicionar", "success"],
+  [/^(adicionar|acrescentar|criar|novo|nova|registar)\b/i, Plus, "Adicionar", "create"],
   [/^(consultar|ver|visualizar|mostrar|abrir)\b/i, Eye, "Consultar", "info"],
   [/^(pesquisar|procurar)\b/i, Search, "Pesquisar", "info"],
   [/^filtrar\b/i, Filter, "Filtrar", "info"],
@@ -584,6 +584,7 @@ export const ActionButton = forwardRef<
       ref={ref}
       data-cancel={closing || undefined}
       data-variant={variant}
+      data-icon-only={onlyIcon || undefined}
       data-action-tone={variant ? undefined : className.includes("danger") ? "danger" : matched?.[3]}
       aria-label={props["aria-label"] || (onlyIcon ? label : undefined)}
       title={props.title || (onlyIcon ? label : undefined)}

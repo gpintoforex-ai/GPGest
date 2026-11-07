@@ -1,0 +1,175 @@
+/* Botões: uma só hierarquia visual em toda a aplicação (última camada; carregada depois de application-visual.css).
+
+   Principal ............ .primary / data-variant="primary": turquesa sólido da marca.
+   Gravar/confirmar ..... principal com tom "success" (Guardar, Confirmar, Aplicar): verde sólido, como nas fichas.
+   Secundário ........... restantes ações: fundo branco, contorno neutro; o ícone conserva a cor da ação.
+   Destrutivo ........... tom "danger" (Eliminar, Anular, Desfazer): contorno e texto vermelhos.
+   Discreto ............. data-variant="quiet": sem contorno, texto turquesa.
+   Só ícone ............. quadrado com a altura do botão; mais compacto dentro de tabelas.
+
+   Ficam de fora os controlos com aparência própria (ligações, separadores, chips, navegação, câmara,
+   ordenação nos cabeçalhos das tabelas),
+   identificados pelas classes abaixo. As cores vêm dos tokens de contrast.css/application-visual.css,
+   por isso os temas claro e escuro mantêm os contrastes verificados. */
+
+:root {
+  --btn-height: 40px;
+  --btn-height-compact: 34px;
+  --btn-padding-x: 16px;
+  --btn-gap: 8px;
+  --btn-font-size: 14px;
+  --btn-radius: var(--radius-control, 10px);
+  --btn-border: color-mix(in srgb, var(--border-control) 42%, var(--border-default));
+  --btn-shadow: 0 1px 2px rgb(16 54 53 / 6%);
+  --btn-primary-shadow: 0 1px 2px rgb(16 54 53 / 14%), 0 2px 6px rgb(8 127 120 / 14%);
+}
+:root[data-theme="dark"] {
+  --btn-shadow: none;
+  --btn-primary-shadow: 0 1px 3px rgb(0 0 0 / 30%);
+}
+
+/* ---------- Forma comum ---------- */
+:root :is(.workspace, .platform-page, dialog) .ui-action:not(:is(
+  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [class*="toggle"], [class*="backdrop"],
+  .sidebar-collapse, .qs-shutter, .qs-icon, .live-auto, .article-sort, .article-name, .assistant-trigger,
+  .workspace-group, .workspace-destination, .step, .item, .command, .cash-count-trigger, .local-cash-value-box,
+  .tone, .value, .key, .row, .filter, .index, .id, .t
+)) {
+  min-height: var(--btn-height);
+  padding: 0 var(--btn-padding-x);
+  gap: var(--btn-gap);
+  border-width: 1px;
+  border-style: solid;
+  border-radius: var(--btn-radius);
+  font-size: var(--btn-font-size);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0;
+  transition: background-color .12s ease, border-color .12s ease, color .12s ease, box-shadow .12s ease;
+}
+:root :is(.workspace, .platform-page, dialog) .ui-action:not(:is(th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"])) > svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* ---------- Secundário (por omissão) ---------- */
+:root :is(.workspace, .platform-page, dialog) .ui-action[data-action-tone]:not(:disabled):not(.primary):not([data-variant]):not(:is(
+  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [role="tab"]
+)),
+:root :is(.workspace, .platform-page, dialog) .ui-action:not([data-action-tone]):not(:disabled):not(.primary):not(.danger):not([data-variant]):not(:is(
+  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [class*="toggle"], [class*="backdrop"], [role="tab"],
+  .qs-shutter, .qs-icon, .live-auto, .workspace-group, .workspace-destination, .step, .item, .command, .article-sort,
+  .article-name, .assistant-trigger, .cash-count-trigger, .local-cash-value-box, .tone, .value, .key, .row, .index, .id, .t
+)),
+:root :is(.workspace, .platform-page, dialog) .ui-action[data-variant="secondary"]:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-primary);
+  border-color: var(--btn-border);
+  box-shadow: var(--btn-shadow);
+}
+:root :is(.workspace, .platform-page, dialog) .ui-action[data-action-tone]:not(:disabled):not(.primary):not([data-variant]):not(:is(
+  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [role="tab"]
+)) > svg {
+  color: var(--button-ink, currentColor);
+}
+:root :is(.workspace, .platform-page, dialog) .ui-action:not(.primary):not([data-variant="primary"]):not([data-variant="quiet"]):not([data-action-tone="danger"]):not(.danger):not(:is(
+  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], [role="tab"]
+)):hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--context-accent-bg);
+  border-color: var(--context-accent);
+  box-shadow: none;
+}
+
+/* ---------- Principal ---------- */
+:root :is(.workspace, .platform-page, dialog) :is(.ui-action.primary, .ui-action[data-variant="primary"]):not(:disabled):not([data-action-tone="danger"]) {
+  color: #fff;
+  background: var(--action-primary);
+  border-color: var(--action-primary);
+  box-shadow: var(--btn-primary-shadow);
+}
+:root :is(.workspace, .platform-page, dialog) :is(.ui-action.primary, .ui-action[data-variant="primary"]):not(:disabled):not([data-action-tone="danger"]):hover {
+  color: #fff;
+  background: var(--action-primary-hover);
+  border-color: var(--action-primary-hover);
+}
+/* Gravar e confirmar: verde sólido, como na ficha do artigo e nas fichas de entidades. */
+:root :is(.workspace, .platform-page, dialog) :is(.ui-action.primary, .ui-action[data-variant="primary"])[data-action-tone="success"]:not(:disabled) {
+  background: var(--save-solid, #07843d);
+  border-color: var(--save-solid, #07843d);
+}
+:root :is(.workspace, .platform-page, dialog) :is(.ui-action.primary, .ui-action[data-variant="primary"])[data-action-tone="success"]:not(:disabled):hover {
+  background: var(--save-hover, #066d33);
+  border-color: var(--save-hover, #066d33);
+}
+:root :is(.workspace, .platform-page, dialog) :is(.ui-action.primary, .ui-action[data-variant="primary"]) > svg { color: currentColor; }
+
+/* ---------- Destrutivo ---------- */
+:root :is(.workspace, .platform-page, dialog) :is(.ui-action[data-action-tone="danger"], .ui-action.danger, .ui-action[data-variant="danger"]):not(:disabled):not(:is(
+  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"]
+)) {
+  color: var(--action-danger);
+  background: var(--surface-primary);
+  border-color: color-mix(in srgb, var(--action-danger) 55%, var(--border-default));
+  box-shadow: var(--btn-shadow);
+}
+:root :is(.workspace, .platform-page, dialog) :is(.ui-action[data-action-tone="danger"], .ui-action.danger, .ui-action[data-variant="danger"]):not(:disabled):not(:is(
+  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"]
+)):hover {
+  color: var(--action-danger);
+  background: var(--context-danger-bg);
+  border-color: var(--action-danger);
+}
+:root :is(.workspace, .platform-page, dialog) :is(.ui-action[data-action-tone="danger"], .ui-action.danger, .ui-action[data-variant="danger"]) > svg { color: currentColor; }
+
+/* ---------- Sugestão (assistente) e discreto ---------- */
+:root :is(.workspace, .platform-page, dialog) .ui-action[data-variant="suggestion"]:not(:disabled) {
+  color: var(--context-suggestion);
+  background: var(--surface-primary);
+  border-color: color-mix(in srgb, var(--context-suggestion) 50%, var(--border-default));
+}
+:root :is(.workspace, .platform-page, dialog) .ui-action[data-variant="suggestion"]:not(:disabled):hover {
+  background: var(--context-suggestion-bg);
+  border-color: var(--context-suggestion);
+}
+:root :is(.workspace, .platform-page, dialog) .ui-action[data-variant="quiet"]:not(:disabled) {
+  color: var(--action-primary-ink);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+:root :is(.workspace, .platform-page, dialog) .ui-action[data-variant="quiet"]:not(:disabled):hover {
+  background: var(--context-accent-bg);
+}
+
+/* ---------- Só ícone ---------- */
+:root :is(.workspace, .platform-page, dialog) .ui-action[data-icon-only]:not(:is(
+  th *, .text-button, [class*="-link"], [class*="tab"], [class*="chip"], .qs-shutter, .qs-icon, .live-auto
+)) {
+  width: var(--btn-height);
+  min-width: var(--btn-height);
+  padding: 0;
+}
+/* Ações por linha nas tabelas: mais compactas, sem sombra. */
+:root :is(.workspace, .platform-page, dialog) :is(td, .table-actions, .row-actions) .ui-action:not(:is(th *, .text-button, [class*="-link"], [class*="chip"])) {
+  min-height: var(--btn-height-compact);
+  padding: 0 12px;
+  font-size: 13px;
+  box-shadow: none;
+}
+:root :is(.workspace, .platform-page, dialog) :is(td, .table-actions, .row-actions) .ui-action[data-icon-only]:not(:is(th *, .text-button, [class*="-link"], [class*="chip"])) {
+  width: var(--btn-height-compact);
+  min-width: var(--btn-height-compact);
+  padding: 0;
+}
+
+/* ---------- Toque e movimento ---------- */
+@media (max-width: 760px), (pointer: coarse) {
+  :root { --btn-height: var(--touch-target, 44px); --btn-height-compact: 40px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root :is(.workspace, .platform-page, dialog) .ui-action { transition: none; }
+}
+@media print {
+  :root :is(.workspace, .platform-page, dialog) .ui-action { box-shadow: none; }
+}

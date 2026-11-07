@@ -8,6 +8,7 @@
   --action-transfer-bg: #38264d;
 }
 :is(.ui-action, .ui-action-link)[data-action-tone="success"] { --button-ink: var(--context-success); --button-bg: var(--context-success-bg); }
+:is(.ui-action, .ui-action-link)[data-action-tone="create"] { --button-ink: var(--context-accent); --button-bg: var(--context-accent-bg); }
 :is(.ui-action, .ui-action-link)[data-action-tone="warning"] { --button-ink: var(--context-warning); --button-bg: var(--context-warning-bg); }
 :is(.ui-action, .ui-action-link)[data-action-tone="danger"] { --button-ink: var(--action-danger); --button-bg: var(--context-danger-bg); }
 :is(.ui-action, .ui-action-link)[data-action-tone="info"] { --button-ink: var(--context-info); --button-bg: var(--context-info-bg); }
