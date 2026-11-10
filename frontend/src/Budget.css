@@ -1,0 +1,68 @@
+/* Orçamento e previsão de despesas. Só tokens do design system; as cores por estado vêm de .ui-tone. */
+.bud { --series-1: #2a78d6; --series-2: #eb6834; display: grid; gap: 16px; }
+:root[data-theme="dark"] .bud { --series-1: #3987e5; --series-2: #d95926; }
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .bud { --series-1: #3987e5; --series-2: #d95926; } }
+.bud-toolbar { align-items: end; }
+.bud-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 215px), 1fr)); gap: 10px; }
+.workspace .bud-kpi.ui-action, .bud-kpi { display: flex; gap: 12px; align-items: center; justify-content: flex-start; min-height: 0; padding: 14px 16px;
+  text-align: left; white-space: normal; border: 1px solid var(--ui-tone-edge); border-radius: 14px; color: var(--color-text);
+  background: linear-gradient(135deg, var(--ui-tone-bg), var(--color-surface) 75%); box-shadow: var(--ui-card-shadow, none); cursor: pointer; }
+.bud-kpi:hover { border-color: var(--ui-tone-ink); }
+.bud-kpi:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.bud-kpi-icon { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; color: var(--ui-tone-ink); background: var(--ui-tone-bg); border: 1px solid var(--ui-tone-edge); }
+.bud-kpi-text { display: grid; gap: 2px; min-width: 0; }
+.bud-kpi-text > span { font-size: 13.5px; font-weight: 600; }
+.bud-kpi-text strong { font-size: 1.35rem; line-height: 1.15; color: var(--ui-tone-ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.bud-kpi-text small { color: var(--color-muted); font-size: 12px; }
+
+.bud-card { min-width: 0; padding: 16px 18px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); box-shadow: var(--ui-card-shadow, none); }
+.bud-card h2 { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; font-size: 1.05rem; }
+.bud-card h2 svg { color: var(--context-suggestion); flex: none; }
+.bud-card h2 small { color: var(--color-muted); font-weight: 400; font-size: 13px; }
+.bud-empty p { margin: 0 0 12px; }
+.bud-version { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; padding: 12px 16px;
+  border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); }
+.bud-version > div:first-child { display: grid; gap: 4px; min-width: 0; justify-items: start; }
+.bud-version-title { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.bud-version small { color: var(--color-muted); }
+.bud-version-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.bud-overview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.bud-wide-card { grid-column: 1 / -1; }
+@media (max-width: 900px) { .bud-overview { grid-template-columns: 1fr; } }
+
+.bud-filters { margin-bottom: 10px; }
+.bud-grid td small { display: block; color: var(--color-muted); font-size: 12px; }
+.bud-grid tfoot th, .bud-grid tfoot td { font-weight: 700; border-top: 2px solid var(--color-border); }
+.workspace .bud-link, .bud-link { padding: 0; border: 0; background: none; color: var(--color-text); font: inherit; font-weight: 600; text-align: left; cursor: pointer;
+  text-decoration: underline; text-decoration-color: transparent; }
+.bud-link:hover, .bud-link:focus-visible { text-decoration-color: currentColor; }
+.bud-notes { margin: 0; padding-left: 18px; color: var(--color-muted); font-size: 12.5px; display: grid; gap: 2px; }
+
+.ui-dialog.bud-drawer { width: min(860px, 100vw); }
+.bud-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; margin: 0; padding: 0; border: 0; min-width: 0; }
+@media (max-width: 640px) { .bud-form { grid-template-columns: 1fr; } }
+.bud-form > label:not(.checkbox), .bud-row label, .bud-dialog label { display: grid; gap: 4px; }
+.bud-form .bud-wide, .bud-hint { grid-column: 1 / -1; }
+.bud-hint { margin: 0; color: var(--color-muted); font-size: 12.5px; }
+.bud-form fieldset { display: grid; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 10px; min-width: 0; justify-items: start; }
+.bud-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; }
+.bud-center-form { grid-template-columns: minmax(0, 140px) minmax(0, 1fr) auto auto; align-items: end; margin-bottom: 12px; }
+@media (max-width: 640px) { .bud-center-form { grid-template-columns: 1fr; } }
+.bud-row-actions { display: flex; gap: 8px; }
+.bud-history { margin-top: 14px; }
+.bud-history h3 { margin: 0 0 8px; font-size: 1rem; }
+.bud-history td small { display: block; color: var(--color-muted); font-size: 12px; }
+.ui-dialog.bud-dialog { width: min(560px, calc(100vw - 24px)); }
+.bud-dialog { display: grid; gap: 10px; }
+.bud-more { margin-top: 12px; }
+.bud-missing { color: var(--context-warning) !important; font-weight: 600; }
+.bud-matching h3 { margin: 14px 0 8px; font-size: 1rem; }
+.bud-match-summary { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--color-muted); font-size: 13px; }
+.bud-match-summary b { color: var(--color-text); font-size: 1.05rem; }
+.bud-batch { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.bud-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.bud-choices { display: grid; gap: 6px; margin: 0; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 10px; }
+.bud-choice { display: flex; gap: 8px; align-items: flex-start; }
+.bud-choice small { display: block; color: var(--color-muted); font-size: 12px; }
+.bud-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.bud-kpi-text strong { white-space: nowrap; overflow-wrap: normal; }

@@ -67,11 +67,24 @@ def erp_shares(db, documents, by_supplier=None):
     if documents:
         for row in db.scalars(select(ERPDocumentRubric).where(ERPDocumentRubric.erp_document_id.in_([d.id for d in documents]))):
             overrides[row.erp_document_id].append(row)
+        # Sem rubrica no documento ERP: a repartição confirmada na compra ligada (classificação de rubricas).
+        from .models import PurchaseRubric
+        missing = [d.id for d in documents if d.id not in overrides]
+        links = {link.purchase_id: link.erp_id for link in db.scalars(select(DocumentERPLink).where(
+            DocumentERPLink.erp_id.in_(missing), DocumentERPLink.undone_at.is_(None)))} if missing else {}
+        for row in db.scalars(select(PurchaseRubric).where(PurchaseRubric.purchase_id.in_(links))) if links else []:
+            overrides[links[row.purchase_id]].append(row)
     result = {}
     sign = lambda doc: -1 if doc.amount_cents < 0 else 1  # noqa: E731
     for doc in documents:
         if overrides[doc.id]:
-            result[doc.id] = ([(row.category_id, sign(doc) * row.amount_cents) for row in sorted(overrides[doc.id], key=lambda r: -r.amount_cents)], "documento")
+            rows = sorted(overrides[doc.id], key=lambda r: -r.amount_cents)
+            total, weights = abs(doc.amount_cents), sum(r.amount_cents for r in rows) or 1
+            amounts = [r.amount_cents for r in rows]
+            if sum(amounts) != total:  # Repartição vinda da compra ligada: proporcional ao total do documento ERP.
+                amounts = [round(total * r.amount_cents / weights) for r in rows[:-1]]
+                amounts.append(total - sum(amounts))
+            result[doc.id] = ([(row.category_id, sign(doc) * amount) for row, amount in zip(rows, amounts)], "documento")
         elif nif_key(doc.supplier_nif) in by_supplier:
             result[doc.id] = ([(by_supplier[nif_key(doc.supplier_nif)], doc.amount_cents)], "fornecedor")
         else:

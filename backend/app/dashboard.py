@@ -504,6 +504,8 @@ def treasury_block(request, db, user, store_id, period, compare):
     for event in events:
         if event.get("transfer") or event.get("currency", "EUR") != "EUR" or event["amount_cents"] <= 0:
             continue
+        if event.get("duplicate") or event.get("source") in ("commitment", "obligation", "budget"):
+            continue  # Por pagar/receber: só documentos e previsões manuais (compromissos e estimativas não são dívida).
         side = "payable" if event["direction"] == -1 else "receivable"
         if not event.get("due_date"):
             key = "sem_data"

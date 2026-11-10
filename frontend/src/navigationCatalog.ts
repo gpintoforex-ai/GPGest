@@ -25,9 +25,13 @@ export const APP_PAGES: readonly string[] = [
     "Bancos",
     "Extratos",
     "Reconciliação automática",
+    "Centro de Conferência",
     "Conferência documental",
+    "Rastreabilidade",
+    "Classificação de rubricas",
     "Despesas por rubrica",
     "Mapas de gestão",
+    "Obrigações e Prazos",
     "Entrega à contabilidade",
     "Email",
     "Importar SAF-T de vendas",
@@ -40,6 +44,7 @@ export const APP_PAGES: readonly string[] = [
     "Organização",
     "Depósitos",
     "Previsão de liquidez",
+    "Orçamento",
     "Faturação e recebimentos",
     "Armazéns",
     "Artigos e validades",
@@ -75,7 +80,12 @@ export const APP_PAGES: readonly string[] = [
   ],
 ];
 export const MANAGER_PAGES: readonly string[] = [
+  "Centro de Conferência",
+  "Rastreabilidade",
+  "Classificação de rubricas",
   "Despesas por rubrica",
+  "Orçamento",
+  "Obrigações e Prazos",
   "Mapas de gestão",
   "Configuração inicial",
   "Regime de IVA",
@@ -319,6 +329,12 @@ const BASE_NAVIGATION: NavigationGroup[] = [
         page: "Previsão de liquidez",
       },
       {
+        id: "financeiro:Orçamento",
+        label: "Orçamento",
+        page: "Orçamento",
+        managerOnly: true,
+      },
+      {
         id: "financeiro:Múltiplas contas",
         label: "Contas bancárias",
         page: "Múltiplas contas",
@@ -352,9 +368,27 @@ const BASE_NAVIGATION: NavigationGroup[] = [
     description: "Conferência, arquivo, classificação e entrega.",
     items: [
       {
+        id: "contabilidade:Centro de Conferência",
+        label: "Centro de Conferência",
+        page: "Centro de Conferência",
+        managerOnly: true,
+      },
+      {
         id: "contabilidade:Conferência documental",
         label: "Conferência documental",
         page: "Conferência documental",
+      },
+      {
+        id: "contabilidade:Rastreabilidade",
+        label: "Rastreabilidade das operações",
+        page: "Rastreabilidade",
+        managerOnly: true,
+      },
+      {
+        id: "contabilidade:Classificação de rubricas",
+        label: "Classificação de rubricas",
+        page: "Classificação de rubricas",
+        managerOnly: true,
       },
       {
         id: "contabilidade:Despesas por rubrica",
@@ -559,6 +593,13 @@ function referenceNavigation(): NavigationGroup[] {
     { ...base("contabilidade"), items: [
       ...base("contabilidade").items.filter(item => !archiveIds.includes(item.id) && !referenceIds.includes(item.id)),
       { ...item("contabilidade:Todos os documentos"), label: "Arquivo documental", relatedTargets: archiveIds.filter(id => id !== "contabilidade:Todos os documentos").map(item) },
+    ] },
+    { id: "obrigacoes", label: "Obrigações e Prazos", description: "Obrigações fiscais, contratos, viaturas, inspeções e outros prazos.", items: [
+      { id: "obrigacoes:visao", label: "Visão geral", page: "Obrigações e Prazos", params: { "area.obrigacoes": "visao" }, managerOnly: true },
+      { id: "obrigacoes:fiscal", label: "Obrigações fiscais", page: "Obrigações e Prazos", params: { "area.obrigacoes": "fiscal" }, managerOnly: true },
+      { id: "obrigacoes:contratos", label: "Contratos", page: "Obrigações e Prazos", params: { "area.obrigacoes": "contrato" }, managerOnly: true },
+      { id: "obrigacoes:veiculos", label: "Veículos (IUC/Inspeções)", page: "Obrigações e Prazos", params: { "area.obrigacoes": "veiculo" }, managerOnly: true },
+      { id: "obrigacoes:outros", label: "Outros prazos", page: "Obrigações e Prazos", params: { "area.obrigacoes": "outros" }, managerOnly: true },
     ] },
     { ...base("analise"), label: "Relatórios" },
     { ...base("admin"), label: "Configurações", items: [

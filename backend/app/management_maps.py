@@ -4,7 +4,8 @@ Proveitos e IVA liquidado: SAF-T de vendas (faturação líquida de IVA; notas d
 no modo integrado, as vendas Wintouch sincronizadas (devoluções subtraem; anulados excluídos).
 Custos e IVA suportado: documentos de compra (e-Fatura, Compras e registos manuais), uma vez por
 documento, mais as compras do ERP sem documento correspondente. A rubrica vem das linhas da compra
-lançada, da rubrica definida no documento ERP ou da rubrica do fornecedor. Os custos sem documento
+lançada, da rubrica definida no documento ERP, da repartição confirmada na classificação de rubricas ou da
+rubrica do fornecedor. Os custos sem documento
 (impostos, vencimentos, encargos) entram pelos registos bancários aprovados com rubrica e marcados
 como custo, sem IVA.
 
@@ -34,6 +35,7 @@ from .models import (
     ERPDocumentRubric,
     ProcurementDocument,
     Purchase,
+    PurchaseRubric,
 )
 from .rubric_expenses import supplier_rubrics
 
@@ -75,6 +77,9 @@ def purchase_documents(db, stores, start, end):
     for row in db.scalars(select(ERPDocumentRubric)):
         erp_rubrics[row.erp_document_id].append(row)
     by_supplier = supplier_rubrics(db)
+    own_rubrics = defaultdict(list)
+    for row in db.scalars(select(PurchaseRubric).where(PurchaseRubric.purchase_id.in_(ids))) if ids else []:
+        own_rubrics[row.purchase_id].append(row)
     result = []
 
     def split(total_base, total_tax, weights):
@@ -106,6 +111,9 @@ def purchase_documents(db, stores, start, end):
             shares = [(category, sign * values[0], sign * values[1]) for category, values in parts.items()]
         elif purchase.id in links and erp_rubrics.get(links[purchase.id]):
             shares = [(c, sign * b, sign * t) for c, b, t in split(base, tax, [(r.category_id, r.amount_cents) for r in erp_rubrics[links[purchase.id]]])]
+        elif own_rubrics.get(purchase.id):
+            # Repartição confirmada na classificação de rubricas (compra sem linhas nem documento ERP com rubrica).
+            shares = [(c, sign * b, sign * t) for c, b, t in split(base, tax, [(r.category_id, r.amount_cents) for r in own_rubrics[purchase.id]])]
         else:
             shares = [(by_supplier.get(nif_key(purchase.supplier_nif), UNCLASSIFIED), sign * base, sign * tax)]
         result.append((purchase.document_date, purchase.id, shares))

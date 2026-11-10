@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Download, LockKeyhole, Settings, UnlockKeyhole } from "lucide-react";
+import { Download, LockKeyhole, Plus, Settings, Trash2, UnlockKeyhole } from "lucide-react";
+import { centsInput, euroToCents } from "./utils/format";
 import { api } from "./lib/api";
 import { ActionButton, ActionLink, AppDialog, Notice, confirmAction } from "./components/InteractionUI";
 import { Field } from "./components/Form";
@@ -64,13 +65,79 @@ export default function BankReconciliationPeriod({ account, from, to, revision, 
       {data.closings?.length > 0 && <details><summary>Histórico de fechos ({data.closings.length})</summary>{data.closings.map((c: Row) => <div className="setting-row" key={c.id}><div><strong>{c.reopened_at ? "Reaberto" : c.stale ? "Dados alterados após o fecho" : "Fechado"}</strong><p>{new Date(c.created_at).toLocaleString("pt-PT")} · {c.created_by} · {c.reason}</p>{c.reopened_at && <p>Reaberto por {c.reopened_by || "utilizador registado"} / {c.reopen_reason}</p>}<ActionLink href={base + `&format=pdf&closing_id=${encodeURIComponent(c.id)}`} target="_blank" rel="noopener noreferrer">PDF do fecho preservado</ActionLink></div></div>)}</details>}
     </>}
     {rules && <AppDialog aria-label="Regras de correspondência" busy={busy} onRequestClose={() => setRules(null)}><h2>Regras de correspondência</h2>{error && <Notice tone="error">{error}</Notice>}
-      <Field label="Tolerância de datas (dias)"><input type="number" min="0" max="90" step="1" value={rules.date_tolerance_days} onChange={e => setRules({ ...rules, date_tolerance_days: e.target.value })} /></Field>
-      <label className="checkbox"><input type="checkbox" checked={rules.grouped_proposals} onChange={e => setRules({ ...rules, grouped_proposals: e.target.checked })} />Gerar propostas de agrupamento</label>
-      <p>As regras geram sugestões. A confirmação financeira e qualquer lançamento de comissão continuam a exigir aprovação explícita.</p>
-      <ActionButton disabled={busy || !Number.isInteger(Number(rules.date_tolerance_days)) || Number(rules.date_tolerance_days) < 0 || Number(rules.date_tolerance_days) > 90} onClick={() => act(async () => {
-        await api(`/reconciliation/accounts/${account}/rules`, { date_tolerance_days: Number(rules.date_tolerance_days), grouped_proposals: rules.grouped_proposals }, { method: "PUT" }); setVersion(v => v + 1); setRules(null);
+      <RulesForm rules={rules} onChange={setRules} />
+      <p>As regras geram sugestões. A confirmação financeira e qualquer lançamento de comissão continuam a exigir aprovação explícita; um movimento de valor parecido nunca marca uma fatura como paga.</p>
+      <ActionButton disabled={busy || !!rulesProblem(rules)} onClick={() => act(async () => {
+        await api(`/reconciliation/accounts/${account}/rules`, rulesBody(rules), { method: "PUT" }); setVersion(v => v + 1); setRules(null);
         window.dispatchEvent(new Event("iazela-reconciliation-rules-changed"));
       })}>Guardar regras</ActionButton>
+      {rulesProblem(rules) && <small className="reconciliation-conflict">{rulesProblem(rules)}</small>}
     </AppDialog>}
   </RecordGroup>;
+}
+
+/** Valor em euros escrito pelo utilizador (texto) ou, à primeira, o valor guardado em cêntimos. */
+const euroText = (text: string | undefined, cents: number | null | undefined) => text ?? (cents == null ? "" : centsInput(cents));
+const integer = (value: unknown, min: number, max: number) => { const n = Number(value); return Number.isInteger(n) && n >= min && n <= max; };
+
+export function rulesProblem(rules: Row): string {
+  if (!integer(rules.date_tolerance_days, 0, 90)) return "A tolerância de datas vai de 0 a 90 dias.";
+  const cents = euroToCents(euroText(rules.amount_text, rules.amount_tolerance_cents));
+  if (cents != null && (Number.isNaN(cents) || cents > 10000)) return "A tolerância de valor vai até 100,00 €.";
+  const percent = Number(String(rules.amount_tolerance_percent ?? "0").replace(",", "."));
+  if (!(percent >= 0 && percent <= 10)) return "A tolerância percentual vai de 0 a 10 %.";
+  if (!integer(rules.min_score, 30, 95) || !integer(rules.safe_score, 50, 100) || !integer(rules.safe_gap, 0, 60)) return "Reveja os limites de confiança.";
+  if (Number(rules.safe_score) < Number(rules.min_score)) return "A confiança para aceitar em lote não pode ser inferior à confiança mínima.";
+  for (const s of rules.suppliers || []) {
+    if ((s.match || "").trim().length < 3) return "Cada exceção por fornecedor precisa de pelo menos 3 letras.";
+    if (s.date_tolerance_days !== "" && s.date_tolerance_days != null && !integer(s.date_tolerance_days, 0, 366)) return "A tolerância de datas do fornecedor vai de 0 a 366 dias.";
+    const own = euroToCents(euroText(s.amount_text, s.amount_tolerance_cents));
+    if (own != null && (Number.isNaN(own) || own > 10000)) return "A tolerância de valor do fornecedor vai até 100,00 €.";
+  }
+  return "";
+}
+
+export function rulesBody(rules: Row) {
+  return {
+    date_tolerance_days: Number(rules.date_tolerance_days), grouped_proposals: !!rules.grouped_proposals,
+    amount_tolerance_cents: euroToCents(euroText(rules.amount_text, rules.amount_tolerance_cents)) || 0,
+    amount_tolerance_percent: String(rules.amount_tolerance_percent ?? "0").replace(",", ".") || "0",
+    min_score: Number(rules.min_score), safe_score: Number(rules.safe_score), safe_gap: Number(rules.safe_gap),
+    suppliers: (rules.suppliers || []).map((s: Row) => ({
+      match: s.match.trim(), note: s.note || "",
+      date_tolerance_days: s.date_tolerance_days === "" || s.date_tolerance_days == null ? null : Number(s.date_tolerance_days),
+      amount_tolerance_cents: euroToCents(euroText(s.amount_text, s.amount_tolerance_cents)),
+    })),
+  };
+}
+
+function RulesForm({ rules, onChange }: { rules: Row; onChange: (rules: Row) => void }) {
+  const set = (changes: Row) => onChange({ ...rules, ...changes });
+  const suppliers: Row[] = rules.suppliers || [];
+  const setSupplier = (index: number, changes: Row) => set({ suppliers: suppliers.map((s, i) => i === index ? { ...s, ...changes } : s) });
+  return <div className="reconciliation-rules">
+    <fieldset><legend>Datas e valores</legend>
+      <Field label="Tolerância de datas (dias)"><input type="number" min="0" max="90" step="1" value={rules.date_tolerance_days} onChange={e => set({ date_tolerance_days: e.target.value })} /></Field>
+      <Field label="Tolerância de valor (€)"><input inputMode="decimal" value={euroText(rules.amount_text, rules.amount_tolerance_cents)} onChange={e => set({ amount_text: e.target.value })} /></Field>
+      <Field label="Tolerância de valor (%)"><input inputMode="decimal" value={String(rules.amount_tolerance_percent ?? "0").replace(".", ",")} onChange={e => set({ amount_tolerance_percent: e.target.value })} /></Field>
+      <small>Usa-se o maior dos dois limites. Serve para comissões e arredondamentos: a proposta é sempre do valor menor e a diferença fica visível.</small>
+      <label className="checkbox"><input type="checkbox" checked={rules.grouped_proposals} onChange={e => set({ grouped_proposals: e.target.checked })} />Gerar propostas de agrupamento</label>
+    </fieldset>
+    <fieldset><legend>Confiança</legend>
+      <Field label="Confiança mínima para propor (30–95)"><input type="number" min="30" max="95" value={rules.min_score} onChange={e => set({ min_score: e.target.value })} /></Field>
+      <Field label="Confiança para aceitar em lote (50–100)"><input type="number" min="50" max="100" value={rules.safe_score} onChange={e => set({ safe_score: e.target.value })} /></Field>
+      <Field label="Distância mínima à alternativa seguinte (pontos)"><input type="number" min="0" max="60" value={rules.safe_gap} onChange={e => set({ safe_gap: e.target.value })} /></Field>
+    </fieldset>
+    <fieldset><legend>Exceções por fornecedor</legend>
+      <small>Por exemplo, débitos diretos pagos 30 a 40 dias depois da fatura. Aplica-se quando o nome ou a referência do registo contém o texto indicado.</small>
+      {suppliers.map((s, index) => <div className="reconciliation-rule-row" key={index}>
+        <Field label="Fornecedor (nome ou referência)"><input value={s.match || ""} maxLength={80} onChange={e => setSupplier(index, { match: e.target.value })} /></Field>
+        <Field label="Datas (dias)"><input type="number" min="0" max="366" value={s.date_tolerance_days ?? ""} placeholder="Da conta" onChange={e => setSupplier(index, { date_tolerance_days: e.target.value })} /></Field>
+        <Field label="Valor (€)"><input inputMode="decimal" value={euroText(s.amount_text, s.amount_tolerance_cents)} placeholder="Da conta" onChange={e => setSupplier(index, { amount_text: e.target.value })} /></Field>
+        <Field label="Nota"><input value={s.note || ""} maxLength={200} onChange={e => setSupplier(index, { note: e.target.value })} /></Field>
+        <ActionButton type="button" aria-label={`Remover a exceção ${s.match || ""}`} onClick={() => set({ suppliers: suppliers.filter((_, i) => i !== index) })}><Trash2 size={15} aria-hidden="true" /></ActionButton>
+      </div>)}
+      <ActionButton type="button" onClick={() => set({ suppliers: [...suppliers, { match: "", date_tolerance_days: "", amount_tolerance_cents: null, note: "" }] })}><Plus size={15} aria-hidden="true" />Acrescentar exceção</ActionButton>
+    </fieldset>
+  </div>;
 }

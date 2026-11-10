@@ -7,7 +7,13 @@ const source = fs.readFileSync(path.join(__dirname, '../frontend/src/navigationC
 const exportsObject = {};
 new Function('exports', ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText)(exportsObject);
 const {NAVIGATION, APP_PAGES, PAGE_ALIASES, visibleNavigation, activeNavigation, navigationParams, PROCUREMENT_PAGES} = exportsObject;
-assert.equal(NAVIGATION.length, 11);
+assert.equal(NAVIGATION.length, 12);
+// Obrigações e Prazos: grupo próprio, só para gestores, com um separador por área da página.
+const obligations = NAVIGATION.find(g => g.id === 'obrigacoes');
+assert.deepEqual(obligations.items.map(i => i.params['area.obrigacoes']), ['visao', 'fiscal', 'contrato', 'veiculo', 'outros']);
+const budgetItem = NAVIGATION.find(g => g.id === 'financeiro').items.find(i => i.page === 'Orçamento');
+assert(budgetItem && budgetItem.managerOnly, 'Orçamento no Financeiro, só para administrador e gestor');
+assert(obligations.items.every(i => i.page === 'Obrigações e Prazos' && i.managerOnly));
 const entities = NAVIGATION.find(g => g.id === 'entidades');
 assert.equal(entities.label, 'Entidades');
 assert.deepEqual(entities.items.map(i => i.id), ['comercial:Clientes', 'compras:Fornecedores']);
@@ -52,4 +58,4 @@ assert.deepEqual(NAVIGATION.find(g=>g.id==='encomendas').items.map(i=>i.label),[
 assert.deepEqual(NAVIGATION.find(g=>g.id==='artigos').items.map(i=>i.label),['Catálogo de artigos','Lotes e validades']);
 assert(!NAVIGATION.find(g=>g.id==='financeiro').items.some(i=>['Meios de pagamento','Prazos de pagamento'].includes(i.label)));
 assert(NAVIGATION.find(g=>g.id==='admin').items.some(i=>i.label==='Meios de pagamento'));
-console.log(`PASS: ${new Set(APP_PAGES).size} legacy pages, ${all.length} destinations, 12 role/mode combinations, 11 groups and contextual active states.`);
+console.log(`PASS: ${new Set(APP_PAGES).size} legacy pages, ${all.length} destinations, 12 role/mode combinations, 12 groups and contextual active states.`);

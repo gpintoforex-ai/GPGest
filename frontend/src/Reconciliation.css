@@ -317,3 +317,10 @@
 .bank-rules-dialog td small { display:block; font-size:11px; color:var(--text-secondary); }
 .bank-rules-dialog td code { font-size:12px; }
 @media (max-width:600px) { .bank-resolution-rule { grid-template-columns:1fr; } }
+.reconciliation-rules { display:grid; gap:12px; }
+.reconciliation-rules fieldset { display:grid; gap:8px; margin:0; padding:10px 12px; border:1px solid var(--color-border); border-radius:10px; min-width:0; }
+.reconciliation-rules small { color:var(--color-muted); }
+.reconciliation-rule-row { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,.6fr) minmax(0,.6fr) minmax(0,1fr) auto; gap:8px; align-items:end; }
+@media (max-width:720px) { .reconciliation-rule-row { grid-template-columns:1fr; } }
+.reconciliation-rules fieldset:not(:last-child) { grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr)); align-items:end; }
+.reconciliation-rules fieldset > small, .reconciliation-rules fieldset > .checkbox { grid-column:1 / -1; }

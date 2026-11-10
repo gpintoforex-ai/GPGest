@@ -1916,3 +1916,229 @@ class WebshopOrder(Base):
     content_digest: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(20))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class Obligation(Base):
+    """Obrigação ou prazo (fiscal, contrato, viatura, inspeção, seguro, licença ou outro): a regra.
+
+    As datas concretas são ocorrências próprias (`ObligationOccurrence`), geradas pelo motor de
+    recorrências; concluir uma ocorrência não altera a regra nem as restantes ocorrências."""
+    __tablename__ = "obligations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    # Vazio: obrigação da empresa; preenchido: de um estabelecimento.
+    store_id: Mapped[str | None] = mapped_column(ForeignKey("stores.id"), nullable=True, index=True)
+    category: Mapped[str] = mapped_column(String(20), index=True)
+    kind: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text, default="", server_default="")
+    entity_id: Mapped[str | None] = mapped_column(ForeignKey("business_entities.id"), nullable=True)
+    entity_name: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    category_id: Mapped[str | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    responsible_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    periodicity: Mapped[str] = mapped_column(String(20))
+    every_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_date: Mapped[str] = mapped_column(String(10))
+    end_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    alert_days: Mapped[str] = mapped_column(String(100), default="[90,60,30,15,7,0]", server_default="[90,60,30,15,7,0]")
+    # Valor previsto a pagar (com IVA quando aplicável) e taxa de IVA, se houver; vazio = sem valor financeiro.
+    amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    vat_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    # Origem da data-limite: manual, regra legal, calendário oficial, contrato…; validada pelo utilizador.
+    date_source: Mapped[str] = mapped_column(String(30), default="manual", server_default="manual")
+    date_note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    date_validated: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    status: Mapped[str] = mapped_column(String(20), default="ativa", server_default="ativa")
+    # Campos próprios do tipo (contrato, viatura, apólice…), em JSON.
+    data: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class ObligationOccurrence(Base):
+    """Uma data concreta de uma obrigação; a chave (obrigação, data da regra) impede duplicados."""
+    __tablename__ = "obligation_occurrences"
+    __table_args__ = (UniqueConstraint("obligation_id", "rule_date"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    obligation_id: Mapped[str] = mapped_column(ForeignKey("obligations.id"), index=True)
+    rule_date: Mapped[str] = mapped_column(String(10))
+    # Data-limite efetiva: a da regra ou a corrigida manualmente (com a origem da correção).
+    due_date: Mapped[str] = mapped_column(String(10), index=True)
+    date_origin: Mapped[str] = mapped_column(Text, default="", server_default="")
+    expected_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    actual_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # pendente, concluida, cancelada ou nao_aplicavel; os restantes estados são calculados pela data.
+    status: Mapped[str] = mapped_column(String(20), default="pendente", server_default="pendente", index=True)
+    responsible_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    completed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ObligationRead(Base):
+    """Confirmação de leitura de uma ocorrência por um utilizador."""
+    __tablename__ = "obligation_reads"
+    __table_args__ = (UniqueConstraint("occurrence_id", "user_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    occurrence_id: Mapped[str] = mapped_column(ForeignKey("obligation_occurrences.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class CostCenter(Base):
+    """Centro de custo (opcional nas linhas do orçamento): código e nome; inativo mantém o histórico."""
+    __tablename__ = "cost_centers"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    code: Mapped[str] = mapped_column(String(20), unique=True)
+    name: Mapped[str] = mapped_column(String(100))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class Budget(Base):
+    """Versão de um orçamento anual de despesas, da empresa (`scope_key` vazio) ou de um estabelecimento.
+
+    Só planeamento: não cria movimentos. Estados: rascunho (editável), aprovado (bloqueado) e revisto
+    (aprovado que foi substituído por uma revisão aprovada). Uma revisão é uma nova versão com as linhas
+    copiadas; as anteriores ficam como histórico."""
+    __tablename__ = "budgets"
+    __table_args__ = (UniqueConstraint("year", "scope_key", "version"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    year: Mapped[int] = mapped_column(Integer, index=True)
+    store_id: Mapped[str | None] = mapped_column(ForeignKey("stores.id"), nullable=True)
+    scope_key: Mapped[str] = mapped_column(String(36), default="", server_default="")
+    name: Mapped[str] = mapped_column(String(120))
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    status: Mapped[str] = mapped_column(String(20), default="rascunho", server_default="rascunho")
+    previous_id: Mapped[str | None] = mapped_column(ForeignKey("budgets.id"), nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    approved_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class BudgetLine(Base):
+    """Despesa prevista de um orçamento: valor sem IVA por ocorrência, regra de recorrência, aumentos
+    previstos e exceções (JSON). As ocorrências são calculadas pelo motor de recorrências, nunca gravadas
+    como movimentos; a chave (linha, data da regra) é estável para a ligação ao realizado."""
+    __tablename__ = "budget_lines"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id"), index=True)
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
+    description: Mapped[str] = mapped_column(String(200))
+    entity_id: Mapped[str | None] = mapped_column(ForeignKey("business_entities.id"), nullable=True)
+    entity_name: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    cost_center_id: Mapped[str | None] = mapped_column(ForeignKey("cost_centers.id"), nullable=True)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    vat_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0, server_default="0")
+    periodicity: Mapped[str] = mapped_column(String(20))
+    every_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_date: Mapped[str] = mapped_column(String(10))
+    end_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Dias entre a data da despesa e a data prevista de pagamento.
+    payment_days: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # "caixa", "banco:<id>" ou vazio (por definir).
+    payment_account: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    # [{"from": "AAAA-MM-DD", "percent": "3.5"}] e [{"date": "AAAA-MM-DD", "skip": true | "amount_cents": n}].
+    increases: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    exceptions: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    status: Mapped[str] = mapped_column(String(20), default="ativa", server_default="ativa")
+    # Linha da versão anterior de onde foi copiada (revisão): as associações ao realizado passam para a nova.
+    origin_line_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class PurchaseRubric(Base):
+    """Repartição por rubrica de uma compra sem linhas e sem documento ERP ligado (por exemplo, uma fatura
+    e-Fatura ainda não lançada). Os valores repartem o total do documento; substitui a rubrica do fornecedor.
+    Com documento ERP ligado, a repartição é guardada no documento ERP (`ERPDocumentRubric`)."""
+    __tablename__ = "purchase_rubrics"
+    __table_args__ = (UniqueConstraint("purchase_id", "category_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    purchase_id: Mapped[str] = mapped_column(ForeignKey("purchases.id"), index=True)
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ClassificationRule(Base):
+    """Regra de classificação aprovada: critérios (fornecedor, tipo de documento, palavra-chave,
+    estabelecimento) → repartição por rubrica em percentagem. Só sugere: a classificação é sempre aplicada
+    por confirmação. `kind` distingue a classificação financeira (rubricas de gestão) de outras futuras."""
+    __tablename__ = "classification_rules"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(120))
+    kind: Mapped[str] = mapped_column(String(20), default="financeira", server_default="financeira")
+    supplier_nif: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+    document_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    keyword: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    store_id: Mapped[str | None] = mapped_column(ForeignKey("stores.id"), nullable=True)
+    # [{"category_id": "...", "percent": "60.00"}], somando 100.
+    shares: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    hits: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class BudgetLink(Base):
+    """Associação de uma parcela do realizado (compra, documento ERP ou custo bancário; por rubrica) a uma
+    ocorrência de uma despesa prevista (linha + data da regra) de uma versão do orçamento.
+
+    Confirmada pelo utilizador ou rejeitada (para não voltar a ser proposta); anular guarda quem, quando e
+    porquê. O valor é o custo da parcela (critério dos mapas de gestão). A soma das associações ativas de uma
+    parcela, numa versão, nunca ultrapassa o custo da parcela: a mesma despesa não conta duas vezes."""
+    __tablename__ = "budget_links"
+    __table_args__ = (Index("uq_budget_link_active", "budget_id", "source_kind", "source_id", "category_id", "budget_line_id", "rule_date",
+                            unique=True, postgresql_where=text("status <> 'anulada'")),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    budget_id: Mapped[str] = mapped_column(ForeignKey("budgets.id"), index=True)
+    budget_line_id: Mapped[str] = mapped_column(ForeignKey("budget_lines.id"), index=True)
+    rule_date: Mapped[str] = mapped_column(String(10))
+    # purchase, erp ou bank (o mesmo documento dos mapas de gestão).
+    source_kind: Mapped[str] = mapped_column(String(10))
+    source_id: Mapped[str] = mapped_column(String(36))
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    # confirmada, rejeitada ou anulada.
+    status: Mapped[str] = mapped_column(String(20), default="confirmada", server_default="confirmada", index=True)
+    confidence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    method: Mapped[str] = mapped_column(String(40), default="manual", server_default="manual")
+    reasons: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    copied_from_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    decided_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    undone_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    undo_reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+
+
+class AutomationSettings(Base):
+    """Automatizações do Centro de Conferência (uma linha por empresa). Por omissão nada é automático.
+
+    Só associações inequívocas e previamente autorizadas: classificação por regra aprovada e associação ao
+    orçamento com confiança muito alta. Pagamentos, reconciliação, lançamentos e escritas no ERP nunca são
+    automáticos. `authorized_by` é quem ativou: as operações ficam na auditoria em seu nome, marcadas como
+    automáticas."""
+    __tablename__ = "automation_settings"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
+    data: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    authorized_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_result: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)

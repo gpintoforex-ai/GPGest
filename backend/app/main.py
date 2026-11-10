@@ -2455,6 +2455,18 @@ register_purchase_process_routes(app, current, authorize, scope)
 
 from .payment_terms import router as payment_terms_router
 app.include_router(payment_terms_router)
+from .obligations import router as obligations_router
+app.include_router(obligations_router)
+from .budget import router as budget_router
+app.include_router(budget_router)
+from .operation_trace import router as operation_trace_router
+app.include_router(operation_trace_router)
+from .classification import router as classification_router
+app.include_router(classification_router)
+from .budget_links import router as budget_links_router
+app.include_router(budget_links_router)
+from .conference import router as conference_router
+app.include_router(conference_router)
 
 # Comportamento comum das tabelas: as definições registam-se ao importar table_specs.
 from . import table_specs  # noqa: E402,F401

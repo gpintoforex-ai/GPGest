@@ -102,6 +102,11 @@ const DocumentControl = lazy(() => import("./DocumentControl"));
 const BillingConference = lazy(() => import("./BillingConference"));
 const AccountingDelivery = lazy(() => import("./AccountingDelivery"));
 const RubricExpenses = lazy(() => import("./RubricExpenses"));
+const Obligations = lazy(() => import("./Obligations"));
+const Budget = lazy(() => import("./Budget"));
+const OperationTrace = lazy(() => import("./OperationTrace"));
+const Classification = lazy(() => import("./Classification"));
+const Conference = lazy(() => import("./Conference"));
 // Dashboard: versão atual ou nova (lado a lado até validar), com a visão de trabalho e o painel financeiro.
 const DashboardHome = lazy(() => import("./DashboardHome"));
 const ManagementMaps = lazy(() => import("./ManagementMaps"));
@@ -800,7 +805,11 @@ export default function App() {
           {page === "Reconciliação automática" && (
             <Reconciliation accounts={boot.accounts} categories={boot.categories} stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} />
           )}
+          {page === "Centro de Conferência" && manager && <Conference stores={boot.stores} admin={boot.user.role === "administrador"} navigate={(next, params) => void navigatePage(next, params)} />}
+          {page === "Classificação de rubricas" && manager && <Classification stores={boot.stores} />}
+          {page === "Rastreabilidade" && manager && <OperationTrace stores={boot.stores} navigate={next => void navigatePage(next)} />}
           {page === "Conferência documental" && <DocumentControl stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} integration={boot.integration} navigate={navigatePage} />}
+          {page === "Obrigações e Prazos" && manager && <Obligations stores={boot.stores} store={store} categories={boot.categories} />}
           {page === "Despesas por rubrica" && manager && <RubricExpenses stores={boot.stores} store={store} categories={boot.categories} admin={boot.user.role === "administrador"} integrated={integratedMode} />}
           {page === "Mapas de gestão" && manager && <ManagementMaps store={store} />}
           {page === "Entrega à contabilidade" && <AccountingDelivery admin={boot.user.role === "administrador"} company={boot.company || {}} stores={boot.stores} store={store} onEmailSettings={() => navigatePage("Email")} onSettings={() => navigatePage(manager ? "Regime de IVA" : "Organização")} />}
@@ -1011,6 +1020,7 @@ export default function App() {
           )}
           {page === "Depósitos" && <Deposits boot={boot} store={store} reload={reload} />}
           {page === "Previsão de liquidez" && <Liquidity boot={boot} store={store} />}
+          {page === "Orçamento" && manager && <Budget stores={boot.stores} />}
           {page === "Faturação e recebimentos" && <BillingConference stores={boot.stores} store={store} manager={manager} />}
           {page === "Armazéns" && <TablePage tableKey="warehouses" context={tableContext} active={activePage === page} store={store} />}
           {page === "Artigos e validades" && <Suspense fallback={<p role="status">A carregar artigos e stock…</p>}><Inventory stores={boot.stores} admin={boot.user.role === "administrador"} /></Suspense>}

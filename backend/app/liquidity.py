@@ -198,6 +198,9 @@ def project(accounts, events, selected, start, end, reserves, assumptions):
         if event["key"] in replacements:
             pending.append({**event, "exclusion": "Recorrência substituída pelo documento associado"})
             continue
+        if event.get("duplicate"):
+            pending.append({**event, "exclusion": event["duplicate"]})
+            continue
         if event.get("conflict"):
             pending.append({**event, "exclusion": "A origem mudou; reveja e confirme o ajuste"})
             continue
@@ -334,7 +337,9 @@ def register_routes(app, current, authorize, scope, audit, serial, planned_summa
         allowed = {a["key"] for a in accounts}
 
         def event(key, store, title, amount, direction, due, target="", currency="EUR", **extra):
-            events.append({"key": key, "store_id": store, "title": title, "amount_cents": amount, "direction": direction, "due_date": due, "expected_date": due if due and due >= stamp else None, "target": target, "currency": currency, "confidence": "provavel", "source": key.split(":", 1)[0], **extra})
+            from .liquidity_estimates import priority
+            level, label = priority(key.split(":", 1)[0])
+            events.append({"key": key, "store_id": store, "title": title, "amount_cents": amount, "direction": direction, "due_date": due, "expected_date": due if due and due >= stamp else None, "target": target, "currency": currency, "confidence": "provavel", "source": key.split(":", 1)[0], "priority": level, "priority_label": label, **extra})
             events[-1]["source_url"] = "/api/liquidity/origin/" + key
             events[-1]["origin_fingerprint"] = digest(events[-1])
 
@@ -374,6 +379,14 @@ def register_routes(app, current, authorize, scope, audit, serial, planned_summa
                     year, month = number // 12, number % 12 + 1
                     due = date(year, month, min(anchor.day, calendar.monthrange(year, month)[1])).isoformat()
                 event(key, row.store_id, data["title"], data["amount_cents"], data["direction"], due, target=data["target"], currency=data["currency"], expected_date=occurrence, from_target=data["from_target"], transfer=bool(data["from_target"]), confidence=data["confidence"], manual_id=row.id, recurrence=data["recurrence"], updated_at=row.updated_at.isoformat())
+        # Prioridades 3 e 4: compromissos (encomendas, receções por faturar) e estimativas (obrigações, orçamento),
+        # sem duplicar documentos já registados; as duplicadas ficam visíveis como excluídas, com o motivo.
+        from .liquidity_estimates import extra_events
+        documents = [e for e in events if e["source"] in ("planned", "wintouch")]
+        estimates, duplicates = extra_events(db, user, ids, store_id, today(), end, documents)
+        for item in estimates + [{**d, "duplicate": d.pop("exclusion")} for d in duplicates]:
+            item = dict(item)
+            event(item.pop("key"), item.pop("store_id"), item.pop("title"), item.pop("amount_cents"), item.pop("direction"), item.pop("due_date"), **item)
         from .deposits import credit_total, cents
         transit = []
         for row in db.scalars(select(BankDeposit).where(BankDeposit.store_id.in_(ids), BankDeposit.status.notin_(["rascunho", "cancelado", "reconciliado"]))):
@@ -478,7 +491,8 @@ def register_routes(app, current, authorize, scope, audit, serial, planned_summa
                 warnings.append(currency + ": saldo inicial parcial; os saldos indisponíveis não estão incluídos no cálculo.")
         if any(a["missing"] or a["stale"] or a["kind"] == "estimado" for a in accounts if a["key"] in selected):
             warnings.append("A previsão utiliza saldos incompletos, estimados ou desatualizados; os indicadores não representam disponibilidade bancária confirmada.")
-        result = {"updated_at": now().isoformat(), "company": db.info.get("company", {}), "scenario": {"id": data.scenario_id, "name": saved.name if saved else {"base": "Base", "conservative": "Conservador", "custom": "Personalizado"}[data.scenario_id], "assumptions": assumptions}, "settings": cfg, "accounts": accounts, "selected": sorted(selected), "groups": groups, "pending": pending, "events": events, "scheduled": scheduled, "warnings": warnings, "transit": transit, "period": {"start": data.start.isoformat(), "end": data.end.isoformat()}}
+        from .liquidity_estimates import summarize
+        result = {"priorities": summarize(scheduled, pending), "updated_at": now().isoformat(), "company": db.info.get("company", {}), "scenario": {"id": data.scenario_id, "name": saved.name if saved else {"base": "Base", "conservative": "Conservador", "custom": "Personalizado"}[data.scenario_id], "assumptions": assumptions}, "settings": cfg, "accounts": accounts, "selected": sorted(selected), "groups": groups, "pending": pending, "events": events, "scheduled": scheduled, "warnings": warnings, "transit": transit, "period": {"start": data.start.isoformat(), "end": data.end.isoformat()}}
         if data.compare:
             base_groups, _, _ = project(accounts, source_data(db, user, data.end, data.store_id)[1], selected, data.start, data.end, cfg["reserves"], {"delay_days": 0, "exclude_uncertain": False})
             result["comparison"] = base_groups
@@ -590,6 +604,14 @@ def register_routes(app, current, authorize, scope, audit, serial, planned_summa
             if row:
                 authorize(user, db, row.store_id)
                 return {"source": "Depósito bancário", "data": {"document": row.number, "status": row.status, "amount_cents": int((row.cash_amount + row.cheque_amount) * 100), "due_date": row.preparation_date, "exit_date": row.exit_date, "delivery_date": row.delivery_date, "account_id": row.account_id, "register_id": row.register_id}}
+        elif source in ("commitment", "obligation", "budget"):
+            # Compromissos e estimativas: o próprio evento da previsão (só das lojas a que o utilizador tem acesso).
+            item = next((e for e in source_data(db, user, today() + timedelta(days=365))[1] if e["key"] == key), None)
+            if item:
+                labels = {"commitment": "Compromisso (encomenda ou receção por faturar)", "obligation": "Prazo das Obrigações e Prazos", "budget": "Despesa orçamentada ainda não realizada"}
+                return {"source": labels[source], "note": item.get("duplicate") or item.get("estimate_note", ""),
+                        "data": {"document": item.get("document") or item["title"], "title": item["title"], "entity": item.get("entity", ""), "due_date": item["due_date"],
+                                 "amount_cents": item["amount_cents"], "currency": item["currency"]}}
         raise HTTPException(404, "Origem indisponível nesta empresa e perfil.")
 
     @app.get("/api/liquidity/setup")

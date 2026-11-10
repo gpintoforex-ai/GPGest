@@ -99,9 +99,11 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
   }
   const tops = new Map<string, number>();
   for (const r of rows) { const internal = internalOf(forBank(r.id)[0]); if (internal) tops.set(key(internal), (tops.get(key(internal)) || 0) + 1); }
-  // Fiável: exata, ou confiança alta claramente acima da alternativa seguinte e documento não disputado por outro movimento.
-  const reliable = (c: Row) => !c.blocked && (!!c.rule || c.proposal.classification === "exata" || c.proposal.score >= 80
-    && (forBank(c.row.id)[1]?.score ?? 0) <= c.proposal.score - 20 && !!c.internal && tops.get(key(c.internal)) === 1);
+  // Fiável: exata, ou confiança alta (limites da conta: Regras de correspondência) claramente acima da alternativa
+  // seguinte e documento não disputado por outro movimento.
+  const limits = (r: Row) => ({ score: Number(data.rules?.[r.account_id]?.safe_score ?? 80), gap: Number(data.rules?.[r.account_id]?.safe_gap ?? 20) });
+  const reliable = (c: Row) => !c.blocked && (!!c.rule || c.proposal.classification === "exata" || c.proposal.score >= limits(c.row).score
+    && (forBank(c.row.id)[1]?.score ?? 0) <= c.proposal.score - limits(c.row).gap && !!c.internal && tops.get(key(c.internal)) === 1);
   const [batch, setBatch] = useState<Row[] | null>(null), [skipped, setSkipped] = useState<string[]>([]), [done, setDone] = useState(0);
   function openBatch(banks: Row[]) {
     const seen = new Set<string>();

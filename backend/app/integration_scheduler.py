@@ -72,6 +72,11 @@ def start_scheduler():
             except Exception:
                 pass
             try:
+                from .conference import scheduled_tick as conference_tick
+                conference_tick()
+            except Exception:
+                pass
+            try:
                 from .order_cycle import scheduled_tick as order_cycle_tick
                 order_cycle_tick()
             except Exception:

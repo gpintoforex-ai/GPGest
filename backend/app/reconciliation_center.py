@@ -3,6 +3,7 @@ import csv
 import io
 import json
 from datetime import date
+from decimal import Decimal
 from urllib.parse import quote
 from typing import Literal
 
@@ -42,13 +43,47 @@ def assert_open(db, account_id, stamp):
         raise HTTPException(409, "O período desta conta está fechado. Reabra-o com justificação antes de alterar os movimentos ou associações.")
 
 
+class SupplierRule(Strict):
+    """Exceção por fornecedor (nome ou referência do registo): débitos diretos a 30 dias, comissões fixas…"""
+    match: str = Field(min_length=3, max_length=80)
+    date_tolerance_days: int | None = Field(default=None, ge=0, le=366)
+    amount_tolerance_cents: int | None = Field(default=None, strict=True, ge=0, le=10000)
+    note: str = Field(default="", max_length=200)
+
+
 class Rules(Strict):
     date_tolerance_days: int = Field(default=10, ge=0, le=90)
     grouped_proposals: bool = True
+    # Diferença de valor aceite como a mesma operação (comissões, arredondamentos): o maior dos dois limites.
+    amount_tolerance_cents: int = Field(default=0, strict=True, ge=0, le=10000)
+    amount_tolerance_percent: Decimal = Field(default=Decimal(0), ge=0, le=10, decimal_places=2)
+    # Confiança mínima para propor e confiança (com distância à alternativa seguinte) para aceitar em lote.
+    min_score: int = Field(default=30, ge=30, le=95)
+    safe_score: int = Field(default=80, ge=50, le=100)
+    safe_gap: int = Field(default=20, ge=0, le=60)
+    suppliers: list[SupplierRule] = Field(default_factory=list, max_length=50)
 
 
 def account_rules(account):
-    return Rules(**json.loads(account.settings or "{}").get("reconciliation_rules", {})).model_dump()
+    return Rules(**json.loads(account.settings or "{}").get("reconciliation_rules", {})).model_dump(mode="json")
+
+
+def effective(policy, internal):
+    """(tolerância de datas, tolerância de valor em cêntimos, regra do fornecedor) para um registo interno."""
+    from .reconciliation import short_normalized
+    date_tolerance = policy.get("date_tolerance_days", 10)
+    amount = abs(internal.get("available_cents") or internal.get("amount_cents") or 0)
+    cents = max(int(policy.get("amount_tolerance_cents", 0)),
+                int((Decimal(str(policy.get("amount_tolerance_percent", 0))) * amount / 100).to_integral_value()))
+    text = short_normalized(f"{internal.get('entity') or ''} {internal.get('reference') or ''} {internal.get('description') or ''}")
+    for rule in policy.get("suppliers", []):
+        if short_normalized(rule["match"]) and short_normalized(rule["match"]) in text:
+            if rule.get("date_tolerance_days") is not None:
+                date_tolerance = rule["date_tolerance_days"]
+            if rule.get("amount_tolerance_cents") is not None:
+                cents = rule["amount_tolerance_cents"]
+            return date_tolerance, cents, rule["match"]
+    return date_tolerance, cents, None
 
 
 @router.get("/api/reconciliation/accounts/{account_id}/rules")
@@ -60,11 +95,14 @@ def rules(account_id: str, user=Depends(current), db: Session = Depends(db_sessi
 def save_rules(account_id: str, data: Rules, user=Depends(current), db: Session = Depends(db_session)):
     account = locked_account(db, user, account_id, True)
     settings = json.loads(account.settings or "{}")
-    settings["reconciliation_rules"] = data.model_dump()
+    if data.safe_score < data.min_score:
+        raise HTTPException(422, "A confiança para aceitar em lote não pode ser inferior à confiança mínima para propor.")
+    before = account_rules(account)
+    settings["reconciliation_rules"] = data.model_dump(mode="json")
     account.settings = json.dumps(settings)
-    record(db, user, "reconciliacao_regras", account.id, data.model_dump(), account.store_id)
+    record(db, user, "reconciliacao_regras", account.id, {"antes": before, "depois": data.model_dump(mode="json")}, account.store_id)
     db.commit()
-    return data.model_dump()
+    return data.model_dump(mode="json")
 
 
 def period_state(db, account, start, end):

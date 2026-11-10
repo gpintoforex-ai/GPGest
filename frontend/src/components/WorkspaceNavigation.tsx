@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import {
+  ClipboardCheck,
+  Wand2,
+  Target,
   LayoutDashboard,
   Users,
   ShoppingCart,
@@ -51,6 +54,7 @@ const icons: Record<string, typeof LayoutDashboard> = {
   artigos: Package,
   fornecedores: Truck,
   vendas: Receipt,
+  obrigacoes: CalendarClock,
 };
 
 // Preserve the former page icons, including destinations moved to a new area.
@@ -61,6 +65,7 @@ const pageIcons: Record<string, typeof LayoutDashboard> = {
   "Movimentos previstos": Clock,
   Depósitos: Landmark,
   "Previsão de liquidez": Clock,
+  "Orçamento": Target,
   "Múltiplas contas": Landmark,
   Extratos: Receipt,
   "Reconciliação automática": CheckCircle,
@@ -68,8 +73,12 @@ const pageIcons: Record<string, typeof LayoutDashboard> = {
   "Prazos de pagamento": Clock,
   "Faturação e recebimentos": Receipt,
   "Importar SAF-T de vendas": FileUp,
+  "Centro de Conferência": ClipboardCheck,
   "Conferência documental": Receipt,
+  Rastreabilidade: Link2,
+  "Classificação de rubricas": Wand2,
   "Despesas por rubrica": FileBarChart,
+  "Obrigações e Prazos": CalendarClock,
   "Mapas de gestão": FileBarChart,
   "Entrega à contabilidade": FileBarChart,
   "Arquivo — Visão geral": LayoutDashboard,

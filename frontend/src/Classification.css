@@ -1,0 +1,42 @@
+/* Classificação de rubricas. Só tokens do design system; cores por estado em .ui-tone. */
+.cls { display: grid; gap: 14px; }
+.cls-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 10px; }
+.workspace .cls-kpi.ui-action, .cls-kpi { display: flex; gap: 10px; align-items: center; justify-content: flex-start; min-height: 0; padding: 12px 14px; text-align: left;
+  white-space: normal; border: 1px solid var(--ui-tone-edge); border-radius: 14px; color: var(--color-text);
+  background: linear-gradient(135deg, var(--ui-tone-bg), var(--color-surface) 75%); }
+.cls-kpi:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.cls-kpi-icon { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; color: var(--ui-tone-ink); background: var(--ui-tone-bg); border: 1px solid var(--ui-tone-edge); }
+.cls-kpi-text { display: grid; gap: 1px; min-width: 0; }
+.cls-kpi-text > span { font-size: 13px; font-weight: 600; }
+.cls-kpi-text strong { font-size: 1.45rem; line-height: 1.1; color: var(--ui-tone-ink); font-variant-numeric: tabular-nums; }
+.cls-kpi-text small { color: var(--color-muted); font-size: 11.5px; }
+.cls-card { min-width: 0; padding: 14px 16px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); }
+.cls-filters { align-items: end; margin-bottom: 10px; }
+.cls-batch { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.cls-grid td small { display: block; color: var(--color-muted); font-size: 12px; }
+.cls-grid td .status-badge { margin-top: 3px; }
+.cls-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.cls-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 3px; }
+.cls-chip { padding: 1px 8px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--color-text); background: var(--surface-secondary); border: 1px solid var(--color-border); }
+.cls-notes { margin: 10px 0 0; padding-left: 18px; color: var(--color-muted); font-size: 12.5px; }
+
+.ui-dialog.cls-dialog { width: min(720px, calc(100vw - 24px)); }
+.cls-dialog { display: grid; gap: 10px; }
+.cls-dialog h3 { margin: 0 0 6px; font-size: 1rem; }
+.cls-doc { margin: 0; }
+.cls-doc small { display: block; color: var(--color-muted); }
+.cls-suggestions { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.cls-suggestions li { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 10px; }
+.cls-suggestions li > div { display: grid; gap: 3px; min-width: 0; justify-items: start; }
+.cls-suggestions small { color: var(--color-muted); font-size: 12px; }
+.cls-mode { display: flex; gap: 6px; }
+.cls-mode [aria-pressed="true"] { border-color: var(--color-accent); font-weight: 700; }
+.cls-shares, .cls-rule { display: grid; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 10px; min-width: 0; }
+.cls-share { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 160px) auto; gap: 8px; align-items: end; }
+@media (max-width: 560px) { .cls-share { grid-template-columns: 1fr; } }
+.cls-share label, .cls-rule-fields > label:not(.checkbox) { display: grid; gap: 4px; }
+.cls-share-foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.cls-ok { color: var(--context-success); font-weight: 600; }
+.cls-warn { color: var(--context-warning); font-weight: 600; }
+.cls-rule-fields { display: grid; gap: 8px; }
+.cls .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

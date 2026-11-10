@@ -241,9 +241,11 @@ def day_label(value):
     return "/".join(reversed(value.split("-")))
 
 
-def suggestion(bank, internal, tolerance=10, named=frozenset()):
+def suggestion(bank, internal, tolerance=10, named=frozenset(), amount_tolerance=0, supplier_rule=None):
     """`named`: palavras de entidades conhecidas que a descrição bancária contém. Quando a descrição
-    refere uma entidade e o registo é de outra, não há proposta (salvo referência do documento)."""
+    refere uma entidade e o registo é de outra, não há proposta (salvo referência do documento).
+    `amount_tolerance`: diferença (cêntimos) tratada como o mesmo valor (comissões, arredondamentos), configurada
+    nas regras da conta; o valor proposto é sempre o menor dos dois, nunca se considera pago o que não foi."""
     if (
         bank["store_id"] != internal["store_id"]
         or bank["amount_cents"] * internal["amount_cents"] <= 0
@@ -252,9 +254,14 @@ def suggestion(bank, internal, tolerance=10, named=frozenset()):
     ):
         return None
     reasons, score = [], 0
+    difference = abs(bank["available_cents"] - internal["available_cents"])
+    within = 0 < difference <= amount_tolerance
     if bank["available_cents"] == internal["available_cents"]:
         score += 45
         reasons.append("Montante disponível igual")
+    elif within:
+        score += 35
+        reasons.append(f"Diferença de {difference / 100:.2f} € dentro da tolerância da conta".replace(".", ","))
     elif bank["available_cents"] < internal["available_cents"]:
         score += 10
         reasons.append("Possível pagamento parcial ou comissão")
@@ -263,7 +270,7 @@ def suggestion(bank, internal, tolerance=10, named=frozenset()):
     # Exclusão rápida antes de comparar textos (a consulta avalia todos os pares movimento/registo).
     late = days > tolerance
     if late and not (internal["source"] == "purchase" and 0 < elapsed <= 366
-                     and bank["available_cents"] == internal["available_cents"]):
+                     and (bank["available_cents"] == internal["available_cents"] or within)):
         return None
     description = short_normalized(bank["description"] + " " + bank.get("reference", ""))
     reference = short_normalized(internal["reference"] or "")
@@ -293,8 +300,10 @@ def suggestion(bank, internal, tolerance=10, named=frozenset()):
     elif named and not referenced:
         return None
     # Valor diferente só com datas próximas não identifica nada: exige referência ou entidade.
-    if bank["available_cents"] != internal["available_cents"] and not referenced and not identified:
+    if bank["available_cents"] != internal["available_cents"] and not within and not referenced and not identified:
         return None
+    if supplier_rule:
+        reasons.append(f"Regra do fornecedor «{supplier_rule}»")
     tokens = {t for t in short_normalized(internal["description"] or "").split() if len(t) >= 4}
     if tokens & words_of(description):
         score += 10
@@ -672,7 +681,18 @@ def register_routes(app, current, authorize, scope, record, serial):
                 (banks if source == "bank" else internals).append(item)
         available = [i for i in internals if i["available_cents"] and i["status"] != "ignorado"]
         from .reconciliation_center import account_rules
+        from .reconciliation_center import effective as rule_effective
         rules = {identifier: account_rules(account) for identifier, account in context["accounts"].items()}
+
+        effective_cache = {}
+
+        def effective_policy(policy, internal, named):
+            # Uma vez por conta e registo (a consulta avalia todos os pares movimento × registo).
+            key = (id(policy), internal["source"], internal["id"])
+            if key not in effective_cache:
+                effective_cache[key] = rule_effective(policy, internal)
+            date_tolerance, amount_tolerance, supplier = effective_cache[key]
+            return date_tolerance, named, amount_tolerance, supplier
         suggestions = []
         known = set().union(*(entity_tokens(i["entity"]) for i in available))
         named_by_bank = {}
@@ -681,7 +701,9 @@ def register_routes(app, current, authorize, scope, record, serial):
                 named = known & set(normalized(bank["description"] + " " + bank.get("reference", "")).split())
                 # Fora do próprio movimento: o identificador das propostas (e as rejeições) depende dele.
                 named_by_bank[bank["id"]] = named
-                matches = [s for i in available if (s := suggestion(bank, i, rules.get(bank.get("account_id"), {}).get("date_tolerance_days", 10), named))]
+                policy = rules.get(bank.get("account_id"), {})
+                matches = [s for i in available if (s := suggestion(bank, i, *effective_policy(policy, i, named)))
+                           and s["score"] >= policy.get("min_score", 30)]
                 suggestions.extend(sorted(matches, key=lambda s: -s["score"])[:5])
         details = {}
         undo_reasons = {}

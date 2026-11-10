@@ -16,6 +16,9 @@ Digitalização rápida por PIN a partir do ecrã de entrada, em dispositivos em
 Arquivo central de todos os documentos, com caixa de entrada, extração, relações, pendências e assistente: [arquivo digital](docs/ARQUIVO-DIGITAL.md).
 Conferir e-Fatura, anexos e ERP: [assistente e-Fatura](docs/ASSISTENTE-EFATURA.md).
 Custos, proveitos e mapa de IVA indicativos: [mapas de gestão](docs/MAPAS-DE-GESTAO.md).
+Obrigações fiscais, contratos, viaturas, inspeções e outros prazos: [obrigações e prazos](docs/OBRIGACOES-E-PRAZOS.md).
+Planear despesas, comparar previsto com realizado e acompanhar desvios: [orçamento e previsão de despesas](docs/ORCAMENTO.md).
+Acompanhar cada operação do documento à liquidação: [motor central de relações e rastreabilidade](docs/MOTOR-CENTRAL-RELACOES.md).
 Painel inicial com indicadores, gráficos e alertas: [dashboard de gestão](docs/DASHBOARD.md). Levantamento e matriz para a modernização: [auditoria do dashboard](docs/DASHBOARD-AUDITORIA.md).
 Enviar documentação por SMTP: [email e dossiê contabilístico](docs/EMAIL-CONTABILIDADE.md), com pré-visualização, histórico e confirmação manual de receção.
 Separar faturação, recebimentos e conferência: [faturação e recebimentos](docs/FATURACAO-RECEBIMENTOS.md), sem duplicar o dinheiro já registado nas caixas e bancos.

@@ -1,0 +1,85 @@
+/* Obrigações, contratos e prazos. Só tokens do design system; as cores por estado vêm de .ui-tone. */
+.obl { display: grid; gap: 16px; }
+.obl-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; }
+.workspace .obl-kpi.ui-action, .obl-kpi { display: flex; gap: 12px; align-items: center; justify-content: flex-start; min-height: 0; padding: 14px 16px;
+  text-align: left; white-space: normal; border: 1px solid var(--ui-tone-edge); border-radius: 14px; color: var(--color-text);
+  background: linear-gradient(135deg, var(--ui-tone-bg), var(--color-surface) 75%); box-shadow: var(--ui-card-shadow, none); cursor: pointer; }
+.obl-kpi:hover { border-color: var(--ui-tone-ink); }
+.obl-kpi:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.obl-kpi-icon { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; color: var(--ui-tone-ink); background: var(--ui-tone-bg); border: 1px solid var(--ui-tone-edge); }
+.obl-kpi-text { display: grid; gap: 2px; min-width: 0; }
+.obl-kpi-text > span { font-size: 13.5px; font-weight: 600; }
+.obl-kpi-text strong { font-size: 1.7rem; line-height: 1.1; color: var(--ui-tone-ink); font-variant-numeric: tabular-nums; }
+.obl-kpi-text small { color: var(--color-muted); font-size: 12px; }
+
+.obl-card { min-width: 0; padding: 16px 18px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); box-shadow: var(--ui-card-shadow, none); }
+.obl-card h2 { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; font-size: 1.05rem; }
+.obl-card h2 svg { color: var(--context-suggestion); flex: none; }
+.obl-card h2 small { color: var(--color-muted); font-weight: 400; font-size: 13px; }
+.obl-overview { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1180px) { .obl-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); } .obl-upcoming { grid-column: 1 / -1; } }
+@media (max-width: 720px) { .obl-overview { grid-template-columns: 1fr; } }
+
+.obl-upcoming ul { display: grid; margin: 0 0 8px; padding: 0; list-style: none; }
+.obl-upcoming li { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--color-border); }
+@media (max-width: 560px) { .obl-upcoming li { grid-template-columns: auto minmax(0, 1fr) auto; } .obl-upcoming li > .obl-icon, .obl-upcoming li > .status-badge { display: none; } }
+.obl-date { display: grid; justify-items: center; min-width: 84px; padding: 4px 8px; border-radius: 8px; color: var(--ui-tone-ink); background: var(--ui-tone-bg); border: 1px solid var(--ui-tone-edge); }
+.obl-date b { font-size: 13.5px; } .obl-date small { font-size: 11.5px; color: var(--color-text); }
+.obl-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: var(--ui-tone-ink); background: var(--ui-tone-bg); border: 1px solid var(--ui-tone-edge); }
+.obl-item { display: grid; min-width: 0; } .obl-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obl-item small { color: var(--color-muted); font-size: 12.5px; }
+
+.obl-calendar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.obl-calendar-head h2 { margin: 0; justify-content: center; }
+.obl-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; text-align: center; }
+.obl-weekday { font-size: 12px; color: var(--color-muted); padding: 2px 0; }
+.obl-day { position: relative; display: grid; justify-items: center; align-content: start; gap: 2px; min-height: 36px; padding: 5px 2px; border-radius: 10px; font-variant-numeric: tabular-nums; }
+.obl-day.is-today b { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; outline: 2px solid var(--context-info); }
+.obl-day.has-items[data-tone] { background: color-mix(in srgb, var(--context-info-bg) 70%, transparent); }
+.obl-day.has-items[data-tone="danger"] { background: var(--context-danger-bg); }
+.obl-day.has-items[data-tone="warning"] { background: var(--context-warning-bg); }
+.obl-day i { width: 6px; height: 6px; border-radius: 50%; background: var(--context-suggestion); }
+.obl-calendar.is-large .obl-day { min-height: 92px; justify-items: stretch; text-align: left; border: 1px solid var(--color-border); }
+.obl-calendar.is-large .obl-day b { justify-self: start; }
+.obl-calendar.is-large .obl-day small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 5px; border-radius: 5px; font-size: 11.5px;
+  color: var(--ui-tone-ink); background: var(--ui-tone-bg); border: 1px solid var(--ui-tone-edge); }
+@media (max-width: 720px) { .obl-calendar.is-large .obl-day { min-height: 56px; } .obl-calendar.is-large .obl-day small { font-size: 0; height: 6px; padding: 0; } }
+
+.obl-categories ul, .obl-simple { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.obl-categories li { display: flex; align-items: center; gap: 8px; } .obl-categories li b { margin-left: auto; }
+.obl-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--ui-tone-ink); flex: none; }
+.obl-donut { position: relative; width: 150px; margin: 4px auto 12px; }
+.obl-donut svg { display: block; width: 100%; transform: rotate(-90deg); }
+.obl-donut-track { fill: none; stroke: var(--surface-secondary); stroke-width: 12; }
+.obl-donut-part { fill: none; stroke: var(--ui-tone-ink); stroke-width: 12; }
+.obl-donut > span { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.obl-donut strong { font-size: 1.8rem; line-height: 1; } .obl-donut small { color: var(--color-muted); }
+
+.obl-bars { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; align-items: end; height: 170px; margin: 0; padding: 0; list-style: none; }
+.obl-bars li { display: grid; grid-template-rows: auto 1fr auto; justify-items: center; height: 100%; gap: 4px; }
+.obl-bars li > span { align-self: end; width: 70%; min-height: 4px; border-radius: 6px 6px 2px 2px; background: linear-gradient(180deg, var(--context-suggestion), color-mix(in srgb, var(--context-suggestion) 55%, var(--color-surface))); }
+.obl-bars small { color: var(--color-muted); text-transform: capitalize; }
+.obl-simple li { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--color-border); }
+.obl-simple li small { color: var(--color-muted); display: inline-flex; gap: 4px; align-items: center; }
+.obl-simple li > .dash-link { text-align: left; }
+.workspace .obl-simple li > .ui-action, .obl-simple li > .ui-action { min-height: 0; padding: 2px 0; border: 0; background: none; box-shadow: none;
+  color: var(--color-text); font-weight: 600; white-space: normal; text-decoration: underline; text-decoration-color: transparent; }
+.obl-simple li > .ui-action:hover { text-decoration-color: currentColor; }
+.obl-ok { color: var(--context-success); } .obl-warn { color: var(--context-warning); }
+
+.obl-filters { margin-bottom: 10px; }
+.obl-grid td small { display: block; color: var(--color-muted); font-size: 12px; }
+.obl-grid .obl-unvalidated, .obl-unvalidated { color: var(--context-warning); font-weight: 600; }
+
+.ui-dialog.obl-drawer { width: min(820px, 100vw); }
+.obl-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+@media (max-width: 640px) { .obl-form { grid-template-columns: 1fr; } }
+.obl-form > label:not(.checkbox), .obl-action-dialog label { display: grid; gap: 4px; }
+.obl-form .obl-wide { grid-column: 1 / -1; }
+.obl-form fieldset { display: grid; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 10px; min-width: 0; }
+.obl-chips { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.obl-history { margin-top: 14px; }
+.obl-history h3 { margin: 0 0 8px; font-size: 1rem; }
+.obl-history td small { display: block; color: var(--color-muted); font-size: 12px; }
+.ui-dialog.obl-action-dialog { width: min(560px, calc(100vw - 24px)); }
+.obl-action-dialog { display: grid; gap: 10px; }

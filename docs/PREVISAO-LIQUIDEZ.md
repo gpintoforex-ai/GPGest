@@ -66,6 +66,30 @@ Abra **Tesouraria > Previsão de liquidez**. A empresa é a selecionada na aplic
 
 Por dia: `saldo final = saldo inicial + entradas - saídas`. O saldo final transita para o dia seguinte. Os cálculos usam cêntimos inteiros e valores decimais na leitura do acumulado. Movimentos sem conta podem entrar no consolidado de todas as contas; na seleção parcial ficam excluídos com indicação do motivo. Uma conta sem saldo não é inventada: os indicadores são identificados como **parciais**, com a limitação visível.
 
+## Prioridades, compromissos e estimativas
+
+Cada valor conta uma vez, na origem mais certa (`backend/app/liquidity_estimates.py`). O separador **Resumo** mostra
+«Origem dos valores previstos» com entradas e saídas por prioridade, e quantas estimativas ficaram de fora:
+
+1. **Real** — saldos de bancos e caixas e depósitos em trânsito.
+2. **Documentos por liquidar** — movimentos previstos das compras e valores em aberto do ERP.
+3. **Compromissos** — encomendas a fornecedores confirmadas ainda por receber e receções sem documento ainda por
+   faturar: só a parte em falta, com IVA (como as linhas da encomenda), com vencimento estimado pela data prevista
+   (ou do documento) mais o prazo de pagamento do fornecedor (30 dias por omissão).
+4. **Estimativas** — previsões manuais, prazos das [Obrigações e Prazos](OBRIGACOES-E-PRAZOS.md) pendentes com valor
+   (as ocorrências já gravadas; vencidos entram hoje) e despesas do [orçamento](ORCAMENTO.md) em vigor ainda não
+   realizadas: só a parte não associada a documentos, com IVA, na data prevista de pagamento (aprovado = provável;
+   rascunho = incerto). Sem filtro de estabelecimento usa o orçamento da empresa ou, sem ele, os dos estabelecimentos.
+
+Contra a duplicação, a estimativa passa para **Pendências** com o motivo:
+- despesa orçamentada com uma fatura por associar que a proposta do orçamento liga a essa ocorrência («Provavelmente
+  substituída por …; associe-o no orçamento») ou coberta por uma obrigação pendente da mesma rubrica e mês;
+- obrigação com um documento por liquidar do mesmo fornecedor, até 15 dias e 10 % de diferença;
+- associar o documento no orçamento faz a estimativa desaparecer (deixa de haver parte por realizar).
+
+Compromissos e estimativas não são dívida: não entram nos valores por pagar/receber do dashboard nem nas propostas
+de liquidação. Horizontes rápidos de 7, 15, 30, 60, 90 e 365 dias (ou datas à escolha, até 366 dias).
+
 ## Permissões e auditoria
 
 - Todos os perfis autenticados podem consultar os estabelecimentos autorizados.

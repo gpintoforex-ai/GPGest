@@ -42,6 +42,16 @@ Na grelha, a coluna **Correspondência (ERP / ZELA)** identifica o documento: a 
 - **Agrupamentos:** uma soma de faturas nunca junta fornecedores diferentes.
 - **Débito direto de várias faturas** (por exemplo, eletricidade e serviço da EDP): a soma de 2 ou 3 faturas também é procurada fora da tolerância, até um ano antes do movimento. Só entram faturas do fornecedor referido na descrição bancária, começando pelas mais recentes. Faturas do mesmo dia somam mais 10 pontos.
 - **Faturas pagas mais tarde:** a tolerância de datas da conta (10 dias por omissão) não se aplica a uma fatura de fornecedor quando se cumprem quatro condições. O valor é igual; a descrição bancária refere a entidade ou a referência; o pagamento é posterior à fatura; e a diferença é de no máximo um ano. A proposta indica a data da fatura e quantos dias depois foi paga. Pagamentos até 45 dias depois da fatura (débito direto ou pagamento a 30 dias) recebem mais 10 pontos, para a fatura mais recente aparecer primeiro.
+- **Regras de correspondência por conta** («Regras, relatórios e fecho» → «Regras de correspondência»; guardadas na conta, com
+  auditoria do antes e depois):
+  - *Tolerância de datas* (0 a 90 dias) e *agrupamentos* (como antes).
+  - *Tolerância de valor* em euros (até 100,00 €) e em percentagem (até 10 %); usa-se o maior dos dois. Um valor dentro
+    da tolerância vale 35 pontos (o igual vale 45) e dispensa referência ou entidade; a proposta é sempre do **valor
+    menor** e a diferença fica visível: um movimento parecido nunca dá uma fatura como paga.
+  - *Exceções por fornecedor*: quando o nome ou a referência do registo contém o texto indicado, usa as suas tolerâncias
+    de datas (até 366 dias) e de valor (por exemplo, débitos diretos pagos 30 a 40 dias depois). A proposta indica a regra.
+  - *Confiança mínima para propor* (30 a 95) e, para «aceitar em conjunto», *confiança* (50 a 100, nunca abaixo da mínima)
+    e *distância à alternativa seguinte*. Por omissão: 30, 80 e 20 pontos (o comportamento anterior).
 - **Marcas curtas:** a primeira palavra do nome com 3 letras (MEO, EDP, NOS, CTT) também identifica a entidade, por exemplo em «DD MEO, SA».
 - **O período escolhido no ecrã** apenas filtra a lista de movimentos e não limita a procura de documentos para as sugestões.
 

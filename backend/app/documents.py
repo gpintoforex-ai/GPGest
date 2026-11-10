@@ -606,6 +606,9 @@ def register_routes(app, current, authorize, scope, record, serial):
             row.store_id,
         )
 
+    # Partilhado com a ficha da operação (operation_trace), sem duplicar as regras de estado.
+    app.state.document_projection = projection
+
     @app.get("/api/documents")
     def documents(user=Depends(current), db: Session = Depends(db_session)):
         from .document_projection import DocumentContext
