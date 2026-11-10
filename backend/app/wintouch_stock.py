@@ -23,7 +23,7 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from .inventory import MovementInput, document_key, lock, post, require, settings, stock_from_erp
 from .models import (
@@ -174,6 +174,23 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
     def warehouse_for(external):
         return next((w for w in local if w.id == linked.get(external)), None)
 
+    def insufficient(item, reason):
+        """Diz em que armazém faltou stock e onde há stock do artigo (ex.: armazém sem ligação ao ERP)."""
+        names = {w.id: w.name for w in local}
+        here = names.get(item.warehouse_id, "indicado")
+        others = []
+        for warehouse in local:
+            if warehouse.id == item.warehouse_id:
+                continue
+            quantity = db.scalar(select(func.coalesce(func.sum(StockEntry.quantity), 0)).where(
+                StockEntry.article_id == item.article_id, StockEntry.warehouse_id == warehouse.id))
+            if quantity > 0:
+                others.append(f"{quantity.normalize():f} em «{warehouse.name}»")
+        if not others:
+            return f"{reason} Armazém: «{here}»."
+        return (f"Sem stock suficiente no armazém «{here}», o das saídas Wintouch; há {', '.join(others)}. "
+                "Transfira o stock para esse armazém ou escolha o armazém das saídas na sincronização.")
+
     def attempt(record, document, line, document_class, data, counter):
         # Cada linha numa subtransação: uma linha recusada (ex.: stock insuficiente) não anula as outras.
         # `data` pode ser uma lista (ex.: devolução repartida pelos lotes do movimento original).
@@ -188,7 +205,11 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
                     movement.data = json.dumps(detail, ensure_ascii=False, default=str)
                 db.flush()
         except HTTPException as exc:
-            pending(document, line, exc.detail if isinstance(exc.detail, str) else "Movimento recusado pelas regras de stock.")
+            reason = exc.detail if isinstance(exc.detail, str) else "Movimento recusado pelas regras de stock."
+            first = (data if isinstance(data, list) else [data])[0]
+            if reason.startswith("Stock disponível insuficiente"):
+                reason = insufficient(first, reason)
+            pending(document, line, reason)
             return
         result[counter] += 1
         for movement in movements:

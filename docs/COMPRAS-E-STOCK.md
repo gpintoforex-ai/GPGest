@@ -80,6 +80,40 @@ Em **Receções de mercadoria → Receção a partir de fatura**, escolha a fatu
    **Descontos:** cada linha mostra e permite corrigir quantidade, bónus, preço unitário e desconto (%); o cabeçalho tem o **desconto global (%)** do documento, proposto quando todas as linhas de mercadoria partilham o mesmo desconto comum (senão, esse desconto fica nas linhas afetadas). O valor líquido e o custo por unidade recebida (faturadas + bónus) são recalculados ao editar. A receção guarda o preço da fatura e um desconto equivalente que junta desconto da linha, desconto global e bónus, para que o custo em stock seja valor líquido ÷ unidades.
    **Resumo do IVA e total do documento** (no fim da janela): incidência, IVA e total por taxa e o total calculado, comparados com a base e o total da fatura no arquivo. Cada coluna (incidência, IVA, total) é destacada: **verde** quando igual, **âmbar** para diferenças de arredondamento até 2 cêntimos (o IVA é arredondado por taxa e pode diferir do fornecedor) e **vermelho** para diferenças reais a conferir; a linha **Diferença** mostra o valor com sinal e a classificação por extenso. Inclui todas as linhas lidas, também as desmarcadas (portes fazem parte da fatura, mas não entram em stock); o desconto global não se aplica a portes/serviços. Cada linha tem a taxa de **IVA (%)** lida da fatura, editável quando o OCR não a consegue ler.
 
+   **Rentabilidade e custos (por linha, informativo):** por baixo do custo de cada linha de mercadoria, recalculados a cada alteração de quantidade, bónus, preço, descontos ou artigo:
+   - **Dois custos.** O **custo de referência** é o valor líquido com descontos de linha e global ÷ unidades faturadas, sem repartir o bónus. O **custo efetivo** é o valor líquido ÷ (faturadas + bónus), o custo que entra em stock. Sem IVA recuperável (parâmetros de stock), ambos incluem o IVA suportado, como na valorização do stock. Não há outros encargos de aquisição repartidos.
+   - **Margem comercial** sobre o PVP sem IVA da ficha (no ERP, o preço sem IVA ou o com IVA descontado da taxa do ERP), com o custo de referência: (PVP − custo de referência) ÷ PVP, em % e em €/un. Verde: igual ou acima da margem mínima; âmbar: abaixo; vermelho: negativa; cinzento: sem PVP, artigo novo ou custo zero (oferta). Com bónus, o detalhe mostra também a **margem efetiva da receção** (com o custo efetivo, ao mesmo PVP) e a diferença em pontos percentuais. É um ganho adicional, nunca motivo para baixar o preço.
+   - **Variação do custo** face à última compra do artigo, sempre custo de referência com custo de referência, para nunca comparar um custo com bónus com outro sem bónus. Mostra o último custo, a diferença em € e % e uma seta de aumento ou redução. Acima do limite de alerta aparece um aviso; último custo 0 € não dá variação. A receção em edição, receções anuladas e entradas estornadas por edição não contam como compra anterior (`GET /api/purchase-receiving/cost-history`, com `reference_cost`, `billed_quantity` e `unit_cost` efetivo).
+   - **Bónus:** unidades oferecidas, valor comercial equivalente (bónus × preço líquido da linha) e benefício (valor dos bónus ÷ (valor líquido + valor dos bónus)).
+   - **Ver cálculos e últimas compras** mostra os valores, as fórmulas e as últimas 5 compras (data, fornecedor, documento, quantidade, custo de referência e custo efetivo). O PVP nunca é alterado aqui.
+
+   **Benefícios comerciais** (secção própria, depois do resumo do IVA): descontos nas linhas e desconto global em €, unidades e valor comercial dos bónus, benefício comercial equivalente (benefícios ÷ valor sem benefícios) e, com um único artigo, o custo efetivo médio. É informativo: os descontos e bónus já estão no valor líquido; o total da fatura, o IVA e o custo em stock não mudam.
+
+   **Parâmetros** (Artigos e stock → Parâmetros, administrador): margem mínima da empresa (30 % por omissão), margem mínima por família (sobrepõe-se à da empresa), alerta de aumento do custo (5 % por omissão) e **método do PVP sugerido**. O método pode ser margem sobre a venda, com a margem mínima, ou markup sobre o custo (50 % por omissão). Define-se para a empresa e, opcionalmente, por família, com método e markup próprios.
+
+   **Validação e atualização de preços** (abre depois de gravar a receção; também em **Preços pendentes**, `GET /api/price-reviews`). Para cada artigo da receção mostra:
+   - o custo de referência, em destaque, e o custo efetivo com bónus;
+   - a variação face ao custo de referência da última compra válida, em € e %;
+   - o PVP atual e as margens comercial e efetiva a esse PVP;
+   - o ganho do bónus: unidades oferecidas × custo de referência.
+
+   O **PVP sugerido** usa sempre o custo de referência, pelo método configurado para a família ou para a empresa, assinalado como «configurado»:
+   - **margem sobre a venda:** custo ÷ (1 − margem);
+   - **markup sobre o custo:** custo × (1 + markup).
+
+   Também se pode escolher **aumento do PVP (%)** ou **PVP manual**. O custo efetivo nunca baixa o PVP sugerido. As margens comercial e efetiva previstas usam sempre o mesmo PVP sem IVA.
+
+   Sem custo de referência não há sugestão automática e usa-se o PVP manual. Acontece, por exemplo, numa linha só de oferta ou numa entrada antiga sem preço do documento, que vale ao seu custo. Só se gravam os artigos selecionados, depois de uma confirmação com o resumo antes → depois: catálogo ZELA com auditoria (`stock_article_price`) e idempotência. A revisão pode ser adiada ou concluída sem alterações.
+
+   **Artigos Wintouch: envio do preço** (`backend/app/wintouch_price_write.py`). Com a ligação Wintouch Cloud ativa, a escrita autorizada nas Integrações e a capacidade **Atualizar preços de venda (linha 1)**, o administrador pode selecionar artigos Wintouch e confirmar **Guardar e enviar para a Wintouch**:
+   - Cada artigo é enviado à parte (`PATCH /product_prices_change` com o ID, a linha de preço 1 e o PVP sem e com IVA). Depois, os preços são **lidos de volta** (`GET /products/{id}/prices`).
+   - Só fica «revisto» o artigo cujos preços a Wintouch confirmar. Nesse caso, o snapshot local do artigo Wintouch passa a ter os valores lidos.
+   - Um envio recusado ou não confirmado fica pendente, com o motivo, e pode ser repetido em segurança, porque definir um preço é idempotente.
+   - Cada envio fica na auditoria (`wintouch_price_write`), com o preço anterior e o novo, o estado e o erro.
+   - A ficha local, o custo, o stock e os documentos não mudam.
+
+   Sem estas condições, para um perfil que não seja administrador ou numa **empresa de demonstração** (que pode ter credenciais de uma Wintouch real), os preços Wintouch só são simulados e a janela indica o motivo.
+
    **Acerto de arredondamento:** quando a diferença para a fatura é de arredondamento (até 10 cêntimos na incidência e até 10 no IVA), **Acertar ao total da fatura** iguala a base e o IVA da receção aos da fatura. O servidor calcula o acerto sobre os seus próprios totais, por isso o total gravado fica exatamente igual ao da fatura, e recusa diferenças maiores. O acerto entra no documento financeiro: compra, dívida e previsto, ou movimento de caixa. Evita assim o conflito com uma compra já importada do e-Fatura ou do ERP com o total do fornecedor. O custo dos artigos em stock não muda. O acerto fica gravado na receção (`rounding_adjustment`) e na auditoria, mantém-se ao editar e **Retirar acerto** desfaz a escolha antes de confirmar.
    **Adicionar linha:** quando a leitura não encontra linhas (digitalização ilegível, formato sem tabela) ou falta alguma, acrescentam-se linhas à mão a partir do original ao lado — descrição, quantidade, bónus, preço, desconto, IVA, lote e validade — com artigo novo por omissão (a designação acompanha a descrição) ou um existente. As linhas acrescentadas podem ser removidas; antes de enviar, indica-se a linha a que falta descrição, quantidade ou código/designação do artigo novo.
    **Editar fornecedor:** abre a ficha da entidade sem sair da receção, tanto ao criar como ao editar um lançamento. Ao guardar, o nome e o prazo de pagamento são atualizados no cabeçalho; as linhas preenchidas mantêm-se. O vencimento acompanha o novo prazo quando ainda corresponde ao sugerido; uma data ajustada manualmente é preservada. A edição segue as permissões e regras da ficha de fornecedores, incluindo as do ERP.
@@ -90,6 +124,29 @@ Em **Receções de mercadoria → Receção a partir de fatura**, escolha a fatu
 
 Os estados de conferência, existência de anexo, pagamento e associação ao ERP são apresentados separadamente. Na coluna **Conferência / anexo**, a receção mostra «Fatura por associar» ou «Faturada», a compra «Por conferir» (com atalho **Conferir** para a Conferência documental) ou «Conferida», e o rascunho «Por confirmar»; o anexo (fatura original do arquivo, ligações e anexos da compra) abre-se na própria coluna com **Consultar anexo**. A rubrica é definida **por linha**: cada linha de uma compra ou nota de crédito pode ter rubrica própria (por exemplo, mercadorias e serviços na mesma fatura); sem ela, usa a rubrica por omissão do documento e, depois, a do fornecedor. No modo autónomo, todas as linhas têm de ter rubrica para alimentar o plano local. O pagamento continua a ser um só por fatura: o movimento previsto fica com a rubrica de maior valor e guarda a repartição por rubrica (tabela `planned_allocations`, migração **0051**), apresentada nos movimentos previstos. A rubrica de um previsto com várias rubricas só se altera nas linhas da compra. A proposta de despesa usa a rubrica de cada linha. Ao liquidar, o movimento real fica com a rubrica principal do previsto. Uma compra confirmada não pode ser alterada através da edição livre do montante do previsto.
 
+## Etiquetas de preço
+
+Nas **Receções de mercadoria**, cada receção confirmada (não anulada) tem o botão **Etiquetas** (`frontend/src/PriceLabels.tsx`):
+
+- **Artigos e quantidades:** os artigos de mercadoria da receção, com o código, a descrição e o **PVP atual com IVA**. No ERP, é o preço com IVA da Wintouch quando é essa a base; nos restantes casos, o PVP sem IVA mais a taxa de venda. O número de etiquetas sugerido é igual às unidades recebidas, com o bónus incluído e arredondado para cima, somando a linha paga e a linha de oferta do mesmo artigo. Pode ser alterado por artigo e reposto com **Repor quantidades da receção**. Os serviços (portes, por exemplo) ficam de fora. Os artigos sem PVP são assinalados e saem sem preço.
+- **Começar na etiqueta:** para reaproveitar uma folha já usada, indica a primeira posição livre. A janela mostra o total de etiquetas e de folhas.
+- **Pré-visualização** da etiqueta, ampliada para leitura, com o conteúdo:
+  - o logótipo;
+  - a descrição, opcionalmente em maiúsculas;
+  - o preço com IVA;
+  - o código do artigo;
+  - a nota do preço (por omissão «P.V.P C/ IVA à taxa em vigor»);
+  - o rodapé, por exemplo o telefone.
+- **Definições da folha e do conteúdo** (administrador e gestor; `GET/POST /api/stock/label-settings`, guardadas por empresa na linha `labels` de `stock_settings`, com revisão e auditoria `etiquetas_configuradas`, sem a imagem):
+  - margens, número de etiquetas na horizontal e na vertical, dimensão da etiqueta e distância entre etiquetas, em centímetros, como na Wintouch;
+  - por omissão, uma folha A4 com 5 × 13 etiquetas de 3,81 × 2,20 cm, topo 1,00 cm, esquerda 0,20 cm e distância horizontal de 0,40 cm;
+  - os elementos visíveis e o logótipo: PNG, JPEG, WebP ou GIF, até cerca de 300 KB.
+
+  O servidor recusa definições em que as etiquetas não cabem na folha.
+- **Imprimir:** abre a impressão do navegador com uma página própria (uma por folha), sem margens de página e com as etiquetas posicionadas em centímetros. Na janela de impressão, escolha a escala **100 %** («Tamanho real»), sem ajustar à página. O tamanho das letras acompanha a altura da etiqueta. Nada é gravado e os preços não mudam.
+
+Validação: `backend/tests/test_labels.py` e `scripts/test-price-labels-ui.py`.
+
 ## Envio e documentos
 
 As encomendas podem ser duplicadas como rascunhos, impressas/consultadas em PDF e preparadas para envio pelo SMTP configurado. A pré-visualização congela o PDF e a mensagem no mecanismo `EmailDispatch` existente. O envio exige confirmação; o estado de envio e a data são independentes do estado da encomenda. Uma aceitação SMTP não é confirmação de leitura. Resultados incertos bloqueiam nova preparação automática para evitar duplicar envios.
@@ -99,6 +156,21 @@ Os anexos indicados neste circuito são ligações HTTPS: os ficheiros permanece
 ## Stock e valorização
 
 As entradas, saídas, transferências, perdas, ajustes e saldos iniciais reutilizam `StockEntry`, `StockLot`, `StockWarehouse` e as permissões existentes. O novo histórico permite filtrar período, artigo, tipo e estabelecimento e abrir o documento de compras de origem. Mostra utilizador, data/hora, unidade, lote, validade e custo/valor quando autorizado.
+
+### Página Movimentos de stock
+
+Página própria (`frontend/src/StockMovements.tsx`), só de consulta: não cria nem altera movimentos.
+
+- **Indicadores** (respeitam todos os filtros): valor líquido dos movimentos (entradas − saídas ao custo, não é o valor do stock), entradas e saídas com quantidade **por unidade de medida** (unidades diferentes não se somam; com mais de duas, mostra o número de unidades) e valor, artigos movimentados e documentos, armazéns envolvidos. As transferências entre armazéns não contam como entradas nem saídas. Sem permissão de ver custos, os valores não aparecem.
+- **Vendas Wintouch:** estado da última sincronização e, para o administrador, **Sincronizar vendas** no cabeçalho (ver [VENDAS-WINTOUCH.md](VENDAS-WINTOUCH.md)). As compras entram no stock só pela receção na aplicação.
+- **Filtros:** Hoje, Esta semana, Mês, Trimestre, Ano, datas, **Artigo** (pesquisa por código, nome sem acentos ou EAN; apagar o texto mostra todos) e tipo de movimento. **Filtros** abre os avançados: **critério de data** (data do documento ou de registo, só a do documento, só a de registo), armazém, origem (Compras, Wintouch, Encomenda de cliente, Inventário, …) e número do documento; **Limpar filtros** repõe tudo. A mesma pesquisa de artigos é usada nas linhas das encomendas, receções e devoluções, no filtro de Artigos e stock e em «Registar movimento».
+- **Por documento** (abre assim): um documento por linha (receção, devolução, compra, encomenda de cliente, vendas Wintouch ou SAF-T, inventário, importação, movimento manual) com data do documento e de registo, fornecedor ou cliente, tipos de movimento, linhas e artigos, entradas e saídas, armazéns e valor. Clicar na linha ou **Ver linhas** mostra todas as linhas desse documento, sem filtro de período.
+- **Por linha:** data (registo em segundo plano quando é de outro dia), documento com entidade e **Abrir** (documentos de compras), artigo (fotografia, código e descrição), tipo com ícone e cor (verde entradas, vermelho saídas, azul transferências, âmbar ajustes), quantidade com sinal e, por baixo, o **stock acumulado** do artigo nesse armazém antes e depois do movimento («Stock 6,00 → 5,00», somando todos os movimentos pela ordem de registo, independentemente dos filtros), armazém, lote e validade, custo unitário e valor. O menu **⋯** de cada linha tem **Ver detalhe**, **Abrir documento**, **Ver linhas do documento** e **Filtrar por este artigo**.
+- **Detalhe:** clicar numa linha abre um painel lateral com quantidade, estado, motivo, documento e entidade, origem, data do documento e registo (com utilizador), armazém, lote, validade, custos, sincronização (importado da Wintouch ou registado na aplicação, sem envio ao ERP) e a referência da operação.
+- Em ecrãs com menos de 1300 px (portátil pequeno, tablet, telemóvel) a grelha dá lugar a **cartões** por documento ou movimento; tocar num cartão abre as linhas ou o detalhe.
+- A grelha só desenha a resposta que corresponde à vista e aos filtros atuais (sem misturar respostas atrasadas); enquanto carrega mostra «A carregar movimentos…».
+
+O período apanha a **data do documento ou a data de registo**: os movimentos de uma receção ficam com a data da fatura, por isso uma receção lançada a 7/11 com fatura de 27/10 aparece tanto em novembro como em outubro (`GET /api/procurement-ledger?view=documents|lines&group=...&date_basis=both|document|record&warehouse_id=&origin=&q=`, com `summary` dos indicadores).
 
 Os movimentos confirmados não são apagados nem editados livremente. Uma correção física exige devolução ou movimento inverso/ajuste justificado no módulo existente. Transferências mantêm os dois movimentos relacionados nos armazéns.
 

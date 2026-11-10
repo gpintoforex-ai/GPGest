@@ -9,6 +9,7 @@ const label = (a: Article) => [a.code, a.name].filter(Boolean).join(" · ");
 /**
  * Pesquisa de artigos por código, nome ou EAN (sem acentos, várias palavras em qualquer ordem).
  * Um código ou EAN exato (leitor de códigos de barras) escolhe logo o artigo.
+ * Dentro de um `Field`, o nome acessível é o rótulo visível; sem rótulo, usa uma descrição própria.
  */
 export default function ArticleSearch({ articles, value, onPick, id: inputId, limit = 30, disabled = false }: {
   articles: Article[];
@@ -37,7 +38,7 @@ export default function ArticleSearch({ articles, value, onPick, id: inputId, li
   function select(article: Article) { onPick(article); setText(label(article)); setOpen(false); setIndex(-1); }
   return <div className="supplier-picker article-search" onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpen(false); }}>
     <div className="supplier-picker-input">
-      <input id={inputId} type="search" role="combobox" aria-label="Pesquisar artigo por código, descrição ou EAN" aria-autocomplete="list"
+      <input id={inputId} type="search" role="combobox" aria-label={inputId ? undefined : "Pesquisar artigo por código, descrição ou EAN"} aria-autocomplete="list"
         aria-expanded={open && words.length > 0} aria-controls={`${id}-list`}
         aria-activedescendant={open && index >= 0 && matches[index] ? `${id}-${index}` : undefined}
         autoComplete="off" placeholder="Código, descrição ou EAN" value={text} disabled={disabled}

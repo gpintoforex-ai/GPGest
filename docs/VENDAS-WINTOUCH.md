@@ -28,6 +28,19 @@ Cada envio tem um identificador único e auditoria persistida antes da chamada e
 
 ## Movimentos de stock
 
+**Onde sincronizar:** em **Stocks → Movimentos de stock**, o quadro
+**Vendas Wintouch** mostra o período e a hora da última sincronização e as linhas por rever ou em conflito;
+o administrador tem **Sincronizar vendas** no cabeçalho da página. A janela abre com o período seguinte proposto: do último dia
+sincronizado (repetir não duplica) até hoje; sem histórico, desde o início do controlo de stock
+(`GET /api/integrations/wintouch/sales/stock-status`). Cada sincronização guarda o período no resultado.
+As vendas aplicadas aparecem nos movimentos como **Venda Wintouch** com o número do documento e o cliente.
+
+**Armazém das saídas:** cada linha sai do armazém ligado ao armazém da Wintouch (Tabelas → Armazéns), ou do
+escolhido na janela. Se faltar stock nesse armazém e houver noutro da mesma loja, a linha fica por aplicar com
+a indicação de onde está o stock (por exemplo, receções lançadas num armazém sem ligação ao ERP): transfira o
+stock para o armazém das saídas e mantenha um só armazém ativo por stock físico. Os formulários de compras só
+propõem armazéns ativos.
+
 Com o controlo de stock ativo (data de início em Artigos → Parâmetros), a importação lê também as
 linhas de artigo de todos os documentos cujo tipo a Wintouch marca como movimentando stock
 (`IsStockEnabled`), a partir dessa data, e aplica-os ao stock logo a seguir, com o utilizador que

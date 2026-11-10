@@ -8,3 +8,5 @@
 .maps-table .maps-revenue td, .maps-table .maps-revenue th { color: var(--color-success); }
 .maps-table .maps-total td, .maps-table .maps-total th { font-weight: 700; border-top: 2px solid var(--color-border); }
 .maps-table .negative, .maps-summary .negative { color: var(--color-danger); }
+/* IVA das compras no mapa de custos e proveitos (informativo, separado dos custos). */
+.maps-vat th[scope="rowgroup"] { padding-top: 16px; text-align: left; font-size: 13px; color: var(--color-muted); }

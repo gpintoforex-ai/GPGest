@@ -316,7 +316,7 @@ export function DetailDrawer(props: React.ComponentProps<typeof AppDialog>) {
  * Ações secundárias agrupadas num menu («Mais ações»): as principais ficam visíveis e estas a um clique.
  * Fecha com Escape, clique fora ou depois de escolher uma ação; o foco regressa ao botão.
  */
-export function ActionMenu({ label = "Mais ações", children }: { label?: string; children: ReactNode }) {
+export function ActionMenu({ label = "Mais ações", icon, children }: { label?: string; icon?: ReactNode; children: ReactNode }) {
   const menu = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     const outside = (event: PointerEvent) => {
@@ -334,7 +334,10 @@ export function ActionMenu({ label = "Mais ações", children }: { label?: strin
         if ((event.target as HTMLElement).closest(".action-menu-panel button") && menu.current) menu.current.open = false;
       }}
     >
-      <summary className="ui-action">{label}<ChevronDown size={16} aria-hidden="true" /></summary>
+      {/* Com ícone (ex.: ações de uma linha), o botão é compacto e o nome fica para leitores de ecrã e dica. */}
+      {icon
+        ? <summary className="ui-action action-menu-icon" aria-label={label} title={label}>{icon}</summary>
+        : <summary className="ui-action">{label}<ChevronDown size={16} aria-hidden="true" /></summary>}
       <div className="action-menu-panel" role="group" aria-label={label}>{children}</div>
     </details>
   );

@@ -102,8 +102,8 @@ const DocumentControl = lazy(() => import("./DocumentControl"));
 const BillingConference = lazy(() => import("./BillingConference"));
 const AccountingDelivery = lazy(() => import("./AccountingDelivery"));
 const RubricExpenses = lazy(() => import("./RubricExpenses"));
-const WorkOverview = lazy(() => import("./WorkOverview"));
-const ManagementDashboard = lazy(() => import("./ManagementDashboard"));
+// Dashboard: versão atual ou nova (lado a lado até validar), com a visão de trabalho e o painel financeiro.
+const DashboardHome = lazy(() => import("./DashboardHome"));
 const ManagementMaps = lazy(() => import("./ManagementMaps"));
 const Inventory = lazy(() => import("./Inventory"));
 const Procurement = lazy(() => import("./Procurement"));
@@ -581,8 +581,7 @@ export default function App() {
           {page === "Dashboard" && (
             <>
               <CompanySetupPanel boot={boot} reload={reload} hasOpenSession={open.length > 0} onNavigate={navigatePage} onAction={openModal} />
-              <WorkOverview store={store} role={boot.user.role} mode={boot.integration?.mode || "local"} navigate={navigatePage} financial={<>
-              <ManagementDashboard store={store} scopeKey={`${boot.company?.id || boot.company?.nif || ""}:${boot.user.id}`} companyName={boot.company?.name || "Empresa"}
+              <DashboardHome store={store} scopeKey={`${boot.company?.id || boot.company?.nif || ""}:${boot.user.id}`} companyName={boot.company?.name || "Empresa"}
                 mode={boot.integration?.mode || "local"} role={boot.user.role} navigate={navigatePage} onAction={kind => void openModal(kind)} operation={<>
               <div className="dashboard-grid">
                 <section className="panel">
@@ -629,7 +628,6 @@ export default function App() {
                 </div>
                 <MovementTable categories={boot.categories} registers={boot.registers} onAttachments={(m) => openModal("attachments", m)} rows={visibleMovements.slice(0, 5)} />
               </section>
-              </>} />
               </>} />
             </>
           )}

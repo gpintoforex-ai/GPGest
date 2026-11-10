@@ -367,8 +367,8 @@ export default function DocumentControl({
       (tab !== "despesas" || r.erp_status !== "confirmada") &&
       (tab !== "contabilidade" || r.treatment !== "nao_aplicavel"),
   ).sort((a, b) => {
-    const result = sort.key === "amount_cents"
-      ? a.amount_cents - b.amount_cents
+    const result = ["amount_cents", "base_cents", "tax_cents"].includes(sort.key)
+      ? (a[sort.key] ?? 0) - (b[sort.key] ?? 0)
       : String(a[sort.key] || "").localeCompare(String(b[sort.key] || ""), "pt-PT", { numeric: true });
     return (sort.ascending ? result : -result) || String(a.id).localeCompare(String(b.id));
   });
@@ -682,7 +682,7 @@ export default function DocumentControl({
             <thead>
               <tr>
                 <th>Selecionar</th>
-                {[ ["document_date", "Data"], ["supplier_name", "Fornecedor"], ["document", "Documento"], ["amount_cents", "Total"] ].map(([key, label]) => <th key={key} aria-sort={sort.key === key ? sort.ascending ? "ascending" : "descending" : "none"}><ActionButton onClick={() => sortBy(key)}>{label} {sort.key === key ? sort.ascending ? "↑" : "↓" : "↕"}</ActionButton></th>)}
+                {[ ["document_date", "Data"], ["supplier_name", "Fornecedor"], ["document", "Documento"], ["base_cents", "Base"], ["tax_cents", "IVA"], ["amount_cents", "Total"] ].map(([key, label]) => <th key={key} aria-sort={sort.key === key ? sort.ascending ? "ascending" : "descending" : "none"}><ActionButton onClick={() => sortBy(key)}>{label} {sort.key === key ? sort.ascending ? "↑" : "↓" : "↕"}</ActionButton></th>)}
                 <th>Origem</th>
                 <th>Disponibilidade / anexos</th>
                 <th>ERP</th>
@@ -713,6 +713,8 @@ export default function DocumentControl({
                     <td>{day(r.document_date)}</td>
                     <td>{r.supplier_name}<br /><small>NIF {r.supplier_nif || "Não indicado"}</small></td>
                     <td><strong>{r.document}</strong></td>
+                    <td className="numeric">{r.base_cents == null ? "—" : euro(r.base_cents)}</td>
+                    <td className="numeric">{r.tax_cents == null ? "—" : euro(r.tax_cents)}</td>
                     <td className="numeric">{euro(r.amount_cents)}</td>
                     <td>{r.origin === "efatura_testes" ? "e-Fatura (teste)" : r.origin === "efatura" ? "e-Fatura" : r.origin === "manual" ? "Manual" : r.origin}</td>
                     <td>

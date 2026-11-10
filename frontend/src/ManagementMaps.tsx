@@ -58,7 +58,13 @@ function CostsRevenues({ data }: { data: Row }) {
       {data.costs.map((row: Row) => <tr key={row.category_id || "none"}><td>{row.category_name}</td>{periods.map(p => <td key={p.key} className="numeric">{formatEuro(row.values[p.key])}</td>)}<td className="numeric">{formatEuro(row.total_cents)}</td></tr>)}
       <tr className="maps-total"><th scope="row">Total de custos</th>{periods.map(p => <td key={p.key} className="numeric">{formatEuro(data.total_costs[p.key])}</td>)}<td className="numeric">{formatEuro(data.totals.costs_cents)}</td></tr>
       <tr className="maps-total"><th scope="row">Margem</th>{periods.map(p => <td key={p.key} className={"numeric" + (data.margin[p.key] < 0 ? " negative" : "")}>{formatEuro(data.margin[p.key])}</td>)}<td className={"numeric" + (data.totals.margin_cents < 0 ? " negative" : "")}>{formatEuro(data.totals.margin_cents)}</td></tr>
-    </tbody></table></div>
+    </tbody>
+    {data.purchase_vat && <tbody className="maps-vat">
+      <tr><th scope="rowgroup" colSpan={periods.length + 2}>IVA das compras (informativo)</th></tr>
+      {([["input", "IVA suportado", "input_cents"], ["deductible", "IVA dedutível estimado", "deductible_cents"], ["non_deductible", data.regime === "normal" ? "IVA não dedutível (incluído nos custos)" : "IVA não dedutível (incluído nos custos: regime sem dedução)", "non_deductible_cents"]] as const).map(([key, label, total]) =>
+        <tr key={key}><td>{label}</td>{periods.map(p => <td key={p.key} className="numeric">{formatEuro(data.purchase_vat[key][p.key])}</td>)}<td className="numeric">{formatEuro(data.purchase_vat.totals[total])}</td></tr>)}
+    </tbody>}
+    </table></div>
     {data.notes.filter(Boolean).map((note: string) => <p key={note} className="footnote">{note}</p>)}
   </section>;
 }

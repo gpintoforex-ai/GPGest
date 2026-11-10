@@ -1,5 +1,6 @@
 """Fictitious intercepted APIs only. No real catalogue/stock mutations."""
 
+import re
 import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -536,9 +537,10 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Registar movimento", exact=True).click()
     movement = page.get_by_role("dialog", name="Registar movimento de stock", exact=True)
     # Os artigos do ERP aceitam movimentos de stock locais.
-    expect(
-        movement.get_by_label("Artigo", exact=True).locator("option", has_text="Chá da Wintouch")
-    ).to_have_count(1)
+    # Pesquisa pelo nome, sem acentos; os artigos do ERP aparecem nos resultados.
+    movement.get_by_label("Artigo", exact=True).fill("cha wint")
+    movement.get_by_role("option").filter(has_text="Chá da Wintouch").click()
+    expect(movement.get_by_label("Artigo", exact=True)).to_have_value(re.compile("Chá da Wintouch"))
     expect(movement.get_by_label("Quantidade (un)", exact=True)).to_have_value("1")
     movement.get_by_label("Movimento", exact=True).select_option("sale")
     movement.get_by_label("Motivo / observações", exact=True).fill("Venda fictícia de teste")

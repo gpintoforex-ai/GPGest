@@ -199,6 +199,8 @@ dialog.detail-drawer {
 .action-menu > summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .action-menu > summary::-webkit-details-marker { display: none; }
 .action-menu[open] > summary svg { transform: rotate(180deg); }
+.action-menu > summary.action-menu-icon { justify-content: center; min-width: 40px; padding-inline: 8px; border-radius: 999px; }
+.action-menu[open] > summary.action-menu-icon svg { transform: none; }
 .action-menu-panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 240px; max-width: min(92vw, 360px); display: grid; gap: 2px; padding: 6px; border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-surface); box-shadow: 0 12px 32px rgba(15, 30, 45, .18); }
 .action-menu-panel > .ui-action, .action-menu-panel > button { justify-content: flex-start; width: 100%; border-color: transparent; background: transparent; text-align: left; }
 .action-menu-panel > .ui-action:hover:not(:disabled) { background: var(--color-info-bg); }

@@ -59,6 +59,17 @@ DEFAULTS = {
     "control_start": None,
     # Casas decimais das quantidades no ecrã (os valores guardados mantêm a precisão do artigo).
     "quantity_decimals": 2,
+    # Rentabilidade na receção de mercadorias: margem mínima sobre o PVP sem IVA (empresa e por família)
+    # e variação do custo de compra a partir da qual se avisa.
+    "margin_minimum": "30",
+    "margin_by_family": {},
+    "cost_alert_percent": "5",
+    # Formação do PVP sugerido na revisão de preços, sempre sobre o custo de referência (sem repartir
+    # bónus): «margin» usa a margem mínima como margem sobre a venda; «markup» aplica o markup sobre o custo.
+    "pricing_method": "margin",
+    "pricing_method_by_family": {},
+    "markup_default": "50",
+    "markup_by_family": {},
 }
 INCOMING = {"purchase", "opening", "customer_return"}
 OUTGOING = {"sale", "supplier_return", "loss", "expired", "transfer"}
@@ -521,7 +532,7 @@ def save_article(
     return row
 
 
-def post(db, user, data, authorize, *, source="manual", bypass=False):
+def post(db, user, data, authorize, *, source="manual", bypass=False, receipt_reversal=False):
     config = settings(db)
     if not bypass:
         require(user, config, "adjust_stock")
@@ -532,8 +543,10 @@ def post(db, user, data, authorize, *, source="manual", bypass=False):
         fail(f"«{product.name}» é um serviço: não movimenta stock.", 409)
     origin = warehouse(db, user, data.warehouse_id, authorize)
     target = warehouse(db, user, data.target_id, authorize) if data.kind == "transfer" else None
+    # An internal receipt reversal corrects an existing entry in its original warehouse.
+    reversing_receipt = receipt_reversal and bypass and source == "procurement" and data.kind == "adjustment" and data.adjustment_out
     for item in (origin, target):
-        if item is not None and not item.active:
+        if item is not None and not item.active and not (item is origin and reversing_receipt):
             fail(
                 f"O armazém «{item.name}» está inativo e não aceita novos movimentos. Reative-o em Tabelas → Armazéns.",
                 409,
@@ -810,6 +823,7 @@ def entry_view(row, cost_visible):
                 "override_reason",
                 "supplier_id",
                 "procurement_id",
+                "source_record",
             )
         },
         "value_delta": detail.get("value_delta") if cost_visible else None,
@@ -898,6 +912,13 @@ class SettingsInput(Strict):
     saft_mapping: dict[str, str] = Field(default_factory=dict)
     control_start: date | None = None
     quantity_decimals: int = Field(default=2, ge=0, le=6)
+    margin_minimum: Decimal = Field(default=Decimal(30), ge=0, le=100, decimal_places=2)
+    margin_by_family: dict[str, Decimal] = Field(default_factory=dict, max_length=500)
+    cost_alert_percent: Decimal = Field(default=Decimal(5), ge=0, le=1000, decimal_places=2)
+    pricing_method: Literal["margin", "markup"] = "margin"
+    pricing_method_by_family: dict[str, Literal["margin", "markup"]] = Field(default_factory=dict, max_length=500)
+    markup_default: Decimal = Field(default=Decimal(50), ge=0, le=10000, decimal_places=2)
+    markup_by_family: dict[str, Decimal] = Field(default_factory=dict, max_length=500)
 
 
 class InventoryCreate(Strict):
@@ -1449,6 +1470,14 @@ def register_routes(app, current, authorize, scope, audit):
         for identifier, rights in data.permissions.items():
             if not db.get(User, identifier) or any(k not in PERMISSIONS for k in rights):
                 fail("Utilizador ou permissão inválida nesta empresa.")
+        for family, minimum in data.margin_by_family.items():
+            if not family.strip() or len(family) > 200 or not 0 <= minimum <= 100:
+                fail("A margem mínima por família deve estar entre 0 e 100 %.")
+        for family, markup in data.markup_by_family.items():
+            if not family.strip() or len(family) > 200 or not 0 <= markup <= 10000:
+                fail("O markup por família deve estar entre 0 e 10000 %.")
+        if any(not family.strip() or len(family) > 200 for family in data.pricing_method_by_family):
+            fail("Família inválida no método de formação de preços.")
         for source, identifier in data.saft_mapping.items():
             article(db, identifier, True, stock=True)
             if not source or len(source) > 200:

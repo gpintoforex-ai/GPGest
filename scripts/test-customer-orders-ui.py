@@ -135,7 +135,7 @@ def run():
             dialog.get_by_label('Nome do cliente',exact=True).fill('Cliente UI')
             dialog.get_by_role('tab',name='Artigos',exact=True).click()
             first=dialog.get_by_role('group',name='Produto 1',exact=True)
-            first.get_by_role('combobox',name='Pesquisar artigo por código, descrição ou EAN').fill('5600000000000')
+            first.get_by_role('combobox',name='Artigo existente').fill('5600000000000')
             expect(first.get_by_label('Descrição',exact=True)).to_have_value('Café de teste')
             first.get_by_label('Quantidade pedida',exact=True).fill('5')
             dialog.get_by_role('button',name='Adicionar produto',exact=True).click()

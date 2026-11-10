@@ -96,6 +96,13 @@ def erp_rubric_labels(db, enterprise, items):
     return labels
 
 
+def document_vat(purchase):
+    """Base e IVA da compra financeira (com o sinal do documento); None quando a origem não os indica."""
+    if not purchase:
+        return {"base_cents": None, "tax_cents": None}
+    return {"base_cents": purchase.base_cents, "tax_cents": purchase.tax_cents}
+
+
 @router.get("/api/rubric-expenses")
 def rubric_expenses(start: date, end: date, store_id: str = "", user=Depends(current), db: Session = Depends(db_session)):
     authorize(user, db, roles=["administrador", "gestor"])
@@ -117,6 +124,7 @@ def rubric_expenses(start: date, end: date, store_id: str = "", user=Depends(cur
         documents.append({"id": "erp:" + doc.id, "source": "ERP", "store": store_names.get(doc.store_id, ""), "document_date": doc.document_date,
                           "supplier_name": doc.supplier_name, "supplier_nif": doc.supplier_nif, "document": doc.document or doc.internal_document,
                           "document_type": doc.document_type, "amount_cents": doc.amount_cents, "rubric_source": source,
+                          "base_cents": doc.base_cents, "tax_cents": doc.tax_cents,
                           "allocations": [{"category_id": c, "category_name": names.get(c) if c else None, "amount_cents": a} for c, a in split]})
     # Compras locais confirmadas que não estejam ligadas ao ERP (essas contam pelo documento ERP).
     linked = set(db.scalars(select(DocumentERPLink.purchase_id).where(DocumentERPLink.undone_at.is_(None))))
@@ -133,6 +141,8 @@ def rubric_expenses(start: date, end: date, store_id: str = "", user=Depends(cur
                           "supplier_name": snapshot.get("name", ""), "supplier_nif": snapshot.get("nif", ""), "document": payload.get("document", ""),
                           "document_type": "NC" if row.kind == "credit" else payload.get("document_type", "FT"),
                           "amount_cents": sign * int(payload.get("total_cents") or 0), "rubric_source": "linhas",
+                          "base_cents": sign * int(payload.get("base_cents") or 0) if payload.get("base_cents") is not None else None,
+                          "tax_cents": sign * int(payload.get("tax_cents") or 0) if payload.get("tax_cents") is not None else None,
                           "allocations": [{"category_id": s["category_id"], "category_name": names.get(s["category_id"]) if s["category_id"] else None,
                                            "amount_cents": sign * int(s["amount_cents"])} for s in split]})
     # Receções com documento de compra próprio (FC, FCD, NCC…), uma vez por compra.
@@ -165,7 +175,7 @@ def rubric_expenses(start: date, end: date, store_id: str = "", user=Depends(cur
                           "document_date": payload["document_date"], "supplier_name": snapshot.get("name", ""),
                           "supplier_nif": snapshot.get("nif", ""), "document": payload.get("document", ""),
                           "document_type": financial.get("document_type_code", ""), "amount_cents": amount,
-                          "rubric_source": "linhas",
+                          "rubric_source": "linhas", **document_vat(db.get(Purchase, row.purchase_id)),
                           "allocations": [{"category_id": x["category_id"], "category_name": names.get(x["category_id"]) if x["category_id"] else None,
                                            "amount_cents": sign * int(x["amount_cents"])} for x in split]})
     # Custos sem documento (impostos, vencimentos, encargos) registados na reconciliação bancária com rubrica.
@@ -176,6 +186,8 @@ def rubric_expenses(start: date, end: date, store_id: str = "", user=Depends(cur
         documents.append({"id": identifier, "source": "Banco", "store": "", "document_date": day, "supplier_name": entry.description,
                           "supplier_nif": "", "document": entry.reference or "", "document_type": "Banco",
                           "amount_cents": sum(amount for _, amount, _ in shares), "rubric_source": "registo bancário",
+                          # Custo sem documento (encargo, imposto, vencimento): sem IVA.
+                          "base_cents": sum(amount for _, amount, _ in shares), "tax_cents": 0,
                           "allocations": [{"category_id": c, "category_name": names.get(c), "amount_cents": amount} for c, amount, _ in shares]})
     totals = defaultdict(lambda: {"total_cents": 0, "documents": 0})
     for doc in documents:
@@ -190,7 +202,10 @@ def rubric_expenses(start: date, end: date, store_id: str = "", user=Depends(cur
     launched = {doc.purchase_id or json.loads(doc.data).get("purchase_id") for doc in db.scalars(select(ProcurementDocument).where(ProcurementDocument.status != "cancelled"))}
     pending = [p for p in db.scalars(select(Purchase).where(Purchase.store_id.in_(stores), Purchase.document_date >= str(start), Purchase.document_date <= str(end), Purchase.amount_cents != 0))
                if (p.origin in ("ficheiro", "efatura") or p.import_id in efatura_imports) and p.id not in launched and p.id not in linked]
+    known = [doc for doc in documents if doc.get("tax_cents") is not None]
     return {"pending_efatura": {"count": len(pending), "total_cents": sum(p.amount_cents for p in pending)},
+            "base_cents": sum(doc["base_cents"] or 0 for doc in known), "tax_cents": sum(doc["tax_cents"] for doc in known),
+            "without_vat_breakdown": len(documents) - len(known),
             "pending_receipts": untyped,
             "rubrics": rubrics, "documents": documents, "total_cents": sum(doc["amount_cents"] for doc in documents),
             "unclassified": sum(1 for doc in documents if any(share["category_id"] is None for share in doc["allocations"])),

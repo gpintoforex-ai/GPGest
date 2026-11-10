@@ -36,12 +36,15 @@ export default function WorkOverview({
   mode,
   navigate,
   financial,
+  embedded = false,
 }: {
   store: string;
   role: string;
   mode: string;
   navigate: Navigate;
   financial?: ReactNode;
+  /** Dentro do Dashboard novo: a página já tem título; a saudação passa a título de secção. */
+  embedded?: boolean;
 }) {
   const [{ start, end }] = useState(range);
   const [data, setData] = useState<Row | null>(null),
@@ -205,9 +208,14 @@ export default function WorkOverview({
     >
       <div className="priority-heading">
         <div>
-          <span className="priority-eyebrow">O negócio, sem ruído</span>
-          <h1>{greeting}. Estas são as prioridades.</h1>
-          <p>Resumo operacional e financeiro com ligações aos registos.</p>
+          {embedded ? <>
+            <h2>Pedidos, abastecimento e trabalho por área</h2>
+            <p>{greeting}. Prioridades dos pedidos das últimas seis semanas, com ligações aos registos.</p>
+          </> : <>
+            <span className="priority-eyebrow">O negócio, sem ruído</span>
+            <h1>{greeting}. Estas são as prioridades.</h1>
+            <p>Resumo operacional e financeiro com ligações aos registos.</p>
+          </>}
         </div>
         <div className="priority-actions">
           <ActionButton

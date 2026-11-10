@@ -26,6 +26,7 @@ import {
 import { api } from "./lib/api";
 import { Field, Form } from "./components/Form";
 import { DataTable } from "./components/DataTable";
+import ArticleSearch from "./components/ArticleSearch";
 import {
   ActionButton,
   AppDialog,
@@ -428,17 +429,11 @@ export default function Inventory({
                 </select>
               </Field>
               <Field label="Artigo">
-                <select
+                <ArticleSearch
+                  articles={articles as { id: string }[]}
                   value={filters.article_id}
-                  onChange={(e) => changeFilter("article_id", e.target.value)}
-                >
-                  <option value="">Todos os artigos</option>
-                  {articles.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} · {a.name}
-                    </option>
-                  ))}
-                </select>
+                  onPick={(a) => { if ((a?.id || "") !== filters.article_id) changeFilter("article_id", a?.id || ""); }}
+                />
               </Field>
               {["Painel", "Movimentos", "Importações"].includes(tab) && (
                 <>
@@ -1058,6 +1053,77 @@ export default function Inventory({
                 }
               />
             </Field>
+            <h3>Rentabilidade na receção de mercadorias</h3>
+            <p className="footnote">
+              Na receção a partir de fatura, cada linha mostra a margem sobre o PVP sem IVA, com o custo
+              efetivo da receção (descontos e bónus incluídos), e a variação do custo face à última compra.
+              O PVP nunca é alterado automaticamente.
+            </p>
+            <Field label="Margem mínima (%)">
+              <input type="number" min="0" max="100" step="0.1" value={config.margin_minimum ?? "30"}
+                onChange={(e) => setConfig({ ...config, margin_minimum: e.target.value })} />
+            </Field>
+            <Field label="Método do PVP sugerido">
+              <select value={config.pricing_method ?? "margin"} onChange={(e) => setConfig({ ...config, pricing_method: e.target.value })}>
+                <option value="margin">Margem sobre a venda (usa a margem mínima)</option>
+                <option value="markup">Markup sobre o custo</option>
+              </select>
+            </Field>
+            <Field label="Markup sobre o custo (%)">
+              <input type="number" min="0" max="10000" step="0.1" value={config.markup_default ?? "50"}
+                onChange={(e) => setConfig({ ...config, markup_default: e.target.value })} />
+            </Field>
+            <p className="footnote">
+              O PVP sugerido na revisão de preços parte sempre do custo de referência: valor líquido ÷ unidades
+              faturadas, sem repartir o bónus. O bónus aparece como ganho adicional e nunca baixa o preço sugerido.
+            </p>
+            <Field label="Alerta de aumento do custo a partir de (%)">
+              <input type="number" min="0" max="1000" step="0.1" value={config.cost_alert_percent ?? "5"}
+                onChange={(e) => setConfig({ ...config, cost_alert_percent: e.target.value })} />
+            </Field>
+            <details className="stock-family-margins">
+              <summary>Margem mínima por família ({Object.keys(config.margin_by_family || {}).length})</summary>
+              <p className="footnote">Sobrepõe-se à margem mínima da empresa nos artigos dessa família. Deixe vazio para usar a da empresa.</p>
+              {[...new Set(articles.map((a) => a.family).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, "pt-PT")).map((family) => (
+                <Field key={family} label={family}>
+                  <input type="number" min="0" max="100" step="0.1" value={config.margin_by_family?.[family] ?? ""}
+                    placeholder={String(config.margin_minimum ?? "30")}
+                    onChange={(e) => {
+                      const next = { ...(config.margin_by_family || {}) };
+                      if (e.target.value === "") delete next[family];
+                      else next[family] = e.target.value;
+                      setConfig({ ...config, margin_by_family: next });
+                    }} />
+                </Field>
+              ))}
+            </details>
+            <details className="stock-family-margins">
+              <summary>Método do PVP por família ({Object.keys(config.pricing_method_by_family || {}).length})</summary>
+              <p className="footnote">Sobrepõe-se ao método e ao markup da empresa nos artigos dessa família. Deixe vazio para usar os da empresa.</p>
+              {[...new Set(articles.map((a) => a.family).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, "pt-PT")).map((family) => (
+                <Field key={family} label={family}>
+                  <select aria-label={`Método do PVP de ${family}`} value={config.pricing_method_by_family?.[family] ?? ""}
+                    onChange={(e) => {
+                      const next = { ...(config.pricing_method_by_family || {}) };
+                      if (e.target.value === "") delete next[family];
+                      else next[family] = e.target.value;
+                      setConfig({ ...config, pricing_method_by_family: next });
+                    }}>
+                    <option value="">Como a empresa</option>
+                    <option value="margin">Margem sobre a venda</option>
+                    <option value="markup">Markup sobre o custo</option>
+                  </select>
+                  <input type="number" min="0" max="10000" step="0.1" aria-label={`Markup de ${family} (%)`}
+                    value={config.markup_by_family?.[family] ?? ""} placeholder={`Markup ${String(config.markup_default ?? "50")} %`}
+                    onChange={(e) => {
+                      const next = { ...(config.markup_by_family || {}) };
+                      if (e.target.value === "") delete next[family];
+                      else next[family] = e.target.value;
+                      setConfig({ ...config, markup_by_family: next });
+                    }} />
+                </Field>
+              ))}
+            </details>
             <h3>Permissões por utilizador</h3>
             <p>
               Administrador mantém todas as permissões. Gestor tem as permissões
@@ -1432,26 +1498,14 @@ function MovementForm({
       {error && <Notice tone="error">{error}</Notice>}
       <div className="form-grid">
         <Field label="Artigo">
-          <select
-            name="article_id"
-            required
+          <ArticleSearch
+            articles={articles as { id: string }[]}
             value={value.article_id}
-            onChange={(e) =>
-              setValue({
-                ...value,
-                article_id: e.target.value,
-                lot_id: "",
-                lot_number: "",
-              })
-            }
-          >
-            <option value="">Selecione</option>
-            {articles.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.code} · {a.name}
-              </option>
-            ))}
-          </select>
+            onPick={(a) => {
+              if ((a?.id || "") !== value.article_id)
+                setValue({ ...value, article_id: a?.id || "", lot_id: "", lot_number: "" });
+            }}
+          />
         </Field>
         <Field label="Movimento">
           <select

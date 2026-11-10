@@ -17,9 +17,10 @@ from app.models import (
     PurchaseArticleAlias,
     StockEntry,
     StockLot,
+    StockWarehouse,
 )
 from sqlalchemy import select
-from test_inventory import product, stock_case, view  # noqa: F401
+from test_inventory import move, product, stock_case, view  # noqa: F401
 
 COLUMNS = """
   REF        DESCRIÇÃO                           QTD   UNI  P.VENDA   DESC     VALOR LIQUIDO  IVA   PVP
@@ -242,6 +243,38 @@ def test_receipt_from_invoice_reopens_exactly_and_saves_in_place(receiving):
     again = c.get(f"/api/purchase-receiving/receipts/{receipt_id}").json()["lines"][0]
     assert (again["quantity"], again["bonus"]) == ("8", "0")
     assert c.put(f"/api/purchase-receiving/receipts/{receipt_id}?revision={revision}", json=body).status_code == 409
+
+
+def test_receipt_can_move_to_active_warehouse_after_original_is_deactivated(receiving):
+    c, sid, doc_id, original, case = receiving
+    _, _, factory, warehouses, _ = case
+    destination = warehouses[1]
+    article = product(case)
+    body = {
+        "supplier_id": sid, "warehouse_id": original, "document": "FA.2026/3208",
+        "document_date": date.today().isoformat(), "request_key": str(uuid4()),
+        "lines": [{"article_id": article, "description": "Artigo", "quantity": "5", "price": "10", "vat": "23"}],
+    }
+    posted = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert posted.status_code == 200, posted.text
+    receipt_id = posted.json()["receipt_id"]
+    # A later entry forces an auditable reversal instead of deleting the original entry.
+    move(case, article, warehouse_id=destination, quantity="1", unit_cost="10")
+    with factory.begin() as db:
+        db.get(StockWarehouse, original).active = False
+
+    opened = c.get(f"/api/purchase-receiving/receipts/{receipt_id}").json()
+    assert opened["receipt"]["warehouse_id"] == original
+    assert [warehouse["id"] for warehouse in opened["warehouses"]] == [destination]
+    url = f"/api/purchase-receiving/receipts/{receipt_id}?revision={opened['receipt']['revision']}"
+    assert c.put(url, json=body).status_code == 409
+    saved = c.put(url, json={**body, "warehouse_id": destination})
+    assert saved.status_code == 200, saved.text
+    with factory() as db:
+        entries = list(db.scalars(select(StockEntry).where(StockEntry.article_id == article)))
+        assert sorted(e.quantity for e in entries if e.warehouse_id == original) == [-5, 5]
+        assert sorted(e.quantity for e in entries if e.warehouse_id == destination) == [1, 5]
+    assert c.get(f"/api/purchase-receiving/receipts/{receipt_id}").json()["receipt"]["warehouse_id"] == destination
 
 
 def test_service_lines_count_in_the_invoice_but_not_in_stock(receiving):
@@ -532,6 +565,10 @@ def test_invoice_receipt_linked_to_an_order_receives_it_with_offer_and_overdeliv
     item = view(case, paid)
     assert D(item["quantity"]) == 12
     assert D(item["average_cost"]).quantize(D("0.0001")) == (D(100) / 12).quantize(D("0.0001"))
+    history = c.get("/api/purchase-receiving/cost-history", params={"article_ids": paid}).json()["articles"][paid]
+    assert len(history) == 1
+    assert D(history[0]["quantity"]) == 12
+    assert D(history[0]["unit_cost"]).quantize(D("0.0001")) == (D(100) / 12).quantize(D("0.0001"))
     # Reaberta, a receção mantém a ligação à encomenda.
     opened = c.get(f"/api/purchase-receiving/receipts/{done.json()['receipt_id']}").json()
     assert opened["receipt"]["order_id"] == order["id"]
@@ -654,3 +691,243 @@ def test_imported_purchase_without_procurement_document_can_receive_the_goods(re
     again = c.get(f"/api/purchase-receiving/purchases/{purchase_id}").json()
     assert again["related"][0]["id"] == receipt_id and again["archive_receipt_id"] == receipt_id
     assert c.get("/api/purchase-receiving/purchases/inexistente").status_code == 404
+
+
+def test_price_review_simulates_wintouch_prices_without_allowing_writes(receiving):
+    from test_inventory import erp_product
+
+    c, sid, doc_id, warehouse, case = receiving
+    erp_id = erp_product(case, "REVIEW-ERP", vat_rate=D(23))
+    linked = c.post("/api/stock/erp-products", json={"erp_id": erp_id})
+    assert linked.status_code == 200, linked.text
+    article = linked.json()["id"]
+    body = {"supplier_id": sid, "warehouse_id": warehouse, "document": "FA.2026/3208",
+            "document_date": date.today().isoformat(), "request_key": str(uuid4()),
+            "lines": [{"article_id": article, "description": "Artigo ERP", "quantity": "2", "price": "3", "vat": "23"}]}
+    posted = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert posted.status_code == 200, posted.text
+    path = f"/api/price-reviews/{posted.json()['receipt_id']}"
+    review = c.get(path).json()
+    line = review["lines"][0]
+    assert line["erp"] and not line["editable"]
+    row = {"article_id": article, "article_revision": line["revision"], "method": "increase", "value": "20"}
+    request = {"receipt_revision": review["revision"], "lines": [row]}
+    simulated = c.post(f"{path}/preview", json=request)
+    assert simulated.status_code == 200, simulated.text
+    proposal = simulated.json()[0]
+    assert D(proposal["after"]) == 6 and D(proposal["after_gross"]) == D("7.38")
+    assert "Wintouch" in proposal["destination"]
+    write = {**request, "lines": [{**row, "confirmed_net": proposal["after"]}], "request_key": str(uuid4()), "confirmed": True}
+    assert c.post(f"{path}/apply", json=write).status_code == 409
+    assert c.get(path).json()["lines"][0]["pending"]
+
+
+def test_wintouch_price_writes_are_never_available_in_demo_or_without_company():
+    from types import SimpleNamespace
+
+    from app.wintouch_price_write import availability
+    admin = SimpleNamespace(role="administrador")
+    assert availability(SimpleNamespace(info={}), admin)[0] is False
+    demo = SimpleNamespace(id="c1", mode="demonstracao", operating_mode="integrated", erp_provider="wintouch", api_active=1, connector_writes=1)
+    allowed, reason = availability(SimpleNamespace(info={"company": {"id": "c1"}, "selected_company": demo}), admin)
+    assert not allowed and "demonstração" in reason
+    real = SimpleNamespace(id="c2", mode="real", operating_mode="integrated", erp_provider="wintouch", api_active=1, connector_writes=1,
+                           data_authority=None, sync_resources=None)
+    db = SimpleNamespace(info={"company": {"id": "c2"}, "selected_company": real})
+    assert availability(db, admin) == (True, "")
+    assert "administrador" in availability(db, SimpleNamespace(role="gestor"))[1]
+    real.connector_writes = 0
+    assert "não está autorizada" in availability(db, admin)[1]
+
+
+def test_price_review_sends_wintouch_price_and_confirms_by_reading_back(receiving, monkeypatch):
+    """Envio do PVP para a Wintouch (API simulada): recusa, envio não confirmado e confirmação por leitura."""
+    import json
+    from contextlib import contextmanager
+
+    import httpx
+    from app import wintouch_price_write as writer
+    from app.models import Audit, StockArticle, WintouchProduct
+    from app.wintouch_sales import Reader
+    from test_inventory import erp_product
+
+    c, sid, doc_id, warehouse, case = receiving
+    erp_id = erp_product(case, "SYNC-ERP", vat_rate=D(23))
+    article = c.post("/api/stock/erp-products", json={"erp_id": erp_id}).json()["id"]
+    body = {"supplier_id": sid, "warehouse_id": warehouse, "document": "FA.2026/5100", "document_date": date.today().isoformat(),
+            "request_key": str(uuid4()), "lines": [{"article_id": article, "description": "Artigo ERP", "quantity": "2", "price": "3", "vat": "23"}]}
+    posted = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert posted.status_code == 200, posted.text
+    path = f"/api/price-reviews/{posted.json()['receipt_id']}"
+    with case[2]() as db:
+        external = db.get(WintouchProduct, erp_id).external_id
+        local_before = db.get(StockArticle, article).data
+    remote = {"Row": 1, "PriceWithoutVAT": "5", "PriceWithVAT": "6.15"}
+    mode, sent = {"value": "reject"}, []
+
+    def transport(request):
+        if request.method == "PATCH":
+            assert request.url.path.endswith("/product_prices_change")
+            sent.append(json.loads(request.content))
+            if mode["value"] == "reject":
+                return httpx.Response(400, json={"Message": "Preço inválido na Wintouch"})
+            if mode["value"] == "apply":
+                remote.update(PriceWithoutVAT="6.0000", PriceWithVAT="7.38")
+            return httpx.Response(200, json={})
+        assert request.method == "GET" and request.url.path.endswith(f"/products/{external}/prices")
+        return httpx.Response(200, json=[remote])
+
+    @contextmanager
+    def connection(db, user, **kwargs):
+        with httpx.Client(transport=httpx.MockTransport(transport)) as client:
+            yield Reader(client, "https://erp.test/api/v1", "tenant", "key")
+    monkeypatch.setattr(writer, "availability", lambda db, user: (True, ""))
+    monkeypatch.setattr(writer, "connection", connection)
+    review = c.get(path).json()
+    line = review["lines"][0]
+    assert review["erp_write"] and line["erp"] and line["editable"]
+    row = {"article_id": article, "article_revision": line["revision"], "method": "increase", "value": "20"}
+    request = {"receipt_revision": review["revision"], "lines": [row]}
+    proposal = c.post(f"{path}/preview", json=request).json()[0]
+    assert D(proposal["after"]) == 6 and D(proposal["after_gross"]) == D("7.38") and "envio" in proposal["destination"]
+
+    def apply():
+        response = c.post(f"{path}/apply", json={**request, "lines": [{**row, "confirmed_net": proposal["after"]}],
+                                                 "request_key": str(uuid4()), "confirmed": True})
+        assert response.status_code == 200, response.text
+        return response.json()
+    rejected = apply()
+    assert rejected["erp"] == [{"code": "SYNC-ERP", "name": rejected["erp"][0]["name"], "state": "failed", "error": "Preço inválido na Wintouch"}]
+    assert rejected["pending"] == 1 and sent[-1] == [{"ID": external, "RowPrice": 1, "PriceWithoutVAT": 6.0, "PriceWithVAT": 7.38}]
+    mode["value"] = "ignore"  # A Wintouch aceita o pedido mas a linha 1 continua com o preço antigo.
+    unconfirmed = apply()
+    assert unconfirmed["erp"][0]["state"] == "uncertain" and "5" in unconfirmed["erp"][0]["error"] and unconfirmed["pending"] == 1
+    mode["value"] = "apply"
+    confirmed = apply()
+    assert confirmed["erp"][0]["state"] == "confirmed" and confirmed["pending"] == 0 and confirmed["updated"] == 1
+    with case[2]() as db:
+        product = db.get(WintouchProduct, erp_id)
+        assert product.sale_price == D("6.0000") and product.sale_price_vat == D("7.38")
+        assert db.get(StockArticle, article).data == local_before  # A ficha local do artigo ERP não muda.
+        states = [json.loads(a.detail)["state"] for a in db.scalars(select(Audit).where(Audit.target_id == article, Audit.action == "wintouch_price_write"))]
+        assert sorted(states) == ["confirmed", "failed", "uncertain"]
+
+
+def test_post_receipt_price_review_is_deferred_decimal_and_idempotent(receiving):
+    from app.models import Audit, StockArticle
+
+    c, sid, doc_id, warehouse, case = receiving
+    article = product(case, sale_net="20", vat_rate="23")
+    move(case, article, quantity="1", unit_cost="8")
+    assert c.get("/api/price-reviews").json() == []
+    body = {"supplier_id": sid, "warehouse_id": warehouse, "document": "FA.2026/3208",
+            "document_date": date.today().isoformat(), "request_key": str(uuid4()), "global_discount": "10",
+            "lines": [{"article_id": article, "description": "Artigo", "quantity": "3", "bonus": "1",
+                       "price": "15", "discount": "10", "vat": "6"}]}
+    posted = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert posted.status_code == 200, posted.text
+    receipt_id = posted.json()["receipt_id"]
+    assert posted.json()["price_review_pending"] == 1
+    path = f"/api/price-reviews/{receipt_id}"
+    review = c.get(path).json()
+    line = review["lines"][0]
+    assert D(line["quantity"]) == 4 and D(line["billed_quantity"]) == 3 and D(line["bonus_quantity"]) == 1
+    # Referência: 36,45 ÷ 3 faturadas; efetivo (stock): 36,45 ÷ 4 recebidas. O PVP parte da referência.
+    assert D(line["cost"]) == D(line["reference_cost"]) == D("12.15")
+    assert D(line["effective_cost"]).quantize(D("0.0001")) == D("9.1125")
+    assert D(line["last_cost"]) == 8 and D(line["gross"]) == D("24.60")
+    assert line["default_method"] == "margin" and D(line["default_value"]) == 30
+    assert D(line["suggested"]) == D("17.36") and D(line["suggested_margin"]) >= 30
+    assert c.get("/api/price-reviews").json()[0]["id"] == receipt_id
+    row = {"article_id": article, "article_revision": line["revision"], "method": "manual", "value": "22"}
+    request = {"receipt_revision": review["revision"], "rounding": "0.50", "lines": [row]}
+    preview = c.post(f"{path}/preview", json=request)
+    assert preview.status_code == 200, preview.text
+    assert D(preview.json()[0]["after_gross"]) == D("27.50")
+    assert D(view(case, article)["sale_net"]) == 20
+    assert c.post(f"{path}/apply", json={**request, "request_key": str(uuid4())}).status_code == 422
+    invalid = {**request, "lines": [{**row, "article_revision": line["revision"] + 1}], "request_key": str(uuid4()), "confirmed": True}
+    assert c.post(f"{path}/apply", json=invalid).status_code == 409
+    assert D(view(case, article)["quantity"]) == 5
+    apply = {**request, "lines": [{**row, "confirmed_net": preview.json()[0]["after"]}], "request_key": str(uuid4()), "confirmed": True}
+    assert c.post(f"{path}/apply", json={**apply, "lines": [{**row, "confirmed_net": "22"}]}).status_code == 409
+    saved = c.post(f"{path}/apply", json=apply)
+    assert saved.status_code == 200, saved.text
+    assert c.post(f"{path}/apply", json=apply).json() == saved.json()
+    assert c.get("/api/price-reviews").json() == []
+    assert D(view(case, article)["quantity"]) == 5
+    assert D(view(case, article)["sale_net"]) == D(preview.json()[0]["after"])
+    with case[2]() as db:
+        assert db.get(StockArticle, article).revision == line["revision"] + 1
+        events = list(db.scalars(select(Audit).where(Audit.target_id == article, Audit.action == "stock_article_price")))
+        assert len(events) == 1 and receipt_id in events[0].detail
+
+
+def test_price_review_prices_from_reference_cost_and_shows_bonus_as_extra_gain(receiving):
+    """Regra dos bónus: o PVP sugerido e a comparação usam o custo sem repartir bónus."""
+    c, sid, doc_id, warehouse, case = receiving
+    article = product(case, sale_net="10", vat_rate="23")
+    move(case, article, quantity="2", unit_cost="8")  # Compra anterior, sem bónus, a 8 €.
+    body = {"supplier_id": sid, "warehouse_id": warehouse, "document": "FA.2026/4100", "document_date": date.today().isoformat(),
+            "request_key": str(uuid4()), "lines": [{"article_id": article, "description": "Artigo", "quantity": "3", "bonus": "1", "price": "8", "vat": "23"}]}
+    posted = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert posted.status_code == 200, posted.text
+    path = f"/api/price-reviews/{posted.json()['receipt_id']}"
+    line = c.get(path).json()["lines"][0]
+    # 24 € ÷ 3 faturadas = 8 € (referência); 24 € ÷ 4 recebidas = 6 € (efetivo, o custo em stock).
+    assert D(line["reference_cost"]) == 8 and D(line["effective_cost"]) == 6
+    assert D(line["bonus_quantity"]) == 1 and D(line["bonus_gain"]) == 8 and D(line["bonus_gain_unit"]) == 2
+    # Mesma compra a 8 € com e sem bónus: sem variação (com o custo efetivo pareceria uma descida de 25 %).
+    assert D(line["last_cost"]) == 8 and D(line["delta"]) == 0 and D(line["delta_percent"]) == 0
+    # Margem mínima de 30 % sobre o custo de referência: 8 ÷ 0,70 = 11,43 €, nunca 6 ÷ 0,70.
+    assert line["default_method"] == "margin" and D(line["suggested"]) == D("11.43")
+    # Margens ao PVP atual (10 €): comercial 20 %, efetiva da receção 40 %.
+    assert D(line["margin"]) == 20 and D(line["effective_margin"]) == 40
+    # Método por omissão da empresa: markup de 50 % sobre o custo de referência.
+    settings = c.get("/api/stock/catalog").json()["settings"]
+    assert c.post("/api/stock/settings", json={**settings, "markup_by_family": {"": "5"}}).status_code == 422
+    saved = c.post("/api/stock/settings", json={**settings, "pricing_method": "markup", "markup_default": "50"})
+    assert saved.status_code == 200, saved.text
+    review = c.get(path).json()
+    line = review["lines"][0]
+    assert line["default_method"] == "markup" and D(line["default_value"]) == 50 and D(line["suggested"]) == 12
+    row = {"article_id": article, "article_revision": line["revision"], "method": "markup", "value": "25"}
+    proposal = c.post(f"{path}/preview", json={"receipt_revision": review["revision"], "lines": [row]}).json()[0]
+    # O mesmo PVP (10 €) para as duas margens; o bónus nunca baixa o preço proposto.
+    assert proposal["method"] == "markup" and D(proposal["after"]) == 10
+    assert D(proposal["after_margin"]) == 20 and D(proposal["after_effective_margin"]) == 40 and D(proposal["bonus_gain"]) == 8
+
+
+def test_cost_history_uses_the_effective_received_cost_and_skips_the_receipt_being_edited(receiving):
+    """Rentabilidade na receção: último custo efetivo (com bónus e descontos), fornecedor e limites."""
+    c, sid, doc_id, warehouse, case = receiving
+    pid = product(case, code="HIST1", name="Artigo com histórico")
+    fresh = product(case, code="HIST2", name="Artigo sem histórico")
+    body = {"supplier_id": sid, "warehouse_id": warehouse, "document": "FA.2026/3208", "document_date": date.today().isoformat(),
+            "request_key": str(uuid4()), "global_discount": "10",
+            "lines": [{"article_id": pid, "description": "Artigo com histórico", "quantity": "3", "bonus": "1", "price": "27.60",
+                       "discount": "0", "vat": "23"}]}
+    done = c.post(f"/api/purchase-receiving/{doc_id}/confirm", json=body)
+    assert done.status_code == 200, done.text
+    receipt = done.json()["receipt_id"]
+    data = c.get("/api/purchase-receiving/cost-history", params={"article_ids": f"{pid},{fresh}"}).json()
+    last = data["articles"][pid][0]
+    # 3 × 27,60 × 0,90 = 74,52 € por 4 unidades recebidas (3 + 1 de bónus) = 18,63 €/un.
+    assert D(last["unit_cost"]) == D("18.63") and last["supplier_name"] == "Fornecedor Natural"
+    # Sem repartir o bónus: 74,52 € ÷ 3 faturadas = 24,84 €/un. É este que se compara com a receção seguinte.
+    assert D(last["reference_cost"]) == D("24.84") and D(last["billed_quantity"]) == 3
+    assert last["procurement_id"] == receipt and last["document"] == "FA.2026/3208"
+    assert data["articles"][fresh] == []
+    assert data["settings"] == {"margin_minimum": "30", "margin_by_family": {}, "cost_alert_percent": "5", "recoverable_vat": True,
+                                "pricing_method": "margin", "pricing_method_by_family": {}, "markup_default": "50", "markup_by_family": {}}
+    # A receção em edição não conta como compra anterior de si própria.
+    edited = c.get("/api/purchase-receiving/cost-history", params={"article_ids": pid, "exclude": receipt}).json()
+    assert edited["articles"][pid] == []
+    # Limites configuráveis (empresa e família), validados.
+    settings = c.get("/api/stock/catalog").json()["settings"]
+    bad = c.post("/api/stock/settings", json={**settings, "margin_by_family": {"Suplementos": "120"}})
+    assert bad.status_code == 422
+    ok = c.post("/api/stock/settings", json={**settings, "margin_minimum": "25", "cost_alert_percent": "8", "margin_by_family": {"Suplementos": "40"}})
+    assert ok.status_code == 200, ok.text
+    limits = c.get("/api/purchase-receiving/cost-history", params={"article_ids": pid}).json()["settings"]
+    assert limits["margin_minimum"] == "25" and limits["cost_alert_percent"] == "8" and limits["margin_by_family"] == {"Suplementos": "40"}

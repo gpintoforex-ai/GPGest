@@ -42,15 +42,18 @@ function Progress({ run }: { run: Run }) {
  * Sincroniza as vendas Wintouch de um período (documentos, pagamentos e, com o controlo de stock
  * ativo, as saídas de stock das linhas). Corre em segundo plano; o progresso é consultado a cada segundo.
  */
-export default function StockSalesSync({ stores, warehouses, onClose, onDone }: {
+export default function StockSalesSync({ stores, warehouses, onClose, onDone, initialFrom, initialTo }: {
   stores: Row[];
   warehouses: Row[];
   onClose: () => void;
   onDone: () => void;
+  /** Período proposto (ex.: desde a última sincronização); sem ele, o mês corrente. */
+  initialFrom?: string;
+  initialTo?: string;
 }) {
   const initial = currentMonth();
-  const [from, setFrom] = useState(initial.from);
-  const [to, setTo] = useState(initial.to);
+  const [from, setFrom] = useState(initialFrom || initial.from);
+  const [to, setTo] = useState(initialTo || initial.to);
   const [store, setStore] = useState(stores[0]?.id || "");
   const [warehouse, setWarehouse] = useState("");
   const [demo, setDemo] = useState(false);
@@ -111,8 +114,9 @@ export default function StockSalesSync({ stores, warehouses, onClose, onDone }: 
       <div className="panel-title"><h2 id="stock-sync-title">Sincronizar movimentos Wintouch</h2></div>
       <p className="footnote">
         Importa os documentos do período: vendas, pagamentos e saldos, e os documentos que a Wintouch marca como
-        movimentando stock (compras, entradas, saídas, transferências e devoluções). Com o controlo de stock ativo, cada
-        linha de artigo gera o movimento de stock correspondente, uma vez e com o lote indicado pela Wintouch.
+        movimentando stock (vendas, entradas, saídas, transferências e devoluções). Com o controlo de stock ativo, cada
+        linha de artigo gera o movimento de stock correspondente, uma vez e com o lote indicado pela Wintouch. As compras
+        entram no stock só pela receção na aplicação.
       </p>
       {!running && !result && !failed && (
         <div className="stock-sync-form">

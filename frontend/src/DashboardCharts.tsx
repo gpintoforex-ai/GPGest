@@ -26,7 +26,7 @@ export function Legend({ series }: { series: Series[] }) {
     <svg width="18" height="10" aria-hidden="true">{s.form === "bar" ? <rect x="2" y="1" width="14" height="8" rx="2" className={`dash-fill-${i + 1}`} /> : <line x1="1" x2="17" y1="5" y2="5" className={`dash-stroke-${i + 1}`} strokeDasharray={s.dashed ? "4 3" : undefined} />}</svg>{s.label}</li>)}</ul>;
 }
 
-export function ChartFrame({ title, legend, children, table, footnote }: { title: string; legend?: ReactNode; children: ReactNode; table: { columns: string[]; rows: (string | number)[][] }; footnote?: ReactNode }) {
+export function ChartFrame({ title, legend, children, table, footnote }: { title: string; legend?: ReactNode; children: ReactNode; table: { columns: string[]; rows: ReactNode[][] }; footnote?: ReactNode }) {
   const [showTable, setShowTable] = useState(false);
   return <figure className="dash-chart">
     <figcaption><span>{title}</span><ActionButton type="button" className="dash-table-toggle" aria-pressed={showTable} onClick={() => setShowTable(!showTable)}>{showTable ? "Ver gráfico" : "Ver tabela"}</ActionButton></figcaption>
@@ -107,11 +107,14 @@ export function ForecastChart({ points, start, reserve, ariaLabel }: { points: {
 }
 
 /** Barras horizontais ordenadas por valor, com rótulos diretos (sem depender da cor). */
-export function BarList({ rows, ariaLabel }: { rows: { label: string; value: number; note?: string }[]; ariaLabel: string }) {
-  const max = Math.max(1, ...rows.map(r => Math.abs(r.value)));
-  return <ul className="dash-barlist" aria-label={ariaLabel}>{rows.map(row => <li key={row.label} tabIndex={0} aria-label={`${row.label}: ${formatEuro(row.value)}${row.note ? ` · ${row.note}` : ""}`}>
-    <span className="dash-barlist-label">{row.label}</span>
-    <span className="dash-barlist-track"><span className="dash-fill-1" style={{ width: `${Math.max(1, Math.abs(row.value) / max * 100)}%` }} /></span>
-    <span className="dash-barlist-value">{formatEuro(row.value)}{row.note && <small>{row.note}</small>}</span>
-  </li>)}</ul>;
+export function BarList({ rows, ariaLabel }: { rows: { label: string; value: number; note?: string; onOpen?: () => void }[]; ariaLabel: string }) {
+  const max = Math.max(1, ...rows.map(row => Math.abs(row.value)));
+  return <ul className="dash-barlist" aria-label={ariaLabel}>{rows.map(row => {
+    const label = `${row.label}: ${formatEuro(row.value)}${row.note ? ` · ${row.note}` : ""}`;
+    const bar = <><span className="dash-barlist-label">{row.label}</span>
+      <span className="dash-barlist-track"><span className="dash-fill-1" style={{ width: `${Math.max(1, Math.abs(row.value) / max * 100)}%` }} /></span>
+      <span className="dash-barlist-value">{formatEuro(row.value)}{row.note && <small>{row.note}</small>}</span></>;
+    return row.onOpen ? <li key={row.label} className="drilldown-bar-item"><button className="drilldown-bar" type="button" aria-label={label} onClick={row.onOpen}>{bar}</button></li>
+      : <li key={row.label} tabIndex={0} aria-label={label}>{bar}</li>;
+  })}</ul>;
 }

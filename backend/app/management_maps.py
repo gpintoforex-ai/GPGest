@@ -1,6 +1,7 @@
 """Mapas de gestão indicativos: custos e proveitos, e mapa de IVA por período.
 
-Proveitos e IVA liquidado: SAF-T de vendas (faturação líquida de IVA; notas de crédito subtraem).
+Proveitos e IVA liquidado: SAF-T de vendas (faturação líquida de IVA; notas de crédito subtraem) ou,
+no modo integrado, as vendas Wintouch sincronizadas (devoluções subtraem; anulados excluídos).
 Custos e IVA suportado: documentos de compra (e-Fatura, Compras e registos manuais), uma vez por
 documento, mais as compras do ERP sem documento correspondente. A rubrica vem das linhas da compra
 lançada, da rubrica definida no documento ERP ou da rubrica do fornecedor. Os custos sem documento
@@ -156,7 +157,7 @@ def context(user, db, start, end, store_id):
 
 @router.get("/api/management/costs-revenues")
 def costs_revenues(start: date, end: date, group: str = "month", store_id: str = "", user=Depends(current), db: Session = Depends(db_session)):
-    from .billing_conference import documents
+    from .dashboard import sales_by_day, sales_source
     from .settings import vat_settings
     if group not in ("month", "quarter"):
         raise HTTPException(422, "Agrupe por mês ou por trimestre.")
@@ -166,12 +167,16 @@ def costs_revenues(start: date, end: date, group: str = "month", store_id: str =
     percents = {c.id: c.vat_deduction_percent for c in categories.values()}
     periods = set()
     revenue = defaultdict(int)
-    for doc in documents(db, stores, str(start), str(end)):
-        if doc["eligible"]:
-            key = period_key(doc["date"], group)
-            periods.add(key)
-            revenue[key] += doc["net_cents"] * doc["direction"]
+    # Proveitos: a mesma faturação sem IVA do dashboard (SAF-T ou, no modo integrado, vendas Wintouch).
+    source = "erp" if sales_source(db)[0] == "erp" else "saft"
+    net, _, _, missing = sales_by_day(db, stores, start, end, source)
+    for day, cents in net.items():
+        key = period_key(day, group)
+        periods.add(key)
+        revenue[key] += cents
     costs = defaultdict(lambda: defaultdict(int))
+    # IVA das compras por período (os mesmos documentos dos custos): suportado e dedutível estimado.
+    vat_input, vat_deductible = defaultdict(int), defaultdict(int)
     for day, _, shares in cost_documents(db, stores, start, end):
         key = period_key(day, group)
         periods.add(key)
@@ -179,6 +184,8 @@ def costs_revenues(start: date, end: date, group: str = "month", store_id: str =
             # Regime normal: base + IVA não dedutível; restantes regimes: o IVA também é custo.
             cost = base + (tax - deductible(tax, category, percents) if regime == "normal" else tax)
             costs[category][key] += cost
+            vat_input[key] += tax
+            vat_deductible[key] += deductible(tax, category, percents) if regime == "normal" else 0
     ordered = sorted(periods)
     rubrics = sorted(costs, key=lambda c: (c == UNCLASSIFIED, -sum(costs[c].values())))
     total_costs = {key: sum(costs[c][key] for c in costs) for key in ordered}
@@ -190,10 +197,19 @@ def costs_revenues(start: date, end: date, group: str = "month", store_id: str =
                    "values": {key: costs[c][key] for key in ordered}, "total_cents": sum(costs[c].values())} for c in rubrics],
         "total_costs": total_costs,
         "margin": {key: revenue[key] - total_costs[key] for key in ordered},
+        "purchase_vat": {
+            "input": {key: vat_input[key] for key in ordered}, "deductible": {key: vat_deductible[key] for key in ordered},
+            "non_deductible": {key: vat_input[key] - vat_deductible[key] for key in ordered},
+            "totals": {"input_cents": sum(vat_input.values()), "deductible_cents": sum(vat_deductible.values()),
+                       "non_deductible_cents": sum(vat_input.values()) - sum(vat_deductible.values())},
+        },
         "totals": {"revenue_cents": sum(revenue.values()), "costs_cents": sum(total_costs.values()),
                    "margin_cents": sum(revenue.values()) - sum(total_costs.values())},
+        "revenue_source": source, "revenue_missing_documents": missing,
         "notes": [
-            "Proveitos: faturação SAF-T líquida de IVA, pela data do documento. Custos: todos os documentos de compra pela data do documento, incluindo faturas do e-Fatura ainda não lançadas (com a rubrica do fornecedor), e os custos sem documento (impostos, vencimentos, encargos) registados na reconciliação bancária com rubrica, pela data do movimento.",
+            *([f"Atenção: {missing} documento(s) de venda do ERP sem base tributável não entram nos proveitos. Volte a sincronizar as vendas do período."] if missing else []),
+            ("Proveitos: vendas Wintouch líquidas de IVA (anulados excluídos; devoluções subtraem)" if source == "erp"
+             else "Proveitos: faturação SAF-T líquida de IVA") + ", pela data do documento. Custos: todos os documentos de compra pela data do documento, incluindo faturas do e-Fatura ainda não lançadas (com a rubrica do fornecedor), e os custos sem documento (impostos, vencimentos, encargos) registados na reconciliação bancária com rubrica, pela data do movimento.",
             "Custo no regime normal = base tributável + IVA não dedutível estimado; nos restantes regimes, o IVA é custo." if regime else "Configure o regime de IVA para calcular os custos corretamente.",
             "Mapa de gestão indicativo: não inclui amortizações, acréscimos e diferimentos, nem custos pagos sem registo com rubrica.",
         ],

@@ -1,0 +1,97 @@
+/* Movimentos de stock: indicadores, grelha e cartões. Só tokens do design-system (claro e escuro). */
+.stock-ledger { display: grid; gap: 16px; min-width: 0; }
+.stock-ledger .page-intro { margin-bottom: 0; }
+
+.stock-ledger-sync { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 10px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-surface); }
+.stock-ledger-sync > small { flex-basis: 100%; }
+.stock-ledger-warning { color: var(--color-warning); font-weight: 600; }
+
+.stock-ledger-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.stock-ledger-kpis .ui-kpi { min-width: 0; }
+/* Valor sem cortes nem quebras a meio do número: só quebra no espaço antes da unidade. */
+.stock-ledger-kpis .ui-kpi.ui-tone .ui-kpi-value { font-size: 22px; overflow-wrap: normal; word-break: normal; }
+
+.stock-ledger-panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.stock-ledger-toolbar .module-tabs { margin-bottom: 0; }
+.stock-ledger-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; }
+.stock-ledger-filters .field { flex: 0 1 170px; min-width: 140px; margin: 0; }
+.stock-ledger-filters .field:has(.article-search) { flex: 1 1 240px; }
+.stock-ledger-period { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 8px; }
+.stock-ledger-more { align-self: flex-end; }
+.stock-ledger-more.active { border-color: var(--action-primary, var(--color-accent-ink)); }
+.stock-ledger-advanced { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; padding: 12px; border: 1px dashed var(--color-border); border-radius: var(--radius-panel); }
+.stock-ledger-advanced .field { flex: 0 1 200px; min-width: 160px; margin: 0; }
+.stock-ledger .footnote { margin: 0; }
+
+/* Grelha: o menu de ações de cada linha precisa de transbordar a tabela. */
+.stock-ledger-table { overflow: visible; }
+.stock-ledger-table table { width: 100%; }
+.stock-ledger-table :is(th, td) { vertical-align: middle; padding: 10px 6px; }
+.stock-ledger-table :is(th, td):first-child { padding-left: 12px; }
+.stock-ledger-table .stock-ledger-document { min-width: 128px; }
+.stock-ledger-nowrap { white-space: nowrap; }
+.stock-ledger-table td small, .stock-ledger-table td b { display: block; }
+.stock-ledger-table .numeric { text-align: right; }
+.stock-ledger-row { cursor: pointer; }
+.stock-ledger-row:hover > td { background: var(--color-info-bg); }
+.stock-ledger-user { display: inline-flex !important; align-items: center; gap: 4px; }
+
+.stock-ledger-document { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.stock-ledger-document > svg { flex: none; margin-top: 2px; color: var(--color-muted); }
+.stock-ledger-document > span { display: grid; gap: 2px; min-width: 0; }
+.stock-ledger-open.ui-action { justify-self: start; min-height: 30px; padding: 3px 10px; font-size: .85rem; gap: 6px; white-space: nowrap; margin-top: 4px; }
+.stock-ledger-kinds { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
+.stock-ledger-article { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.stock-ledger-table .stock-ledger-article { min-width: 132px; }
+.stock-ledger .ui-status.status-badge.ui-tone[data-tone] { white-space: nowrap; }
+.stock-ledger-article > span { display: grid; min-width: 0; }
+.stock-ledger-article img, .stock-ledger-thumb { flex: none; width: 40px; height: 40px; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-surface); object-fit: contain; }
+.stock-ledger-thumb { display: grid; place-items: center; color: var(--color-muted); }
+
+.stock-ledger-qty { font-weight: 700; white-space: nowrap; }
+.stock-ledger-qty + .stock-ledger-qty { margin-left: 8px; }
+.stock-ledger .is-in { color: var(--color-success); }
+.stock-ledger .is-out { color: var(--color-danger); }
+.stock-ledger-warehouse { display: inline-flex; gap: 6px; align-items: center; }
+.stock-ledger-warehouse svg { flex: none; color: var(--color-muted); }
+
+.stock-ledger-empty { padding: 18px 0; }
+.stock-ledger-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.stock-ledger-footer .actions { align-items: center; }
+
+/* Cartões (tablet e telemóvel). */
+.stock-ledger-cards { display: none; list-style: none; margin: 0; padding: 0; gap: 10px; }
+.stock-ledger-card { display: grid; gap: 6px; width: 100%; padding: 12px 14px; text-align: left; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-panel); cursor: pointer; font: inherit; }
+.stock-ledger-card:hover { border-color: var(--color-info); }
+.stock-ledger-card:focus-visible { outline: 3px solid var(--color-info); outline-offset: 2px; }
+.stock-ledger-card-head, .stock-ledger-card-flow { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.stock-ledger-card-hint { color: var(--color-info); font-weight: 600; }
+
+/* Detalhe lateral. */
+.stock-ledger-detail h2 { margin-top: 0; }
+.stock-ledger-detail-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.stock-ledger-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; margin: 0 0 20px; }
+.stock-ledger-detail-grid > div { min-width: 0; }
+.stock-ledger-detail-grid .is-wide { grid-column: 1 / -1; }
+.stock-ledger-detail-grid dt { color: var(--color-muted); font-size: .85rem; }
+.stock-ledger-detail-grid dd { margin: 2px 0 0; display: grid; gap: 4px; justify-items: start; overflow-wrap: anywhere; }
+
+@media (max-width: 1280px) {
+  .stock-ledger-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1299px) {
+  .stock-ledger-table { display: none; }
+  .stock-ledger-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+}
+@media (max-width: 760px) {
+  .stock-ledger-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stock-ledger-kpis .ui-kpi.ui-tone .ui-kpi-value { font-size: 18px; }
+  .stock-ledger-filters .field, .stock-ledger-advanced .field { flex: 1 1 100%; }
+  .stock-ledger-detail-grid { grid-template-columns: 1fr; }
+}
+/* Números de documento e nomes longos não alargam a grelha. */
+.stock-ledger-document b, .stock-ledger-article small { overflow-wrap: anywhere; }
+/* Stock acumulado por baixo da quantidade: «Stock 6,00 → 5,00». */
+.stock-ledger-balance { display: block; white-space: nowrap; color: var(--color-muted); }
+.stock-ledger-balance b { display: inline !important; color: var(--color-text); }

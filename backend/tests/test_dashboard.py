@@ -68,6 +68,7 @@ def test_roles_cannot_read_costs_or_results_they_are_not_allowed_to_see(setup):
     assert reader["permissions"]["costs"] is False
     assert reader["expenses"]["status"] == "restricted" and reader["margin"]["status"] == "restricted"
     assert reader["vat"]["status"] == "restricted"
+    assert client.get("/api/dashboard/expenses/drilldown", params=JANUARY).status_code == 403
     assert "documents_without_attachment" not in reader["operations"]["items"]
     client.post("/api/auth/logout")
     assert client.post("/api/auth/login", json={"email": "operator@test.pt", "password": "PasswordTest123!"}).status_code == 200
@@ -138,6 +139,60 @@ def test_dashboard_vat_matches_map_and_top_subtracts_returns(case):
     assert [r["code"] for r in rows] == ["P2"]  # P1: uma venda e uma devolução, quantidade líquida zero.
     assert rows[0]["quantity"] == "3" and rows[0]["sales_cents"] == 3000
     assert dashboard(client, start="2026-02-01", end="2026-02-28")["top_articles"]["status"] == "empty"
+    # Série de compras (evolução vendas vs compras): mesmos documentos e fórmula do total das despesas, nos
+    # mesmos períodos da faturação.
+    expenses = data["expenses"]
+    assert expenses["unit"] == data["sales"]["unit"] and len(expenses["points"]) == len(data["sales"]["points"])
+    assert sum(p["amount_cents"] for p in expenses["points"]) == expenses["total_cents"] == 10000 + 1150
+    assert [p["label"] for p in expenses["points"]] == [p["label"] for p in data["sales"]["points"]]
+    route = "/api/dashboard/expenses/drilldown"
+    summary = client.get(route, params=JANUARY).json()
+    assert summary["total_cents"] == expenses["total_cents"]
+    key = summary["rows"][0]["id"]
+    params = {**JANUARY, "category": key, "limit": 1}
+    listing = client.get(route, params=params).json()
+    assert listing["count"] == 1 and listing["total_cents"] == 11150
+    assert client.get(route, params={**params, "offset": 1}).json()["rows"] == []
+    item = listing["rows"][0]
+    detail = client.get(route, params={**params, "document_id": item["id"]}).json()
+    assert detail["document"]["allocations"] == [{"label": "Dedução parcial", "base_cents": 10000, "tax_cents": 2300, "amount_cents": 11150}]
+    assert client.get(route, params={**params, "document_id": "inexistente"}).status_code == 404
+    assert client.get(route, params={"start": "2026-02-01", "end": "2026-02-28"}).json()["total_cents"] == 0
+
+
+def test_expense_drilldown_preserves_origin_deduplication_and_document_lines(setup):
+    import json
+    from uuid import uuid4
+
+    from app.models import BusinessEntity, ERPDocument, ProcurementDocument, Purchase, Register, now
+
+    client, ids, factory = setup
+    with factory.begin() as db:
+        store = db.get(Register, ids["registers"][0]).store_id
+        supplier = BusinessEntity(name="Fornecedor teste", tax_number="500000009", is_supplier=True, category_id=ids["category"])
+        purchase = Purchase(store_id=store, supplier_nif="500000009", supplier_name="Fornecedor teste",
+                            document="FT TESTE/1", document_date="2026-01-12", amount_cents=2460, base_cents=2000, tax_cents=460)
+        db.add_all([supplier, purchase])
+        db.flush()
+        db.add(ProcurementDocument(kind="invoice", store_id=store, supplier_id=supplier.id, user_id=ids["operator"],
+                                   purchase_id=purchase.id, request_key=str(uuid4()), status="confirmed", confirmed_at=now(),
+                                   data=json.dumps({"category_id": ids["category"], "lines": [
+                                       {"description": "Artigo", "quantity": "2", "price": "10", "discount": "0", "vat": "23"}]})))
+        for index, number in enumerate(("FT TESTE/1", "FT ERP/2")):
+            db.add(ERPDocument(store_id=store, enterprise_id="teste", external_id=str(index), supplier_nif="500000009",
+                               supplier_name="Fornecedor teste", document=number, internal_document=number, document_type="FT",
+                               document_date="2026-01-11", amount_cents=2460, base_cents=2000, tax_cents=460))
+        purchase_id = purchase.id
+    route = "/api/dashboard/expenses/drilldown"
+    params = {**JANUARY, "store_id": store, "category": ids["category"], "limit": 1}
+    first = client.get(route, params=params).json()
+    second = client.get(route, params={**params, "offset": 1}).json()
+    assert first["count"] == second["count"] == 2
+    assert first["total_cents"] == second["total_cents"] == sum(row["amount_cents"] for row in first["rows"] + second["rows"])
+    assert first["rows"][0]["id"] == purchase_id and second["rows"][0]["source"] == "ERP"
+    assert second["rows"][0]["synced_at"]
+    detail = client.get(route, params={**params, "document_id": purchase_id}).json()
+    assert detail["lines"][0]["description"] == "Artigo" and detail["lines"][0]["base_cents"] == 2000
 
 
 def test_erp_vat_missing_breakdown_does_not_show_false_balance(setup):
@@ -210,6 +265,98 @@ def test_erp_top_reports_missing_and_malformed_lines(setup):
     top = dashboard(client, **JANUARY)["top_articles"]
     assert top["status"] == "ok" and top["incomplete_documents"] == 3
     assert top["rows"][0]["quantity"] == "4"
+
+
+def margin_case(setup):
+    """Vendas Wintouch de janeiro com todos os casos da margem histórica e da cobertura de custos."""
+    import json
+    from decimal import Decimal
+    from app.models import Register, StockArticle, StockEntry, StockWarehouse, WintouchProduct, WintouchSaleRecord
+    from app.wintouch_stock import line_key
+    client, ids, factory = setup
+    with factory.begin() as db:
+        store = db.get(Register, ids["registers"][0]).store_id
+        warehouse = StockWarehouse(store_id=store, name="Armazém margem")
+        products = {key: WintouchProduct(enterprise_id="erp", external_id=key, code=key.upper(), name=f"Artigo {key}")
+                    for key in ("p1", "p2", "p3", "p4", "p5", "orphan")}
+        db.add_all([warehouse, *products.values()])
+        db.flush()
+        details = {"p1": {"family": "Suplementos"}, "p5": {"service": True}}
+        articles = {key: StockArticle(code=p.code, name=p.name, erp_id=p.id, data=json.dumps(details.get(key, {})))
+                    for key, p in products.items() if key != "orphan"}
+        db.add_all(articles.values())
+        db.flush()
+
+        def entry(key, kind, quantity, cost, day, request_key):
+            db.add(StockEntry(article_id=articles[key].id, warehouse_id=warehouse.id, user_id=ids["operator"], kind=kind, quantity=Decimal(quantity),
+                              unit_cost=None if cost is None else Decimal(cost), occurred_on=day, request_key=request_key, data="{}"))
+        entry("p1", "purchase", "6", "10.42", "2026-01-05", "margin:p1:1")
+        entry("p1", "sale", "-1", "9", "2026-01-12", line_key("erp", "l-b"))  # Custo gravado na saída de stock da venda.
+        entry("p1", "purchase", "5", "20", "2026-01-20", "margin:p1:2")  # Compra posterior: não muda vendas anteriores.
+        entry("p3", "purchase", "2", "4", "2026-01-25", "margin:p3")  # Só depois da venda: sem custo histórico.
+        entry("p4", "purchase", "1", "0", "2026-01-02", "margin:p4")  # Oferta: custo zero conhecido.
+
+        def sale(key, product, line_id, quantity, net, day, document_class=40):
+            db.add(WintouchSaleRecord(enterprise_id="erp", external_id=key, store_id=store, kind="documento", document_date=day,
+                                      data=json.dumps({"document_group": "vendas", "document_class": document_class,
+                                                       "lines": [{"id": line_id, "product_id": product, "quantity": quantity, "net": net}]})))
+        sale("a", "p1", "l-a", "2", "29.52", "2026-01-10")
+        sale("b", "p1", "l-b", "1", "15", "2026-01-12")
+        sale("return", "p1", "l-r", "1", "14.76", "2026-01-15", document_class=6)
+        sale("no-cost", "p2", "l-2", "1", "50", "2026-01-11")
+        sale("no-history", "p3", "l-3", "1", "10", "2026-01-11")
+        sale("zero", "p4", "l-4", "1", "8", "2026-01-11")
+        sale("service", "p5", "l-5", "1", "7", "2026-01-11")
+        sale("no-match", "orphan", "l-6", "1", "2", "2026-01-11")
+        sale("unknown", "missing", "l-7", "1", "3", "2026-01-11")
+    return client, store
+
+
+def test_margin_uses_cost_of_goods_sold_and_classifies_missing_costs(setup):
+    client, store = margin_case(setup)
+    margin = dashboard(client, store_id=store, **JANUARY)["margin"]
+    # Serviço fora; mercadorias: 29,52 + 15 − 14,76 + 50 + 10 + 8 + 2 + 3 = 102,76 €.
+    assert margin["status"] == "ok" and margin["source"] == "erp" and margin["sales_cents"] == 10276
+    assert margin["services_cents"] == 700 and margin["service_lines"] == 1
+    # Com custo: venda A ao custo médio à data (10,42; a compra de 20 € é posterior), venda B ao custo da
+    # saída de stock (9), devolução ao custo médio (subtrai) e a oferta a custo zero.
+    assert margin["covered_cents"] == 2952 + 1500 - 1476 + 800 and margin["cost_cents"] == 2084 + 900 - 1042
+    assert margin["gross_margin_cents"] == 3776 - 1942 and margin["gross_margin_percent"] == 48.6
+    # Cobertura parcial: a margem é apresentada, mas sempre identificada como parcial.
+    assert margin["cost_coverage_percent"] == 36.7 and margin["level"] == "critical" and margin["partial"] is True
+    assert margin["uncovered_cents"] == 5000 + 1000 + 200 + 300
+    # Estimado (sem saída de stock): venda A, devolução e oferta; a venda B usa o custo gravado.
+    assert margin["estimated_cents"] == 2952 - 1476 + 800 and margin["zero_cost_cents"] == 800
+    assert {r["reason"]: r["sales_cents"] for r in margin["reasons"]} == {
+        "no_cost": 5000, "no_history": 1000, "zero_cost": 800, "unidentified": 300, "no_match": 200}
+    assert margin["review_articles"] == 5 and margin["negative_articles"] == 0
+    assert sum(p["covered_cents"] for p in margin["points"]) == margin["covered_cents"]
+    assert margin["rows"][0]["name"] == "Artigo sem ficha" or any(r["name"] == "Suplementos" for r in margin["rows"])
+
+
+def test_margin_articles_grid_lists_cost_source_reason_and_erp_state(setup):
+    client, store = margin_case(setup)
+    response = client.get("/api/dashboard/margin-articles", params={"store_id": store, **JANUARY})
+    assert response.status_code == 200, response.text
+    rows = {row["code"]: row for row in response.json()["rows"]}
+    assert rows["P1"]["cost_source"] == "mixed" and rows["P1"]["family"] == "Suplementos" and rows["P1"]["reasons"] == []
+    from decimal import Decimal
+    assert rows["P1"]["erp_status"].startswith("Sincronizado") and Decimal(rows["P1"]["quantity"]) == 2  # 2 + 1 − 1 devolvida
+    assert rows["P2"]["reasons"] == ["no_cost"] and rows["P2"]["unit_cost"] is None and rows["P2"]["needs_review"]
+    assert rows["P3"]["reasons"] == ["no_history"]
+    assert rows["P4"]["reasons"] == ["zero_cost"] and rows["P4"]["margin_cents"] == 800
+    assert rows["ORPHAN"]["reasons"] == ["no_match"] and rows["ORPHAN"]["erp_status"] == "Sem ficha local"
+    assert rows["ERP:missing"]["reasons"] == ["unidentified"] and rows["ERP:missing"]["erp_status"] == "Sem correspondência"
+    assert "P5" not in rows  # Serviço: fora da grelha de margem.
+    client.post("/api/auth/logout")
+    assert client.post("/api/auth/login", json={"email": "reader@test.pt", "password": "PasswordTest123!"}).status_code == 200
+    assert client.get("/api/dashboard/margin-articles", params=JANUARY).status_code == 403
+
+
+def test_margin_without_sales_in_period_is_empty_not_zero(setup):
+    client, store = margin_case(setup)
+    margin = dashboard(client, store_id=store, start="2026-03-01", end="2026-03-31")["margin"]
+    assert margin["status"] == "empty" and margin["gross_margin_cents"] is None and margin["cost_coverage_percent"] is None
 
 
 def test_top_does_not_add_erp_lines_to_saft_sales(case):

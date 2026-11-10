@@ -2035,7 +2035,9 @@ def company_sales_start(
             current_run.status, current_run.error_message = status, error
             current_run.finished_at = now()
             current_run.current_label = ""
-            current_run.results = json.dumps(payload, ensure_ascii=False, default=str)
+            # O período fica com o resultado: a página de movimentos propõe a sincronização seguinte a partir dele.
+            period = {"start": data.start_date.isoformat(), "end": data.end_date.isoformat(), "store_id": data.store_id}
+            current_run.results = json.dumps({**payload, "period": period} if isinstance(payload, dict) else {"period": period}, ensure_ascii=False, default=str)
             tracker.commit()
 
     threading.Thread(target=work, name="sync-vendas-wintouch", daemon=True).start()
@@ -2065,6 +2067,57 @@ def company_sales_run(run_id: str, user=Depends(current), db: Session = Depends(
     if not run:
         raise HTTPException(404, "Sincronização não encontrada.")
     return sales_progress_view(run)
+
+
+@app.get("/api/integrations/wintouch/sales/stock-status")
+def company_sales_stock_status(user=Depends(current), db: Session = Depends(db_session)):
+    """Estado das vendas Wintouch nos movimentos de stock: última sincronização e período seguinte.
+
+    As compras entram só pela receção na aplicação; as vendas chegam ao stock por esta sincronização.
+    """
+    from datetime import date
+    from zoneinfo import ZoneInfo
+
+    from .inventory import settings as stock_settings
+    from .inventory import stock_from_erp
+    from .models import WintouchSyncRun
+
+    company_id = db.info.get("company", {}).get("id")
+    with database.next_platform_session() as core:
+        company = core.get(Company, company_id) if company_id else None
+        available = bool(company and company.active and company.api_active and company.erp_provider == "wintouch")
+        enterprise = company.api_enterprise if company else None
+    if not available or stock_from_erp(db):
+        return {"available": False}
+    runs = select(WintouchSyncRun).where(
+        WintouchSyncRun.enterprise_id == enterprise, WintouchSyncRun.resource == SALES_PROGRESS
+    ).order_by(WintouchSyncRun.started_at.desc())
+    running = db.scalar(runs.where(WintouchSyncRun.status == "em_curso").limit(1))
+    last = db.scalar(runs.where(WintouchSyncRun.status != "em_curso").limit(1))
+    done = db.scalar(runs.where(WintouchSyncRun.status == "concluida").limit(1))
+    today = now().astimezone(ZoneInfo("Europe/Lisbon")).date()
+    control = stock_settings(db)["control_start"]
+    # Continua no último dia sincronizado (repetir não duplica); sem histórico, no início do controlo
+    # de stock ou no início do mês.
+    period = (json.loads(done.results or "null") or {}).get("period") if done else None
+    start = date.fromisoformat(period["end"]) if period else date.fromisoformat(control) if control else today.replace(day=1)
+    if control:
+        start = max(start, date.fromisoformat(control))
+    start = min(max(start, today - timedelta(days=366)), today)
+    view = None
+    if last:
+        result = json.loads(last.results or "null") or {}
+        stock = result.get("stock") or {}
+        view = {
+            "status": last.status, "finished_at": last.finished_at, "error": last.error_message if last.status == "falhou" else "",
+            "period": result.get("period"), "stock_status": stock.get("status"), "stock_message": stock.get("message", ""),
+            "applied": stock.get("applied", 0), "pending_count": stock.get("pending_count", 0),
+            "conflict_count": stock.get("conflict_count", 0),
+        }
+    return {
+        "available": True, "can_sync": user.role == "administrador", "running": bool(running), "last": view,
+        "next_start": start.isoformat(), "next_end": today.isoformat(), "control_start": control,
+    }
 
 
 @app.get("/api/integrations/wintouch/sales/running")
@@ -2393,6 +2446,10 @@ from .procurement import register_routes as register_procurement_routes
 register_procurement_routes(app, current, authorize, scope, record)
 from .purchase_receiving import register_routes as register_purchase_receiving_routes
 register_purchase_receiving_routes(app, current, authorize, scope, record)
+from .price_review import register_routes as register_price_review_routes
+register_price_review_routes(app, current, authorize, scope, record)
+from .labels import register_routes as register_label_routes
+register_label_routes(app, current, authorize, record)
 from .purchase_process import register_routes as register_purchase_process_routes
 register_purchase_process_routes(app, current, authorize, scope)
 

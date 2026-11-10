@@ -50,7 +50,9 @@ with sync_playwright() as p:
         assert dialog.evaluate('(e)=>e.matches(":modal")')
         dialog.get_by_label('Fornecedor',exact=True).select_option('supplier')
         dialog.get_by_role('tab',name='Artigos',exact=True).click()
-        dialog.get_by_label('Artigo',exact=True).select_option('p1')
+        # Pesquisa do artigo pelo nome (parte do nome, sem acentos): escolhe-se na lista de resultados.
+        dialog.get_by_label('Artigo',exact=True).fill(inv['article']['name'].split()[0][:4])
+        dialog.get_by_role('option').filter(has_text=inv['article']['name']).first.click()
         dialog.get_by_label('Quantidade',exact=True).fill('20')
         expect(dialog.get_by_label('Descrição',exact=True)).to_have_value(inv['article']['name'])
         output=root/'.local/procurement-ui';output.mkdir(exist_ok=True)

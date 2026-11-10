@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import inventory as stock
+from . import price_review as review_costs
 from . import procurement as buying
 from . import purchase_financials as financials
 from .db import db_session
@@ -35,6 +36,7 @@ from .models import (
     Purchase,
     PurchaseArticleAlias,
     StockArticle,
+    StockEntry,
     StockWarehouse,
     WintouchProduct,
 )
@@ -570,6 +572,67 @@ def register_routes(app, current, authorize, scope, audit):
         stock.require(user, stock.settings(db), "view_cost")
         return suppliers(user, db)
 
+    @app.get("/api/purchase-receiving/cost-history")
+    def cost_history(article_ids: str = "", exclude: str = "", user=Depends(current), db: Session = Depends(db_session)):
+        """Últimas compras de cada artigo (custo efetivo) e os limites de rentabilidade da receção.
+
+        Base equivalente à da receção em curso: custo por unidade recebida (valor líquido com descontos
+        ÷ unidades faturadas + bónus), tal como entra em stock (com o IVA suportado quando não é
+        recuperável). Ficam de fora a receção em edição (`exclude`), receções anuladas e entradas já
+        estornadas por edição. Só leitura.
+        """
+        authorize(user, db, roles=ROLES)
+        config = stock.settings(db)
+        stock.require(user, config, "view_cost")
+        ids = list(dict.fromkeys(i for i in article_ids.split(",") if i))[:200]
+        warehouses = select(StockWarehouse.id).where(StockWarehouse.store_id.in_(scope(user, db)))
+        cancelled = set(db.scalars(select(Doc.id).where(Doc.status == "cancelled")))
+        names, articles = {}, {}
+        for article_id in ids:
+            reversed_ids = {json.loads(e.data).get("reversal_of") for e in db.scalars(select(StockEntry).where(
+                StockEntry.article_id == article_id, StockEntry.data.like('%"reversal_of"%')))}
+            purchases = {}
+            for entry in db.scalars(select(StockEntry).where(
+                    StockEntry.article_id == article_id, StockEntry.kind == "purchase", StockEntry.quantity > 0,
+                    StockEntry.unit_cost >= 0, StockEntry.warehouse_id.in_(warehouses))
+                    .order_by(StockEntry.created_at.desc(), StockEntry.id.desc()).execution_options(yield_per=100)):
+                detail = json.loads(entry.data)
+                origin = detail.get("procurement_id")
+                if entry.id in reversed_ids or origin and (origin == exclude or origin in cancelled):
+                    continue
+                # A receipt can post several lots, including separate zero-priced bonus entries.
+                key = ("receipt", origin) if origin else ("entry", entry.id)
+                billed = review_costs.billed_units(entry)
+                if key in purchases:
+                    purchase = purchases[key]
+                    purchase["quantity"] += entry.quantity
+                    purchase["value"] += entry.quantity * entry.unit_cost
+                    purchase["billed"] += billed
+                    continue
+                if len(purchases) == 5:
+                    continue
+                supplier = detail.get("supplier_id")
+                if supplier and supplier not in names:
+                    entity = db.get(BusinessEntity, supplier)
+                    names[supplier] = entity.name if entity else ""
+                purchases[key] = {
+                    "date": entry.occurred_on, "created_at": entry.created_at, "document": detail.get("document") or "",
+                    "supplier_name": names.get(supplier, ""), "quantity": entry.quantity,
+                    "value": entry.quantity * entry.unit_cost, "billed": billed,
+                    "document_price": detail.get("document_price"), "procurement_id": origin,
+                }
+            history = []
+            for purchase in purchases.values():
+                value, billed = purchase.pop("value"), purchase.pop("billed")
+                quantity = purchase["quantity"]
+                # unit_cost: custo efetivo (com bónus); reference_cost: sem repartir bónus, para comparar.
+                history.append({**purchase, "quantity": str(quantity), "unit_cost": str(value / quantity),
+                                "billed_quantity": str(billed), "reference_cost": str((value / billed).quantize(D("0.00000001"))) if billed > 0 else None})
+            articles[article_id] = history
+        return {"articles": articles, "settings": {key: config[key] for key in (
+            "margin_minimum", "margin_by_family", "cost_alert_percent", "recoverable_vat",
+            "pricing_method", "pricing_method_by_family", "markup_default", "markup_by_family")}}
+
     def received(db):
         """Faturas do arquivo já usadas numa receção: a lançada a partir da fatura e as anexadas
         (ex.: fatura ou guia lida na receção de uma encomenda), para não serem recebidas duas vezes."""
@@ -853,7 +916,8 @@ def register_routes(app, current, authorize, scope, audit):
         doc = document(db, user, identifier)
         prior = db.scalar(select(Doc).where(Doc.request_key == data.request_key))
         if prior:
-            return {"receipt_id": prior.id, "already": True}
+            review = json.loads(prior.data).get("price_review", {})
+            return {"receipt_id": prior.id, "already": True, "price_review_pending": len(review.get("pending", []))}
         if received(db).get(doc.id):
             fail("Esta fatura já tem uma receção de mercadoria registada.", 409)
         warehouse = stock.warehouse(db, user, data.warehouse_id, authorize)
@@ -891,7 +955,9 @@ def register_routes(app, current, authorize, scope, audit):
             warehouse.store_id,
         )
         db.commit()
-        return {"receipt_id": row.id, "lines": len(lines), "created_articles": len(created), "learned": learned}
+        review = json.loads(row.data).get("price_review", {})
+        return {"receipt_id": row.id, "lines": len(lines), "created_articles": len(created), "learned": learned,
+                "price_review_pending": len(review.get("pending", []))}
 
     def receipt_of(db, user, identifier):
         row = db.get(Doc, identifier)
@@ -962,7 +1028,7 @@ def register_routes(app, current, authorize, scope, audit):
             "suppliers": candidates,
             "warehouses": [
                 {"id": w.id, "name": w.name, "store_id": w.store_id}
-                for w in db.scalars(select(StockWarehouse).where(StockWarehouse.store_id.in_(stores)))
+                for w in db.scalars(select(StockWarehouse).where(StockWarehouse.store_id == row.store_id))
                 if w.active
             ],
         }
@@ -986,4 +1052,6 @@ def register_routes(app, current, authorize, scope, audit):
         extra = {"receiving": receiving, **amounts, "rounding_adjustment": adjustment}
         buying.replace_confirmed(db, user, row, edited, authorize, audit, extra)
         db.commit()
-        return {"receipt_id": row.id, "lines": len(lines), "created_articles": len(created), "learned": learned}
+        review = json.loads(row.data).get("price_review", {})
+        return {"receipt_id": row.id, "lines": len(lines), "created_articles": len(created), "learned": learned,
+                "price_review_pending": len(review.get("pending", []))}

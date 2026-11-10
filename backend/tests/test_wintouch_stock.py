@@ -182,6 +182,16 @@ def test_insufficient_stock_is_listed_and_does_not_block_other_lines(case):
     assert [r.kind for r in entries(factory, articles["prod-a"])] == ["purchase"]
 
 
+def test_insufficient_stock_names_the_warehouse_and_where_the_stock_is(case):
+    """Venda no armazém sem stock (ex.: o ligado à Wintouch) com stock noutro armazém da loja."""
+    client, factory, store, warehouse, articles, data, calls = case
+    empty = client.post("/api/stock/warehouses", json={"store_id": store, "name": "Armazém Wintouch"}).json()["id"]
+    stock = run(case, warehouse=empty)
+    reason = next(p["reason"] for p in stock["pending"] if p["article"] == "Artigo prod-a")
+    assert "«Armazém Wintouch»" in reason and "10 em «Principal»" in reason and "Transfira o stock" in reason
+    assert [r.kind for r in entries(factory, articles["prod-a"])] == ["purchase"]
+
+
 def test_without_control_start_no_lines_are_read_and_stock_is_unchanged(case):
     client, factory, store, warehouse, articles, data, calls = case
     settings = client.get("/api/stock/catalog").json()["settings"]
@@ -407,3 +417,33 @@ def test_purchases_enter_stock_only_by_the_app_receipt_exit_and_transfer(case):
     assert stock["already_received_count"] == 1 and stock["entries"] == 0, stock
     assert not any("Compra na Wintouch" in p["reason"] for p in stock["pending"])
     assert [r.kind for r in entries(factory, articles["prod-a"]) if r.kind == "purchase"] == ["purchase"]
+
+
+def test_stock_ledger_shows_wintouch_sales_and_proposes_the_next_period(endpoint):
+    """As vendas sincronizadas aparecem em Movimentos de stock; o estado propõe continuar no último dia."""
+    import time
+
+    client, factory, store, warehouse, articles, data, calls = endpoint
+    status = client.get("/api/integrations/wintouch/sales/stock-status").json()
+    assert status["available"] and status["can_sync"] and status["last"] is None
+    assert status["next_start"] == "2026-10-01"  # sem histórico: início do controlo de stock
+    body = {"store_id": store, "start_date": "2026-10-01", "end_date": "2026-10-31", "confirm_demo": True}
+    run = client.post("/api/integrations/wintouch/sales/start", json=body).json()
+    deadline = time.monotonic() + 60
+    while run["status"] == "em_curso" and time.monotonic() < deadline:
+        time.sleep(0.2)
+        run = client.get(f"/api/integrations/wintouch/sales/runs/{run['id']}").json()
+    assert run["status"] == "concluida", run
+    status = client.get("/api/integrations/wintouch/sales/stock-status").json()
+    assert status["last"]["period"] == {"start": "2026-10-01", "end": "2026-10-31", "store_id": store}
+    assert status["last"]["applied"] == 1 and status["next_start"] == "2026-10-31" and not status["running"]
+    params = {"store_id": store, "start": "2026-10-01", "end": "2026-10-31", "view": "documents"}
+    rows = client.get("/api/procurement-ledger", params=params).json()["rows"]
+    sale = next(r for r in rows if r["document"] == "FR 2026 1")
+    assert sale["origin"] == "Wintouch" and sale["document_type"] == "Venda Wintouch"
+    assert sale["kinds"] == ["sale"] and D(sale["outbound"]) == 2 and D(sale["inbound"]) == 0
+    lines = client.get("/api/procurement-ledger", params={"store_id": store, "group": sale["group"]}).json()["rows"]
+    assert len(lines) == 1 and lines[0]["article_id"] == articles["prod-a"] and lines[0]["document_type"] == "Venda Wintouch"
+    # Quem não é administrador vê o estado, sem poder sincronizar.
+    client.post("/api/auth/login", json={"email": "operator@test.pt", "password": "PasswordTest123!"})
+    assert client.get("/api/integrations/wintouch/sales/stock-status").json()["can_sync"] is False
