@@ -13,7 +13,7 @@ página `Obrigações e Prazos` (`frontend/src/Obligations.tsx`), API `backend/a
 | 3. Painel e calendário | Concluída |
 | 4. Contratos (pré-aviso de denúncia, fidelização, renovação) | Concluída (migração **0083**) — ver «Contratos» |
 | 5. Viaturas (ficha, IUC e inspeção por categoria e idade) | Concluída (migração **0084**) — ver «Viaturas» |
-| 6. Obrigações fiscais com modelos de regra «a validar» | Por fazer: hoje registam-se manualmente, com a origem da data |
+| 6. Obrigações fiscais com modelos de regra «a validar» | Concluída (sem migração) — ver «Modelos fiscais» |
 | 7. Alertas internos e por email (adesão do utilizador) | Por fazer: os estados e a confirmação de leitura já existem |
 | 8. Integração financeira (previsão de liquidez, orçamento) e documental (arquivo) | Por fazer |
 
@@ -82,6 +82,22 @@ Separador **Veículos** (`frontend/src/Vehicles.tsx`, API `backend/app/vehicles.
 - **Venda ou abate** (com motivo): os prazos futuros deixam de ser gerados; reativar volta a gerá-los.
 - As obrigações da viatura (IUC, inspeção, seguro, revisão) só se alteram pela ficha; os valores entram na previsão de
   liquidez como estimativas.
+
+## Modelos fiscais
+
+Botão **Modelos fiscais** (`frontend/src/FiscalTemplates.tsx`, API `backend/app/fiscal_templates.py`).
+
+- Catálogo de modelos com a regra habitual e a fonte a confirmar: IVA (declaração e pagamento, mensal ou
+  trimestral; regime dos pequenos retalhistas), comunicação das faturas, retenções na fonte, DMR, Segurança Social
+  (declaração e pagamento), fundos de compensação, IRC (Modelo 22 e três pagamentos por conta), IES, comunicação
+  de inventários, Modelo 10 e IMI. O IUC gere-se na ficha de cada viatura.
+- **Proposta pela empresa**: pré-seleciona os que se aplicam ao regime e periodicidade de IVA configurados
+  (Configurações → Regime de IVA) e, para DMR e Segurança Social, à existência de funcionários ativos. Os
+  condicionais (IMI, Modelo 10, comunicação de faturas, retenções, fundos de compensação) ficam por escolher.
+- **Criação só do escolhido**, com a próxima data-limite calculada a partir de hoje e a recorrência do modelo; cada
+  obrigação fica com origem «regra legal», **por validar**, a regra e a fonte na nota, e alertas a 30, 15, 7 dias e no
+  dia. Um modelo já criado não se duplica (`data.template`). Dias não úteis e prorrogações corrigem-se reagendando a
+  ocorrência com a origem.
 
 ## Painel
 

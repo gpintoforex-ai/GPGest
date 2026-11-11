@@ -7,6 +7,7 @@ import { api } from "./lib/api";
 import { euroToCents, formatEuro } from "./utils/format";
 import Contracts from "./Contracts";
 import Vehicles from "./Vehicles";
+import FiscalTemplates from "./FiscalTemplates";
 import "./Obligations.css";
 
 /**
@@ -67,6 +68,7 @@ export default function Obligations({ store, stores, categories }: { store: stri
   const [version, setVersion] = useState(0);
   const [editing, setEditing] = useState<Row | null>(null);
   const [acting, setActing] = useState<{ action: string; item: Row } | null>(null);
+  const [templates, setTemplates] = useState(false);
   const refresh = () => setVersion(v => v + 1);
 
   useEffect(() => {
@@ -117,7 +119,8 @@ export default function Obligations({ store, stores, categories }: { store: stri
 
   return <div className="obl">
     <PageHeader title="Obrigações, Contratos e Prazos" description="Obrigações fiscais, renovações de contratos, IUC, inspeções, seguros, licenças e outros prazos da empresa."
-      actions={<ActionButton type="button" className="primary" onClick={() => setEditing({})}><Plus size={16} aria-hidden="true" />Novo prazo</ActionButton>} />
+      actions={<><ActionButton type="button" onClick={() => setTemplates(true)}><Landmark size={16} aria-hidden="true" />Modelos fiscais</ActionButton>
+        <ActionButton type="button" className="primary" onClick={() => setEditing({})}><Plus size={16} aria-hidden="true" />Novo prazo</ActionButton></>} />
     {error && <Notice tone="error">{error}</Notice>}
     {notice && <Notice tone="success">{notice}</Notice>}
     <div className="obl-kpis" role="group" aria-label="Indicadores de prazos">
@@ -163,6 +166,7 @@ export default function Obligations({ store, stores, categories }: { store: stri
     {editing && <ObligationDrawer value={editing} data={data} stores={stores} categories={categories} store={store} onClose={() => setEditing(null)}
       onSaved={message => { setEditing(null); setNotice(message); refresh(); }} actions={actions} />}
     {acting && <ActionDialog {...acting} onClose={() => setActing(null)} onConfirm={body => void act(acting.action, acting.item, body)} />}
+    {templates && <FiscalTemplates users={data?.users || []} onClose={() => setTemplates(false)} onCreated={message => { setTemplates(false); setNotice(message); refresh(); }} />}
   </div>;
 }
 
