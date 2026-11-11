@@ -561,7 +561,7 @@ def treasury_block(request, db, user, store_id, period, compare):
 def expense_contributions(db, stores, start, end, regime, percents, view="operating"):
     """Parcelas de uma vista (natureza das rubricas: rubric_nature.VIEWS)."""
     from . import rubric_nature
-    data = rubric_nature.collect(db, stores, start, end, treasury=view == "treasury")
+    data = rubric_nature.collect(db, stores, start, end, treasury=view in ("treasury", "fiscal"))
     yield from rubric_nature.contributions(data, view, regime, percents, rubric_nature.flags(db))
 
 

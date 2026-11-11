@@ -556,6 +556,28 @@ class Category(Base):
     in_payment_budget: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
 
+class RubricReclassification(Base):
+    """Rubrica de análise de um pagamento já confirmado (registo bancário ou saída de caixa), sem alterar o registo.
+
+    O valor, a data e a rubrica original ficam intactos; as análises (custos, tesouraria, obrigações fiscais,
+    orçamento) passam a usar `to_category_id`. Anular repõe a rubrica original. Tudo fica na auditoria."""
+    __tablename__ = "rubric_reclassifications"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    source: Mapped[str] = mapped_column(String(10))  # bank | move
+    source_id: Mapped[str] = mapped_column(String(36), index=True)
+    from_category_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    to_category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"))
+    reason: Mapped[str] = mapped_column(Text)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    undone_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    __table_args__ = (
+        Index("one_active_rubric_reclassification", "source", "source_id", unique=True,
+              postgresql_where=text("undone_at IS NULL"), sqlite_where=text("undone_at IS NULL")),
+    )
+
+
 class LocalPaymentMethod(Base):
     __tablename__ = "local_payment_methods"
     id: Mapped[str] = mapped_column(String(20), primary_key=True)

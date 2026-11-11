@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { FlaskConical, Lightbulb, ShieldCheck } from "lucide-react";
+import { AlertTriangle, FlaskConical, Lightbulb, ShieldCheck } from "lucide-react";
 import { StatusBadge } from "./components/BusinessUI";
 import { ActionButton, Notice } from "./components/InteractionUI";
+import FiscalPayments from "./FiscalPayments";
 import { api } from "./lib/api";
 import { formatEuro } from "./utils/format";
 import "./RubricNature.css";
@@ -72,6 +73,7 @@ export default function RubricNature() {
         <ActionButton type="button" onClick={() => applySuggestion(r)} disabled={drafts[r.id] && same(drafts[r.id], { ...r.suggestion })}>Usar sugestão em {r.name}</ActionButton>
       </li>)}</ul>
     </section>}
+    <FiscalPayments onRubricCreated={() => setVersion(v => v + 1)} />
     <section className="rn-card" aria-label="Natureza das rubricas">
       <div className="rn-head">
         <h3>Natureza e análises</h3>
@@ -82,7 +84,7 @@ export default function RubricNature() {
         <tbody>{rubrics.map((r: Row) => {
           const value = current(r), changed = !same(value, pick(r));
           return <tr key={r.id} data-changed={changed || undefined}>
-            <td><strong>{r.name}</strong>{!r.active && <small>Inativa</small>}{changed && <StatusBadge tone="info" compact>Alterada (por simular)</StatusBadge>}</td>
+            <td><strong>{r.name}</strong>{!r.active && <small>Inativa</small>}{changed && <StatusBadge tone="info" compact>{simulation ? "Alterada (simulada)" : "Alterada (por simular)"}</StatusBadge>}</td>
             <td><select aria-label={`Natureza de ${r.name}`} value={value.nature}
               onChange={e => edit(r, { ...(presets[e.target.value] as Draft), nature: e.target.value })}>
               {data.natures.map((n: Row) => <option key={n.key} value={n.key}>{n.label}</option>)}</select></td>
@@ -100,13 +102,17 @@ export default function RubricNature() {
     </section>
     {simulation && <section className="rn-card" aria-label="Simulação">
       <h3><FlaskConical size={16} aria-hidden /> Simulação: {fullDate(simulation.start)} a {fullDate(simulation.end)}</h3>
-      <ul className="rn-changes">{simulation.changes.map((c: Row) => <li key={c.category_id}><strong>{c.name}</strong>: {labels[c.before.nature]} → {labels[c.after.nature]}
+      <ul className="rn-changes">{simulation.changes.map((c: Row) => <li key={c.category_id}><strong>{c.name}</strong>: {c.before.nature === c.after.nature ? `${labels[c.after.nature]} (natureza mantém-se)` : `${labels[c.before.nature]} → ${labels[c.after.nature]}`}
         {FLAGS.filter(f => c.before[f] !== c.after[f]).map(f => <span key={f} className="rn-chip">{c.after[f] ? "Entra em" : "Sai de"} {SHORT[f].toLowerCase()}</span>)}</li>)}</ul>
       <div className="table-wrap"><table className="rn-grid" aria-label="Antes e depois por vista">
         <thead><tr><th>Vista</th><th>Antes</th><th>Depois</th><th>Diferença</th></tr></thead>
         <tbody>{simulation.views.map((v: Row) => <tr key={v.key}><td>{v.label}</td><td>{formatEuro(v.before_cents)}</td><td>{formatEuro(v.after_cents)}</td>
           <td className={v.difference_cents ? "rn-diff" : ""}>{v.difference_cents ? `${v.difference_cents > 0 ? "+" : "−"}${formatEuro(Math.abs(v.difference_cents))}` : "Sem alteração"}</td></tr>)}</tbody>
       </table></div>
+      {!!simulation.warnings?.length && <div className="rn-warnings" role="note" aria-label="Avisos da simulação">
+        <strong><AlertTriangle size={15} aria-hidden /> Confirme antes de aplicar</strong>
+        <ul>{simulation.warnings.map((w: Row, i: number) => <li key={i}>{w.text}</li>)}</ul>
+      </div>}
       <h4>{simulation.affected.count} registo(s) afetado(s){simulation.affected.count > simulation.affected.rows.length ? ` (os ${simulation.affected.rows.length} mais recentes)` : ""}</h4>
       {simulation.affected.rows.length ? <div className="table-wrap"><table className="rn-grid" aria-label="Registos afetados">
         <thead><tr><th>Data</th><th>Documento ou movimento</th><th>Entidade</th><th>Origem</th><th>Rubrica</th><th>Valor</th></tr></thead>

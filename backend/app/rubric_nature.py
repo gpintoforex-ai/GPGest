@@ -67,7 +67,8 @@ ORIGINS = {
                  "Regime normal: base tributável + IVA não dedutível estimado; restantes regimes: total com IVA.",
     "purchases": "Documentos de compra nas rubricas de análise de compras e investimentos (mercadorias, equipamento), com o mesmo "
                  "critério de valor. O custo das mercadorias vendidas continua a vir das margens.",
-    "fiscal": "Pagamentos ao Estado: registos bancários e documentos nas rubricas de obrigações fiscais, pelo valor pago. "
+    "fiscal": "Pagamentos ao Estado pelo valor pago: registos bancários e saídas de caixa nas rubricas de obrigações fiscais "
+              "(mesmo os que não contam como custo) e documentos nessas rubricas. "
               "IVA liquidado, suportado e dedutível estimado: os mesmos documentos do Mapa de IVA.",
     "treasury": "Pagamentos efetivos pela data do pagamento: saídas de caixa a fornecedores, despesas e saídas, e pagamentos e "
                 "encargos do livro bancário, nas rubricas que entram nas saídas de tesouraria. Exclui transferências internas e estornos.",
@@ -90,6 +91,17 @@ def suggestion(category):
     if "mercador" in name:
         return {"nature": "mercadorias", **PRESETS["mercadorias"],
                 "reason": "Compras de mercadoria são analisadas como compras; o custo das mercadorias vendidas vem das margens."}
+    if any(w.startswith(("imobilizad", "investiment", "equipament")) for w in words) or "obras" in words:
+        return {"nature": "investimento", **PRESETS["investimento"],
+                "reason": "Equipamento e obras são investimento: pesam no mês da compra se ficarem nos custos operacionais. "
+                          "Passam para «Compras e investimentos»; continuam na tesouraria e no orçamento."}
+    if any(w.startswith(("transferencia", "suprimento", "emprestimo", "financiament")) for w in words) or "fundos" in words:
+        return {"nature": "financeiro", **PRESETS["financeiro"],
+                "reason": "Passagens entre contas, entradas e saídas de capital e reembolsos de empréstimos não são custos. "
+                          "Os juros devem ter uma rubrica de custo própria."}
+    if any(w.startswith(("vencimento", "salario", "ordenado", "remuneraco")) for w in words):
+        return {"nature": "pessoal", **PRESETS["pessoal"],
+                "reason": "Identifica a rubrica como custo com pessoal; continua nos custos operacionais (os números não mudam)."}
     return None
 
 
@@ -107,9 +119,18 @@ def flag(table, category, name):
 
 
 def treasury_outflows(db, stores, start, end):
-    """[(data, id, rubrica, valor)] dos pagamentos efetivos (os mesmos de billing_conference.payment_list)."""
+    """[(data, id, rubrica, valor)] dos pagamentos efetivos (os mesmos de billing_conference.payment_list), com a
+    rubrica de análise reclassificada quando existe."""
+    from .fiscal_payments import reclassified
+    return [(day, identifier, category, amount) for day, identifier, category, amount, _ in outflow_records(db, stores, start, end, reclassified(db))]
+
+
+def outflow_records(db, stores, start, end, moved=None):
+    """[(data, id, rubrica de análise, valor, registo)] dos pagamentos efetivos: saídas de caixa (fornecedores,
+    despesas, saídas) e pagamentos/encargos do livro bancário, sem transferências nem estornos."""
     from .billing_conference import bounds, local_day, movement_store
     from .models import BankAccount, BankBookEntry, Movement, Register
+    moved = moved or {}
     first, last = bounds(str(start), str(end))
     registers = {row.id: row for row in db.scalars(select(Register))}
     result = []
@@ -117,14 +138,16 @@ def treasury_outflows(db, stores, start, end):
             Movement.direction == -1, Movement.kind.in_(("fornecedor", "despesa", "saida_caixa")), Movement.reversed_by.is_(None),
             Movement.reversal_of.is_(None), Movement.transfer_id.is_(None), Movement.occurred_at >= first, Movement.occurred_at < last)):
         if movement_store(db, move, registers)[0] in stores:
-            result.append((local_day(move.occurred_at), "move:" + move.id, move.category_id or "", move.amount_cents))
+            key = "move:" + move.id
+            result.append((local_day(move.occurred_at), key, moved.get(key, move.category_id or ""), move.amount_cents, move))
     accounts = [a.id for a in db.scalars(select(BankAccount).where(BankAccount.store_id.in_(stores)))]
     reversed_ids = set(db.scalars(select(BankBookEntry.original_id).where(BankBookEntry.original_id.is_not(None))))
     for entry in db.scalars(select(BankBookEntry).where(
-            BankBookEntry.account_id.in_(accounts), BankBookEntry.kind.in_(("payment", "fee")),
+            BankBookEntry.account_id.in_(accounts), BankBookEntry.kind.in_(("payment", "fee")), BankBookEntry.transfer_id.is_(None),
             BankBookEntry.movement_date >= str(start), BankBookEntry.movement_date <= str(end))) if accounts else []:
         if entry.id not in reversed_ids:
-            result.append((entry.movement_date, "bank:" + entry.id, entry.category_id or "", abs(entry.amount_cents)))
+            key = "bank:" + entry.id
+            result.append((entry.movement_date, key, moved.get(key, entry.category_id or ""), abs(entry.amount_cents), entry))
     return result
 
 
@@ -149,11 +172,18 @@ def contributions(data, view, regime, percents, table):
             if flag(table, category, "in_treasury"):
                 yield day, identifier, category, amount, 0, amount
         return
-    for day, identifier, category, base, tax in data["documents"]:
-        if view == "fiscal":
-            if flag(table, category, "in_fiscal"):
+    if view == "fiscal":
+        # Pagamentos ao Estado pelo valor pago: registos bancários e saídas de caixa nas rubricas fiscais (mesmo os
+        # que não contam como custo) e documentos de outras origens nessas rubricas. Os custos sem documento do
+        # banco já estão nos pagamentos: não se contam duas vezes.
+        for day, identifier, category, base, tax in data["documents"]:
+            if not identifier.startswith("bank:") and flag(table, category, "in_fiscal"):
                 yield day, identifier, category, base, tax, base + tax
-            continue
+        for day, identifier, category, amount in data["treasury"]:
+            if flag(table, category, "in_fiscal"):
+                yield day, identifier, category, amount, 0, amount
+        return
+    for day, identifier, category, base, tax in data["documents"]:
         if view == "costs":
             included = flag(table, category, "in_operating_costs") or flag(table, category, "in_purchases")
         elif view == "budget":
@@ -253,6 +283,37 @@ def view_totals(data, regime, percents, table, budget_data):
     return totals
 
 
+def review(db, changes, data):
+    """Avisos sobre alterações que provavelmente não são intencionais (não bloqueiam a aplicação)."""
+    from .models import BankBookEntry, Movement
+    used = {item[2] for item in data["documents"]} | {item[2] for item in data["treasury"]}
+    ids = list(changes)
+    inflows = set(db.scalars(select(Movement.category_id).where(Movement.category_id.in_(ids), Movement.direction == 1).distinct()))
+    inflows |= set(db.scalars(select(BankBookEntry.category_id).where(BankBookEntry.category_id.in_(ids), BankBookEntry.amount_cents > 0).distinct()))
+    warnings = []
+    for key, (category, values) in changes.items():
+        name, nature = category.name, values["nature"]
+        changed = [FLAG_LABELS[f].lower() for f in FLAGS if getattr(category, f) != values[f]]
+        if not any(values[f] for f in ("in_operating_costs", "in_purchases", "in_fiscal", "in_treasury")):
+            warnings.append({"category_id": key, "text": f"«{name}» deixa de aparecer em todas as vistas (custos operacionais, compras e "
+                                                          "investimentos, obrigações fiscais e saídas de tesouraria)."})
+        elif (category.in_operating_costs and not values["in_operating_costs"] and not values["in_purchases"]
+              and not values["in_fiscal"] and nature != "financeiro"):
+            warnings.append({"category_id": key, "text": f"«{name}» sai dos custos operacionais sem entrar em compras e investimentos nem em "
+                                                          "obrigações fiscais: os valores só ficam nas saídas de tesouraria."})
+        if key not in used and changed:
+            usage = " É usada em entradas (recebimentos), que não aparecem nestas análises." if key in inflows else ""
+            warnings.append({"category_id": key, "text": f"«{name}» não tem pagamentos nem documentos de custo no período: a alteração de "
+                                                          f"{', '.join(changed)} não muda nenhum valor.{usage}"})
+        expected = {"fiscal": "in_fiscal", "mercadorias": "in_purchases", "investimento": "in_purchases"}.get(nature)
+        if expected and not values[expected]:
+            warnings.append({"category_id": key, "text": f"A natureza «{NATURES[nature]}» costuma entrar em «{FLAG_LABELS[expected]}», "
+                                                          f"mas o indicador está desmarcado em «{name}»."})
+        if nature in ("fiscal", "mercadorias", "investimento", "financeiro") and values["in_operating_costs"]:
+            warnings.append({"category_id": key, "text": f"«{name}» tem a natureza «{NATURES[nature]}» mas continua nos custos operacionais."})
+    return warnings
+
+
 def simulate(db, user, changes):
     from .dashboard import describe_sources
     from .models import Category
@@ -298,6 +359,7 @@ def simulate(db, user, changes):
         "views": [{"key": key, "label": labels[key], "before_cents": before[key], "after_cents": after[key],
                    "difference_cents": after[key] - before[key]} for key in (*VIEWS, "costs", "budget")],
         "affected": {"count": len(rows), "rows": sample},
+        "warnings": review(db, changes, data),
         "preserved": ["Previsão de liquidez e prazos de pagamento", "Extratos, livro bancário e reconciliação",
                       "Documentos de compra, movimentos e dados do ERP (nenhum registo é alterado)",
                       "Mapa de IVA e previsão de IVA (calculados pelos documentos)"],

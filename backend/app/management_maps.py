@@ -139,7 +139,10 @@ def bank_costs(db, stores, start, end):
         BankAccount.store_id.in_(stores), BankBookEntry.counts_as_cost.is_(True), BankBookEntry.category_id.is_not(None),
         BankBookEntry.amount_cents < 0, BankBookEntry.original_id.is_(None), BankBookEntry.id.not_in(corrected),
         BankBookEntry.movement_date >= str(start), BankBookEntry.movement_date <= str(end)))
-    return [(row.movement_date, "bank:" + row.id, [(row.category_id, -row.amount_cents, 0)]) for row in rows]
+    # Rubrica de análise reclassificada (fiscal_payments): o registo bancário não muda.
+    from .fiscal_payments import reclassified
+    moved = reclassified(db)
+    return [(row.movement_date, "bank:" + row.id, [(moved.get("bank:" + row.id, row.category_id), -row.amount_cents, 0)]) for row in rows]
 
 
 def cost_documents(db, stores, start, end):

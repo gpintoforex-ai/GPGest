@@ -2468,6 +2468,8 @@ from .budget import router as budget_router
 app.include_router(budget_router)
 from .rubric_nature import router as rubric_nature_router
 app.include_router(rubric_nature_router)
+from .fiscal_payments import router as fiscal_payments_router
+app.include_router(fiscal_payments_router)
 from .operation_trace import router as operation_trace_router
 app.include_router(operation_trace_router)
 from .classification import router as classification_router

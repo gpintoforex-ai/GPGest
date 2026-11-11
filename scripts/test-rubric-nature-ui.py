@@ -58,7 +58,34 @@ SIMULATION = {
     "preserved": ["Previsão de liquidez e prazos de pagamento", "Extratos, livro bancário e reconciliação"],
 }
 SIMULATION["changes"][0]["after"].pop("reason")
-state = {"role": "administrador", "applied": False}
+SIMULATION["warnings"] = [{"category_id": "iva", "text": "«Vendas» não tem pagamentos nem documentos de custo no período: a alteração não muda nenhum valor."}]
+CANDIDATES = [
+    {"id": "bank:b1", "date": "2026-08-20", "description": "PAG ESTADO IVA 2T 2026", "origin": "Banco · BPI Principal", "amount_cents": 201852,
+     "category_id": "imp", "category_name": "Impostos", "confidence": 90, "reason": "A descrição menciona IVA.", "reclassified": False, "rule": None},
+    {"id": "bank:b2", "date": "2026-07-15", "description": "PAGAMENTO AT 998877", "origin": "Banco · BPI Principal", "amount_cents": 30000,
+     "category_id": "imp", "category_name": "Impostos", "confidence": 55, "reason": "Pagamento ao Estado sem indicar o imposto: confirme no comprovativo.",
+     "reclassified": False, "rule": None},
+]
+PREVIEW = {"fingerprint": "a" * 64, "start": "2024-12-01", "end": "2026-11-11", "target": "IVA", "total_cents": 201852,
+           "rows": [{"id": "bank:b1", "date": "2026-08-20", "description": "PAG ESTADO IVA 2T 2026", "origin": "Banco · BPI Principal",
+                     "amount_cents": 201852, "from_name": "Impostos", "to_name": "IVA"}],
+           "views": [{"key": "operating", "label": "Custos e despesas operacionais", "before_cents": 801852, "after_cents": 600000, "difference_cents": -201852},
+                     {"key": "fiscal", "label": "Obrigações fiscais", "before_cents": 0, "after_cents": 201852, "difference_cents": 201852},
+                     {"key": "treasury", "label": "Saídas de tesouraria", "before_cents": 710000, "after_cents": 710000, "difference_cents": 0}],
+           "preserved": ["Valor, data, descrição e rubrica original de cada registo (nada é alterado no banco nem na caixa)"]}
+state = {"role": "administrador", "applied": False, "fiscal_rubric": False, "reclassified": False, "undone": False, "rule": False}
+
+
+def fiscal_payments():
+    history = []
+    if state["reclassified"]:
+        history = [{"id": "r1", "record": "bank:b1", "origin": "Banco · BPI Principal", "date": "2026-08-20", "description": "PAG ESTADO IVA 2T 2026",
+                    "amount_cents": 201852, "from_name": "Impostos", "to_name": "IVA", "reason": "IVA estava em Impostos com a TSU", "user": "Administrador",
+                    "created_at": "2026-11-11T10:00:00+00:00", "undone_at": "2026-11-11T10:05:00+00:00" if state["undone"] else None,
+                    "rule": None if state["undone"] else {"pattern": "pag estado iva", "category_id": "ivaR", "counts_as_cost": True, "exists": state["rule"]}}]
+    return {"start": "2024-12-01", "end": "2026-11-11", "can_apply": state["role"] == "administrador",
+            "fiscal_rubrics": [{"id": "ivaR", "name": "IVA"}] if state["fiscal_rubric"] else [],
+            "candidates": CANDIDATES[1:] if state["reclassified"] and not state["undone"] else CANDIDATES, "history": history}
 writes, drills = [], []
 
 
@@ -88,6 +115,27 @@ def intercept(route):
         writes.append((path, route.request.post_data_json))
         state["applied"] = True
         return route.fulfill(json={"applied": 1, "views": SIMULATION["views"]})
+    if path == "/api/rubric-nature/fiscal-payments":
+        return route.fulfill(json=fiscal_payments())
+    if path == "/api/rubric-nature/fiscal-rubric" and method == "POST":
+        writes.append((path, route.request.post_data_json))
+        state["fiscal_rubric"] = True
+        return route.fulfill(json={"id": "ivaR", "name": "IVA"})
+    if path == "/api/rubric-nature/reclassify/preview" and method == "POST":
+        writes.append((path, route.request.post_data_json))
+        return route.fulfill(json=PREVIEW)
+    if path == "/api/rubric-nature/reclassify" and method == "POST":
+        writes.append((path, route.request.post_data_json))
+        state["reclassified"] = True
+        return route.fulfill(json={"applied": 1, "views": PREVIEW["views"]})
+    if path == "/api/rubric-nature/reclassifications/r1/undo" and method == "POST":
+        writes.append((path, route.request.post_data_json))
+        state["undone"] = True
+        return route.fulfill(json={"undone": "r1"})
+    if path == "/api/bank-rules" and method == "POST":
+        writes.append((path, route.request.post_data_json))
+        state["rule"] = True
+        return route.fulfill(json={"id": "rule1"})
     if path in ("/api/categories", "/api/tables/categories") and method == "GET":
         return route.fulfill(json=[])
     return ns["intercept"](route)
@@ -104,7 +152,7 @@ with sync_playwright() as p:
     for theme, width in (("light", 1440), ("dark", 390)):
         writes.clear()
         drills.clear()
-        state.update(role="administrador", applied=False)
+        state.update(role="administrador", applied=False, fiscal_rubric=False, reclassified=False, undone=False, rule=False)
         page = browser.new_page(viewport={"width": width, "height": 1000}, locale="pt-PT")
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
@@ -157,6 +205,7 @@ with sync_playwright() as p:
         expect(before_after.get_by_role("row").filter(has_text="Saídas de tesouraria")).to_contain_text("Sem alteração")
         expect(simulation.get_by_role("table", name="Registos afetados")).to_contain_text("PAGAMENTO AO ESTADO")
         expect(simulation).to_contain_text("Não muda: Previsão de liquidez")
+        expect(simulation.get_by_role("note", name="Avisos da simulação")).to_contain_text("não muda nenhum valor")
         apply = simulation.get_by_role("button", name="Aplicar alterações")
         expect(apply).to_be_disabled()
         simulation.get_by_label("Motivo da alteração").fill("Separar IVA dos custos")
@@ -167,16 +216,68 @@ with sync_playwright() as p:
         assert writes[-1][0] == "/api/rubric-nature/apply"
         assert writes[-1][1]["fingerprint"] == "f" * 64 and writes[-1][1]["reason"] == "Separar IVA dos custos", writes[-1]
         expect(page.get_by_role("table", name="Natureza e análises de cada rubrica").get_by_label("Natureza de IVA")).to_have_value("fiscal")
+        # 3) Pagamentos ao Estado noutras rubricas: criar a rubrica IVA, pré-visualizar, reclassificar, regra e anular.
+        fiscal = page.get_by_role("region", name="Pagamentos ao Estado")
+        candidates = fiscal.get_by_role("table", name="Pagamentos que parecem IVA ao Estado")
+        expect(candidates.get_by_role("row")).to_have_count(3)
+        expect(candidates).to_contain_text("Indício forte")
+        expect(candidates).to_contain_text("Indício médio")
+        expect(fiscal.get_by_role("button", name="Pré-visualizar 0 reclassificação(ões)")).to_be_disabled()
+        fiscal.get_by_role("button", name="Criar rubrica IVA (obrigação fiscal)").click()
+        expect(page.get_by_text("Rubrica «IVA» criada como obrigação fiscal")).to_be_visible()
+        assert ("/api/rubric-nature/fiscal-rubric", {"name": "IVA"}) in writes, writes
+        expect(fiscal.get_by_role("button", name="Criar rubrica IVA (obrigação fiscal)")).to_have_count(0)
+        fiscal.get_by_role("button", name="Selecionar os de indício forte (1)").click()
+        expect(fiscal.get_by_label("Selecionar PAG ESTADO IVA 2T 2026 de 20/08/2026")).to_be_checked()
+        expect(fiscal.get_by_label("Selecionar PAGAMENTO AT 998877 de 15/07/2026")).not_to_be_checked()
+        fiscal.get_by_role("button", name="Pré-visualizar 1 reclassificação(ões)").click()
+        preview = fiscal.get_by_role("region", name="Pré-visualização da reclassificação")
+        expect(preview.get_by_role("table", name="Antes e depois da reclassificação").get_by_role("row").filter(
+            has_text="Custos e despesas operacionais")).to_contain_text("−2.018,52")
+        assert writes[-1] == ("/api/rubric-nature/reclassify/preview", {"items": ["bank:b1"], "category_id": "ivaR"}), writes[-1]
+        expect(preview).to_contain_text("nada é alterado no banco nem na caixa")
+        reclassify = preview.get_by_role("button", name="Reclassificar")
+        expect(reclassify).to_be_disabled()
+        preview.get_by_label("Motivo da reclassificação").fill("IVA estava em Impostos com a TSU")
+        audit(page)
+        page.screenshot(path=str(OUT / f"pagamentos-estado-{theme}-{width}.png"), full_page=True)
+        reclassify.click()
+        expect(page.get_by_text("1 pagamento(s) reclassificado(s).")).to_be_visible()
+        assert writes[-1] == ("/api/rubric-nature/reclassify", {"items": ["bank:b1"], "category_id": "ivaR", "fingerprint": "a" * 64,
+                                                               "reason": "IVA estava em Impostos com a TSU"}), writes[-1]
+        expect(candidates.get_by_role("row")).to_have_count(2)
+        fiscal.get_by_text("Histórico de reclassificações (1 ativa(s))").click()
+        history = fiscal.get_by_role("table", name="Histórico de reclassificações")
+        expect(history).to_contain_text("Impostos → IVA")
+        history.get_by_role("button", name="Criar regra para os próximos").click()
+        expect(history.get_by_label("Texto na descrição do extrato")).to_have_value("pag estado iva")
+        history.get_by_role("button", name="Guardar regra").click()
+        expect(page.get_by_text("Regra bancária criada")).to_be_visible()
+        assert writes[-1][0] == "/api/bank-rules" and {k: writes[-1][1][k] for k in ("pattern", "kind", "direction", "category_id", "counts_as_cost")} == {
+            "pattern": "pag estado iva", "kind": "payment", "direction": -1, "category_id": "ivaR", "counts_as_cost": True}, writes[-1]
+        if not history.is_visible():
+            fiscal.get_by_text("Histórico de reclassificações (1 ativa(s))").click()
+        expect(history).to_contain_text("Já existe regra bancária para «pag estado iva».")
+        history.get_by_role("button", name="Anular").click()
+        confirm = history.get_by_role("button", name="Confirmar anulação")
+        expect(confirm).to_be_disabled()
+        history.get_by_label("Motivo da anulação").fill("Afinal era IRC")
+        audit(page)
+        confirm.click()
+        expect(page.get_by_text("Reclassificação anulada")).to_be_visible()
+        assert writes[-1] == ("/api/rubric-nature/reclassifications/r1/undo", {"reason": "Afinal era IRC"}), writes[-1]
         # Gestor: simula, mas não aplica.
-        state.update(role="gestor", applied=False)
+        state.update(role="gestor", applied=False, fiscal_rubric=False, reclassified=False, undone=False, rule=False)
         page.reload()
         page.get_by_role("region", name="Sugestões").get_by_role("button", name="Usar sugestão em IVA").click()
         page.get_by_role("button", name="Simular 1 alteração(ões)").click()
         expect(page.get_by_role("region", name="Simulação")).to_contain_text("Só um administrador pode aplicar")
         expect(page.get_by_role("button", name="Aplicar alterações")).to_have_count(0)
+        expect(page.get_by_role("region", name="Pagamentos ao Estado")).to_contain_text("Peça a um administrador para criar a rubrica «IVA».")
         assert not errors, errors
         page.close()
     browser.close()
 print("PASS: vistas do Dashboard por natureza (origem, IVA do período, detalhe por vista) e natureza das rubricas "
-      "(sugestão, simulação antes/depois, registos afetados, aprovação com motivo; gestor sem aplicar), temas e larguras.")
+      "(sugestão, simulação antes/depois com avisos, registos afetados, aprovação com motivo; gestor sem aplicar), pagamentos ao Estado "
+      "(rubrica IVA, pré-visualização, reclassificação, regra bancária, anulação), temas e larguras.")
 print(json.dumps({"drilldowns": len(drills)}))
