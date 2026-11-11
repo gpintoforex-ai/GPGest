@@ -27,9 +27,31 @@ def compatible(bank, item, tolerance=10, late=False):
 def grouped(banks, internals, rules, named=None):
     """Bounded sum proposals: never silently treat a bounded search as exhaustive.
     `named`: por movimento, as palavras de entidades conhecidas que a descrição bancária refere."""
+    from bisect import bisect_left, bisect_right
+
     from .reconciliation import entity_tokens, normalized
     named = named or {}
     words = {b["id"]: set(normalized(b["description"] + " " + b.get("reference", "")).split()) for b in banks}
+    # Datas convertidas uma vez por registo (antes: em cada comparação) e janelas de datas para não comparar pares
+    # impossíveis; as comparações feitas são as mesmas e pela mesma ordem.
+    ordinal = {}
+
+    def day(row):
+        key = id(row)
+        if key not in ordinal:
+            ordinal[key] = iso_day(row["date"]).toordinal()
+        return ordinal[key]
+
+    def elapsed(bank, item):  # noqa: F811 (versão local com as datas em cache)
+        return day(bank) - day(item)
+
+    def compatible(bank, item, tolerance=10, late=False):  # noqa: F811
+        gap = day(bank) - day(item)
+        return (bank["store_id"] == item["store_id"]
+                and bank["amount_cents"] * item["amount_cents"] > 0
+                and bank.get("currency", "EUR") == item.get("currency", "EUR")
+                and (not item.get("account_id") or item["account_id"] == bank.get("account_id"))
+                and (abs(gap) <= tolerance or late and 0 < gap <= 366))
 
     def same_entity(bank, item):
         # Quando a descrição refere uma entidade conhecida, só registos dessa entidade.
@@ -47,11 +69,16 @@ def grouped(banks, internals, rules, named=None):
     output = []
     eligible = [r for r in internals if r["available_cents"] and r["status"] != "ignorado"]
     limited = len(banks) > 200 or len(eligible) > 200
+    eligible_by_day = sorted(range(len(eligible)), key=lambda n: day(eligible[n]))
+    eligible_days = [day(eligible[n]) for n in eligible_by_day]
     for bank in banks[:200]:
         if not bank["available_cents"] or bank["status"] == "ignorado":
             continue
         tolerance = rules.get(bank.get("account_id"), {}).get("date_tolerance_days", 10)
-        candidates = [r for r in eligible if not r.get("transfer")
+        # Janela: dentro da tolerância ou faturas até um ano antes do movimento.
+        here = day(bank)
+        near = sorted(eligible_by_day[bisect_left(eligible_days, here - max(tolerance, 366)):bisect_right(eligible_days, here + tolerance)])
+        candidates = [r for r in (eligible[n] for n in near) if not r.get("transfer")
                       and (compatible(bank, r, tolerance) and same_entity(bank, r) or late_invoice(bank, r))]
         # As mais próximas primeiro: a pesquisa limitada fica com as faturas mais recentes.
         candidates.sort(key=lambda r: abs(elapsed(bank, r)))
@@ -78,11 +105,17 @@ def grouped(banks, internals, rules, named=None):
             if sum(1 for p in output if p["bank_id"] == bank["id"]) >= 3:
                 break
     # Several statement lines for one economic record. Never net opposite directions.
+    pending = [b for b in banks if b["available_cents"] and b["status"] != "ignorado"]
+    widest = max((rules.get(b.get("account_id"), {}).get("date_tolerance_days", 10) for b in pending), default=10)
+    pending_by_day = sorted(range(len(pending)), key=lambda n: day(pending[n]))
+    pending_days = [day(pending[n]) for n in pending_by_day]
     for item in eligible[:200]:
         if item.get("transfer"):
             continue
-        possible = [b for b in banks if b["available_cents"] and b["status"] != "ignorado"
-                    and compatible(b, item, rules.get(b.get("account_id"), {}).get("date_tolerance_days", 10)) and same_entity(b, item)]
+        here = day(item)
+        near = sorted(pending_by_day[bisect_left(pending_days, here - widest):bisect_right(pending_days, here + widest)])
+        possible = [b for b in (pending[n] for n in near)
+                    if compatible(b, item, rules.get(b.get("account_id"), {}).get("date_tolerance_days", 10)) and same_entity(b, item)]
         limited |= len(possible) > 12
         for pair in itertools.combinations(possible[:12], 2):
             if pair[0].get("account_id") != pair[1].get("account_id") or sum(b["available_cents"] for b in pair) != item["available_cents"]:
@@ -136,8 +169,12 @@ def classify(banks, internals, suggestions, cards, rejected=()):
         if any(bank_counts[b] > 1 for b in own_banks) or any(source_banks[(l["source"], l["source_id"])] - own_banks for l in lines):
             proposal["classification"] = "conflito"
             proposal["reasons"] = [*proposal["reasons"], "Existem alternativas concorrentes; escolha manualmente após conferir"]
+    related_by_bank = {}
+    for proposal in all_proposals:
+        for line_bank in {line["source_id"] for line in proposal["bank_lines"]}:
+            related_by_bank.setdefault(line_bank, []).append(proposal)
     for bank in banks:
-        related = [p for p in all_proposals if any(l["source_id"] == bank["id"] for l in p["bank_lines"])]
+        related = related_by_bank.get(bank["id"], [])
         bank["match_classification"] = ("conciliado" if bank["status"] == "reconciliado" else
             "ignorado" if bank["status"] == "ignorado" else "conflito" if any(p["classification"] == "conflito" for p in related)
             else "exata" if any(p["classification"] == "exata" for p in related) else "provavel" if related else "sem_correspondencia")

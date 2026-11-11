@@ -19,7 +19,11 @@ banks = [{**common, 'id': f'b{i}', 'source': 'bank', 'description': f'Movimento 
 banks.append({**banks[0], 'id': 'b3', 'status': 'reconciliado', 'available_cents': 0, 'match_classification': 'conciliado'})
 internals = [{**common, 'id': f'm{i}', 'source': 'movement', 'description': f'Registo de demonstração {i}', 'amount_cents': 5000, 'available_cents': 5000, 'status': 'pendente'} for i in range(2)]
 group = {'proposal_id': 'a'*64, 'bank_id': 'b0', 'bank_lines': [{'source': 'bank', 'source_id': 'b0', 'amount_cents': 10000}], 'lines': [{'source': 'movement', 'source_id': r['id'], 'amount_cents': 5000} for r in internals], 'net_cents': 10000, 'gross_cents': 10000, 'commission_cents': 0, 'kind': 'pagamento', 'confidence': 'Média', 'score': 55, 'classification': 'provavel', 'reasons': ['Soma dos dois registos de demonstração']}
-data = {'banks': banks, 'internals': internals, 'suggestions': [], 'card_suggestions': [group], 'groups': []}
+# Proposta com valor diferente (90,00 € para um movimento de 100,00 €): fica de fora do filtro «Só valores iguais».
+partial = {**common, 'id': 'm9', 'source': 'movement', 'description': 'Registo parcial de demonstração', 'amount_cents': 9000, 'available_cents': 9000, 'status': 'pendente'}
+different = {'proposal_id': 'c'*64, 'bank_id': 'b1', 'source': 'movement', 'source_id': 'm9', 'amount_cents': 9000, 'score': 45, 'confidence': 'Baixa',
+             'classification': 'provavel', 'reasons': ['Possível pagamento parcial'], 'bank_lines': [{'source': 'bank', 'source_id': 'b1', 'amount_cents': 9000}]}
+data = {'banks': banks, 'internals': [*internals, partial], 'suggestions': [different], 'card_suggestions': [group], 'groups': []}
 state = {'name': account['name'], 'currency': 'EUR', 'book_balance_cents': 10000, 'bank_balance_cents': 10000, 'opening_cents': 0, 'statement_opening_cents': 0, 'statement_incoming_cents': 10000, 'statement_outgoing_cents': 0, 'justified_difference_cents': 0, 'unresolved_difference_cents': 0, 'comparable': True, 'pending_bank': {'count': 3}, 'pending_application': {'count': 2}, 'card_pending_settlement': {'count': 0, 'amount_cents': 0}, 'closing_blockers': ['Existem movimentos por reconciliar.'], 'closings': [], 'signature': 'b'*64}
 
 with sync_playwright() as p:
@@ -55,6 +59,13 @@ with sync_playwright() as p:
             cards = page.locator('.reconciliation-center-bottom > section').all()
             assert max(c.bounding_box()['y'] for c in cards) - min(c.bounding_box()['y'] for c in cards) < 2
         page.get_by_role('button', name='Por reconciliar (3)', exact=True).click()
+        expect(page.locator('.reconciliation-center tbody tr')).to_have_count(3)
+        equal = page.locator('.reconciliation-equal-filter')
+        expect(equal).to_contain_text('Só valores iguais (1)')
+        equal.locator('input').check()
+        expect(page.locator('.reconciliation-center tbody tr')).to_have_count(1)
+        expect(page.locator('.reconciliation-center tbody tr')).to_contain_text('Movimento de demonstração 0')
+        equal.locator('input').uncheck()
         expect(page.locator('.reconciliation-center tbody tr')).to_have_count(3)
         page.get_by_label('Pesquisar movimento', exact=True).fill('demonstração 0')
         expect(page.locator('.reconciliation-center tbody tr')).to_have_count(1)
@@ -96,7 +107,8 @@ with sync_playwright() as p:
     expect(page.locator('.reconciliation-dashboard tbody tr')).to_have_count(50)
     table = page.locator('.reconciliation-statement-panel .table-wrap').bounding_box()
     assert table['height'] <= 422, f'The statement must scroll inside the panel: {table}'
-    assert page.locator('.reconciliation-center-bottom').bounding_box()['y'] < 1100
+    bottom = page.locator('.reconciliation-center-bottom').bounding_box()['y']
+    assert bottom < 1100, bottom
     page.screenshot(path=str(OUT/'dashboard-64-movements.png'), full_page=True)
     browser.close()
 print('PASS: dashboard, account/period, search, filters, grouped review, no automatic writes, desktop/tablet/mobile.')

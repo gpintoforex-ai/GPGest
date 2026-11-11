@@ -388,7 +388,9 @@ def register_routes(app, current, authorize, scope, record, serial):
             store, amount, day = account.store_id, row.amount_cents, row.movement_date
             description, entity, reference, payment = row.description, "", row.reference or "", ""
         elif source == "book":
-            if row.original_id or db.scalar(select(BankBookEntry.id).where(BankBookEntry.original_id==row.id)):
+            reversed_books = (context or {}).get("reversed_books")
+            if row.original_id or (row.id in reversed_books if reversed_books is not None else
+                                   db.scalar(select(BankBookEntry.id).where(BankBookEntry.original_id==row.id))):
                 return None
             account = db.get(BankAccount, row.account_id)
             store, amount, day = account.store_id, row.amount_cents, row.movement_date
@@ -397,10 +399,17 @@ def register_routes(app, current, authorize, scope, record, serial):
             if row.origin == "efatura_testes":
                 return None
             from .models import DocumentState, DocumentERPLink, ERPDocument
-            state = db.get(DocumentState, row.id)
-            if state and state.treatment in {"anulado", "anulada", "cancelado", "cancelada"}:
+            treatments = (context or {}).get("document_states")
+            if treatments is not None:
+                treatment = treatments.get(row.id)
+            else:
+                state = db.get(DocumentState, row.id)
+                treatment = state.treatment if state else None
+            if treatment in {"anulado", "anulada", "cancelado", "cancelada"}:
                 return None
-            if db.scalar(select(ERPDocument.id).join(DocumentERPLink, DocumentERPLink.erp_id == ERPDocument.id).where(
+            cancelled = (context or {}).get("cancelled_erp_purchases")
+            if (row.id in cancelled) if cancelled is not None else db.scalar(
+                    select(ERPDocument.id).join(DocumentERPLink, DocumentERPLink.erp_id == ERPDocument.id).where(
                     DocumentERPLink.purchase_id == row.id, DocumentERPLink.undone_at.is_(None), ERPDocument.cancelled.is_(True)).limit(1)):
                 return None
             store, amount, day = row.store_id, -row.amount_cents, row.document_date
@@ -616,6 +625,13 @@ def register_routes(app, current, authorize, scope, record, serial):
                 )
             },
         }
+        # Lidos uma vez (antes: uma consulta por registo do livro bancário e por compra).
+        from .models import DocumentERPLink, DocumentState, ERPDocument
+        context["reversed_books"] = set(db.scalars(select(BankBookEntry.original_id).where(BankBookEntry.original_id.is_not(None))))
+        context["document_states"] = dict(db.execute(select(DocumentState.purchase_id, DocumentState.treatment)).all())
+        context["cancelled_erp_purchases"] = set(db.scalars(
+            select(DocumentERPLink.purchase_id).join(ERPDocument, DocumentERPLink.erp_id == ERPDocument.id).where(
+                DocumentERPLink.undone_at.is_(None), ERPDocument.cancelled.is_(True))))
         queries = {
             "bank": select(BankTransaction)
             .join(BankAccount)
@@ -696,13 +712,37 @@ def register_routes(app, current, authorize, scope, record, serial):
         suggestions = []
         known = set().union(*(entity_tokens(i["entity"]) for i in available))
         named_by_bank = {}
+        # suggestion() só propõe registos dentro da tolerância de datas ou faturas de compra até um ano antes com o
+        # mesmo valor (ou dentro da tolerância de valor). Os índices por data e por valor evitam avaliar os restantes
+        # pares (antes: todos os movimentos × todos os registos); os avaliados seguem a ordem original.
+        from bisect import bisect_left, bisect_right
+        ordinals = [iso_day(i["date"]).toordinal() for i in available]
+        by_day = sorted(range(len(available)), key=ordinals.__getitem__)
+        sorted_days = [ordinals[n] for n in by_day]
+        purchase_index = sorted((n for n, i in enumerate(available) if i["source"] == "purchase"),
+                                key=lambda n: available[n]["available_cents"])
+        purchase_amounts = [available[n]["available_cents"] for n in purchase_index]
+        limits = {}
+
+        def window(policy):
+            if not policy:
+                return 10, 0  # Sem regras da conta: tolerância de datas de 10 dias e de valor nula.
+            if id(policy) not in limits:
+                values = [effective_policy(policy, i, frozenset()) for i in available]
+                limits[id(policy)] = (max((v[0] for v in values), default=10), max((v[2] for v in values), default=0))
+            return limits[id(policy)]
+
         for bank in banks:
             if bank["available_cents"] and bank["status"] != "ignorado":
                 named = known & set(normalized(bank["description"] + " " + bank.get("reference", "")).split())
                 # Fora do próprio movimento: o identificador das propostas (e as rejeições) depende dele.
                 named_by_bank[bank["id"]] = named
                 policy = rules.get(bank.get("account_id"), {})
-                matches = [s for i in available if (s := suggestion(bank, i, *effective_policy(policy, i, named)))
+                days, cents = window(policy)
+                day, value = iso_day(bank["date"]).toordinal(), bank["available_cents"]
+                picked = set(by_day[bisect_left(sorted_days, day - days):bisect_right(sorted_days, day + days)])
+                picked.update(purchase_index[bisect_left(purchase_amounts, value - cents):bisect_right(purchase_amounts, value + cents)])
+                matches = [s for n in sorted(picked) if (s := suggestion(bank, available[n], *effective_policy(policy, available[n], named)))
                            and s["score"] >= policy.get("min_score", 30)]
                 suggestions.extend(sorted(matches, key=lambda s: -s["score"])[:5])
         details = {}
@@ -724,30 +764,33 @@ def register_routes(app, current, authorize, scope, record, serial):
                 actor=db.get(User,audit.user_id)
                 undo_actors[audit.target_id]={'id':audit.user_id,'name':actor.name if actor else 'Utilizador registado'}
         groups = []
-        for r in db.scalars(
+        group_rows = list(db.scalars(
             select(Reconciliation)
             .where(Reconciliation.store_id.in_(stores))
             .order_by(Reconciliation.created_at.desc())
-        ):
+        ))
+        group_ids = [r.id for r in group_rows]
+        group_lines, group_currency = {}, {}
+        if group_ids:
+            for link in db.scalars(select(ReconciliationLine).where(ReconciliationLine.reconciliation_id.in_(group_ids))):
+                group_lines.setdefault(link.reconciliation_id, []).append(link)
+            for group_id, currency in db.execute(
+                    select(ReconciliationLine.reconciliation_id, BankAccount.currency)
+                    .join(BankTransaction, ReconciliationLine.source_id == BankTransaction.id)
+                    .join(BankAccount, BankTransaction.account_id == BankAccount.id)
+                    .where(ReconciliationLine.reconciliation_id.in_(group_ids), ReconciliationLine.source == "bank")):
+                group_currency.setdefault(group_id, currency)
+        for r in group_rows:
             groups.append(
                 {
                     **serial(r),
-                    "currency": db.scalar(select(BankAccount.currency).join(BankTransaction, BankTransaction.account_id == BankAccount.id).join(
-                        ReconciliationLine, ReconciliationLine.source_id == BankTransaction.id).where(
-                        ReconciliationLine.reconciliation_id == r.id, ReconciliationLine.source == "bank").limit(1)),
+                    "currency": group_currency.get(r.id),
                     "gross_cents": details.get(r.id, {}).get("gross_cents", 0),
                     "net_cents": details.get(r.id, {}).get("net_cents", 0),
                     "undo_reason": undo_reasons.get(r.id, ""),
                     "created_by": actors.get(r.id),
                     "undone_by": undo_actors.get(r.id),
-                    "lines": [
-                        serial(link)
-                        for link in db.scalars(
-                            select(ReconciliationLine).where(
-                                ReconciliationLine.reconciliation_id == r.id
-                            )
-                        )
-                    ],
+                    "lines": [serial(link) for link in group_lines.get(r.id, [])],
                 }
             )
         from .reconciliation_matching import grouped, classify

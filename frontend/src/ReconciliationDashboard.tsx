@@ -58,7 +58,7 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
 }) {
   const [periodSummary, setPeriodSummary] = useState<Row | null>(null);
   const [filter, setFilter] = useState("todos"), [direction, setDirection] = useState("todos"), [search, setSearch] = useState("");
-  const [minimum, setMinimum] = useState(""), [maximum, setMaximum] = useState("");
+  const [minimum, setMinimum] = useState(""), [maximum, setMaximum] = useState(""), [equalOnly, setEqualOnly] = useState(false);
   const searched = amountOf(search), low = amountOf(minimum), high = amountOf(maximum);
   const [limit, setLimit] = useState(50), [expanded, setExpanded] = useState("");
   const [selection, setSelection] = useState<string[]>([]), [periodOpen, setPeriodOpen] = useState(false), [rulesOpen, setRulesOpen] = useState(false);
@@ -97,6 +97,15 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
     return { row, proposal, internal, internals: [internal], kind: internal.transfer ? "transferencia" : "pagamento", alternatives,
       lines: [{ source: "bank", source_id: row.id, amount_cents: proposal.amount_cents }, { source: internal.source, source_id: internal.id, amount_cents: proposal.amount_cents }] };
   }
+  // Valor igual: a melhor proposta de documento tem exatamente o valor por associar do movimento
+  // (registo único com o mesmo disponível, ou agrupamento sem comissão cuja soma é igual).
+  function equalValue(row: Row) {
+    const proposal = forBank(row.id)[0];
+    if (!proposal || row.available_cents <= 0 || (proposal.bank_lines || []).length > 1) return false;
+    if (proposal.lines) return !proposal.commission_cents && proposal.lines.reduce((n: number, l: Row) => n + l.amount_cents, 0) === row.available_cents;
+    const internal = internalOf(proposal);
+    return !!internal && internal.available_cents === row.available_cents && proposal.amount_cents === row.available_cents;
+  }
   const tops = new Map<string, number>();
   for (const r of rows) { const internal = internalOf(forBank(r.id)[0]); if (internal) tops.set(key(internal), (tops.get(key(internal)) || 0) + 1); }
   // Fiável: exata, ou confiança alta (limites da conta: Regras de correspondência) claramente acima da alternativa
@@ -121,9 +130,11 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
   const suggested = rows.filter(r => proposedFor(r.id) && r.available_cents > 0).length;
   const conflicts = rows.filter(r => r.match_classification === "conflito").length;
   const unmatched = rows.filter(r => r.available_cents > 0 && !proposedFor(r.id)).length;
+  const equalCount = rows.filter(equalValue).length;
   const visible = rows.filter(r => (filter === "todos" || filter === "conciliados" && r.status === "reconciliado" || filter === "pendentes" && r.available_cents > 0 || filter === "sugestoes" && r.available_cents > 0 && proposedFor(r.id) || filter === "sem" && r.available_cents > 0 && !proposedFor(r.id) || filter === "conflitos" && r.match_classification === "conflito")
     && (direction === "todos" || direction === "entradas" && r.amount_cents > 0 || direction === "saidas" && r.amount_cents < 0)
     && (low == null || Math.abs(r.amount_cents) >= low) && (high == null || Math.abs(r.amount_cents) <= high)
+    && (!equalOnly || equalValue(r))
     // A pesquisa encontra também o valor do movimento ou o valor por associar.
     && (searched != null && (Math.abs(r.amount_cents) === searched || r.available_cents === searched)
       || `${r.description} ${r.reference || ""}`.toLocaleLowerCase("pt-PT").includes(search.toLocaleLowerCase("pt-PT"))));
@@ -163,7 +174,8 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
     <div className="reconciliation-center-body">
       <aside className="panel reconciliation-center-filters" aria-label="Filtrar movimentos do extrato"><h3><SlidersHorizontal size={17} />Filtrar movimentos</h3>{filters.map(({ id, label, count, icon: Icon, tone }) => <ActionButton inferAction={false} key={id} data-filter-tone={tone} aria-pressed={filter === id} onClick={() => { setFilter(id); setLimit(50); }}><Icon size={17} /><span>{label} ({count})</span></ActionButton>)}
         <div className="reconciliation-type-filter"><Field label="Tipo de movimento"><select value={direction} onChange={e => setDirection(e.target.value)}><option value="todos">Todos os movimentos</option><option value="entradas">Recebimentos / entradas</option><option value="saidas">Pagamentos / saídas</option></select></Field><small><ArrowDownLeft size={13} /> Entradas <ArrowUpRight size={13} /> Saídas</small>
-          <div className="reconciliation-amount-filter"><Field label="Valor mínimo (€)"><input inputMode="decimal" value={minimum} placeholder="0,00" aria-invalid={!!minimum.trim() && low == null} onChange={e => { setMinimum(e.target.value); setLimit(50); }} /></Field><Field label="Valor máximo (€)"><input inputMode="decimal" value={maximum} placeholder="0,00" aria-invalid={!!maximum.trim() && high == null} onChange={e => { setMaximum(e.target.value); setLimit(50); }} /></Field></div></div>
+          <div className="reconciliation-amount-filter"><Field label="Valor mínimo (€)"><input inputMode="decimal" value={minimum} placeholder="0,00" aria-invalid={!!minimum.trim() && low == null} onChange={e => { setMinimum(e.target.value); setLimit(50); }} /></Field><Field label="Valor máximo (€)"><input inputMode="decimal" value={maximum} placeholder="0,00" aria-invalid={!!maximum.trim() && high == null} onChange={e => { setMaximum(e.target.value); setLimit(50); }} /></Field></div>
+          <label className="reconciliation-equal-filter" title="Proposta de documento com exatamente o mesmo valor do movimento por associar"><input type="checkbox" checked={equalOnly} onChange={e => { setEqualOnly(e.target.checked); setLimit(50); }} />Só valores iguais ({equalCount})</label></div>
         <ActionButton variant="suggestion" onClick={onSuggestions}><Sparkles size={17} />Rever propostas</ActionButton>
       </aside>
       <section className="panel reconciliation-statement-panel" aria-label="Movimentos do extrato">
@@ -208,7 +220,7 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
         <td>{c.rule ? <RuleIdentity rule={c.rule} /> : c.internal ? <Identity item={c.internal} /> : c.proposal?.lines ? <GroupIdentity proposal={c.proposal} internals={data.internals} currency={c.row.currency} /> : "—"}{c.blocked && <small className="reconciliation-conflict">{c.blocked}</small>}</td>
         <td>{c.rule ? "Regra por descrição" : c.proposal ? <>{c.proposal.confidence} ({c.proposal.score}/100){c.alternatives > 0 && <small className="reconciliation-conflict">{c.alternatives} alternativa(s) por conferir</small>}</> : "—"}</td>
       </tr>)}</tbody></table></div>
-      {busy && done > 0 && <p role="status">A aceitar {done} de {accepting.length}…</p>}
+      {busy && done > 0 && <p role="status">{done < accepting.length ? `A aceitar ${done} de ${accepting.length}…` : `${done} aceite(s). A atualizar a reconciliação…`}</p>}
       <div className="actions"><ActionButton variant="suggestion" disabled={busy || !accepting.length} onClick={async () => { await onAcceptMany(accepting, setDone); setBatch(null); setSelection([]); }}><CheckCheck size={16} />{busy ? "A aceitar…" : `Aceitar ${accepting.length} correspondência(s)`}</ActionButton><ActionButton disabled={busy} onClick={() => setBatch(null)}>Cancelar</ActionButton></div>
     </AppDialog>}
   </section>;
