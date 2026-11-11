@@ -12,12 +12,15 @@ A previsão de liquidez, os extratos, a reconciliação bancária e os dados do 
 
 import hashlib
 import json
+import re
 import unicodedata
 from collections import defaultdict
 from datetime import date, timedelta
+from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import Field
+from pydantic import AfterValidator, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -73,6 +76,24 @@ ORIGINS = {
     "treasury": "Pagamentos efetivos pela data do pagamento: saídas de caixa a fornecedores, despesas e saídas, e pagamentos e "
                 "encargos do livro bancário, nas rubricas que entram nas saídas de tesouraria. Exclui transferências internas e estornos.",
 }
+
+
+REASON_WORD = re.compile(r"[^\W\d_]{2,}")
+
+
+def meaningful(value):
+    """Motivo legível: pelo menos duas palavras reais e uma com 4 ou mais letras (recusa «jjjjjkkjk»)."""
+    value = " ".join((value or "").split())
+    # Uma palavra conta se tiver vogal (ou for uma sigla em maiúsculas, como TSU ou DMR) e não for uma repetição de letras.
+    words = [w for w in REASON_WORD.findall(value) if len(set(w.casefold())) >= min(3, len(w))
+             and (w.isupper() or any(c in "aeiouy" for c in fold(w)))]
+    if len(words) < 2 or not any(len(w) >= 4 for w in words):
+        raise ValueError("Indique um motivo com pelo menos duas palavras (por exemplo, «Separar IVA dos custos operacionais»).")
+    return value
+
+
+# Motivo das aprovações, reclassificações, anulações e pedidos: fica na auditoria, por isso tem de ser legível.
+Reason = Annotated[str, Field(min_length=5, max_length=500), AfterValidator(meaningful)]
 
 
 def fold(text):
@@ -231,7 +252,9 @@ class Simulation(Strict):
 
 class Approval(Simulation):
     fingerprint: str = Field(min_length=64, max_length=64)
-    reason: str = Field(min_length=5, max_length=500)
+    reason: Reason
+    # Pedido de um gestor que esta aplicação aprova (fica aprovado e ligado na auditoria).
+    request_id: str | None = Field(default=None, max_length=36)
 
 
 def describe(category):
@@ -373,7 +396,66 @@ def listing(user=Depends(current), db: Session = Depends(db_session)):
     return {"natures": [{"key": key, "label": label, "flags": PRESETS[key]} for key, label in NATURES.items()],
             "flags": [{"key": key, "label": label} for key, label in FLAG_LABELS.items()],
             "can_apply": user.role == "administrador",
-            "rubrics": [describe(row) for row in db.scalars(select(Category).order_by(Category.active.desc(), Category.name))]}
+            "rubrics": [describe(row) for row in db.scalars(select(Category).order_by(Category.active.desc(), Category.name))],
+            "history": history(db)}
+
+
+def history(db, limit=30):
+    """Alterações de natureza aplicadas, agrupadas por aplicação (lote), mais recentes primeiro."""
+    from .models import Audit, User
+    users = {u.id: u.name for u in db.scalars(select(User))}
+    batches = {}
+    for row in db.scalars(select(Audit).where(Audit.action == "rubrica_natureza_alterada").order_by(Audit.created_at.desc()).limit(400)):
+        detail = json.loads(row.detail or "{}")
+        # Aplicações anteriores ao lote: o mesmo utilizador, motivo e segundo.
+        key = detail.get("batch") or f"{row.user_id}|{detail.get('reason', '')}|{row.created_at.replace(microsecond=0).isoformat()}"
+        batch = batches.get(key)
+        if batch is None:
+            if len(batches) >= limit:
+                break
+            batch = batches[key] = {"id": key, "date": row.created_at.isoformat(), "user": users.get(row.user_id, ""),
+                                    "reason": detail.get("reason", ""), "request_id": detail.get("request_id"), "changes": []}
+        batch["changes"].append({"category_id": row.target_id, "name": detail.get("name", ""), "before": detail.get("before", {}),
+                                 "after": detail.get("after", {})})
+    return list(batches.values())
+
+
+def recent_changes(db, days=180):
+    """Notas para o Dashboard: mudanças recentes de natureza e reclassificações que explicam os totais."""
+    from .dashboard import today
+    from .models import Category, RubricReclassification
+    since = today() - timedelta(days=days)
+    notes = []
+    for batch in history(db, limit=10):
+        day = date.fromisoformat(batch["date"][:10])
+        if day < since:
+            continue
+        out = [c["name"] for c in batch["changes"] if c["before"].get("in_operating_costs") and not c["after"].get("in_operating_costs")]
+        back = [c["name"] for c in batch["changes"] if not c["before"].get("in_operating_costs") and c["after"].get("in_operating_costs")]
+        parts = []
+        if out:
+            parts.append(f"{', '.join(out)} deixaram de contar nos custos operacionais" if len(out) > 1 else f"{out[0]} deixou de contar nos custos operacionais")
+        if back:
+            parts.append(f"{', '.join(back)} voltaram aos custos operacionais" if len(back) > 1 else f"{back[0]} voltou aos custos operacionais")
+        if not parts:
+            parts.append("mudou a natureza de " + ", ".join(c["name"] for c in batch["changes"]))
+        notes.append({"date": str(day), "text": f"Desde {day.strftime('%d/%m/%Y')}, {'; '.join(parts)}."})
+    names = {c.id: c.name for c in db.scalars(select(Category))}
+    moved = defaultdict(lambda: [0, None])
+    for row in db.scalars(select(RubricReclassification).where(RubricReclassification.undone_at.is_(None))):
+        day = row.created_at.date()
+        if day >= since:
+            entry = moved[row.to_category_id]
+            entry[0] += 1
+            entry[1] = max(entry[1] or day, day)
+    for category, (count, day) in moved.items():
+        notes.append({"date": str(day), "text": f"{count} pagamento(s) reclassificado(s) para «{names.get(category, '')}» (último em "
+                                                 f"{day.strftime('%d/%m/%Y')}); os registos no banco e na caixa não mudaram."})
+    notes.sort(key=lambda n: n["date"], reverse=True)
+    if notes:
+        notes.append({"date": "", "text": "Os dois períodos comparados usam a configuração atual, por isso a comparação continua coerente; "
+                                          "relatórios exportados antes destas datas podem mostrar outros totais."})
+    return notes
 
 
 @router.post("/api/rubric-nature/simulate")
@@ -393,13 +475,17 @@ def apply(data: Approval, user=Depends(current), db: Session = Depends(db_sessio
         raise HTTPException(409, "A configuração das rubricas mudou desde a simulação. Simule novamente antes de aplicar.")
     result = simulate(db, user, changes)
     summary = {view["key"]: [view["before_cents"], view["after_cents"]] for view in result["views"]}
+    from .rubric_requests import settle
+    settle(db, user, data.request_id, "nature", [change.model_dump() for change in data.changes], data.reason)
+    batch = str(uuid4())
     for key, (category, values) in changes.items():
         before = {"nature": category.nature, **{name: getattr(category, name) for name in FLAGS}}
         for name, value in values.items():
             setattr(category, name, value)
         record(db, user, "rubrica_natureza_alterada", key, {"name": category.name, "before": before, "after": values,
-                                                             "reason": data.reason.strip(), "simulation": summary,
+                                                             "reason": data.reason, "simulation": summary,
                                                              "period": [result["start"], result["end"]],
-                                                             "affected_records": result["affected"]["count"]})
+                                                             "affected_records": result["affected"]["count"],
+                                                             "batch": batch, "request_id": data.request_id})
     db.commit()
     return {"applied": len(changes), "views": result["views"]}

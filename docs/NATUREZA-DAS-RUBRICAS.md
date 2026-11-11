@@ -37,7 +37,25 @@ obrigação fiscal, movimento financeiro) e cinco indicadores:
    e é preciso simular de novo. Cada rubrica alterada fica na auditoria (`rubrica_natureza_alterada`) com o antes, o
    depois, o motivo e o resumo da simulação.
 
-O gestor pode simular e partilhar o resultado, mas não aplica.
+**Motivo:** fica na auditoria, por isso tem de ser legível: pelo menos duas palavras reais (com vogal, ou siglas em
+maiúsculas como TSU), uma delas com quatro ou mais letras. Textos como «jjjjjkkjk» são recusados. Há motivos habituais
+para escolher com um clique, que podem ser editados.
+
+**Pedidos de aprovação:** o gestor simula e **pede aprovação ao administrador**, com motivo. O pedido guarda as
+alterações e o resumo da simulação; nada muda até ser aprovado. O administrador vê o aviso na barra do menu
+(«Pedidos de alteração de rubricas por aprovar») e, no cartão **Pedidos de aprovação**, escolhe **Rever e aprovar**: as
+alterações são carregadas, simuladas de novo, e **Aprovar e aplicar** aplica e marca o pedido como aprovado (se o
+administrador ajustar o pedido, fica «aprovado com alterações»). Também pode **recusar** com motivo; quem pediu pode
+**cancelar** enquanto está por aprovar. O mesmo vale para pedidos de reclassificação de pagamentos ao Estado. Pedidos,
+aprovações, recusas e cancelamentos ficam na auditoria (`rubrica_pedido_*`).
+
+**Histórico:** o separador mostra cada aplicação (data, utilizador, motivo, rubricas e indicadores que mudaram, se veio
+de um pedido). **Repor a configuração anterior** carrega na tabela os valores anteriores a essa aplicação; é preciso
+simular e aplicar como qualquer outra alteração.
+
+**Outra empresa:** **Exportar configuração** descarrega um ficheiro JSON com a natureza e os indicadores de cada rubrica;
+**Importar de outra empresa** carrega-o na tabela pelas rubricas com o mesmo nome (sem acentos nem maiúsculas) e indica
+as que não têm correspondência. Nada é gravado sem simular e aplicar.
 
 **Avisos da simulação** (não bloqueiam): rubrica que deixa de aparecer em todas as vistas; rubrica que sai dos custos
 operacionais sem entrar em compras nem em obrigações fiscais (exceto movimento financeiro); alteração sem efeito porque
@@ -85,6 +103,11 @@ documento ou movimento:
 - **Saídas de tesouraria:** pagamentos efetivos pela data do pagamento (caixa a fornecedores, despesas e saídas;
   pagamentos e encargos do livro bancário), sem transferências internas nem estornos.
 
+**Mudanças recentes na classificação:** nos 180 dias seguintes a uma mudança de natureza ou a reclassificações, o cartão
+mostra uma nota (por exemplo, «Desde 11/11/2026, IVA deixou de contar nos custos operacionais») com ligação ao
+histórico. Os dois períodos comparados usam sempre a configuração atual; relatórios exportados antes podem ter outros
+totais.
+
 ## O que não muda
 
 Previsão de liquidez e prazos de pagamento, extratos, livro bancário e reconciliação, documentos e dados do ERP, Mapa
@@ -104,7 +127,13 @@ de IVA e previsão de IVA (calculados pelos documentos de venda e compra).
 - `POST /api/rubric-nature/reclassify` — o mesmo, `fingerprint` da pré-visualização e `reason` (administrador).
 - `POST /api/rubric-nature/reclassifications/{id}/undo` — `{reason}` (administrador).
 
-Migrações: 0087 (natureza e indicadores) e 0088 (`rubric_reclassifications`; sem linhas nada muda).
+- `GET /api/rubric-nature/requests` — pedidos por aprovar e decididos nos últimos 90 dias.
+- `POST /api/rubric-nature/requests` — `{kind: "nature", changes, reason}` ou `{kind: "reclassification", items,
+  category_id, reason}` (administrador e gestor); aprovar = `apply`/`reclassify` com `request_id` (administrador).
+- `POST /api/rubric-nature/requests/{id}/reject` — `{reason}` (administrador); `.../cancel` (quem pediu).
 
-Testes: `backend/tests/test_rubric_nature.py`, `backend/tests/test_fiscal_payments.py` e
-`scripts/test-rubric-nature-ui.py`.
+Migrações: 0087 (natureza e indicadores), 0088 (`rubric_reclassifications`) e 0089 (`rubric_requests`); sem linhas,
+nada muda.
+
+Testes: `backend/tests/test_rubric_nature.py`, `backend/tests/test_fiscal_payments.py`,
+`backend/tests/test_rubric_requests.py` e `scripts/test-rubric-nature-ui.py`.

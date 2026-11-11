@@ -121,7 +121,21 @@ def alerts(store_id: str = "", user=Depends(current), db: Session = Depends(db_s
             group["items"] = group["items"][:ITEMS]
             groups.append(group)
 
-    for read in (customer_orders, purchases, expiring_lots, pending_documents, deadlines):
+    def rubric_requests():
+        # Pedidos de gestores para alterar a natureza das rubricas ou reclassificar pagamentos: só o administrador decide.
+        if user.role != "administrador":
+            return
+        from .models import Category, User
+        from .rubric_requests import describe, pending
+        rows = pending(db)
+        if rows:
+            users = {u.id: u.name for u in db.scalars(select(User))}
+            names = {c.id: c.name for c in db.scalars(select(Category))}
+            add("rubricas_pedidos", "Pedidos de alteração de rubricas por aprovar",
+                [f"{describe(db, r, users, names)['title']} · {users.get(r.requested_by, '')}" for r in rows],
+                "warning", "Rubricas", {"area.rubricas": "natureza"})
+
+    for read in (customer_orders, purchases, expiring_lots, pending_documents, deadlines, rubric_requests):
         section(read)
     order = {"danger": 0, "warning": 1}
     groups.sort(key=lambda g: order.get(g["tone"], 2))

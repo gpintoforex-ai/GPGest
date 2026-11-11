@@ -28,6 +28,7 @@ from .models import (
     User,
     now,
 )
+from .rubric_nature import Reason
 from .schemas import Strict
 
 router = APIRouter()
@@ -207,7 +208,8 @@ class Selection(Strict):
 
 class Confirmation(Selection):
     fingerprint: str = Field(min_length=64, max_length=64)
-    reason: str = Field(min_length=5, max_length=500)
+    reason: Reason
+    request_id: str | None = Field(default=None, max_length=36)
 
 
 def prepared(db, user, data):
@@ -290,6 +292,8 @@ def reclassify(data: Confirmation, user=Depends(current), db: Session = Depends(
     if result["fingerprint"] != data.fingerprint:
         fail("Os registos ou as rubricas mudaram desde a pré-visualização. Pré-visualize novamente antes de aplicar.", 409)
     selected, target, _ = prepared(db, user, data)
+    from .rubric_requests import settle
+    settle(db, user, data.request_id, "reclassification", {"items": data.items, "category_id": data.category_id}, data.reason)
     stamp = now()
     summary = {view["key"]: [view["before_cents"], view["after_cents"]] for view in result["views"]}
     for key, (item, day, category) in selected.items():
@@ -301,19 +305,19 @@ def reclassify(data: Confirmation, user=Depends(current), db: Session = Depends(
             active.undone_at, active.undone_by = stamp, user.id
         db.flush()
         row = RubricReclassification(source=source, source_id=identifier, from_category_id=category or None,
-                                     to_category_id=target.id, reason=data.reason.strip(), user_id=user.id)
+                                     to_category_id=target.id, reason=data.reason, user_id=user.id)
         db.add(row)
         db.flush()
         record(db, user, "pagamento_rubrica_reclassificada", key, {
             "date": day, "amount_cents": abs(item.amount_cents), "original_category_id": item.category_id,
-            "before_category_id": category or None, "after_category_id": target.id, "reason": data.reason.strip(),
-            "reclassification_id": row.id, "simulation": summary})
+            "before_category_id": category or None, "after_category_id": target.id, "reason": data.reason,
+            "reclassification_id": row.id, "simulation": summary, "request_id": data.request_id})
     db.commit()
     return {"applied": len(selected), "views": result["views"]}
 
 
 class Undo(Strict):
-    reason: str = Field(min_length=5, max_length=500)
+    reason: Reason
 
 
 @router.post("/api/rubric-nature/reclassifications/{identifier}/undo")
@@ -329,6 +333,6 @@ def undo(identifier: str, data: Undo, user=Depends(current), db: Session = Depen
     row.undone_at, row.undone_by = now(), user.id
     record(db, user, "pagamento_rubrica_reposta", f"{row.source}:{row.source_id}", {
         "reclassification_id": row.id, "from_category_id": row.to_category_id, "to_category_id": row.from_category_id,
-        "reason": data.reason.strip()})
+        "reason": data.reason})
     db.commit()
     return {"undone": row.id}

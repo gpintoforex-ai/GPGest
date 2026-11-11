@@ -578,6 +578,23 @@ class RubricReclassification(Base):
     )
 
 
+class RubricRequest(Base):
+    """Pedido de aprovação de um gestor ao administrador: alteração da natureza das rubricas ou reclassificação de
+    pagamentos. Guarda o pedido e o resumo da simulação; só a aprovação do administrador (com nova simulação) altera."""
+    __tablename__ = "rubric_requests"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    kind: Mapped[str] = mapped_column(String(20))  # nature | reclassification
+    payload: Mapped[str] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(Text, default="{}")
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="pendente", index=True)  # pendente | aprovado | recusado | cancelado
+    requested_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    decided_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_reason: Mapped[str] = mapped_column(Text, default="")
+
+
 class LocalPaymentMethod(Base):
     __tablename__ = "local_payment_methods"
     id: Mapped[str] = mapped_column(String(20), primary_key=True)

@@ -736,6 +736,8 @@ def expenses_block(db, stores, period, compare):
         "unit": unit, "points": operating["points"],
         "views": [{key: value for key, value in view.items() if key != "points"} for view in views.values()],
         "rubrics_without_nature": unconfigured,
+        # Mudanças recentes de natureza e reclassificações que explicam diferenças face a relatórios anteriores.
+        "config_notes": rubric_nature.recent_changes(db),
         "meta": meta("Custos e despesas operacionais por rubrica, pela data do documento (custos sem documento: pela data do movimento bancário).",
                      "Regime normal: base tributável + IVA não dedutível estimado; restantes regimes: total com IVA. Só as rubricas que entram nos "
                      "custos operacionais (Configurações → Rubricas → Natureza). Rubrica das linhas da compra, do documento ERP ou do fornecedor.",

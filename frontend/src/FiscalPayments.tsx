@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Landmark, ShieldCheck } from "lucide-react";
 import { StatusBadge } from "./components/BusinessUI";
 import { ActionButton, Notice } from "./components/InteractionUI";
+import ReasonField, { RECLASSIFY_REASONS, UNDO_REASONS } from "./ReasonField";
 import { api } from "./lib/api";
 import { formatEuro } from "./utils/format";
 
@@ -17,7 +18,9 @@ const fullDate = (iso?: string | null) => iso ? iso.slice(0, 10).split("-").reve
 const strength = (value: number) => value >= 85 ? { tone: "success" as const, label: "Indício forte" }
   : value >= 50 ? { tone: "warning" as const, label: "Indício médio" } : { tone: "neutral" as const, label: "Indício fraco" };
 
-export default function FiscalPayments({ onRubricCreated }: { onRubricCreated: () => void }) {
+export default function FiscalPayments({ onRubricCreated, review, onReviewDone }: {
+  onRubricCreated: () => void; review?: Row | null; onReviewDone?: () => void;
+}) {
   const [data, setData] = useState<Row | null>(null), [version, setVersion] = useState(0);
   const [selected, setSelected] = useState<string[]>([]), [target, setTarget] = useState("");
   const [preview, setPreview] = useState<Row | null>(null), [reason, setReason] = useState("");
@@ -33,6 +36,12 @@ export default function FiscalPayments({ onRubricCreated }: { onRubricCreated: (
     }).catch(e => { if (active) setError((e as Error).message); });
     return () => { active = false; };
   }, [version]);
+  // Pedido de reclassificação de um gestor em revisão: carrega a seleção e pré-visualiza de novo.
+  useEffect(() => {
+    if (!review) return;
+    setSelected(review.payload.items); setTarget(review.payload.category_id); setReason("");
+    void run(async () => { setPreview(await api("/rubric-nature/reclassify/preview", { items: review.payload.items, category_id: review.payload.category_id })); });
+  }, [review]);
   const candidates: Row[] = data?.candidates || [];
   const strong = useMemo(() => candidates.filter(c => c.confidence >= 85).map(c => c.id), [candidates]);
   const toggle = (id: string, on: boolean) => { setSelected(s => on ? [...s, id] : s.filter(x => x !== id)); setPreview(null); };
@@ -48,9 +57,16 @@ export default function FiscalPayments({ onRubricCreated }: { onRubricCreated: (
   });
   const showPreview = () => run(async () => { setPreview(await api("/rubric-nature/reclassify/preview", { items: selected, category_id: target })); });
   const apply = () => run(async () => {
-    const result = await api("/rubric-nature/reclassify", { items: selected, category_id: target, fingerprint: preview!.fingerprint, reason: reason.trim() });
+    const result = await api("/rubric-nature/reclassify", { items: selected, category_id: target, fingerprint: preview!.fingerprint, reason: reason.trim(),
+      ...(review ? { request_id: review.id } : {}) });
     setReason(""); setVersion(v => v + 1);
-    setNotice(`${result.applied} pagamento(s) reclassificado(s). Os registos bancários e de caixa não foram alterados; pode anular no histórico.`);
+    setNotice(`${result.applied} pagamento(s) reclassificado(s)${review ? ` (pedido de ${review.requested_by} aprovado)` : ""}. Os registos bancários e de caixa não foram alterados; pode anular no histórico.`);
+    if (review) onReviewDone?.();
+  });
+  const ask = () => run(async () => {
+    await api("/rubric-nature/requests", { kind: "reclassification", items: selected, category_id: target, reason: reason.trim() });
+    setReason(""); setPreview(null); setSelected([]); onReviewDone?.();
+    setNotice("Pedido enviado ao administrador. Nada muda até ser aprovado.");
   });
   const confirmUndo = () => run(async () => {
     await api(`/rubric-nature/reclassifications/${undo!.id}/undo`, { reason: undo!.reason.trim() });
@@ -104,11 +120,15 @@ export default function FiscalPayments({ onRubricCreated }: { onRubricCreated: (
           <td className={v.difference_cents ? "rn-diff" : ""}>{v.difference_cents ? `${v.difference_cents > 0 ? "+" : "−"}${formatEuro(Math.abs(v.difference_cents))}` : "Sem alteração"}</td></tr>)}</tbody>
       </table></div>
       <p className="rn-preserved"><ShieldCheck size={15} aria-hidden /> Não muda: {preview.preserved.join("; ")}.</p>
-      {data.can_apply ? <div className="rn-apply">
-        <label>Motivo da reclassificação<textarea value={reason} onChange={e => setReason(e.target.value)} rows={2} maxLength={500}
-          placeholder="Ex.: pagamentos de IVA registados em Impostos, junto com a TSU" /></label>
-        <ActionButton type="button" className="primary" onClick={() => void apply()} disabled={busy || reason.trim().length < 5}>Reclassificar</ActionButton>
-      </div> : <Notice tone="info">Só um administrador pode reclassificar. Partilhe esta pré-visualização com o administrador da empresa.</Notice>}
+      {review && <Notice tone="info">A rever o pedido de {review.requested_by} («{review.reason}»). Ao reclassificar, o pedido fica aprovado.</Notice>}
+      <div className="rn-apply">
+        <ReasonField label={data.can_apply ? "Motivo da reclassificação" : "Motivo do pedido"} value={reason} onChange={setReason} options={RECLASSIFY_REASONS}
+          placeholder="Ex.: pagamentos de IVA registados em Impostos, junto com a TSU" />
+        {data.can_apply
+          ? <ActionButton type="button" className="primary" onClick={() => void apply()} disabled={busy || reason.trim().length < 5}>{review ? "Aprovar e reclassificar" : "Reclassificar"}</ActionButton>
+          : <ActionButton type="button" className="primary" onClick={() => void ask()} disabled={busy || reason.trim().length < 5}>Pedir aprovação ao administrador</ActionButton>}
+      </div>
+      {!data.can_apply && <p className="rn-hint">Só um administrador reclassifica. O pedido guarda esta pré-visualização; o administrador volta a pré-visualizar antes de aprovar.</p>}
     </div>}
     {!!history.length && <details className="rn-history">
       <summary>Histórico de reclassificações ({history.filter(h => !h.undone_at).length} ativa(s))</summary>
@@ -119,7 +139,7 @@ export default function FiscalPayments({ onRubricCreated }: { onRubricCreated: (
           <td>{h.from_name} → {h.to_name}</td><td>{h.reason}<small>{h.user}, {fullDate(h.created_at)}</small></td>
           <td>{h.undone_at ? <StatusBadge tone="neutral" compact>Anulada {fullDate(h.undone_at)}</StatusBadge> : <div className="rn-row-actions">
             {data.can_apply && (undo && undo.id === h.id ? <div className="rn-inline">
-              <label>Motivo da anulação<input value={undo.reason} onChange={e => setUndo({ id: h.id, reason: e.target.value })} maxLength={500} /></label>
+              <ReasonField label="Motivo da anulação" value={undo.reason} onChange={value => setUndo({ id: h.id, reason: value })} options={UNDO_REASONS} />
               <ActionButton type="button" onClick={() => void confirmUndo()} disabled={busy || undo.reason.trim().length < 5}>Confirmar anulação</ActionButton>
               <ActionButton type="button" onClick={() => setUndo(null)}>Cancelar</ActionButton>
             </div> : <ActionButton type="button" onClick={() => setUndo({ id: h.id, reason: "" })}>Anular</ActionButton>)}

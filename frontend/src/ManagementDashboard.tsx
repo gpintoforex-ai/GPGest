@@ -181,6 +181,11 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
             {v.label}<span>{formatEuro(v.total_cents)}</span></button>)}
         </div>}
         {shownView.origin && <p className="dash-muted dash-origin"><strong>Origem:</strong> {shownView.origin}</p>}
+        {!!expenses?.config_notes?.length && <div className="dash-config-notes" role="note" aria-label="Mudanças recentes na classificação">
+          <strong>Mudanças recentes na classificação</strong>
+          <ul>{expenses.config_notes.map((n: Row, i: number) => <li key={i}>{n.text}</li>)}</ul>
+          {data?.permissions?.costs && <ActionButton type="button" className="dash-link" onClick={() => navigate("Rubricas", { "area.rubricas": "natureza" })}>Ver histórico</ActionButton>}
+        </div>}
         {shownView.rows.length ? <BarList ariaLabel={shownView.label} rows={shownView.rows.map((r: Row) => ({ label: r.name, value: r.amount_cents, onOpen: () => explainExpenses(r, shownView), note: r.previous_cents ? `comparação ${formatEuro(r.previous_cents)}` : undefined }))} />
           : <p className="dash-muted">Sem valores nesta vista no período.{shownView.key !== "operating" && expenses?.rubrics_without_nature ? " As rubricas por definir entram nos custos operacionais." : ""}</p>}
         {fiscalVat && <div className="dash-vat-block"><dl className="dash-vat-detail" aria-label="IVA do período">
