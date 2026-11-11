@@ -12,7 +12,7 @@ página `Obrigações e Prazos` (`frontend/src/Obligations.tsx`), API `backend/a
 | 2. Estrutura de obrigações e motor de recorrências | Concluída (migração **0078**) |
 | 3. Painel e calendário | Concluída |
 | 4. Contratos (pré-aviso de denúncia, fidelização, renovação) | Concluída (migração **0083**) — ver «Contratos» |
-| 5. Viaturas (ficha, IUC e inspeção por categoria e idade) | Por fazer: hoje regista-se cada prazo da viatura como obrigação |
+| 5. Viaturas (ficha, IUC e inspeção por categoria e idade) | Concluída (migração **0084**) — ver «Viaturas» |
 | 6. Obrigações fiscais com modelos de regra «a validar» | Por fazer: hoje registam-se manualmente, com a origem da data |
 | 7. Alertas internos e por email (adesão do utilizador) | Por fazer: os estados e a confirmação de leitura já existem |
 | 8. Integração financeira (previsão de liquidez, orçamento) e documental (arquivo) | Por fazer |
@@ -60,6 +60,28 @@ Separador **Contratos** (`frontend/src/Contracts.tsx`, API `backend/app/contract
 - **Decisões, nunca automáticas** (com motivo e auditoria): *registar denúncia* (termina na próxima renovação; os
   pagamentos param aí; antes do fim da fidelização exige aceitar a eventual penalização), *renovar* (só sem renovação
   automática: nova data de fim ou mais um período), *terminar* (data efetiva) e *reativar*.
+
+## Viaturas
+
+Separador **Veículos** (`frontend/src/Vehicles.tsx`, API `backend/app/vehicles.py`, tabela `vehicles`).
+
+- **Ficha**: matrícula (normalizada para AA-00-BB; única), marca, modelo, data da primeira matrícula, categoria,
+  combustível, âmbito, responsável, IUC (valor previsto), inspeção (última inspeção ou regra manual, custo), seguro
+  (seguradora, apólice, renovação, prémio e periodicidade), próxima revisão, contrato de leasing/renting, rubrica e
+  alertas.
+- **Regras pré-configuradas como modelos «a validar»** (origem «regra legal», até serem marcadas como validadas na
+  ficha; qualquer ocorrência pode ser reagendada com a origem):
+  - *IUC*: anual, até ao último dia do mês da matrícula (confirmar no Portal das Finanças). Ao registar a viatura
+    começa no próximo prazo; os anteriores supõem-se pagos.
+  - *Inspeção*: na data de aniversário da matrícula. Ligeiro de passageiros: 4, 6 e 8 anos e depois anual; ligeiro de
+    mercadorias: 2 anos e depois anual; pesados, táxis, ambulâncias, transporte escolar e instrução: anual a partir do
+    1.º ano (confirmar no IMT/centro de inspeção). Motociclos, reboques e outros: regra manual (próxima data e, se
+    houver, intervalo em anos). Uma inspeção feita até 3 meses antes da data-limite conta para essa data.
+- **Inspeção seguinte**: concluir a inspeção (com o valor pago) regista-a como última e cria a próxima; o histórico fica.
+  Uma inspeção em atraso aparece como vencida, mesmo antiga (os prazos únicos geram-se sempre).
+- **Venda ou abate** (com motivo): os prazos futuros deixam de ser gerados; reativar volta a gerá-los.
+- As obrigações da viatura (IUC, inspeção, seguro, revisão) só se alteram pela ficha; os valores entram na previsão de
+  liquidez como estimativas.
 
 ## Painel
 

@@ -92,3 +92,5 @@
 .obl-link:hover, .obl-link:focus-visible { text-decoration-color: currentColor; }
 .obl-grid td .status-badge { margin-top: 3px; }
 .obl-hint { margin: 0; color: var(--color-muted); font-size: 13px; }
+.obl-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.obl-notes { margin: 10px 0 0; padding-left: 18px; color: var(--color-muted); font-size: 12.5px; }

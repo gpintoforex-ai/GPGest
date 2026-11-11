@@ -120,8 +120,10 @@ def sync(db, row, reference):
     end = date.fromisoformat(row.end_date) if row.end_date else None
     wanted = []
     if row.status == "ativa":
+        # Um prazo único conta sempre, mesmo muito atrasado; as recorrências só geram BEHIND dias para trás.
+        since = start if row.periodicity == "unica" else max(start, reference - timedelta(days=BEHIND))
         wanted = [d.isoformat() for d in recurrence.dates(start, row.periodicity, reference + timedelta(days=AHEAD), end=end,
-                                                          every_months=row.every_months, since=max(start, reference - timedelta(days=BEHIND)))]
+                                                          every_months=row.every_months, since=since)]
     existing = {o.rule_date: o for o in db.scalars(select(ObligationOccurrence).where(ObligationOccurrence.obligation_id == row.id))}
     for stamp in wanted:
         if stamp not in existing:
@@ -170,9 +172,11 @@ def occurrence_view(o, ob, reference, users, reads):
 
 
 def managed(ob):
-    """Obrigação gerida por um contrato (prazo de denúncia ou pagamentos): só se altera pelo contrato."""
+    """Obrigação gerida por um contrato (prazo de denúncia ou pagamentos) ou por uma viatura (IUC, inspeção,
+    seguro, revisão): só se altera pela respetiva ficha."""
     data = json.loads(ob.data or "{}")
-    return {"contract_id": data.get("contract_id"), "role": data.get("role")} if data.get("contract_id") else {"contract_id": None, "role": None}
+    return {"contract_id": data.get("contract_id"), "vehicle_id": data.get("vehicle_id"),
+            "role": data.get("role") if data.get("contract_id") or data.get("vehicle_id") else None}
 
 
 def obligation_view(ob, users, next_occurrence=None):
@@ -336,8 +340,8 @@ def update(identifier: str, data: ObligationInput, user=Depends(current), db: Se
     check_scope(user, db, data.store_id)
     if row.revision != data.revision:
         fail("A obrigação foi alterada entretanto. Volte a abri-la.", 409)
-    if managed(row)["contract_id"]:
-        fail("Esta obrigação é gerida por um contrato: altere-a na ficha do contrato.", 409)
+    if managed(row)["contract_id"] or managed(row)["vehicle_id"]:
+        fail("Esta obrigação é gerida por um contrato ou viatura: altere-a na respetiva ficha.", 409)
     validate_links(db, data)
     before = obligation_view(row, {})
     apply(row, data)
@@ -358,8 +362,8 @@ def change_status(identifier: str, data: StatusInput, user=Depends(current), db:
     check_scope(user, db, row.store_id)
     if row.revision != data.revision:
         fail("A obrigação foi alterada entretanto. Volte a abri-la.", 409)
-    if managed(row)["contract_id"]:
-        fail("Esta obrigação é gerida por um contrato: use as decisões do contrato (denunciar, renovar, terminar).", 409)
+    if managed(row)["contract_id"] or managed(row)["vehicle_id"]:
+        fail("Esta obrigação é gerida por um contrato ou viatura: use as ações da respetiva ficha.", 409)
     record(db, user, "obrigacao_estado", row.id, {"antes": row.status, "depois": data.status, "motivo": data.reason}, row.store_id)
     row.status, row.revision = data.status, row.revision + 1
     sync(db, row, today())
@@ -413,5 +417,9 @@ def occurrence_action(identifier: str, action: str, data: OccurrenceAction, user
     occurrence.revision += 1
     record(db, user, "obrigacao_prazo_" + action.replace("-", "_"), occurrence.id,
            {"obrigacao": row.id, "antes": before, "motivo": reason, "valor_efetivo": occurrence.actual_cents, "data": occurrence.due_date}, row.store_id)
+    owner = managed(row)
+    if action == "complete" and owner["vehicle_id"] and owner["role"] == "inspection":
+        from .vehicles import after_inspection
+        after_inspection(db, user, owner["vehicle_id"], occurrence.due_date)  # Cria a inspeção seguinte; o histórico fica.
     db.commit()
     return {"ok": True, "status": occurrence.status, "revision": occurrence.revision}

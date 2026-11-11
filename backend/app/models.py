@@ -2183,3 +2183,46 @@ class Contract(Base):
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class Vehicle(Base):
+    """Viatura da empresa. Gere, no motor de obrigações, o IUC, a inspeção periódica (pela categoria e idade), o
+    seguro e a revisão. As regras legais são modelos «a validar»; cada data pode ser corrigida. `obligations`
+    guarda {"iuc": id, "inspection": id, "insurance": id, "service": id}."""
+    __tablename__ = "vehicles"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str | None] = mapped_column(ForeignKey("stores.id"), nullable=True)
+    plate: Mapped[str] = mapped_column(String(20), unique=True)
+    make: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    model: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    first_registration: Mapped[str] = mapped_column(String(10))
+    category: Mapped[str] = mapped_column(String(30))
+    fuel: Mapped[str] = mapped_column(String(30), default="", server_default="")
+    # ativa, vendida ou abatida (estas terminam as obrigações; o histórico fica).
+    status: Mapped[str] = mapped_column(String(20), default="ativa", server_default="ativa")
+    responsible_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    iuc_amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    iuc_validated: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    last_inspection_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Regra manual (motociclos, reboques, outros): de N em N anos a partir da próxima data indicada.
+    inspection_manual_next: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    inspection_manual_years: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    inspection_cost_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    inspection_validated: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    insurance_entity: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    insurance_policy: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    insurance_renewal: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    insurance_amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    insurance_periodicity: Mapped[str] = mapped_column(String(20), default="anual", server_default="anual")
+    next_service_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    service_cost_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Contrato de leasing ou renting associado (ficha de contrato).
+    contract_id: Mapped[str | None] = mapped_column(ForeignKey("contracts.id"), nullable=True)
+    category_id: Mapped[str | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    alert_days: Mapped[str] = mapped_column(String(100), default="[60,30,15,7,0]", server_default="[60,30,15,7,0]")
+    obligations: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)

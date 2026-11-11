@@ -6,6 +6,7 @@ import { ActionMenu, DetailDrawer, ModuleTabs, PageHeader, useWorkspaceTab } fro
 import { api } from "./lib/api";
 import { euroToCents, formatEuro } from "./utils/format";
 import Contracts from "./Contracts";
+import Vehicles from "./Vehicles";
 import "./Obligations.css";
 
 /**
@@ -134,6 +135,7 @@ export default function Obligations({ store, stores, categories }: { store: stri
       : tab === "visao" ? <Overview data={data} actions={actions} onAll={() => drill("")} onMonth={setMonth} onOpen={openObligation} />
       : tab === "calendario" ? <section className="obl-card"><Calendar data={data} large onMonth={setMonth} /></section>
       : tab === "contrato" ? <Contracts store={store} stores={stores} categories={categories} />
+      : tab === "veiculo" ? <Vehicles store={store} stores={stores} categories={categories} />
       : <section className="obl-card" aria-label="Lista de prazos">
         <div className="obl-filters filter-bar" role="group" aria-label="Filtrar prazos">
           <label>Pesquisar<input type="search" value={filters.q} placeholder="Título, entidade ou tipo" onChange={e => setFilters({ ...filters, q: e.target.value })} /></label>
@@ -307,7 +309,7 @@ function ObligationDrawer({ value, data, stores, categories, store, onClose, onS
   return <DetailDrawer className="obl-drawer" aria-label={editing ? "Ficha da obrigação" : "Novo prazo"} busy={busy} onRequestClose={onClose}>
     <h2>{editing ? form.title : "Novo prazo"}</h2>
     {error && <Notice tone="error">{error}</Notice>}
-    {value.contract_id && <Notice tone="info">Prazo gerido pelo contrato: altere as datas, o valor e os alertas na ficha do contrato (separador Contratos). Aqui pode tratar cada ocorrência.</Notice>}
+    {(value.contract_id || value.vehicle_id) && <Notice tone="info">Prazo gerido {value.contract_id ? "pelo contrato" : "pela viatura"}: altere as datas, o valor e os alertas na ficha {value.contract_id ? "do contrato (separador Contratos)" : "da viatura (separador Veículos)"}. Aqui pode tratar cada ocorrência.</Notice>}
     <div className="obl-form">
       <label>Categoria<select value={form.category} onChange={e => set({ category: e.target.value, kind: "", ...(e.target.value === "fiscal" && !editing ? { date_source: "regra_legal", date_validated: false } : {}) })}>
         {Object.entries(CATEGORY_META).map(([key, [label]]) => <option key={key} value={key}>{label}</option>)}</select></label>
@@ -352,7 +354,7 @@ function ObligationDrawer({ value, data, stores, categories, store, onClose, onS
           <td>{o.completed_by ? `${o.completed_by} · ${fullDate(o.completed_at)}` : "—"}</td><td>{actions(o)}</td></tr>)}</tbody></table></div>
     </section>}
     <div className="ui-dialog-actions"><ActionButton type="button" onClick={onClose}>Fechar</ActionButton>
-      <ActionButton type="button" className="primary" disabled={busy || !!value.contract_id || form.title.trim().length < 2 || !form.start_date || Number.isNaN(cents)} onClick={() => void save()}>
+      <ActionButton type="button" className="primary" disabled={busy || !!value.contract_id || !!value.vehicle_id || form.title.trim().length < 2 || !form.start_date || Number.isNaN(cents)} onClick={() => void save()}>
         {editing ? "Guardar alterações" : "Criar prazo"}</ActionButton></div>
   </DetailDrawer>;
 }
