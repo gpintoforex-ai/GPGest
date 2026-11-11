@@ -2467,6 +2467,8 @@ from .budget_links import router as budget_links_router
 app.include_router(budget_links_router)
 from .conference import router as conference_router
 app.include_router(conference_router)
+from .contracts import router as contracts_router
+app.include_router(contracts_router)
 
 # Comportamento comum das tabelas: as definições registam-se ao importar table_specs.
 from . import table_specs  # noqa: E402,F401

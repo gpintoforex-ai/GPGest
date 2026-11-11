@@ -165,7 +165,14 @@ def occurrence_view(o, ob, reference, users, reads):
         "responsible": users.get(o.responsible_id or ob.responsible_id), "responsible_id": o.responsible_id or ob.responsible_id,
         "completed_at": o.completed_at.isoformat() if o.completed_at else None, "completed_by": users.get(o.completed_by),
         "read": o.id in reads, "alert_due": o.status == "pendente" and (days in alerts or days < 0),
+        **managed(ob),
     }
+
+
+def managed(ob):
+    """Obrigação gerida por um contrato (prazo de denúncia ou pagamentos): só se altera pelo contrato."""
+    data = json.loads(ob.data or "{}")
+    return {"contract_id": data.get("contract_id"), "role": data.get("role")} if data.get("contract_id") else {"contract_id": None, "role": None}
 
 
 def obligation_view(ob, users, next_occurrence=None):
@@ -177,7 +184,7 @@ def obligation_view(ob, users, next_occurrence=None):
         "start_date": ob.start_date, "end_date": ob.end_date, "alert_days": json.loads(ob.alert_days),
         "amount_cents": ob.amount_cents, "vat_rate": str(ob.vat_rate) if ob.vat_rate is not None else None,
         "date_source": ob.date_source, "date_note": ob.date_note, "date_validated": ob.date_validated, "status": ob.status,
-        "data": json.loads(ob.data), "revision": ob.revision, "next": next_occurrence,
+        "data": json.loads(ob.data), "revision": ob.revision, "next": next_occurrence, **managed(ob),
     }
 
 
@@ -257,7 +264,7 @@ def overview(store_id: str = "", month: str = "", user=Depends(current), db: Ses
         "categories": [{"key": k, "label": label, "count": sum(1 for r in active if r.category == k)} for k, label in CATEGORIES.items()],
         "per_month": [{"month": m.isoformat()[:7], "count": per_month.get(m.isoformat()[:7], 0)} for m in months],
         "fiscal": [obligation_view(r, users, next_by_obligation.get(r.id)) for r in sorted(active, key=lambda r: r.title) if r.category == "fiscal"],
-        "contracts": [v for v in upcoming if v["category"] == "contrato" and v["days"] >= 0],
+        "contracts": [v for v in upcoming if v["category"] == "contrato" and v["days"] >= 0 and v.get("role") != "payment"],
         "labels": {"categories": CATEGORIES, "states": STATES, "date_sources": DATE_SOURCES, "periodicities": recurrence.PERIODICITIES},
         "users": [{"id": u.id, "name": u.name} for u in db.scalars(select(User).where(User.active == 1)).all()],
     }
@@ -329,6 +336,8 @@ def update(identifier: str, data: ObligationInput, user=Depends(current), db: Se
     check_scope(user, db, data.store_id)
     if row.revision != data.revision:
         fail("A obrigação foi alterada entretanto. Volte a abri-la.", 409)
+    if managed(row)["contract_id"]:
+        fail("Esta obrigação é gerida por um contrato: altere-a na ficha do contrato.", 409)
     validate_links(db, data)
     before = obligation_view(row, {})
     apply(row, data)
@@ -349,6 +358,8 @@ def change_status(identifier: str, data: StatusInput, user=Depends(current), db:
     check_scope(user, db, row.store_id)
     if row.revision != data.revision:
         fail("A obrigação foi alterada entretanto. Volte a abri-la.", 409)
+    if managed(row)["contract_id"]:
+        fail("Esta obrigação é gerida por um contrato: use as decisões do contrato (denunciar, renovar, terminar).", 409)
     record(db, user, "obrigacao_estado", row.id, {"antes": row.status, "depois": data.status, "motivo": data.reason}, row.store_id)
     row.status, row.revision = data.status, row.revision + 1
     sync(db, row, today())

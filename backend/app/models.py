@@ -2142,3 +2142,44 @@ class AutomationSettings(Base):
     last_result: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
     revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class Contract(Base):
+    """Ficha de contrato (telecomunicações, renda, software, energia, leasing…).
+
+    Gere duas obrigações do motor de prazos: o prazo de denúncia (ou o fim do contrato) com os alertas, e os
+    pagamentos com valor (que alimentam a previsão de liquidez). Nada é renovado, denunciado ou terminado
+    automaticamente: só por decisão registada, com motivo e auditoria."""
+    __tablename__ = "contracts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    store_id: Mapped[str | None] = mapped_column(ForeignKey("stores.id"), nullable=True)
+    entity_id: Mapped[str | None] = mapped_column(ForeignKey("business_entities.id"), nullable=True)
+    entity_name: Mapped[str] = mapped_column(String(200))
+    contract_type: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    description: Mapped[str] = mapped_column(Text, default="", server_default="")
+    number: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    start_date: Mapped[str] = mapped_column(String(10))
+    # Fim do período em curso (data de renovação); vazio = sem termo.
+    end_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    fidelization_end: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    auto_renewal: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    renewal_months: Mapped[int] = mapped_column(Integer, default=12, server_default="12")
+    notice_days: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    # Valor de cada pagamento (com IVA) e periodicidade dos pagamentos.
+    amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    vat_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    payment_periodicity: Mapped[str] = mapped_column(String(20), default="mensal", server_default="mensal")
+    payment_every_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    first_payment_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    category_id: Mapped[str | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    responsible_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    alert_days: Mapped[str] = mapped_column(String(100), default="[90,60,30,15,7,0]", server_default="[90,60,30,15,7,0]")
+    # ativo, denunciado (termina no fim do período) ou terminado.
+    status: Mapped[str] = mapped_column(String(20), default="ativo", server_default="ativo")
+    notice_obligation_id: Mapped[str | None] = mapped_column(ForeignKey("obligations.id"), nullable=True)
+    payment_obligation_id: Mapped[str | None] = mapped_column(ForeignKey("obligations.id"), nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)

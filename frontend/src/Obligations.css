@@ -83,3 +83,12 @@
 .obl-history td small { display: block; color: var(--color-muted); font-size: 12px; }
 .ui-dialog.obl-action-dialog { width: min(560px, calc(100vw - 24px)); }
 .obl-action-dialog { display: grid; gap: 10px; }
+
+.obl-contracts-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.obl-contracts-head h2 { margin: 0; }
+.obl-contracts-summary { margin: 0 0 10px; color: var(--color-muted); font-size: 13px; }
+.workspace .obl-link, .obl-link { padding: 0; border: 0; background: none; color: var(--color-text); font: inherit; font-weight: 600; text-align: left; cursor: pointer;
+  text-decoration: underline; text-decoration-color: transparent; }
+.obl-link:hover, .obl-link:focus-visible { text-decoration-color: currentColor; }
+.obl-grid td .status-badge { margin-top: 3px; }
+.obl-hint { margin: 0; color: var(--color-muted); font-size: 13px; }

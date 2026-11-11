@@ -11,7 +11,7 @@ página `Obrigações e Prazos` (`frontend/src/Obligations.tsx`), API `backend/a
 | 1. Auditoria e plano | Concluída |
 | 2. Estrutura de obrigações e motor de recorrências | Concluída (migração **0078**) |
 | 3. Painel e calendário | Concluída |
-| 4. Contratos (pré-aviso de denúncia, fidelização, renovação) | Por fazer: hoje regista-se a data de renovação como prazo da categoria Contrato |
+| 4. Contratos (pré-aviso de denúncia, fidelização, renovação) | Concluída (migração **0083**) — ver «Contratos» |
 | 5. Viaturas (ficha, IUC e inspeção por categoria e idade) | Por fazer: hoje regista-se cada prazo da viatura como obrigação |
 | 6. Obrigações fiscais com modelos de regra «a validar» | Por fazer: hoje registam-se manualmente, com a origem da data |
 | 7. Alertas internos e por email (adesão do utilizador) | Por fazer: os estados e a confirmação de leitura já existem |
@@ -42,7 +42,27 @@ página `Obrigações e Prazos` (`frontend/src/Obligations.tsx`), API `backend/a
 - **Auditoria**: criação, alteração, mudança de estado da obrigação e todas as ações sobre ocorrências.
 - **Concorrência**: revisão na obrigação e em cada ocorrência; uma versão desatualizada é recusada (409).
 
+## Contratos
+
+Separador **Contratos** (`frontend/src/Contracts.tsx`, API `backend/app/contracts.py`, tabela `contracts`).
+
+- **Ficha**: fornecedor ou entidade, tipo, número, âmbito, início, fim do período em curso (data de renovação),
+  fim da fidelização, renovação automática (de N em N meses), pré-aviso para denúncia (dias), valor de cada pagamento
+  (com IVA) e periodicidade, primeiro pagamento, rubrica, responsável, alertas e observações.
+- **Prazo de denúncia** = renovação − pré-aviso. É este prazo que tem os alertas (90, 60, 30, 15, 7 dias e no dia),
+  não a data de renovação. Na renovação automática repete-se em cada período; sem renovação automática é um prazo
+  único («Fim do contrato») para decidir a tempo. A lista mostra a próxima renovação, o prazo de denúncia com os dias
+  em falta e o estado, a fidelização e o custo anual.
+- **Motor comum**: cada contrato gere duas obrigações (`data.contract_id`, `role` notice/payment): o prazo de
+  denúncia e os pagamentos. Os pagamentos entram na previsão de liquidez como estimativas (e cobrem a despesa
+  orçamentada da mesma rubrica e mês). Estas obrigações só se alteram pela ficha do contrato (a edição direta é
+  recusada); cada ocorrência trata-se como qualquer prazo (concluir, ler, reagendar).
+- **Decisões, nunca automáticas** (com motivo e auditoria): *registar denúncia* (termina na próxima renovação; os
+  pagamentos param aí; antes do fim da fidelização exige aceitar a eventual penalização), *renovar* (só sem renovação
+  automática: nova data de fim ou mais um período), *terminar* (data efetiva) e *reativar*.
+
 ## Painel
+
 
 - **Indicadores** (cada um abre a lista filtrada): vencidas, prazos a expirar (≤ 7 dias), próximos 30 e 90 dias
   (com o valor previsto), em dia (obrigações ativas sem prazos vencidos; concluídas no ano) e total.
