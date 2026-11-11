@@ -122,7 +122,7 @@ try:
         expect(page.locator(".sidebar")).not_to_be_in_viewport()
         page.get_by_label("Comissão (€)", exact=True).scroll_into_view_if_needed()
         commission_box = page.get_by_label("Comissão (€)", exact=True).bounding_box()
-        kind_box = page.locator(".reconciliation-confirm select").bounding_box()
+        kind_box = page.locator(".reconciliation-confirm select").first.bounding_box()
         assert commission_box["y"] > kind_box["y"] + kind_box["height"], "Campos devem ficar em linhas distintas no telemóvel."
         page.screenshot(path=str(root / ".local" / "reconciliation-mobile.png"), full_page=True)
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Layout ultrapassa largura do telemóvel."

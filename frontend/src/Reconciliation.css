@@ -325,3 +325,15 @@
 .reconciliation-rules fieldset:not(:last-child) { grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr)); align-items:end; }
 .reconciliation-rules fieldset > small, .reconciliation-rules fieldset > .checkbox { grid-column:1 / -1; }
 .reconciliation-center .reconciliation-equal-filter { display: flex; gap: 8px; align-items: center; margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--color-text); cursor: pointer; }
+.reconciliation-value-match { display: inline-flex; gap: 4px; align-items: center; width: fit-content; margin-top: 4px; padding: 1px 8px; border-radius: 999px; border: 1px solid; font-size: 11.5px; font-weight: 650; }
+.reconciliation-value-match.is-equal { color: var(--context-success); background: var(--context-success-bg); border-color: var(--context-success); }
+.reconciliation-value-match.is-different { color: var(--context-warning); background: var(--context-warning-bg); border-color: var(--context-warning); }
+.reconciliation-batch .reconciliation-value-match { display: flex; }
+.reconciliation-value-match.is-withholding { color: var(--context-info); background: var(--context-info-bg); border-color: var(--context-info); }
+.withholdings { display: grid; gap: 10px; }
+.withholdings-items { margin: 0; padding-left: 16px; font-size: 12.5px; }
+.withholdings td small { display: block; color: var(--text-secondary); font-size: 12px; }
+.withholdings td.numeric { text-align: right; white-space: nowrap; }
+.reconciliation-value-match.is-discount { color: var(--context-suggestion); background: var(--context-suggestion-bg); border-color: var(--context-suggestion); }
+.reconciliation-difference-kind { display: grid; gap: 4px; }
+.reconciliation-difference-kind small { color: var(--text-secondary); font-size: 12px; }

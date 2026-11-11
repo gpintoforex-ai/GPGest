@@ -60,6 +60,13 @@ with sync_playwright() as p:
             assert max(c.bounding_box()['y'] for c in cards) - min(c.bounding_box()['y'] for c in cards) < 2
         page.get_by_role('button', name='Por reconciliar (3)', exact=True).click()
         expect(page.locator('.reconciliation-center tbody tr')).to_have_count(3)
+        rows_now = page.locator('.reconciliation-center tbody tr')
+        same = rows_now.filter(has_text='Movimento de demonstração 0').locator('.reconciliation-value-match')
+        expect(same).to_have_text('Valor igual')
+        expect(same).to_have_class(re.compile('is-equal'))
+        other = rows_now.filter(has_text='Movimento de demonstração 1').locator('.reconciliation-value-match')
+        expect(other).to_have_text('Diferença de 10,00 €')
+        expect(other).to_have_attribute('title', re.compile(r'Movimento por associar 100,00\s€ · documento 90,00\s€'))
         equal = page.locator('.reconciliation-equal-filter')
         expect(equal).to_contain_text('Só valores iguais (1)')
         equal.locator('input').check()

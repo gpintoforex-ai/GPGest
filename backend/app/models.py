@@ -442,6 +442,11 @@ class Reconciliation(Base):
     kind: Mapped[str] = mapped_column(String(20))
     commission_cents: Mapped[int] = mapped_column(BigInteger, default=0)
     difference_cents: Mapped[int] = mapped_column(BigInteger, default=0)
+    # Parte da diferença que é retenção na fonte (IRS/IRC): retida a um fornecedor (pagamento, a entregar ao Estado)
+    # ou retida por um cliente (recebimento). Faz parte de difference_cents, nunca a excede.
+    withholding_cents: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    # Parte da diferença que é desconto financeiro (pronto pagamento): obtido num pagamento, concedido num recebimento.
+    discount_cents: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     reason: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

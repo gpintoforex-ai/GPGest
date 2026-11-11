@@ -25,7 +25,7 @@ obrigação fiscal, movimento financeiro) e cinco indicadores:
 - **Sugestões** (só propostas, pelo nome da rubrica): «IVA» → obrigação fiscal; «Mercadorias» → compra de mercadorias;
   «Imobilizado», «Investimentos», «Equipamento», «Obras» → investimento; «Transferências», «Fundos», «Suprimentos»,
   «Empréstimos», «Financiamento» → movimento financeiro; «Vencimentos», «Salários», «Ordenados», «Remunerações» →
-  custo com pessoal (os números não mudam). A rubrica «Impostos» (TSU, retenções na fonte, imposto do selo) fica nos
+  custo com pessoal (os números não mudam). «Retenções…» → obrigação fiscal (a entrega ao Estado não é custo novo). A rubrica «Impostos» (TSU, retenções na fonte, imposto do selo) fica nos
   custos operacionais: são encargos da atividade e de pessoal.
 
 ## Simulação e aprovação

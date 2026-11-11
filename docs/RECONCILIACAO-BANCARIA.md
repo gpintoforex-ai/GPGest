@@ -139,3 +139,33 @@ A grelha tem deslocação interna e cabeçalho fixo. Foi validada com 64 movimen
 - Compilação TypeScript/Vite passou; permanece o aviso de tamanho de alguns bundles.
 - O verificador global `npm run check:ui` ainda assinala elementos nativos preexistentes em `Assistant.tsx`, `WebshopSettings.tsx` e no indicador partilhado `RecordSheet.tsx`. Não assinalou os novos módulos de reconciliação. Estas ocorrências não foram substituídas nesta alteração.
 - Migração 0075 aplicada nos três esquemas da instalação local; servidor reiniciado e saúde verificada.
+
+## Retenção na fonte e desconto financeiro
+
+Quando uma fatura de fornecedor é paga com retenção na fonte (IRS/IRC), o banco mostra o valor da fatura menos a
+retenção (por exemplo, 184,50 € com base de 150,00 € pagos com 167,25 €: retenção de 11,5 %).
+
+- **Proposta:** a ZELA reconhece a retenção quando o valor por associar do movimento é igual ao disponível da fatura
+  menos base × taxa (±1 cêntimo). A taxa vem da ficha do fornecedor (Clientes e fornecedores → Retenção na fonte); sem
+  ela, são experimentadas as taxas habituais (25 %, 23 %, 20 %, 16,5 %, 11,5 %) e a proposta diz «taxa habitual:
+  confirme». Como em qualquer valor diferente, a descrição bancária tem de referir a entidade ou o documento.
+- **Indicador:** «Retenção na fonte 11,5 %: 17,25 €» (azul); valor igual a verde; outras diferenças a âmbar. O filtro
+  «Só valores iguais» inclui as propostas com retenção reconhecida.
+- **Desconto financeiro (pronto pagamento):** quando a diferença é 1 %, 1,5 %, 2 %, 2,5 %, 3 %, 4 % ou 5 % da base (ou do
+  total) da fatura (±1 cêntimo), a proposta indica «Desconto financeiro 3 %: 2,75 €» (lilás) e pede confirmação. Ex.:
+  112,56 € (base 91,51 €) pagos com 109,81 € = 3 % da base.
+- **Aceitar:** a fatura fica paga na totalidade, a retenção ou o desconto é a diferença justificada e o motivo é
+  preenchido. Também na aceitação em conjunto. Na revisão manual, «Natureza da diferença» (outra, retenção na fonte ou
+  desconto financeiro) classifica qualquer diferença de um pagamento.
+- **Retenções na fonte e descontos financeiros** (secção no fim da reconciliação): por mês do movimento, as retenções a
+  entregar ao Estado (até ao dia 20 do mês seguinte), as retidas por clientes e os descontos financeiros obtidos
+  (ganho financeiro) e concedidos. Se existir a obrigação «Retenções na fonte» (Obrigações e Prazos →
+  modelos fiscais) nesse prazo, «Usar … como valor previsto» atualiza o valor previsto da ocorrência (auditoria
+  `retencoes_valor_previsto`). Desfazer a reconciliação retira a retenção.
+- **Custos:** a entrega ao Estado não é um custo novo (o valor já está nas faturas). Registe esses pagamentos numa rubrica
+  como «Retenções na fonte», com a natureza «Obrigação fiscal» (sugerida automaticamente), para não contarem duas vezes.
+
+API: `GET /api/withholdings`, `POST /api/withholdings/forecast` (`{month, occurrence_id, revision}`); a confirmação
+`/api/reconciliation/confirm` aceita `withholding_cents` e `discount_cents` (partes da diferença de um pagamento).
+Migração 0090 (`reconciliations.withholding_cents` e `discount_cents`). Testes: `backend/tests/test_withholding.py` e `scripts/test-reconciliation-batch-ui.py`.
+

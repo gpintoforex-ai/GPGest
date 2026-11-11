@@ -60,6 +60,10 @@ class Confirmation(Strict):
     kind: Literal["pagamento", "cartao", "transferencia"] = "pagamento"
     commission_cents: int = Field(strict=True, ge=0, le=10**15, default=0)
     difference_cents: int = Field(strict=True, ge=-(10**15), le=10**15, default=0)
+    # Retenção na fonte contida na diferença (IRS/IRC retido ao fornecedor ou pelo cliente).
+    withholding_cents: int = Field(strict=True, ge=0, le=10**15, default=0)
+    # Desconto financeiro (pronto pagamento) contido na diferença.
+    discount_cents: int = Field(strict=True, ge=0, le=10**15, default=0)
     reason: str = Field(max_length=2000, default="")
     post_commission: bool = False
 
@@ -241,6 +245,58 @@ def day_label(value):
     return "/".join(reversed(value.split("-")))
 
 
+# Taxas habituais de retenção na fonte (pontos base) quando a ficha do fornecedor não indica a taxa.
+WITHHOLDING_RATES = (2500, 2300, 2000, 1650, 1150)
+MAX_WITHHOLDING_BP = 2800
+
+
+def withholding_match(bank, internal):
+    """Retenção na fonte de uma fatura de compra: o banco paga o disponível menos base × taxa (±1 cêntimo).
+    A taxa vem da ficha do fornecedor; sem ela, experimenta as taxas habituais. Só faturas sem associações."""
+    from decimal import ROUND_HALF_UP, Decimal
+    if internal["source"] != "purchase" or not internal.get("base_cents") or internal.get("associated_cents"):
+        return None
+    paid, owed = abs(bank["available_cents"]), abs(internal["available_cents"])
+    if not 0 < paid < owed or bank["amount_cents"] * internal["amount_cents"] <= 0:
+        return None
+    configured = internal.get("withholding_bp")
+    if not configured and paid == internal["base_cents"]:
+        # Pagamento igual à base: a «retenção» de 23 % seria o próprio IVA. Sem taxa na ficha, não se presume.
+        return None
+    for points in ([configured] if configured else WITHHOLDING_RATES):
+        cents = int((Decimal(internal["base_cents"]) * points / 10000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+        if cents and abs(owed - cents - paid) <= 1:
+            return {"cents": owed - paid, "basis_points": points, "base_cents": internal["base_cents"], "configured": bool(configured)}
+    return None
+
+
+# Descontos financeiros (pronto pagamento) habituais, em pontos base, sobre a base ou sobre o total da fatura.
+DISCOUNT_RATES = (100, 150, 200, 250, 300, 400, 500)
+
+
+def discount_match(bank, internal):
+    """Possível desconto financeiro: o banco paga o disponível menos base (ou total) × taxa habitual (±1 cêntimo).
+    Só faturas sem associações; é sempre uma proposta a confirmar."""
+    from decimal import ROUND_HALF_UP, Decimal
+    if internal["source"] != "purchase" or internal.get("associated_cents"):
+        return None
+    paid, owed = abs(bank["available_cents"]), abs(internal["available_cents"])
+    if not 0 < paid < owed or bank["amount_cents"] * internal["amount_cents"] <= 0:
+        return None
+    for on, basis in (("base", internal.get("base_cents")), ("total", owed)):
+        if not basis:
+            continue
+        for points in DISCOUNT_RATES:
+            cents = int((Decimal(basis) * points / 10000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+            if cents and abs(owed - cents - paid) <= 1:
+                return {"cents": owed - paid, "basis_points": points, "on": on, "basis_cents": basis}
+    return None
+
+
+def percent_label(points):
+    return f"{points / 100:.2f}".rstrip("0").rstrip(".").replace(".", ",") + " %"
+
+
 def suggestion(bank, internal, tolerance=10, named=frozenset(), amount_tolerance=0, supplier_rule=None):
     """`named`: palavras de entidades conhecidas que a descrição bancária contém. Quando a descrição
     refere uma entidade e o registo é de outra, não há proposta (salvo referência do documento).
@@ -256,9 +312,21 @@ def suggestion(bank, internal, tolerance=10, named=frozenset(), amount_tolerance
     reasons, score = [], 0
     difference = abs(bank["available_cents"] - internal["available_cents"])
     within = 0 < difference <= amount_tolerance
+    withheld = None if difference == 0 or within else withholding_match(bank, internal)
+    discounted = None if difference == 0 or within or withheld else discount_match(bank, internal)
     if bank["available_cents"] == internal["available_cents"]:
         score += 45
         reasons.append("Montante disponível igual")
+    elif discounted:
+        score += 30
+        reasons.append(f"Possível desconto financeiro de {percent_label(discounted['basis_points'])} sobre "
+                       f"{'a base' if discounted['on'] == 'base' else 'o total'} de {discounted['basis_cents'] / 100:.2f} €: "
+                       f"{discounted['cents'] / 100:.2f} € (confirme)".replace(".", ","))
+    elif withheld:
+        score += 40
+        reasons.append(f"Retenção na fonte de {percent_label(withheld['basis_points'])} sobre {withheld['base_cents'] / 100:.2f} €: "
+                       f"{withheld['cents'] / 100:.2f} €".replace(".", ",")
+                       + ("" if withheld["configured"] else " (taxa habitual: confirme)"))
     elif within:
         score += 35
         reasons.append(f"Diferença de {difference / 100:.2f} € dentro da tolerância da conta".replace(".", ","))
@@ -270,7 +338,7 @@ def suggestion(bank, internal, tolerance=10, named=frozenset(), amount_tolerance
     # Exclusão rápida antes de comparar textos (a consulta avalia todos os pares movimento/registo).
     late = days > tolerance
     if late and not (internal["source"] == "purchase" and 0 < elapsed <= 366
-                     and (bank["available_cents"] == internal["available_cents"] or within)):
+                     and (bank["available_cents"] == internal["available_cents"] or within or withheld)):
         return None
     description = short_normalized(bank["description"] + " " + bank.get("reference", ""))
     reference = short_normalized(internal["reference"] or "")
@@ -300,6 +368,7 @@ def suggestion(bank, internal, tolerance=10, named=frozenset(), amount_tolerance
     elif named and not referenced:
         return None
     # Valor diferente só com datas próximas não identifica nada: exige referência ou entidade.
+    # Valor diferente (também com retenção) exige referência ou entidade na descrição.
     if bank["available_cents"] != internal["available_cents"] and not within and not referenced and not identified:
         return None
     if supplier_rule:
@@ -318,6 +387,8 @@ def suggestion(bank, internal, tolerance=10, named=frozenset(), amount_tolerance
         "confidence": "Alta" if score >= 80 else "Média" if score >= 50 else "Baixa",
         "reasons": reasons,
         "amount_cents": min(bank["available_cents"], internal["available_cents"]),
+        **({"withholding": withheld} if withheld else {}),
+        **({"discount": discounted} if discounted else {}),
     }
 
 
@@ -419,6 +490,10 @@ def register_routes(app, current, authorize, scope, record, serial):
                 row.document,
                 "",
             )
+            from .invoice_evidence import nif_key
+            rates = (context or {}).get("withholding_rates") or {}
+            extra = {"base_cents": abs(row.base_cents) if row.base_cents else None,
+                     "withholding_bp": rates.get(nif_key(row.supplier_nif or ""))}
         elif source == "payment":
             if row.method == "numerario":
                 return None
@@ -522,7 +597,7 @@ def register_routes(app, current, authorize, scope, record, serial):
             "currency": account.currency if account else projected.get("currency") if projected else "EUR",
             "origin_source": row.source if source=="payment" else source,
             "origin_source_id": row.source_id if source=="payment" else row.id,
-
+            **(extra if source == "purchase" else {}),
         }
 
     def get_source(db, user, source, source_id):
@@ -629,6 +704,12 @@ def register_routes(app, current, authorize, scope, record, serial):
         from .models import DocumentERPLink, DocumentState, ERPDocument
         context["reversed_books"] = set(db.scalars(select(BankBookEntry.original_id).where(BankBookEntry.original_id.is_not(None))))
         context["document_states"] = dict(db.execute(select(DocumentState.purchase_id, DocumentState.treatment)).all())
+        # Taxa de retenção na fonte configurada em cada fornecedor (pelo NIF).
+        from .invoice_evidence import nif_key as entity_nif
+        from .models import BusinessEntity
+        context["withholding_rates"] = {entity_nif(e.tax_number or ""): e.withholding_basis_points for e in db.scalars(
+            select(BusinessEntity).where(BusinessEntity.withholding.is_(True), BusinessEntity.withholding_basis_points.is_not(None),
+                                         BusinessEntity.removed.is_(False)))}
         context["cancelled_erp_purchases"] = set(db.scalars(
             select(DocumentERPLink.purchase_id).join(ERPDocument, DocumentERPLink.erp_id == ERPDocument.id).where(
                 DocumentERPLink.undone_at.is_(None), ERPDocument.cancelled.is_(True))))
@@ -741,7 +822,8 @@ def register_routes(app, current, authorize, scope, record, serial):
                 days, cents = window(policy)
                 day, value = iso_day(bank["date"]).toordinal(), bank["available_cents"]
                 picked = set(by_day[bisect_left(sorted_days, day - days):bisect_right(sorted_days, day + days)])
-                picked.update(purchase_index[bisect_left(purchase_amounts, value - cents):bisect_right(purchase_amounts, value + cents)])
+                picked.update(purchase_index[bisect_left(purchase_amounts, value - cents):bisect_right(
+                    purchase_amounts, max(value + cents, value * 10000 // (10000 - MAX_WITHHOLDING_BP) + 2))])
                 matches = [s for n in sorted(picked) if (s := suggestion(bank, available[n], *effective_policy(policy, available[n], named)))
                            and s["score"] >= policy.get("min_score", 30)]
                 suggestions.extend(sorted(matches, key=lambda s: -s["score"])[:5])
@@ -970,6 +1052,9 @@ def register_routes(app, current, authorize, scope, record, serial):
             raise HTTPException(
                 422, "Indique a justificação da comissão, diferença ou transferência."
             )
+        if (data.withholding_cents or data.discount_cents) and (
+                data.kind != "pagamento" or data.withholding_cents + data.discount_cents > abs(data.difference_cents)):
+            raise HTTPException(422, "A retenção na fonte e o desconto financeiro têm de fazer parte da diferença justificada de um pagamento ou recebimento.")
         if data.post_commission and (not data.commission_cents or len(bank_accounts)!=1):
             raise HTTPException(422,"O lançamento da comissão exige uma comissão positiva e uma única conta bancária.")
         group = Reconciliation(
@@ -977,6 +1062,8 @@ def register_routes(app, current, authorize, scope, record, serial):
             kind=data.kind,
             commission_cents=data.commission_cents,
             difference_cents=data.difference_cents,
+            withholding_cents=data.withholding_cents,
+            discount_cents=data.discount_cents,
             reason=data.reason.strip(),
         )
         db.add(group)

@@ -1,6 +1,7 @@
 """Grelha da reconciliação: identificação da entidade e aceitação de sugestões em conjunto.
 APIs simuladas: nenhum dado real é lido ou alterado."""
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -105,7 +106,7 @@ with sync_playwright() as p:
         expect(page.get_by_text('1 correspondência(s) aceite(s) e registada(s) na auditoria.', exact=True)).to_be_visible()
         assert confirms[0] == {'lines': [{'source': 'bank', 'source_id': 'b0', 'amount_cents': 10000},
                                          {'source': 'payment', 'source_id': 'i0', 'amount_cents': 10000}],
-                               'kind': 'pagamento', 'commission_cents': 0, 'difference_cents': 0, 'reason': '',
+                               'kind': 'pagamento', 'commission_cents': 0, 'difference_cents': 0, 'withholding_cents': 0, 'discount_cents': 0, 'reason': '',
                                'post_commission': False}, confirms[0]
 
         # Seleção manual: b0, b1 e b2 são aceitáveis; b2 repete o documento de b1 e o agrupamento fica de fora.
@@ -129,5 +130,81 @@ with sync_playwright() as p:
         expect(page.get_by_text('Por aceitar: TRF RECEBIDA 1: O valor excede', exact=False)).to_be_visible()
         assert not errors, errors
         page.close()
+
+    # Retenção na fonte (dados fictícios): fatura de 184,50 € (base 150,00 €) paga com 167,25 € = retenção de 11,5 %.
+    withheld_bank = {**common, 'id': 'w0', 'source': 'bank', 'description': 'TRF CR SEPA+ 0001 P/ JOAO EXEMPLO', 'reference': '', 'entity': '',
+                     'amount_cents': -16725, 'available_cents': 16725, 'match_classification': 'provavel'}
+    invoice = {**common, 'id': 'p0', 'source': 'purchase', 'description': 'FACT 1/450', 'reference': 'FACT 1/450', 'entity': 'Joao Exemplo Silva',
+               'amount_cents': -18450, 'available_cents': 18450, 'base_cents': 15000}
+    proposal = {'proposal_id': 'd' * 64, 'bank_id': 'w0', 'source': 'purchase', 'source_id': 'p0', 'amount_cents': 16725, 'score': 70,
+                'confidence': 'Média', 'classification': 'provavel', 'bank_lines': [{'source': 'bank', 'source_id': 'w0', 'amount_cents': 16725}],
+                'reasons': ['Retenção na fonte de 11,5 % sobre 150,00 €: 17,25 € (taxa habitual: confirme)'],
+                'withholding': {'cents': 1725, 'basis_points': 1150, 'base_cents': 15000, 'configured': False}}
+    # Desconto financeiro (dados fictícios): 112,56 € (base 91,51 €) pagos com 109,81 € = 3 % da base.
+    discount_bank = {**withheld_bank, 'id': 'w1', 'description': 'TRF CR SEPA+ 0002 P/ SAUDE EXEMPLO', 'amount_cents': -10981, 'available_cents': 10981}
+    discount_invoice = {**invoice, 'id': 'p1', 'description': 'FT 2/2136', 'reference': 'FT 2/2136', 'entity': 'Saude Exemplo Lda',
+                        'amount_cents': -11256, 'available_cents': 11256, 'base_cents': 9151}
+    discount = {**proposal, 'proposal_id': 'e' * 64, 'bank_id': 'w1', 'source_id': 'p1', 'amount_cents': 10981,
+                'bank_lines': [{'source': 'bank', 'source_id': 'w1', 'amount_cents': 10981}],
+                'reasons': ['Possível desconto financeiro de 3 % sobre a base de 91,51 €: 2,75 € (confirme)'],
+                'discount': {'cents': 275, 'basis_points': 300, 'on': 'base', 'basis_cents': 9151}}
+    del discount['withholding']
+    data.update(banks=[withheld_bank, discount_bank], internals=[invoice, discount_invoice], suggestions=[proposal, discount], card_suggestions=[])
+    confirms = []
+    page = browser.new_page(viewport={'width': 1440, 'height': 1000}, locale='pt-PT')
+    page.clock.install(time=datetime(2026, 10, 12, 12, tzinfo=timezone.utc))
+    page.route('**/api/**', intercept)
+    page.goto('http://127.0.0.1:5174/?pagina=' + quote('Reconciliação automática'))
+    row = page.locator('.reconciliation-center tbody tr', has_text='JOAO EXEMPLO')
+    expect(row.locator('.reconciliation-value-match')).to_have_text('Retenção na fonte 11,5 %: 17,25 €')
+    expect(row.locator('.reconciliation-value-match')).to_have_class(re.compile('is-withholding'))
+    other = page.locator('.reconciliation-center tbody tr', has_text='SAUDE EXEMPLO').locator('.reconciliation-value-match')
+    expect(other).to_have_text('Desconto financeiro 3 %: 2,75 €')
+    expect(other).to_have_class(re.compile('is-discount'))
+    expect(page.locator('.reconciliation-equal-filter')).to_contain_text('Só valores iguais (2)')
+    page.get_by_label('Selecionar movimentos visíveis', exact=True).check()
+    page.get_by_role('button', name='Aceitar sugestões (2)', exact=True).click()
+    dialog = page.get_by_role('dialog', name='Aceitar sugestões em conjunto')
+    expect(dialog.locator('tbody tr', has_text='JOAO EXEMPLO')).to_contain_text('Retenção na fonte 11,5 %: 17,25 €')
+    expect(dialog.locator('tbody tr', has_text='SAUDE EXEMPLO')).to_contain_text('Desconto financeiro 3 %: 2,75 €')
+    dialog.get_by_role('button', name='Aceitar 2 correspondência(s)', exact=True).click()
+    expect(dialog).to_be_hidden()
+    by_bank = {c['lines'][0]['source_id']: c for c in confirms}
+    assert by_bank['w0'] == {'lines': [{'source': 'bank', 'source_id': 'w0', 'amount_cents': 16725}, {'source': 'purchase', 'source_id': 'p0', 'amount_cents': 18450}],
+                             'kind': 'pagamento', 'commission_cents': 0, 'difference_cents': 1725, 'withholding_cents': 1725, 'discount_cents': 0,
+                             'reason': 'Retenção na fonte de 11,5 % sobre 150,00 € (a entregar ao Estado)', 'post_commission': False}, confirms
+    assert by_bank['w1'] == {'lines': [{'source': 'bank', 'source_id': 'w1', 'amount_cents': 10981}, {'source': 'purchase', 'source_id': 'p1', 'amount_cents': 11256}],
+                             'kind': 'pagamento', 'commission_cents': 0, 'difference_cents': 275, 'withholding_cents': 0, 'discount_cents': 275,
+                             'reason': 'Desconto financeiro de 3 % sobre a base de 91,51 €', 'post_commission': False}, confirms
+    # Retenções na fonte: total do mês, prazo de entrega e valor previsto da obrigação.
+    forecasts = []
+    months = {'months': [{'kind': 'a_entregar', 'month': '2026-10', 'total_cents': 1725, 'count': 1, 'due_date': '2026-11-20',
+                          'items': [{'reconciliation_id': 'g1', 'date': '2026-10-10', 'withholding_cents': 1725, 'bank': 'TRF',
+                                     'documents': [{'document': 'FACT 1/450', 'entity': 'Joao Exemplo Silva'}]}],
+                          'occurrence': {'id': 'o1', 'title': 'Retenções na fonte (IRS/IRC) — pagamento', 'status': 'pendente',
+                                         'expected_cents': None, 'actual_cents': None, 'revision': 0}}], 'has_obligation': True}
+
+    def withholdings(route):
+        path = urlsplit(route.request.url).path.removeprefix('/api')
+        if path == '/withholdings':
+            return route.fulfill(json=months)
+        if path == '/withholdings/forecast':
+            forecasts.append(json.loads(route.request.post_data))
+            months['months'][0]['occurrence'].update(expected_cents=1725, revision=1)
+            return route.fulfill(json={'occurrence_id': 'o1', 'expected_cents': 1725, 'revision': 1})
+        return intercept(route)
+    page.unroute('**/api/**')
+    page.route('**/api/**', withholdings)
+    page.get_by_text('Retenções na fonte e descontos financeiros', exact=True).click()
+    table = page.get_by_role('table', name='Retenções na fonte por mês')
+    expect(table).to_contain_text('A entregar ao Estado')
+    expect(table).to_contain_text('Até 20/11/2026')
+    expect(table).to_contain_text('FACT 1/450 (Joao Exemplo Silva)')
+    table.get_by_role('button', name='Usar 17,25 € como valor previsto').click()
+    expect(page.get_by_text('Valor previsto da obrigação de 20/11/2026 atualizado', exact=False)).to_be_visible()
+    assert forecasts == [{'month': '2026-10', 'occurrence_id': 'o1', 'revision': 0}], forecasts
+    expect(table.get_by_role('button', name='Usar 17,25 € como valor previsto')).to_have_count(0)
+    page.screenshot(path=str(OUT / 'withholding-1440.png'), full_page=True)
+    page.close()
     browser.close()
 print('Reconciliação em lote: identificação e aceitação em conjunto OK')

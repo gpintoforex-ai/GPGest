@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Landmark, ListChecks, ListFilter, CheckCheck, FilePlus2, CheckCircle2, Clock, Sparkles, CircleAlert, Search, SlidersHorizontal, ArrowDownLeft, ArrowUpRight, Download, Settings, X, CalendarDays, CircleHelp } from "lucide-react";
+import Withholdings from "./Withholdings";
+import { Landmark, ListChecks, ListFilter, CheckCheck, FilePlus2, CheckCircle2, Clock, Sparkles, CircleAlert, Search, SlidersHorizontal, ArrowDownLeft, ArrowUpRight, Download, Settings, X, CalendarDays, CircleHelp, Equal, EqualNot } from "lucide-react";
 import { RecordIndicator, RecordGroup } from "./components/RecordSheet";
 import { ActionButton, ActionLink, AppDialog, Notice } from "./components/InteractionUI";
 import { Field } from "./components/Form";
@@ -42,10 +43,46 @@ function GroupIdentity({ proposal, internals, currency }: { proposal: Row; inter
 }
 
 /** Tratamento proposto por uma regra por descrição (movimento sem documento). */
+/** Valor proposto face ao valor por associar do movimento: igual (verde) ou diferença (âmbar), com ícone e texto. */
+function ValueMatch({ bank, proposal, internals }: { bank: Row; proposal?: Row; internals: Row[] }) {
+  if (!proposal || bank.available_cents <= 0) return null;
+  const internal = proposal.lines ? undefined : internals.find((r: Row) => r.source === proposal.source && r.id === proposal.source_id);
+  const value: number = proposal.lines ? proposal.lines.reduce((n: number, l: Row) => n + l.amount_cents, 0) : internal?.available_cents ?? proposal.amount_cents;
+  const difference = value - bank.available_cents;
+  const detail = `Movimento por associar ${money(bank.available_cents, bank.currency)} · ${proposal.lines ? "soma dos documentos" : "documento"} ${money(value, bank.currency)}`;
+  const discount = proposal.discount;
+  if (discount && difference === discount.cents) {
+    const rate = `${(discount.basis_points / 100).toLocaleString("pt-PT", { maximumFractionDigits: 2 })} %`;
+    return <span className="reconciliation-value-match is-discount" title={`${detail} · possível desconto financeiro de ${rate} sobre ${discount.on === "base" ? "a base" : "o total"} de ${money(discount.basis_cents, bank.currency)} (confirme)`}>
+      <Equal size={13} aria-hidden="true" />Desconto financeiro {rate}: {money(discount.cents, bank.currency)}</span>;
+  }
+  const withheld = proposal.withholding;
+  if (withheld && difference === withheld.cents) {
+    const rate = `${(withheld.basis_points / 100).toLocaleString("pt-PT", { maximumFractionDigits: 2 })} %`;
+    return <span className="reconciliation-value-match is-withholding" title={`${detail} · retenção na fonte de ${rate} sobre ${money(withheld.base_cents, bank.currency)}${withheld.configured ? " (taxa da ficha do fornecedor)" : " (taxa habitual: confirme)"}`}>
+      <Equal size={13} aria-hidden="true" />Retenção na fonte {rate}: {money(withheld.cents, bank.currency)}</span>;
+  }
+  return difference === 0
+    ? <span className="reconciliation-value-match is-equal" title={detail}><Equal size={13} aria-hidden="true" />Valor igual</span>
+    : <span className="reconciliation-value-match is-different" title={detail}><EqualNot size={13} aria-hidden="true" />Diferença de {money(Math.abs(difference), bank.currency)}</span>;
+}
+
 function RuleIdentity({ rule }: { rule: Row }) {
   return <span className="reconciliation-identity"><b>{rule.name}</b>
     <small>{["Regra", rule.kind_label, rule.category_name && `Rubrica ${rule.category_name}`, rule.employee_name, rule.target_account_name && `Para ${rule.target_account_name}`,
       rule.counts_as_cost ? "conta como custo" : ""].filter(Boolean).join(" · ")}</small></span>;
+}
+
+/** Retenção na fonte reconhecida na proposta: a diferença é exatamente a retenção calculada. */
+function withholdingOf(row: Row, proposal?: Row, internal?: Row) {
+  const withheld = proposal?.withholding;
+  return withheld && internal && internal.available_cents - row.available_cents === withheld.cents ? withheld : null;
+}
+
+/** Desconto financeiro reconhecido na proposta: a diferença é exatamente o desconto calculado. */
+function discountOf(row: Row, proposal?: Row, internal?: Row) {
+  const discount = proposal?.discount;
+  return discount && internal && internal.available_cents - row.available_cents === discount.cents ? discount : null;
 }
 
 export default function ReconciliationDashboard({ data, accounts, categories = [], store, account, from, to, loaded, busy, manager, admin, onAccount, onDates, onReview, onSuggestions, onReject, onManual, onReviewMultiple, onAcceptMany, onResolve }: {
@@ -62,6 +99,7 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
   const searched = amountOf(search), low = amountOf(minimum), high = amountOf(maximum);
   const [limit, setLimit] = useState(50), [expanded, setExpanded] = useState("");
   const [selection, setSelection] = useState<string[]>([]), [periodOpen, setPeriodOpen] = useState(false), [rulesOpen, setRulesOpen] = useState(false);
+  const [withholdingsOpen, setWithholdingsOpen] = useState(false);
   const scope = (r: Row) => (!store || r.store_id === store) && (!account || r.account_id === account);
   const rows: Row[] = data.banks.filter((r: Row) => scope(r) && (!from || r.date >= from) && (!to || r.date <= to));
   const proposals: Row[] = [...data.suggestions, ...(data.card_suggestions || [])].filter(p => (p.bank_lines || [{ source_id: p.bank_id }]).every((l: Row) => rows.some(r => r.id === l.source_id)));
@@ -92,6 +130,24 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
         lines: [{ source: "bank", source_id: row.id, amount_cents: row.available_cents }, ...proposal.lines.map((l: Row) => ({ source: l.source, source_id: l.source_id, amount_cents: l.amount_cents }))] };
     }
     if (!internal) return blocked("Sem proposta simples: rever individualmente");
+    const discount = discountOf(row, proposal, internal);
+    if (discount) {
+      // Desconto financeiro: a fatura fica paga na totalidade; o desconto é a diferença justificada.
+      const rate = `${(discount.basis_points / 100).toLocaleString("pt-PT", { maximumFractionDigits: 2 })} %`;
+      return { row, proposal, internal, internals: [internal], kind: "pagamento", alternatives,
+        difference_cents: Math.sign(row.amount_cents) * (row.available_cents - internal.available_cents), discount_cents: discount.cents,
+        reason: `Desconto financeiro de ${rate} sobre ${discount.on === "base" ? "a base" : "o total"} de ${(discount.basis_cents / 100).toFixed(2).replace(".", ",")} €`,
+        lines: [{ source: "bank", source_id: row.id, amount_cents: row.available_cents }, { source: internal.source, source_id: internal.id, amount_cents: internal.available_cents }] };
+    }
+    const withheld = withholdingOf(row, proposal, internal);
+    if (withheld) {
+      // Retenção na fonte: a fatura fica paga na totalidade; a retenção é a diferença justificada.
+      const rate = `${(withheld.basis_points / 100).toLocaleString("pt-PT", { maximumFractionDigits: 2 })} %`;
+      return { row, proposal, internal, internals: [internal], kind: "pagamento", alternatives,
+        difference_cents: Math.sign(row.amount_cents) * (row.available_cents - internal.available_cents), withholding_cents: withheld.cents,
+        reason: `Retenção na fonte de ${rate} sobre ${(withheld.base_cents / 100).toFixed(2).replace(".", ",")} €${row.amount_cents < 0 ? " (a entregar ao Estado)" : " (retida pelo cliente)"}`,
+        lines: [{ source: "bank", source_id: row.id, amount_cents: row.available_cents }, { source: internal.source, source_id: internal.id, amount_cents: internal.available_cents }] };
+    }
     if (proposal.amount_cents !== row.available_cents || internal.available_cents !== row.available_cents) return blocked("Valores diferentes (parcial ou comissão): rever individualmente");
     if (internal.transfer && !internal.deposit_id) return blocked("Transferência sem depósito registado exige justificação: rever individualmente");
     return { row, proposal, internal, internals: [internal], kind: internal.transfer ? "transferencia" : "pagamento", alternatives,
@@ -104,7 +160,8 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
     if (!proposal || row.available_cents <= 0 || (proposal.bank_lines || []).length > 1) return false;
     if (proposal.lines) return !proposal.commission_cents && proposal.lines.reduce((n: number, l: Row) => n + l.amount_cents, 0) === row.available_cents;
     const internal = internalOf(proposal);
-    return !!internal && internal.available_cents === row.available_cents && proposal.amount_cents === row.available_cents;
+    return !!internal && (internal.available_cents === row.available_cents && proposal.amount_cents === row.available_cents
+      || !!withholdingOf(row, proposal, internal) || !!discountOf(row, proposal, internal));
   }
   const tops = new Map<string, number>();
   for (const r of rows) { const internal = internalOf(forBank(r.id)[0]); if (internal) tops.set(key(internal), (tops.get(key(internal)) || 0) + 1); }
@@ -175,7 +232,7 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
       <aside className="panel reconciliation-center-filters" aria-label="Filtrar movimentos do extrato"><h3><SlidersHorizontal size={17} />Filtrar movimentos</h3>{filters.map(({ id, label, count, icon: Icon, tone }) => <ActionButton inferAction={false} key={id} data-filter-tone={tone} aria-pressed={filter === id} onClick={() => { setFilter(id); setLimit(50); }}><Icon size={17} /><span>{label} ({count})</span></ActionButton>)}
         <div className="reconciliation-type-filter"><Field label="Tipo de movimento"><select value={direction} onChange={e => setDirection(e.target.value)}><option value="todos">Todos os movimentos</option><option value="entradas">Recebimentos / entradas</option><option value="saidas">Pagamentos / saídas</option></select></Field><small><ArrowDownLeft size={13} /> Entradas <ArrowUpRight size={13} /> Saídas</small>
           <div className="reconciliation-amount-filter"><Field label="Valor mínimo (€)"><input inputMode="decimal" value={minimum} placeholder="0,00" aria-invalid={!!minimum.trim() && low == null} onChange={e => { setMinimum(e.target.value); setLimit(50); }} /></Field><Field label="Valor máximo (€)"><input inputMode="decimal" value={maximum} placeholder="0,00" aria-invalid={!!maximum.trim() && high == null} onChange={e => { setMaximum(e.target.value); setLimit(50); }} /></Field></div>
-          <label className="reconciliation-equal-filter" title="Proposta de documento com exatamente o mesmo valor do movimento por associar"><input type="checkbox" checked={equalOnly} onChange={e => { setEqualOnly(e.target.checked); setLimit(50); }} />Só valores iguais ({equalCount})</label></div>
+          <label className="reconciliation-equal-filter" title="Proposta de documento com exatamente o mesmo valor do movimento por associar, ou cuja diferença é a retenção na fonte ou o desconto financeiro reconhecidos"><input type="checkbox" checked={equalOnly} onChange={e => { setEqualOnly(e.target.checked); setLimit(50); }} />Só valores iguais ({equalCount})</label></div>
         <ActionButton variant="suggestion" onClick={onSuggestions}><Sparkles size={17} />Rever propostas</ActionButton>
       </aside>
       <section className="panel reconciliation-statement-panel" aria-label="Movimentos do extrato">
@@ -194,8 +251,9 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
             <td className="reconciliation-grid-date">{day(row.date)}</td><td><span>{row.description}</span>{row.reference && <small>{row.reference}</small>}{!account && <small>{row.account}</small>}</td>
             <td className={row.amount_cents < 0 ? "reconciliation-value-negative" : "reconciliation-value-positive"}>{row.amount_cents > 0 ? "+ " : ""}{money(row.amount_cents, row.currency)}{row.status === "parcial" && <small>Por associar: {money(row.available_cents, row.currency)}</small>}</td>
             <td>{row.status === "reconciliado" ? confirmed?.length ? confirmed.map((i: Row) => <Identity key={key(i)} item={i} />) : "Associação confirmada" : <span className={suggestion || rule ? "reconciliation-match-label" : "reconciliation-no-match"}>{(suggestion || rule) && <Sparkles size={14} />}{internal ? <Identity item={internal} /> : suggestion?.lines ? <GroupIdentity proposal={suggestion} internals={data.internals} currency={row.currency} /> : rule ? <RuleIdentity rule={rule} /> : "Sem correspondência"}</span>}
+              {row.status !== "reconciliado" && <ValueMatch bank={row} proposal={suggestion} internals={data.internals} />}
               {proposed.length > 0 && <ActionButton variant="quiet" className="reconciliation-proposal-toggle" onClick={() => setExpanded(expanded === row.id ? "" : row.id)} aria-expanded={expanded === row.id}>{expanded === row.id ? "Ocultar propostas" : `Ver propostas (${proposed.length})`}</ActionButton>}
-              {expanded === row.id && proposed.map((p: Row) => <div className="reconciliation-proposal" key={p.proposal_id || p.source + p.source_id}><StatusBadge tone={p.classification === "conflito" ? "danger" : p.classification === "exata" ? "success" : "suggestion"}>{classifications[p.classification] || "Sugestão"}</StatusBadge>{internalOf(p) ? <Identity item={internalOf(p)!} /> : p.lines && <GroupIdentity proposal={p} internals={data.internals} currency={row.currency} />}<p>Confiança {String(p.confidence || "").toLowerCase()} ({p.score}/100) · {p.reasons.join(" · ")}</p>{manager && <div className="actions"><ActionButton disabled={busy} variant="suggestion" onClick={() => onReview(row, p)}>Rever e aceitar</ActionButton>{p.proposal_id && <ActionButton disabled={busy} onClick={() => onReject(p)}>Rejeitar proposta</ActionButton>}</div>}</div>)}
+              {expanded === row.id && proposed.map((p: Row) => <div className="reconciliation-proposal" key={p.proposal_id || p.source + p.source_id}><StatusBadge tone={p.classification === "conflito" ? "danger" : p.classification === "exata" ? "success" : "suggestion"}>{classifications[p.classification] || "Sugestão"}</StatusBadge>{internalOf(p) ? <Identity item={internalOf(p)!} /> : p.lines && <GroupIdentity proposal={p} internals={data.internals} currency={row.currency} />}<ValueMatch bank={row} proposal={p} internals={data.internals} /><p>Confiança {String(p.confidence || "").toLowerCase()} ({p.score}/100) · {p.reasons.join(" · ")}</p>{manager && <div className="actions"><ActionButton disabled={busy} variant="suggestion" onClick={() => onReview(row, p)}>Rever e aceitar</ActionButton>{p.proposal_id && <ActionButton disabled={busy} onClick={() => onReject(p)}>Rejeitar proposta</ActionButton>}</div>}</div>)}
             </td><td><div className="reconciliation-row-actions">{suggestion && manager && row.status !== "ignorado" ? <><ActionButton variant="suggestion" disabled={busy} onClick={() => onReview(row, suggestion)} aria-label={`Rever e aceitar proposta: ${row.description}`}><Sparkles size={13} />Aceitar</ActionButton>{suggestion.proposal_id && <ActionButton variant="quiet" disabled={busy} onClick={() => onReject(suggestion)} aria-label={`Rejeitar proposta: ${row.description}`}><X size={14} /></ActionButton>}</> : rule && canSelect ? <ActionButton variant="suggestion" disabled={busy} onClick={() => onResolve(row, rule)} aria-label={`Registar pela regra «${rule.name}»: ${row.description}`}><Sparkles size={13} />Registar</ActionButton> : <StatusBadge tone={row.status === "reconciliado" ? "success" : row.match_classification === "conflito" ? "danger" : "warning"}>{row.status === "reconciliado" && <CheckCircle2 size={13} />}{row.status === "reconciliado" ? "Conciliado" : row.status === "parcial" ? "Parcial" : row.status === "ignorado" ? "Ignorado com motivo" : "Por reconciliar"}</StatusBadge>}{manager && canSelect && !suggestion && <ActionButton variant="quiet" disabled={busy} onClick={() => onReview(row)} aria-label={`Procurar lançamento: ${row.description}`}><Search size={14} /></ActionButton>}{manager && canSelect && !suggestion && !rule && <ActionButton variant="quiet" disabled={busy} onClick={() => onResolve(row)} aria-label={`Resolver sem documento: ${row.description}`} title="Registar sem documento (impostos, vencimentos, encargos, transferências)"><FilePlus2 size={14} />Resolver</ActionButton>}</div>{row.match_classification === "conflito" && <small className="reconciliation-conflict">Conflito · conferir alternativas</small>}</td>
           </tr>;
         })}</tbody></table></div>
@@ -207,6 +265,7 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
       <RecordGroup title="Evolução mensal" icon={ListChecks}><div className="reconciliation-chart"><div className="reconciliation-chart-axis"><span>100%</span><span>50%</span><span>0%</span></div><div className="reconciliation-months">{months.map(m => <div key={m.key}><span>{m.value == null ? "—" : `${m.value}%`}</span><div style={{ height: `${m.value || 0}%` }} /><small>{m.label}</small></div>)}</div></div><p className="footnote">Movimentos importados conciliados. Sem extrato: —.</p></RecordGroup>
       <RecordGroup title="Ações rápidas" icon={Sparkles}><div className="reconciliation-quick-actions"><ActionButton variant="suggestion" onClick={onSuggestions}><Sparkles size={17} />Rever sugestões ({suggested})</ActionButton><ActionButton inferAction={false} onClick={() => setFilter("sem")}><CircleHelp size={17} />Tratar sem correspondência</ActionButton>{report ? <ActionLink href={report + "&format=pdf"} target="_blank" rel="noopener noreferrer"><Download size={17} />Exportar reconciliação (PDF)</ActionLink> : <ActionButton disabled><Download size={17} />Exportar · selecione uma conta</ActionButton>}{manager && <ActionButton inferAction={false} onClick={() => setRulesOpen(true)}><ListFilter size={17} />Regras por descrição</ActionButton>}<ActionButton inferAction={false} onClick={showPeriod}><Settings size={17} />Regras, relatórios e fecho</ActionButton></div></RecordGroup>
     </div>
+    <details className="reconciliation-period-details" onToggle={e => setWithholdingsOpen(e.currentTarget.open)}><summary>Retenções na fonte e descontos financeiros</summary>{withholdingsOpen && <Withholdings revision={data} />}</details>
     <details className="reconciliation-period-details" id="reconciliation-period" open={periodOpen} onToggle={e => setPeriodOpen(e.currentTarget.open)}><summary>Fecho, saldos e histórico da reconciliação</summary><BankReconciliationPeriod account={account} from={from} to={to} revision={data} manager={manager} admin={admin} onSummary={setPeriodSummary} /></details>
     {!account && <Notice>Selecione uma conta para comparar saldos e preparar o fecho. A grelha apresenta os dados importados disponíveis.</Notice>}
     {rulesOpen && <BankRules accounts={accounts.filter(a => !store || a.store_id === store)} categories={categories} onClose={() => setRulesOpen(false)}
@@ -217,7 +276,7 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
       <div className="table-wrap"><table><caption className="sr-only">Correspondências a aceitar</caption><thead><tr><th className="reconciliation-checkbox"><span className="sr-only">Aceitar</span></th><th>Movimento do extrato</th><th>Documento proposto</th><th>Confiança</th></tr></thead><tbody>{batch.map(c => <tr key={c.row.id} className={c.blocked ? "is-blocked" : undefined}>
         <td className="reconciliation-checkbox"><input type="checkbox" aria-label={`Aceitar ${c.row.description}`} disabled={!!c.blocked || busy} checked={!c.blocked && !skipped.includes(c.row.id)} onChange={e => setSkipped(e.target.checked ? skipped.filter(id => id !== c.row.id) : [...skipped, c.row.id])} /></td>
         <td><span className="reconciliation-identity"><b>{c.row.description}</b><small>{day(c.row.date)} · {money(c.row.amount_cents, c.row.currency)}</small></span></td>
-        <td>{c.rule ? <RuleIdentity rule={c.rule} /> : c.internal ? <Identity item={c.internal} /> : c.proposal?.lines ? <GroupIdentity proposal={c.proposal} internals={data.internals} currency={c.row.currency} /> : "—"}{c.blocked && <small className="reconciliation-conflict">{c.blocked}</small>}</td>
+        <td>{c.rule ? <RuleIdentity rule={c.rule} /> : c.internal ? <Identity item={c.internal} /> : c.proposal?.lines ? <GroupIdentity proposal={c.proposal} internals={data.internals} currency={c.row.currency} /> : "—"}{!c.rule && <ValueMatch bank={c.row} proposal={c.proposal} internals={data.internals} />}{c.blocked && <small className="reconciliation-conflict">{c.blocked}</small>}</td>
         <td>{c.rule ? "Regra por descrição" : c.proposal ? <>{c.proposal.confidence} ({c.proposal.score}/100){c.alternatives > 0 && <small className="reconciliation-conflict">{c.alternatives} alternativa(s) por conferir</small>}</> : "—"}</td>
       </tr>)}</tbody></table></div>
       {busy && done > 0 && <p role="status">{done < accepting.length ? `A aceitar ${done} de ${accepting.length}…` : `${done} aceite(s). A atualizar a reconciliação…`}</p>}

@@ -82,6 +82,9 @@ export default function Reconciliation({
   const [kind, setKind] = useState("pagamento");
   const [commission, setCommission] = useState("0");
   const [difference, setDifference] = useState("0");
+  // Natureza da diferença (escolhida pelo utilizador ou pela proposta): outra, retenção na fonte ou desconto financeiro.
+  const [differenceKind, setDifferenceKind] = useState<"" | "retencao" | "desconto">("");
+  useEffect(() => { if (!centsSafe(difference)) setDifferenceKind(""); }, [difference]);
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -210,12 +213,17 @@ export default function Reconciliation({
     );
     if (!bank || !internal) return;
     const amount = (s.amount_cents / 100).toFixed(2);
-    setSelected({ [key(bank)]: amount, [key(internal)]: amount });
+    const withheld = s.withholding && internal.available_cents - bank.available_cents === s.withholding.cents ? s.withholding : null;
+    const discount = !withheld && s.discount && internal.available_cents - bank.available_cents === s.discount.cents ? s.discount : null;
+    setSelected(withheld || discount
+      ? { [key(bank)]: (bank.available_cents / 100).toFixed(2), [key(internal)]: (internal.available_cents / 100).toFixed(2) }
+      : { [key(bank)]: amount, [key(internal)]: amount });
     setView("manual"); reviewSelection();
     setCommission("0");
     setPostCommission(false);
-    setDifference("0");
-    setReason("");
+    setDifference(withheld || discount ? (Math.sign(bank.amount_cents) * (bank.available_cents - internal.available_cents) / 100).toFixed(2) : "0");
+    setDifferenceKind(withheld ? "retencao" : discount ? "desconto" : "");
+    setReason(discount ? `Desconto financeiro de ${(discount.basis_points / 100).toLocaleString("pt-PT", { maximumFractionDigits: 2 })} % sobre ${discount.on === "base" ? "a base" : "o total"} de ${(discount.basis_cents / 100).toFixed(2).replace(".", ",")} €` : withheld ? `Retenção na fonte de ${(withheld.basis_points / 100).toLocaleString("pt-PT", { maximumFractionDigits: 2 })} % sobre ${(withheld.base_cents / 100).toFixed(2).replace(".", ",")} €${bank.amount_cents < 0 ? " (a entregar ao Estado)" : " (retida pelo cliente)"}` : "");
     setKind(internal.transfer ? "transferencia" : "pagamento");
     setNotice(
       "Sugestão selecionada. Confira os movimentos e os valores antes de confirmar.",
@@ -243,7 +251,8 @@ export default function Reconciliation({
               request_key: crypto.randomUUID(), confirmed: true, acknowledge_existing: false });
           } else await api("/reconciliation/confirm", {
             lines: item.lines,
-            kind: item.kind, commission_cents: 0, difference_cents: 0, reason: "", post_commission: false,
+            kind: item.kind, commission_cents: 0, difference_cents: item.difference_cents || 0,
+            withholding_cents: item.withholding_cents || 0, discount_cents: item.discount_cents || 0, reason: item.reason || "", post_commission: false,
           });
         } catch (e) {
           refused += 1;
@@ -582,6 +591,15 @@ export default function Reconciliation({
                 Bruto − comissão + diferença = líquido. Para pagamentos
                 parciais, ajuste o valor a associar em cada movimento.
               </p>
+              <label className="reconciliation-difference-kind">Natureza da diferença
+                <select value={centsSafe(difference) !== 0 ? differenceKind : ""} disabled={busy || centsSafe(difference) === 0 || kind !== "pagamento"}
+                  onChange={e => setDifferenceKind(e.target.value as "" | "retencao" | "desconto")}>
+                  <option value="">Outra diferença (justificar)</option>
+                  <option value="retencao">Retenção na fonte (IRS/IRC)</option>
+                  <option value="desconto">Desconto financeiro (pronto pagamento)</option>
+                </select>
+                <small>Retenção e desconto ficam registados em «Retenções na fonte e descontos financeiros»; a fatura fica paga na totalidade.</small>
+              </label>
               <label className="bank-resolution-check"><input type="checkbox" checked={postCommission} disabled={busy||centsSafe(commission)<=0} onChange={e=>setPostCommission(e.target.checked)}/>Aprovo criar um movimento próprio de comissão na aplicação, na conta do extrato</label>
               <p className="footnote">A comissão indicada é uma explicação da diferença. Só cria um movimento com esta aprovação explícita. A reconciliação, por si só, preserva os saldos registados.</p>
               <label>
@@ -610,9 +628,12 @@ export default function Reconciliation({
                         kind,
                         commission_cents: cents(commission),
                         difference_cents: cents(difference),
+                        withholding_cents: differenceKind === "retencao" && kind === "pagamento" ? Math.abs(cents(difference)) : 0,
+                        discount_cents: differenceKind === "desconto" && kind === "pagamento" ? Math.abs(cents(difference)) : 0,
                         reason,
                         post_commission: postCommission,
                       });
+                      setDifferenceKind("");
                       setSelected({});
                       setCommission("0");
                       setPostCommission(false);

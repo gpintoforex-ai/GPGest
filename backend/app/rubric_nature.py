@@ -109,6 +109,10 @@ def suggestion(category):
     if "iva" in words and not any(w in words for w in ("dedutivel", "suportado")):
         return {"nature": "fiscal", **PRESETS["fiscal"],
                 "reason": "Pagamentos de IVA ao Estado são uma obrigação fiscal: o IVA liquidado nas vendas já foi recebido do cliente e não é custo."}
+    if any(w.startswith("retenc") for w in words):
+        return {"nature": "fiscal", **PRESETS["fiscal"],
+                "reason": "A entrega ao Estado das retenções na fonte não é um custo novo: o valor retido já faz parte das faturas "
+                          "dos fornecedores. É uma obrigação fiscal e uma saída de tesouraria."}
     if "mercador" in name:
         return {"nature": "mercadorias", **PRESETS["mercadorias"],
                 "reason": "Compras de mercadoria são analisadas como compras; o custo das mercadorias vendidas vem das margens."}
