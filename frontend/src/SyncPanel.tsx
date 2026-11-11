@@ -2,6 +2,17 @@ import { Notice } from "./components/InteractionUI";
 import { useEffect, useState } from "react";
 import { api } from "./lib/api";
 import { Form } from "./components/Form";
+import { DataTable } from "./components/DataTable";
+
+const resourceLabel = (resource: string) =>
+  ({
+    products: "Artigos",
+    entities: "Entidades",
+    cash_accounts: "Caixas",
+    sales: "Vendas e recebimentos",
+  })[resource] || resource;
+const syncDate = (r: any) =>
+  new Date(r.started_at).toLocaleString("pt-PT", { timeZone: "Europe/Lisbon" });
 
 const resources = [
   { id: "products", label: "Artigos" },
@@ -99,50 +110,33 @@ export default function SyncPanel({
         <p>Ative e guarde a ligação para importar.</p>
       )}
       <h4>Últimas sincronizações</h4>
-      {history.length === 0 ? (
-        <p>Ainda não existem importações.</p>
-      ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>Recurso</th>
-                <th>Estado</th>
-                <th>Lidos</th>
-                <th>Novos</th>
-                <th>Atualizados</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    {new Date(r.started_at).toLocaleString("pt-PT", {
-                      timeZone: "Europe/Lisbon",
-                    })}
-                  </td>
-                  <td>
-                    {{
-                      products: "Artigos",
-                      entities: "Entidades",
-                      cash_accounts: "Caixas",
-                      sales: "Vendas e recebimentos",
-                    }[r.resource as string] || r.resource}
-                  </td>
-                  <td>
-                    {r.status}
-                    {r.error_message && <p>{r.error_message}</p>}
-                  </td>
-                  <td>{r.read_count}</td>
-                  <td>{r.inserted_count}</td>
-                  <td>{r.updated_count}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable<any>
+        label="últimas sincronizações"
+        rows={history}
+        rowKey={(r) => String(r.id)}
+        emptyText="Ainda não existem importações."
+        exportName="sincronizacoes.csv"
+        searchText={(r) => `${resourceLabel(r.resource)} ${r.status} ${r.error_message || ""}`}
+        columns={[
+          { id: "data", label: "Data", render: (r) => syncDate(r), sortValue: (r) => r.started_at || "", exportValue: syncDate },
+          { id: "recurso", label: "Recurso", render: (r) => resourceLabel(r.resource), sortValue: (r) => resourceLabel(r.resource), exportValue: (r) => resourceLabel(r.resource) },
+          {
+            id: "estado",
+            label: "Estado",
+            sortValue: (r) => r.status,
+            exportValue: (r) => [r.status, r.error_message].filter(Boolean).join(" — "),
+            render: (r) => (
+              <>
+                {r.status}
+                {r.error_message && <p>{r.error_message}</p>}
+              </>
+            ),
+          },
+          { id: "lidos", label: "Lidos", numeric: true, render: (r) => r.read_count, sortValue: (r) => r.read_count || 0, exportValue: (r) => r.read_count },
+          { id: "novos", label: "Novos", numeric: true, render: (r) => r.inserted_count, sortValue: (r) => r.inserted_count || 0, exportValue: (r) => r.inserted_count },
+          { id: "atualizados", label: "Atualizados", numeric: true, render: (r) => r.updated_count, sortValue: (r) => r.updated_count || 0, exportValue: (r) => r.updated_count },
+        ]}
+      />
     </section>
   );
 }

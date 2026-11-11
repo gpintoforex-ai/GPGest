@@ -27,8 +27,10 @@ Em todas as tabelas, na mesma posição e com os mesmos ícones e textos:
 - **Novo …** (canto superior direito), **Editar** (lápis), **Desativar/Ativar** e **Remover** (caixote), por linha.
   **Consultar** (olho) só aparece a quem não pode editar; quem edita abre a ficha pelo lápis.
 - Pesquisa, filtro **Estado** (Ativos, Inativos, Todos), ordenação por coluna e paginação (10 a 100 por página).
-- Com integração: filtros **Origem** (IAZELA/ERP) e **Sincronização** e a barra **Integração com o ERP**
-  com um único botão, **Sincronizar**, e a regra para conflitos.
+- Com integração: filtros **Origem** (IAZELA/ERP) e **Sincronização** e o botão **Sincronizar** no
+  cabeçalho, à esquerda de **Novo …**. A regra para conflitos e a lista de operações suportadas pelo
+  conector estão na janela de sincronização (**Regra para conflitos e operações do conector**). Quando o
+  conector não permite sincronizar, o botão fica inativo e o motivo aparece por baixo da descrição da página.
 - Colunas comuns: código e descrição, origem, código no ERP, estado da sincronização e data da última
   sincronização concluída. Não há coluna de estado: um registo inativo mostra a etiqueta «Inativo» junto
   ao nome (e aparece esbatido); o filtro **Estado** escolhe Ativos, Inativos ou Todos. Os estados aparecem com ícone e texto, nunca só por cor.
@@ -127,8 +129,8 @@ Resultado e recuperação:
   códigos repetidos na própria Wintouch aparecem no aviso da sincronização.
 - `base_values` guarda os valores acordados na última sincronização. Alterado só de um lado, a alteração
   segue para o outro; alterado nos dois lados, é **conflito**.
-- A regra **Em conflito** (por tabela, só administrador) pode ser **Perguntar em cada registo**
-  (por omissão), **Prevalece o ERP** ou **Prevalece a IAZELA**. Um conflito sem decisão fica marcado e nada é alterado.
+- A regra **Em conflito** (por tabela, só administrador, na janela **Sincronizar**) pode ser **Perguntar em cada registo**
+  (por omissão), **Prevalece o ERP** ou **Prevalece a IAZELA**. Um conflito sem decisão fica marcado e nada é alterado. Mudar a regra refaz a pré-visualização.
 - Campos geridos pelo ERP (nome e NIF das entidades, com a origem das entidades no ERP) são só de leitura
   na IAZELA e prevalecem sempre do lado do ERP.
 
@@ -200,16 +202,33 @@ recusa entidades sem exatamente uma morada principal.
   É sincronizado com `PaymentMethodID`/`SupplierPaymentMethodID` através da associação entre os meios da
   Wintouch e os da IAZELA (Configuração inicial). Um meio sem associação única impede o envio, com
   indicação para a rever. Sem meio escolhido, uma entidade da Wintouch segue o meio do ERP.
+- **Retenção na fonte** (migração **0076**): «Faz retenção na fonte» e «Taxa de retenção (%)», na
+  secção de condições.
+  - **Onde se aplica:** clientes e fornecedores.
+  - **Como se guarda:** em centésimas de ponto percentual (`withholding_basis_points`, 2500 = 25 %).
+  - **Validação:** com a retenção ativa, a taxa é obrigatória e tem de ser maior do que zero; sem retenção, a taxa deixa de ficar guardada.
+  - **Wintouch:** é informação só da IAZELA, também nas entidades da Wintouch, e nunca é enviada ao ERP.
 - Ao **criar**, rubrica, prazo e meio de pagamento são obrigatórios (`create_required`); as fichas já
   existentes podem ser editadas sem eles.
-- A janela de criar/editar tem dois separadores: **Dados gerais** (identificação e contactos, localização)
-  e **Condições comerciais** (rubrica, prazo e meio de pagamento), com os botões de guardar sempre
+- A janela de criar/editar tem dois separadores (três nos fornecedores): **Dados gerais** (identificação e contactos, localização)
+  e **Condições comerciais** (rubrica, prazo e meio de pagamento; nos fornecedores também o grupo
+  **Encomendas ao fornecedor**: encomenda mínima sem portes, portes por encomenda, portes grátis a partir
+  de e prazo de entrega) e, nos fornecedores, **Validades e devoluções** (aceita devolução de produtos a
+  acabar a validade e quantos meses antes avisar, de 1 a 36, 3 por omissão), com os botões de guardar sempre
   visíveis. Os separadores ocupam o mesmo espaço, pelo que a janela não muda de tamanho ao trocar. Se
-  faltar um campo obrigatório noutro separador, a janela mostra-o ao guardar. A ficha cabe sem
-  deslocação num portátil comum (1366×768).
+  faltar um campo obrigatório noutro separador, a janela mostra-o ao guardar. As fichas com
+  separadores abrem mais largas (até 1000 px) com os campos em menos linhas, para caberem sem deslocação na
+  área útil de um portátil com o browser aberto (1366×657, verificado também a 1280×600;
+  `scripts/test-supplier-dialog-ui.py`).
 - O tipo (cliente/fornecedor) não aparece na ficha: resulta da tabela onde se cria. Editar em
   «Fornecedores» mantém a marca de cliente, e vice-versa.
 - Cada campo tem um ícone ilustrativo junto ao nome (NIF, nome, email, morada, prazo, meio, …).
+- As condições de encomenda do fornecedor ficam guardadas uma vez, nas mesmas condições comerciais usadas
+  pelas Encomendas de clientes (`supplier_order_terms`, sem migração). A ficha e o separador **Condições dos
+  fornecedores** editam os mesmos valores. A ficha só altera o mínimo, os portes, os portes grátis e o
+  prazo; descontos, escalões, preços acordados e alertas mantêm-se. Não são enviadas ao ERP: a Wintouch não
+  tem estes campos. A alteração fica na auditoria (`fornecedor_condicoes_encomenda`). Um fornecedor do
+  ERP sem ficha local passa a ter uma quando se gravam condições.
 - Em **Editar**, os botões **Anterior**/**Seguinte** mudam de registo pela ordem da listagem; com
   alterações por guardar, pede confirmação antes.
 - **NIF:** o dígito de controlo é verificado ao escrever. Ao sair do campo, um NIF português válido e

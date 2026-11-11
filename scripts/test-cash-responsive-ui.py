@@ -34,9 +34,7 @@ with sync_playwright() as p:
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.route("**/api/**", intercept)
-    page.goto("http://127.0.0.1:5174")
-    page.get_by_role("button", name="Tesouraria", exact=True).click()
-    page.get_by_role("button", name="Folha de caixa", exact=True).click()
+    page.goto("http://127.0.0.1:5174/entrar?pagina=Folha+de+caixa")
     page.get_by_text("Conferência e fecho", exact=True).click()
     table = page.locator(".local-cash-conference")
     expect(table).to_be_visible()

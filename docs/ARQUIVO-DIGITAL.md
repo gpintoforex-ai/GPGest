@@ -186,6 +186,8 @@ Cada resposta indica o modo (leitura ou escrita), a interpretação, as fontes c
 1. **Aplicar a migração:** `cd backend; ..\.venv\Scripts\alembic.exe upgrade head`.
 2. **Indexar o que já existe:** em *Arquivo digital › Visão geral*, carregar em **Atualizar arquivo** (administrador ou gestor).
 3. **Novos documentos:** entram pela *Caixa de entrada* (carregar), pela *Digitalizar documento*, pela digitalização rápida ou pelas pastas Drive configuradas.
+
+**Datas no arquivo:** Todos os documentos e Caixa de entrada abrem sem limite de datas, incluindo documentos de meses anteriores. Em Todos os documentos, preencha «Emitido desde» e/ou «Até» e escolha «Filtrar» para limitar o período. «Limpar filtros» repõe a pesquisa de todos os períodos e regressa à primeira página, mantendo a loja selecionada e as permissões de acesso.
 4. **Rever:** abrir cada documento, confirmar ou corrigir os dados e carregar em **Guardar e marcar revisto**.
 5. **Validar:** em *Associações*, validar as propostas. Pode selecionar as fortes e confirmar em lote; a confirmação mostra um resumo e pede confirmação.
 6. **Antes de entregar à contabilidade:** ver *Pendências* e *Dossiês contabilísticos*. Depois, usar *Contabilidade › Entrega à contabilidade*.
@@ -219,3 +221,9 @@ Cada resposta indica o modo (leitura ou escrita), a interpretação, as fontes c
   - outras clouds não estão implementadas: o contrato de armazenamento é extensível.
 - **Motor de relações:** trata débitos bancários (despesas). Documentos de venda/recebimento não são relacionados automaticamente.
 - **Dossiê:** a exportação continua a incluir os anexos das compras (e as digitalizações sem compra). Documentos do arquivo sem compra associada aparecem nas Pendências, mas ainda não entram no ZIP.
+
+## Destinos das Obrigações e Prazos
+
+Além de compras, documentos do ERP, movimentos e pagamentos, um documento pode ser associado (manualmente) a um
+**prazo**, a uma **obrigação**, a um **contrato** ou a uma **viatura** (comprovativos, declarações, contratos, apólices,
+documentos de viaturas). Ver [OBRIGACOES-E-PRAZOS.md](OBRIGACOES-E-PRAZOS.md#documentos-e-registos-reais).

@@ -1,0 +1,68 @@
+/* Sincronização de vendas Wintouch a partir dos movimentos de stock. Só tokens do design-system. */
+.stock-sync-dialog {
+  width: min(640px, calc(100vw - 32px));
+}
+.stock-sync-form {
+  display: grid;
+  gap: 12px;
+}
+.stock-sync-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 12px;
+}
+.stock-sync-progress {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-subtle);
+}
+.stock-sync-progress-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+.stock-sync-progress-head span {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.stock-sync-progress-bar {
+  position: relative;
+  height: 12px;
+  margin: 10px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-border);
+}
+.stock-sync-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary);
+  transition: width 0.4s ease;
+}
+/* Etapa sem total conhecido (ex.: leitura da lista de documentos): faixa em movimento. */
+.stock-sync-progress-bar.is-indeterminate span {
+  width: 35%;
+  animation: stock-sync-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes stock-sync-indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stock-sync-progress-bar.is-indeterminate span { animation: none; width: 100%; opacity: 0.45; }
+  .stock-sync-progress-bar span { transition: none; }
+}
+.stock-sync-panel-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.stock-sync-panel-title h2 {
+  margin: 0;
+}

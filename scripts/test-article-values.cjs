@@ -5,7 +5,7 @@ const source = fs.readFileSync(require("node:path").join(__dirname, "../frontend
 const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
 const moduleExports = {};
 new Function("exports", output)(moduleExports);
-const { articlePayload, articlePrices, validateArticle, newArticle } = moduleExports;
+const { articlePayload, articlePrices, validateArticle, newArticle, duplicateArticle } = moduleExports;
 
 assert.deepEqual(articlePrices("10", "23", "4"), { net: 10, gross: 12.3, cost: 4, margin: 6, marginPct: 60 });
 assert.equal(articlePrices("0", "23", "4").marginPct, null);
@@ -32,4 +32,13 @@ assert.ok(validateArticle({ ...valid, additional_photos: ["http://example.com/im
 assert.equal(articlePayload({ ...valid, internal_notes: "Equipa" }).internal_notes, "Equipa");
 assert.equal(articlePayload({ ...valid, quantity: "999", origin: "Local", average_cost: "20" }).quantity, undefined);
 assert.equal(articlePayload({ ...valid, reference: "REF" }).reference, "REF");
+const duplicate = duplicateArticle({ ...valid, id: "erp-id", origin: "ERP", erp_id: "linked", erp_price_net: "8", erp_vat_rate: "6", quantity: "40" }, [{ code: "P001-COPIA" }]);
+assert.equal(duplicate.code, "P001-COPIA-2");
+assert.deepEqual(duplicate.barcodes, []);
+assert.equal(duplicate.id, undefined);
+assert.equal(duplicate.erp_id, undefined);
+assert.equal(duplicate.quantity, undefined);
+assert.equal(duplicate.sale_net, "8");
+assert.equal(duplicate.vat_rate, "6");
+assert.deepEqual(validateArticle(duplicate, [{ code: "P001-COPIA" }]), {});
 console.log("PASS: gross margin, zero and missing values, VAT, validation, duplicates and canonical payload.");

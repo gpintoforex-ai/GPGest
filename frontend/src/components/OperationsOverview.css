@@ -1,0 +1,12 @@
+.operations-overview { margin: 16px 0 22px; min-width: 0; }
+.operations-overview-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 175px), 1fr)); gap: 12px; }
+.operations-overview > .ui-context-suggestion { margin-top: 14px; }
+.operations-overview .ui-kpi { min-width: 0; }
+.operations-overview .ui-kpi-description { overflow-wrap: anywhere; }
+@media (max-width: 540px) {
+  .operations-overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .operations-overview .ui-kpi { padding: 12px; }
+  .operations-overview .ui-kpi-value { font-size: 24px; }
+}
+
+.operations-overview-time { color: var(--text-secondary); font-size: 11px; margin: 0 0 12px; }

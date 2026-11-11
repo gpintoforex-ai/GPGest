@@ -1,0 +1,72 @@
+body {
+  margin: 0;
+  background: var(--surface-secondary);
+}
+.ui-catalog.workspace {
+  margin-left: 0;
+  width: 100%;
+  display: block;
+  min-height: 100vh;
+  background: var(--surface-secondary);
+}
+.ui-catalog.workspace > main {
+  max-width: 1400px;
+  margin: auto;
+  padding: 24px;
+}
+.ui-catalog-header {
+  min-height: 0;
+  height: auto;
+  padding: 0;
+  position: static;
+  background: transparent;
+  border: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.ui-catalog-header h1 {
+  font-size: 30px;
+  margin: 4px 0;
+}
+.ui-catalog-header p {
+  margin: 6px 0;
+}
+.ui-catalog .panel,
+.ui-catalog .ui-module-overview {
+  margin-bottom: 18px;
+}
+.ui-catalog .panel > h2 {
+  margin: 0 0 16px;
+  font-size: 19px;
+}
+.ui-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 12px;
+}
+.ui-catalog-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.ui-catalog .doc-overview-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+}
+.ui-catalog output {
+  display: block;
+  padding: 12px;
+  color: var(--text-primary);
+}
+@media (max-width: 600px) {
+  .ui-catalog.workspace > main {
+    padding: 12px;
+  }
+  .ui-catalog-header {
+    flex-direction: column;
+  }
+}

@@ -36,7 +36,7 @@ from .cash_sheet import day as sheet_day_of
 from .cash_sheet import summary as sheet_summary
 from .access import authorize, cents, current, record, scope, serial
 from .db import db_session
-from .entities import list_entities
+from .entities import list_entities, supplier_missing
 from .table_rules import ensure_usable
 from .models import (
     Access,
@@ -343,6 +343,12 @@ def change_password(
     return {"ok": True}
 
 
+def stock_quantity_decimals(db):
+    from .inventory import settings as stock_settings
+
+    return stock_settings(db)["quantity_decimals"]
+
+
 @app.get("/api/bootstrap")
 def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
     ids = scope(user, db)
@@ -376,6 +382,8 @@ def bootstrap(user=Depends(current), db: Session = Depends(db_session)):
         "user": serial(user),
         "mode": db.info.get("company", {}).get("mode", os.getenv("APP_MODE", "real")),
         "company": {**profile, **db.info.get("company", {})},
+        # Casas decimais das quantidades (Artigos → Parâmetros), usadas em todos os ecrãs.
+        "quantity_decimals": stock_quantity_decimals(db),
         "stores": [serial(s) for s in db.scalars(select(Store).where(Store.id.in_(ids)))],
         "registers": [
             {**serial(r), "last_opening_cents": opening}
@@ -747,6 +755,17 @@ def cash_payment_method_status(method_id: str, data: PaymentMethodStatus, user=D
     return {**current_method, "active": data.active}
 
 
+def incomplete_supplier(view):
+    """Os débitos só se atribuem a fornecedores com rubrica, meio e prazo de pagamento na ficha."""
+    missing = supplier_missing(view)
+    if missing:
+        raise HTTPException(
+            422,
+            f"Complete a ficha do fornecedor «{view['name']}» antes de lhe atribuir débitos: "
+            f"falta {', '.join(missing)}. Use Tabelas → Fornecedores.",
+        )
+
+
 @app.post("/api/sessions/{session_id}/close")
 def close_session(
     session_id: str,
@@ -795,6 +814,7 @@ def close_session(
             selected = active_suppliers.get(allocation.supplier_id)
             if not selected:
                 raise HTTPException(404, "Fornecedor ativo não encontrado nesta empresa.")
+            incomplete_supplier(selected)
             supplier_allocations.append({
                 "id": selected["id"],
                 "name": selected["name"],
@@ -823,6 +843,7 @@ def close_session(
         supplier = next((e for e in list_entities(user, db) if e["id"] == data.supplier_id and e["is_supplier"] and e["active"]), None)
         if not supplier:
             raise HTTPException(404, "Fornecedor ativo não encontrado nesta empresa.")
+        incomplete_supplier(supplier)
     supplier_name = supplier["name"] if supplier else data.supplier_name.strip()
     if data.supplier_answer == "indicado" and not supplier_allocations and len(supplier_name) < 2:
         raise HTTPException(422, "Indique o nome do fornecedor dos débitos.")
@@ -1784,7 +1805,10 @@ def company_sales_list(user=Depends(current), db: Session = Depends(db_session))
     for r in db.scalars(query.order_by(WintouchSaleRecord.document_date.desc())):
         if r.kind == "previsto" and r.external_id in local_owned:
             continue
+        if r.kind == "stock":
+            continue  # Entradas, saídas e transferências de stock não são vendas nem pagamentos.
         data = json.loads(r.data)
+        data.pop("lines", None)  # Linhas de artigo: só para as saídas de stock, não para a lista.
         if r.kind == "real" and not is_real_cash_movement(data):
             continue
         if r.id in supplier_overrides and (data.get("entity") or "").strip() in ("", "Entidade não indicada"):
@@ -1843,15 +1867,15 @@ def import_cash_sheet_erp(session_id: str, data: CashSheetERPImport, user=Depend
     return {"import": result, "closed": bool(session.closed_at), "sheet": session_result(db, session)}
 
 
-@app.post("/api/integrations/wintouch/sales")
-def company_sales_import(
-    data: SalesImport, user=Depends(current), db: Session = Depends(db_session)
-):
+def sales_source(data: SalesImport, user, db):
+    """Valida o pedido e a ligação Wintouch da empresa; regista a importação na auditoria."""
+    from datetime import date
+
     from cryptography.fernet import InvalidToken
 
+    from .inventory import settings as stock_settings
+    from .inventory import stock_from_erp
     from .platform import cipher, validate_url
-    from .wintouch_sales import synchronize_sales
-    from .wintouch_sync import SyncError
 
     authorize(user, db, data.store_id, ["administrador"])
     if not db.get(Store, data.store_id):
@@ -1882,12 +1906,227 @@ def company_sales_import(
         data.store_id,
     )
     db.commit()
+    # As linhas de artigo só são lidas a partir do início do controlo de stock (uma consulta por documento).
+    control = stock_settings(db)["control_start"]
+    return {
+        "company_id": company_id, "enterprise": enterprise, "url": url, "key": key,
+        "lines_from": date.fromisoformat(control) if control and not stock_from_erp(db) else None,
+    }
+
+
+def run_sales_import(db, user, data: SalesImport, source, progress=None):
+    """Importa as vendas do período e aplica as linhas ao stock (quando o controlo está ativo)."""
+    from .wintouch_sales import synchronize_sales
+    from .wintouch_stock import apply_sales_stock
+    from .wintouch_sync import SyncError
+
     try:
-        return synchronize_sales(
-            db.get_bind(), enterprise, data.store_id, data.start_date, data.end_date, url, key
+        result = synchronize_sales(
+            db.get_bind(), source["enterprise"], data.store_id, data.start_date, data.end_date,
+            source["url"], source["key"], source["lines_from"], progress,
         )
     except SyncError as exc:
         raise HTTPException(409, str(exc)) from None
+    if result["status"] == "concluida":
+        db.expire_all()
+        try:
+            result["stock"] = apply_sales_stock(
+                db, user, authorize, source["enterprise"], data.store_id, data.start_date,
+                data.end_date, data.warehouse_id, progress,
+            )
+            stock = result["stock"]
+            record(db, user, "vendas_wintouch_stock", source["company_id"], {
+                k: stock.get(k) for k in ("status", "applied", "returns", "reversed", "pending_count", "conflict_count")
+            }, data.store_id)
+            db.commit()
+        except HTTPException as exc:
+            db.rollback()
+            result["stock"] = {"status": "erro", "message": exc.detail if isinstance(exc.detail, str) else "As saídas de stock não foram aplicadas."}
+    return result
+
+
+@app.post("/api/integrations/wintouch/sales")
+def company_sales_import(
+    data: SalesImport, user=Depends(current), db: Session = Depends(db_session)
+):
+    return run_sales_import(db, user, data, sales_source(data, user, db))
+
+
+SALES_PROGRESS = "vendas:progresso"
+
+
+def sales_progress_view(run):
+    finished = run.status != "em_curso"
+    return {
+        "id": run.id,
+        "status": run.status,
+        "stage": run.current_label,
+        "done": run.done_count,
+        "total": run.total_count,
+        "error": run.error_message if run.status == "falhou" else "",
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "result": json.loads(run.results or "null") if finished else None,
+    }
+
+
+@app.post("/api/integrations/wintouch/sales/start")
+def company_sales_start(
+    data: SalesImport, user=Depends(current), db: Session = Depends(db_session)
+):
+    """Importação de vendas em segundo plano, com progresso consultável (etapa, feitos, total)."""
+    import threading
+
+    from .models import WintouchSyncRun
+
+    source = sales_source(data, user, db)
+    limit = now() - timedelta(minutes=10)
+    for stale in db.scalars(select(WintouchSyncRun).where(
+        WintouchSyncRun.enterprise_id == source["enterprise"], WintouchSyncRun.resource == SALES_PROGRESS,
+        WintouchSyncRun.status == "em_curso",
+    )):
+        if (stale.heartbeat_at or stale.started_at) < limit:
+            stale.status, stale.finished_at = "falhou", now()
+            stale.error_message = "Sincronização interrompida antes de terminar. Pode repetir o período."
+    db.commit()
+    run = WintouchSyncRun(
+        enterprise_id=source["enterprise"], resource=SALES_PROGRESS, status="em_curso",
+        current_label="A preparar", heartbeat_at=now(), results="null",
+    )
+    db.add(run)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Já existe uma sincronização de vendas em curso. Aguarde que termine.") from None
+    # Sessão própria (mesmo esquema da empresa): a do pedido fecha quando a resposta sai.
+    bind, info, run_id, user_id = db.get_bind(), dict(db.info), run.id, user.id
+
+    def work():
+        last = [0.0]
+
+        def progress(stage, done, total):
+            # No máximo ~3 escritas por segundo; a última de cada etapa é sempre gravada.
+            if monotonic() - last[0] < 0.3 and done != total:
+                return
+            last[0] = monotonic()
+            with Session(bind=bind) as tracker:
+                current_run = tracker.get(WintouchSyncRun, run_id)
+                current_run.current_label = stage[:300]
+                current_run.done_count, current_run.total_count = done, total
+                current_run.heartbeat_at = now()
+                tracker.commit()
+
+        status, error, payload = "concluida", "", None
+        with Session(bind=bind, expire_on_commit=False) as worker:
+            worker.info.update(info)
+            try:
+                payload = run_sales_import(worker, worker.get(User, user_id), data, source, progress)
+                if payload["status"] != "concluida":
+                    status, error = "falhou", payload.get("error_message") or "A importação não terminou."
+            except HTTPException as exc:
+                worker.rollback()
+                status, error = "falhou", exc.detail if isinstance(exc.detail, str) else "A importação não terminou."
+            except Exception:
+                worker.rollback()
+                status, error = "falhou", "Falha inesperada durante a sincronização. Repita o período; os registos já gravados não são duplicados."
+        with Session(bind=bind) as tracker:
+            current_run = tracker.get(WintouchSyncRun, run_id)
+            current_run.status, current_run.error_message = status, error
+            current_run.finished_at = now()
+            current_run.current_label = ""
+            # O período fica com o resultado: a página de movimentos propõe a sincronização seguinte a partir dele.
+            period = {"start": data.start_date.isoformat(), "end": data.end_date.isoformat(), "store_id": data.store_id}
+            current_run.results = json.dumps({**payload, "period": period} if isinstance(payload, dict) else {"period": period}, ensure_ascii=False, default=str)
+            tracker.commit()
+
+    threading.Thread(target=work, name="sync-vendas-wintouch", daemon=True).start()
+    return sales_progress_view(run)
+
+
+def sales_progress_run(db, run_id=None):
+    from .models import WintouchSyncRun
+
+    company_id = db.info.get("company", {}).get("id")
+    with database.next_platform_session() as core:
+        company = core.get(Company, company_id) if company_id else None
+        enterprise = company.api_enterprise if company else None
+    query = select(WintouchSyncRun).where(
+        WintouchSyncRun.resource == SALES_PROGRESS, WintouchSyncRun.enterprise_id == enterprise
+    )
+    if run_id:
+        return db.scalar(query.where(WintouchSyncRun.id == run_id))
+    return db.scalar(query.where(WintouchSyncRun.status == "em_curso").order_by(WintouchSyncRun.started_at.desc()))
+
+
+@app.get("/api/integrations/wintouch/sales/runs/{run_id}")
+def company_sales_run(run_id: str, user=Depends(current), db: Session = Depends(db_session)):
+    if user.role != "administrador":
+        raise HTTPException(403, "Só o administrador acompanha a sincronização de vendas.")
+    run = sales_progress_run(db, run_id)
+    if not run:
+        raise HTTPException(404, "Sincronização não encontrada.")
+    return sales_progress_view(run)
+
+
+@app.get("/api/integrations/wintouch/sales/stock-status")
+def company_sales_stock_status(user=Depends(current), db: Session = Depends(db_session)):
+    """Estado das vendas Wintouch nos movimentos de stock: última sincronização e período seguinte.
+
+    As compras entram só pela receção na aplicação; as vendas chegam ao stock por esta sincronização.
+    """
+    from datetime import date
+    from zoneinfo import ZoneInfo
+
+    from .inventory import settings as stock_settings
+    from .inventory import stock_from_erp
+    from .models import WintouchSyncRun
+
+    company_id = db.info.get("company", {}).get("id")
+    with database.next_platform_session() as core:
+        company = core.get(Company, company_id) if company_id else None
+        available = bool(company and company.active and company.api_active and company.erp_provider == "wintouch")
+        enterprise = company.api_enterprise if company else None
+    if not available or stock_from_erp(db):
+        return {"available": False}
+    runs = select(WintouchSyncRun).where(
+        WintouchSyncRun.enterprise_id == enterprise, WintouchSyncRun.resource == SALES_PROGRESS
+    ).order_by(WintouchSyncRun.started_at.desc())
+    running = db.scalar(runs.where(WintouchSyncRun.status == "em_curso").limit(1))
+    last = db.scalar(runs.where(WintouchSyncRun.status != "em_curso").limit(1))
+    done = db.scalar(runs.where(WintouchSyncRun.status == "concluida").limit(1))
+    today = now().astimezone(ZoneInfo("Europe/Lisbon")).date()
+    control = stock_settings(db)["control_start"]
+    # Continua no último dia sincronizado (repetir não duplica); sem histórico, no início do controlo
+    # de stock ou no início do mês.
+    period = (json.loads(done.results or "null") or {}).get("period") if done else None
+    start = date.fromisoformat(period["end"]) if period else date.fromisoformat(control) if control else today.replace(day=1)
+    if control:
+        start = max(start, date.fromisoformat(control))
+    start = min(max(start, today - timedelta(days=366)), today)
+    view = None
+    if last:
+        result = json.loads(last.results or "null") or {}
+        stock = result.get("stock") or {}
+        view = {
+            "status": last.status, "finished_at": last.finished_at, "error": last.error_message if last.status == "falhou" else "",
+            "period": result.get("period"), "stock_status": stock.get("status"), "stock_message": stock.get("message", ""),
+            "applied": stock.get("applied", 0), "pending_count": stock.get("pending_count", 0),
+            "conflict_count": stock.get("conflict_count", 0),
+        }
+    return {
+        "available": True, "can_sync": user.role == "administrador", "running": bool(running), "last": view,
+        "next_start": start.isoformat(), "next_end": today.isoformat(), "control_start": control,
+    }
+
+
+@app.get("/api/integrations/wintouch/sales/running")
+def company_sales_running(user=Depends(current), db: Session = Depends(db_session)):
+    """Sincronização de vendas ainda em curso (para retomar o acompanhamento ao reabrir)."""
+    if user.role != "administrador":
+        return None
+    run = sales_progress_run(db)
+    return sales_progress_view(run) if run else None
 
 
 def settlement_context(db, user, record_id):
@@ -2207,9 +2446,42 @@ from .procurement import register_routes as register_procurement_routes
 register_procurement_routes(app, current, authorize, scope, record)
 from .purchase_receiving import register_routes as register_purchase_receiving_routes
 register_purchase_receiving_routes(app, current, authorize, scope, record)
+from .price_review import register_routes as register_price_review_routes
+register_price_review_routes(app, current, authorize, scope, record)
+from .labels import register_routes as register_label_routes
+register_label_routes(app, current, authorize, record)
+from .purchase_process import register_routes as register_purchase_process_routes
+register_purchase_process_routes(app, current, authorize, scope)
 
 from .payment_terms import router as payment_terms_router
 app.include_router(payment_terms_router)
+# Antes das obrigações: «/api/obligations/fiscal-templates» e «…/notifications» não podem ser lidos como «/api/obligations/{id}».
+from .obligation_documents import router as obligation_documents_router
+app.include_router(obligation_documents_router)
+from .obligation_alerts import router as obligation_alerts_router
+app.include_router(obligation_alerts_router)
+from .fiscal_templates import router as fiscal_templates_router
+app.include_router(fiscal_templates_router)
+from .obligations import router as obligations_router
+app.include_router(obligations_router)
+from .budget import router as budget_router
+app.include_router(budget_router)
+from .rubric_nature import router as rubric_nature_router
+app.include_router(rubric_nature_router)
+from .fiscal_payments import router as fiscal_payments_router
+app.include_router(fiscal_payments_router)
+from .operation_trace import router as operation_trace_router
+app.include_router(operation_trace_router)
+from .classification import router as classification_router
+app.include_router(classification_router)
+from .budget_links import router as budget_links_router
+app.include_router(budget_links_router)
+from .conference import router as conference_router
+app.include_router(conference_router)
+from .contracts import router as contracts_router
+app.include_router(contracts_router)
+from .vehicles import router as vehicles_router
+app.include_router(vehicles_router)
 
 # Comportamento comum das tabelas: as definições registam-se ao importar table_specs.
 from . import table_specs  # noqa: E402,F401
@@ -2218,6 +2490,8 @@ app.include_router(tables_router)
 
 from .bank_balances import router as bank_balances_router
 app.include_router(bank_balances_router)
+from .reconciliation_center import router as reconciliation_center_router
+app.include_router(reconciliation_center_router)
 
 from .rubric_expenses import router as rubric_expenses_router
 app.include_router(rubric_expenses_router)
@@ -2240,7 +2514,22 @@ from .customer_orders import router as customer_orders_router
 app.include_router(customer_orders_router)
 from .order_cycle import router as order_cycle_router
 app.include_router(order_cycle_router)
+from .supply_center import router as supply_center_router
+app.include_router(supply_center_router)
+from .order_analytics import router as order_analytics_router
+app.include_router(order_analytics_router)
 from .market_prices import router as market_prices_router
 app.include_router(market_prices_router)
 from .article_suppliers import router as article_suppliers_router
 app.include_router(article_suppliers_router)
+from .alerts import router as alerts_router
+app.include_router(alerts_router)
+from .workspace_search import router as workspace_search_router
+app.include_router(workspace_search_router)
+from .assistant import router as assistant_router
+app.include_router(assistant_router)
+from .bank_rules import router as bank_rules_router
+app.include_router(bank_rules_router)
+
+from .webshop import router as webshop_router
+app.include_router(webshop_router)

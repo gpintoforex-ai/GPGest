@@ -148,13 +148,17 @@ def test_maximum_stock_is_validated_and_filtered(stock_case):
 
 
 def test_article_details_show_price_history_and_purchases_by_supplier(stock_case):
-    from app.models import BusinessEntity
+    from app.models import BusinessEntity, PaymentTerm
     from test_inventory import login, move, product, view
 
-    client, _, factory, _, _ = stock_case
+    client, ids, factory, _, _ = stock_case
     with factory.begin() as db:
-        first = BusinessEntity(name="Fornecedor Alfa", is_supplier=True)
-        second = BusinessEntity(name="Fornecedor Beta", is_supplier=True)
+        term = PaymentTerm(code="30D", name="30 dias", days=30)
+        db.add(term)
+        db.flush()
+        defaults = {"category_id": ids["category"], "payment_term_id": term.id, "payment_method_id": "numerario"}
+        first = BusinessEntity(name="Fornecedor Alfa", is_supplier=True, **defaults)
+        second = BusinessEntity(name="Fornecedor Beta", is_supplier=True, **defaults)
         db.add_all([first, second])
         db.flush()
         alpha, beta = first.id, second.id

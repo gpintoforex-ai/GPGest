@@ -1,0 +1,75 @@
+/* Shared application appearance, matching the article and entity record sheets.
+   Semantic status/payment colours and module layouts remain owned by their components. */
+:root, .surface-light {
+  --text-primary:#14213d; --text-secondary:#526572; --text-muted:#526572;
+  --text-label:#304653; --text-placeholder:#526572;
+  --surface-primary:#ffffff; --surface-secondary:#f4faf9; --surface-elevated:#ffffff;
+  --border-default:#d7e8e5; --border-control:#748d91; --border-focus:#087f78;
+  --action-primary:#087f78; --action-primary-hover:#06645f; --action-primary-ink:#08756f;
+  --action-primary-light:#9be9de; --action-primary-light-hover:#80ddcf; --action-primary-light-ink:#064f50;
+  --context-accent:#08756f; --context-accent-bg:#e4f9f5;
+  --selection-bg:#9be9de; --selection-ink:#064f50;
+  --save-solid:#07843d; --save-hover:#066d33;
+  --radius-control:10px; --radius-panel:14px;
+  --shadow-panel:0 2px 5px rgb(16 54 53 / 5%);
+  --page-card-shadow:var(--shadow-panel);
+  --page-card-hover-shadow:0 3px 10px rgb(16 54 53 / 7%);
+  --page-card-edge:var(--border-default);
+}
+:root[data-theme="dark"], .surface-dark {
+  --text-primary:#e8f4f3; --text-secondary:#bfd1d3; --text-muted:#bfd1d3;
+  --text-label:#dae9e8; --text-placeholder:#afc5c7;
+  --surface-primary:#142e34; --surface-secondary:#10272c; --surface-elevated:#1b3940;
+  --border-default:#2b4a50; --border-control:#78979d; --border-focus:#70e3d3;
+  --action-primary:#087f78; --action-primary-hover:#06645f; --action-primary-ink:#70e3d3;
+  --context-accent:#70e3d3; --context-accent-bg:#113c40;
+  --selection-bg:#70e3d3; --selection-ink:#064044;
+  --shadow-panel:0 2px 8px rgb(0 0 0 / 15%);
+  --page-card-hover-shadow:0 3px 12px rgb(0 0 0 / 20%);
+}
+:root[data-theme], .surface-light, .surface-dark {
+  --rs-accent:var(--context-accent); --rs-selection:var(--selection-bg); --rs-on-accent:var(--selection-ink);
+  --rs-border:var(--border-default); --rs-surface:var(--surface-primary);
+  --rs-tint:var(--context-accent-bg); --rs-canvas:var(--surface-secondary);
+  --ui-selection-bg:var(--selection-bg); --ui-selection-ink:var(--selection-ink);
+  --ui-radius-card:var(--radius-panel); --ui-radius-control:var(--radius-control);
+  --ui-card-shadow:var(--shadow-panel);
+}
+:root[data-theme] :is(body,.workspace,.platform-page) { background:var(--surface-secondary); }
+:root[data-theme] .sidebar { background:var(--surface-primary); border-color:var(--border-default); box-shadow:2px 0 8px rgb(16 54 53 / 4%); }
+:root[data-theme] .sidebar nav button { border-radius:var(--radius-control); }
+:root[data-theme] .sidebar nav button:hover:not(:disabled) { background:var(--context-accent-bg); color:var(--context-accent); }
+:root[data-theme] .sidebar nav button:is(.active,[aria-current="page"]) { background:var(--selection-bg); color:var(--selection-ink); box-shadow:inset 3px 0 var(--context-accent); }
+:root[data-theme] .sidebar nav button:is(.active,[aria-current="page"]) svg { color:inherit; }
+.workspace > header { background:var(--surface-primary); border-bottom:1px solid var(--border-default); }
+:root .avatar { background:var(--selection-bg); color:var(--selection-ink); }
+:root .workspace .doc-dashboard-section-title span,
+:root .workspace .doc-overview-card > :is(small,span),
+:root .workspace .doc-overview-card strong small { color:var(--text-secondary); }
+:root .workspace :is(.module-tabs,.doc-tabs,.deposit-tabs,.conference-tabs) > button:is(.is-active,.active,[aria-selected="true"],[aria-pressed="true"],[aria-current="page"]) {
+  background:var(--selection-bg); color:var(--selection-ink); border-color:var(--selection-bg); box-shadow:none;
+}
+:root .workspace :is(.module-tabs,.doc-tabs,.deposit-tabs,.conference-tabs) > button:hover:not(:disabled) { background:var(--context-accent-bg); color:var(--context-accent); }
+:root .workspace :is(.module-tabs,.doc-tabs,.deposit-tabs,.conference-tabs) > button:is(.is-active,.active,[aria-selected="true"],[aria-pressed="true"]):hover { background:var(--selection-bg); color:var(--selection-ink); }
+:root :is(.workspace,.platform-page,dialog) :is(.panel,.metric-card,.stat,.doc-overview-card,.dash-kpi,.dash-chart,.stock-card,.integration-card,.record-sheet-group) { border-radius:var(--radius-panel); }
+:root :is(.workspace,.platform-page,dialog) :is(input:not([type="checkbox"],[type="radio"],[type="color"]),select,textarea) { border-radius:var(--radius-control); }
+:root :is(.workspace,.platform-page,dialog) :is(button,.ui-action,.download-link) { border-radius:var(--radius-control); }
+:root :is(.workspace,.platform-page,dialog) button.primary:not(:disabled) { background:var(--action-primary); border-color:var(--action-primary); color:white; box-shadow:none; }
+:root :is(.workspace,.platform-page,dialog) button.primary[type="submit"]:not(:disabled),
+:root :is(.workspace,.platform-page,dialog) .ui-action.primary[data-action-tone="success"]:not(:disabled),
+:root :is(.workspace,.platform-page,dialog) .ui-action[data-variant="primary"][data-action-tone="success"]:not(:disabled) { background:var(--save-solid); border-color:var(--save-solid); color:white; }
+:root :is(.workspace,.platform-page,dialog) button.primary[type="submit"]:hover:not(:disabled),
+:root :is(.workspace,.platform-page,dialog) .ui-action.primary[data-action-tone="success"]:hover:not(:disabled),
+:root :is(.workspace,.platform-page,dialog) .ui-action[data-variant="primary"][data-action-tone="success"]:hover:not(:disabled) { background:var(--save-hover); border-color:var(--save-hover); }
+:root :is(.workspace,.platform-page,dialog) button.primary[data-action-tone="danger"]:not(:disabled) { background:var(--context-danger-bg); color:var(--action-danger); border-color:var(--action-danger); }
+:root :is(.workspace,.platform-page,dialog) tbody tr:hover { background:var(--context-accent-bg); }
+:root :is(.workspace,.platform-page,dialog) thead th { background:var(--surface-secondary); color:var(--text-secondary); }
+:root dialog.ui-dialog { border:1px solid var(--border-default); border-radius:20px; background:var(--surface-primary); color:var(--text-primary); }
+:root dialog.ui-dialog::backdrop { background:rgb(12 37 43 / 45%); }
+@media (prefers-reduced-motion:reduce) {
+  :root :is(.sidebar nav,.module-tabs,.doc-tabs,.deposit-tabs,.conference-tabs) button { transition:none; }
+}
+@media print {
+  :root[data-theme] :is(body,.workspace) { background:white; }
+  :root dialog.ui-dialog::backdrop { background:transparent; }
+}

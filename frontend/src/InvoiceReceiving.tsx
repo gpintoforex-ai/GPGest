@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import InvoiceOrderLink, { orderComparison, orderLinks, suggestedOrder } from "./InvoiceOrderLink";
+import { formatQuantity } from "./lib/quantity";
 import { CheckCircle2, CircleAlert, ExternalLink, Eye, EyeOff, FileText, PackagePlus, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { api } from "./lib/api";
 import { Field } from "./components/Form";
@@ -7,6 +9,8 @@ import Processing from "./tables/Processing";
 import RecordDialog from "./tables/RecordDialog";
 import SupplierPicker from "./components/SupplierPicker";
 import ReceiptFinance from "./ReceiptFinance";
+import ExpiryHint from "./components/ExpiryHint";
+import { CommercialBenefits, LineInsights, lineInsight } from "./ReceivingInsights";
 import type { TableInfo } from "./tables/types";
 import "./tables/TablePage.css";
 
@@ -105,15 +109,20 @@ function lineValues(line: Row, global: number) {
  * Receção a partir da fatura do fornecedor (PDF no Arquivo digital): lê as linhas (texto ou OCR),
  * relaciona-as com os artigos e propõe fichas novas. Nada entra em stock antes de confirmar.
  */
-export default function InvoiceReceiving({ articles, stores, categories, onClose, onDone, editReceipt }: {
+export default function InvoiceReceiving({ articles, stores, categories, canChangePrice, onPriceSaved, onClose, onDone, editReceipt, startDocument }: {
   // Receção já lançada a partir de fatura: reabre a mesma janela com o lançamento gravado.
   editReceipt?: string;
+  // Fatura do arquivo a ler logo ao abrir (ex.: «Receber mercadoria» na Conferência documental).
+  startDocument?: string;
   articles: Row[];
   stores: Row[];
   categories: Row[];
+  canChangePrice: boolean;
+  onPriceSaved: (id: string, saleNet: string, revision: number) => void;
   onClose: () => void;
-  onDone: (message: string) => void;
+  onDone: (message: string, reviewReceipt?: string) => void;
 }) {
+  const [detailIndex, setDetailIndex] = useState<number | null>(null);
   const [supplierTable, setSupplierTable] = useState<TableInfo | null>(null);
   const [supplierName, setSupplierName] = useState("");
   // Ficha do fornecedor aberta para editar (rubrica, prazo, meio de pagamento…) sem sair da receção.
@@ -126,12 +135,15 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
   const [lines, setLines] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Mensagem repetida na linha a corrigir (o topo do formulário pode ficar fora de vista).
+  const [attention, setAttention] = useState<{ line: number; message: string } | null>(null);
   const [requestKey] = useState(() => crypto.randomUUID());
   // Original da fatura ao lado da conferência (descarregado para um URL local, como no Arquivo).
   const [pdf, setPdf] = useState<{ url: string; mime: string } | null>(null);
   const [pdfError, setPdfError] = useState("");
   const [showPdf, setShowPdf] = useState(() => window.matchMedia("(min-width: 1100px)").matches);
   const pdfUrl = useRef("");
+  const formArea = useRef<HTMLDivElement>(null);
   const active = useMemo(() => articles.filter(a => a.active !== false), [articles]);
   const byLabel = useMemo(() => new Map(active.map(a => [`${a.code} · ${a.name}`, a])), [active]);
 
@@ -147,19 +159,24 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           document: data.document.number || "",
           document_type: data.document.document_type,
           document_date: data.document.issue_date,
-          warehouse_id: data.receipt.warehouse_id || data.warehouses[0]?.id || "",
+          warehouse_id: data.warehouses.some((w: Row) => w.id === data.receipt.warehouse_id) ? data.receipt.warehouse_id : "",
           document_type_id: data.receipt.document_type_id || "",
           payment_method: data.receipt.payment_method || "",
           due_date: data.receipt.due_date || data.document.issue_date,
           credit_note_purchase_ids: data.receipt.credit_note_purchase_ids || [],
           global_discount: String(global),
           match_document_totals: !!data.receipt.match_document_totals,
+          order_id: data.receipt.order_id || "",
+          allow_overdelivery: false,
         });
         setLines(data.lines.map((line: Row) => initialLine(line, global)));
       }).catch(e => setError(e.message)).finally(() => setBusy(false));
       return;
     }
-    api("/purchase-receiving/documents").then(r => setDocuments(r.rows)).catch(e => setError(e.message));
+    api("/purchase-receiving/documents").then(r => {
+      setDocuments(r.rows);
+      if (startDocument) void read(r.rows.find((row: Row) => row.id === startDocument) || { id: startDocument });
+    }).catch(e => setError(e.message));
   }, [editReceipt]);
 
   useEffect(() => {
@@ -193,7 +210,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
         match_document_totals: false,
       });
       const global = documentDiscount(data.lines);
-      setHeader(current => ({ ...current, global_discount: String(global) }));
+      setHeader(current => ({ ...current, global_discount: String(global), order_id: suggestedOrder(data.orders || [], data.lines), allow_overdelivery: false }));
       setLines(data.lines.map((line: Row) => initialLine(line, global)));
     } catch (e) {
       setError((e as Error).message);
@@ -202,7 +219,10 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
     }
   }
 
-  const change = (index: number, patch: Row) => setLines(current => current.map((line, i) => (i === index ? { ...line, ...patch } : line)));
+  const change = (index: number, patch: Row) => {
+    setAttention(current => current?.line === index ? null : current);
+    setLines(current => current.map((line, i) => (i === index ? { ...line, ...patch } : line)));
+  };
   const included = lines.filter(line => line.include);
   const globalDiscount = Number(header.global_discount || 0);
   const total = included.reduce((sum, line) => sum + lineValues(line, globalDiscount).net, 0);
@@ -221,6 +241,20 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
     const vat = rows.reduce((sum, row) => sum + row.vat, 0);
     return { rows, base, vat, total: base + vat };
   }, [lines, globalDiscount]);
+  // Rentabilidade: últimas compras dos artigos escolhidos (custo efetivo) e limites de margem/alerta.
+  const chosenArticles = [...new Set(included.filter(line => line.choice !== NEW && line.choice !== OTHER).map(line => String(line.choice)))].sort().join(",");
+  const costQuery = new URLSearchParams({ article_ids: chosenArticles, exclude: editReceipt || "" }).toString();
+  const [costResponse, setCostResponse] = useState<{ query: string; data: Row | null } | null>(null);
+  const costInfo = costResponse?.query === costQuery ? costResponse.data : null;
+  const historyState = costResponse?.query !== costQuery ? "loading" : costInfo ? "ready" : "error";
+  useEffect(() => {
+    let active = true;
+    setCostResponse(null);
+    api(`/purchase-receiving/cost-history?${costQuery}`)
+      .then(data => { if (active) setCostResponse({ query: costQuery, data }); })
+      .catch(() => { if (active) setCostResponse({ query: costQuery, data: null }); });
+    return () => { active = false; };
+  }, [costQuery]);
   const unresolved = included.filter(line => line.choice === OTHER);
   const chosenSupplier: Row | undefined = result?.suppliers.find((s: Row) => s.id === header.supplier_id);
   const supplierMissing: string[] = chosenSupplier?.missing || [];
@@ -259,18 +293,102 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
   const adjusting = canAdjust && !!header.match_document_totals;
   const adjustment = adjusting && gap ? { base: gap.base, vat: gap.vat, total: gap.base + gap.vat } : { base: 0, vat: 0, total: 0 };
 
+  /** Campo com esta etiqueta (Field, ou etiqueta que envolve o controlo), dentro de `scope`. */
+  const control = (label: string, scope: ParentNode | null | undefined = formArea.current) => {
+    const found = [...(scope?.querySelectorAll("label") || [])].find(l => l.textContent?.trim() === label) as HTMLLabelElement | undefined;
+    return (found?.control || found?.querySelector("input, select, textarea") || null) as HTMLElement | null;
+  };
+  const lineBox = (line: Row) => formArea.current?.querySelectorAll("fieldset.invoice-receiving-line")[lines.indexOf(line)] || null;
+  /** Mostra o que falta e leva ao sítio onde se corrige (o campo fica com a mensagem até ser alterado). */
+  function point(target: Element | null | undefined, message: string) {
+    setError(message);
+    const box = target?.closest("fieldset.invoice-receiving-line");
+    const boxes = [...(formArea.current?.querySelectorAll("fieldset.invoice-receiving-line") || [])];
+    setAttention(box ? { line: boxes.indexOf(box), message } : null);
+    requestAnimationFrame(() => {
+      const element = target as HTMLElement | null;
+      if (!element) return;
+      element.scrollIntoView({ block: "center", behavior: "smooth" });
+      element.focus({ preventScroll: true });
+      element.classList.add("needs-attention");
+      const native = element instanceof HTMLInputElement || element instanceof HTMLSelectElement ? element : null;
+      const clear = () => { element.classList.remove("needs-attention"); native?.setCustomValidity(""); };
+      if (native && native.type !== "checkbox") {
+        native.setCustomValidity(message);
+        native.reportValidity();
+      }
+      element.addEventListener("input", clear, { once: true });
+      element.addEventListener("change", clear, { once: true });
+      window.setTimeout(() => element.classList.remove("needs-attention"), 6000);
+    });
+  }
+  /** Primeira informação em falta para lançar, pela ordem do ecrã, com o campo onde se corrige. */
+  function blocker(order: Row | undefined): { target: Element | null; message: string } | null {
+    const editSupplierButton = formArea.current?.querySelector('[aria-label="Editar fornecedor"]') || null;
+    if (!header.supplier_id) return { target: control("Fornecedor"), message: "Escolha o fornecedor do documento." };
+    if (supplierMissing.length) return {
+      target: editSupplierButton,
+      message: `Complete a ficha do fornecedor antes de lançar: falta ${supplierMissing.join(", ")}. Use «Editar fornecedor».`,
+    };
+    if (!String(header.document || "").trim()) return { target: control("Documento do fornecedor"), message: "Indique o número do documento do fornecedor." };
+    if (!header.document_date) return { target: control("Data do documento"), message: "Indique a data do documento." };
+    if (!result?.warehouses.some((w: Row) => w.id === header.warehouse_id)) return { target: control("Armazém de entrada"), message: "Escolha um armazém de entrada ativo no estabelecimento da receção." };
+    if (!header.document_type_id) return { target: control("Tipo de documento"), message: "Escolha o tipo de documento (por exemplo FC, a crédito, ou FCD, a dinheiro)." };
+    if (!included.length) return { target: formArea.current?.querySelector("fieldset.invoice-receiving-line input[type=checkbox]") || null, message: "Inclua pelo menos uma linha da fatura." };
+    for (const line of included) {
+      const box = lineBox(line), number = lines.indexOf(line) + 1;
+      const name = line.choice === NEW ? line.newArticle.name || line.description : active.find((x: Row) => x.id === line.choice)?.name || line.description;
+      if (line.choice === OTHER) return { target: box?.querySelector("select") || box, message: `Linha ${number}: escolha o artigo em «Procurar outro artigo…».` };
+      if (!line.description.trim()) return { target: control("Descrição", box) || box, message: `Linha ${number}: indique a descrição.` };
+      if (Number(line.qty) <= 0) return { target: control("Quantidade", box) || box, message: `Linha ${number}: indique a quantidade.` };
+      if (line.choice === NEW && !String(line.newArticle.code || "").trim()) return { target: control("Código", box) || box, message: `Linha ${number}: indique o código do artigo novo.` };
+      if (line.choice === NEW && !String(line.newArticle.name || "").trim()) return { target: control("Designação", box) || box, message: `Linha ${number}: indique a designação do artigo novo.` };
+      const existing = line.choice !== NEW ? active.find((x: Row) => x.id === line.choice) : null;
+      const service = line.choice === NEW ? !!line.newArticle.service : !!existing?.service;
+      const lots = !service && (line.choice === NEW ? !!line.newArticle.lots : !!existing?.lots);
+      if (lots && !String(line.lotValue || "").trim()) return { target: control("Lote", box) || box, message: `Linha ${number}: «${name}» controla lotes; indique o lote.` };
+      if (!lots && !service && existing && (String(line.lotValue || "").trim() || line.expiryValue)) {
+        if (Number(existing.quantity || 0) > 0) return { target: control("Lote", box) || box, message: `Linha ${number}: «${name}» já tem stock sem lotes: limpe o lote e a validade da linha, ou ative os lotes na ficha do artigo.` };
+        if (!line.enableLots) return { target: box?.querySelector(".invoice-receiving-lots input[type=checkbox]") || box, message: `Linha ${number}: «${name}» não controla lotes. Ative «Controlar lotes e validades» para este artigo, ou limpe o lote e a validade.` };
+      }
+    }
+    if (orderComparison(order, lines).over && !header.allow_overdelivery) return {
+      target: control("Aceitar as quantidades acima do encomendado (entrega superior)"),
+      message: "Há quantidades acima do encomendado: confirme a entrega superior no quadro da encomenda, ou corrija as linhas.",
+    };
+    return null;
+  }
+  /** Erro devolvido pelo servidor: leva à linha («Linha N: …») ou ao campo do cabeçalho a que se refere. */
+  function pointServerError(message: string) {
+    const number = Number(/^Linha (\d+)/.exec(message)?.[1] || 0);
+    const line = number ? included[number - 1] : undefined;
+    if (line) {
+      const box = lineBox(line);
+      return point((/lote|validade/i.test(message) ? control("Lote", box) : null) || box?.querySelector("input:not([type=checkbox]), select") || box, message);
+    }
+    if (/fornecedor/i.test(message)) return point(formArea.current?.querySelector('[aria-label="Editar fornecedor"]') || control("Fornecedor"), message);
+    if (/tipo de documento/i.test(message)) return point(control("Tipo de documento"), message);
+    if (/vencimento/i.test(message)) return point(control("Vencimento"), message);
+    if (/meio de pagamento/i.test(message)) return point(control("Meio de pagamento"), message);
+    if (/armazém/i.test(message)) return point(control("Armazém de entrada"), message);
+    if (/encomenda/i.test(message)) return point(control("Encomenda recebida com esta fatura"), message);
+    setError(message);
+  }
+
   async function confirm() {
-    const missing = included.findIndex(line => !line.description.trim() || Number(line.qty) <= 0
-      || (line.choice === NEW && (!String(line.newArticle.code || "").trim() || !String(line.newArticle.name || "").trim())));
-    if (missing >= 0) {
-      const line = included[missing];
-      setError(`Linha ${lines.indexOf(line) + 1}: ${!line.description.trim() ? "indique a descrição" : Number(line.qty) <= 0 ? "indique a quantidade" : "indique o código e a designação do artigo novo"}.`);
+    const order = (result?.orders || []).find((o: Row) => o.id === header.order_id);
+    setAttention(null);
+    const problem = blocker(order);
+    if (problem) {
+      point(problem.target, problem.message);
       return;
     }
     setBusy(true); setError("");
     try {
       const body = {
         ...header,
+        order_id: order ? order.id : null,
+        allow_overdelivery: !!(order && header.allow_overdelivery),
         global_discount: String(globalDiscount || 0),
         document_type_id: header.document_type_id || null,
         payment_method: header.payment_method || null,
@@ -290,17 +408,19 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           vat: String(line.vatValue || 0),
           lot: line.lotValue,
           expiry: line.expiryValue || null,
+          enable_lots: !!line.enableLots,
+          ...orderLinks(order, line),
         })),
       };
       if (editReceipt) {
         const saved: Row = await api(`/purchase-receiving/receipts/${editReceipt}?revision=${result!.receipt.revision}`, body, { method: "PUT" });
-        onDone(`Receção atualizada: ${saved.lines} linhas; os movimentos de stock foram gerados de novo.`);
+        onDone(`Receção atualizada: ${saved.lines} linhas; os movimentos de stock foram gerados de novo.`, saved.price_review_pending ? saved.receipt_id : undefined);
         return;
       }
       const done: Row = await api(`/purchase-receiving/${reading!.id}/confirm`, body);
-      onDone(`Receção registada: ${done.lines} linhas em stock${done.created_articles ? `, ${done.created_articles} artigos novos criados` : ""}.`);
+      onDone(done.already ? "Receção já registada." : `Receção registada: ${done.lines} linhas em stock${done.created_articles ? `, ${done.created_articles} artigos novos criados` : ""}.`, done.price_review_pending ? done.receipt_id : undefined);
     } catch (e) {
-      setError((e as Error).message);
+      pointServerError((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -309,6 +429,38 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
   const shown = (documents || []).filter(d => `${d.supplier_name} ${d.supplier_nif} ${d.document} ${d.file}`.toLocaleLowerCase("pt-PT").includes(filter.toLocaleLowerCase("pt-PT")));
 
   const split = reading && showPdf;
+  const lineFields = (line: Row, index: number) => <>
+          <Field label="Quantidade"><input required type="number" min="0.000001" step="any" disabled={!line.include} value={line.qty} onChange={e => change(index, { qty: e.target.value })} /></Field>
+          <Field label="Bónus"><input type="number" min="0" step="any" disabled={!line.include} value={line.bonusQty} onChange={e => change(index, { bonusQty: e.target.value })} /></Field>
+          <Field label="Preço unitário (€)"><input required type="number" min="0" step="any" disabled={!line.include} value={line.priceValue} onChange={e => change(index, { priceValue: e.target.value })} /></Field>
+          <Field label="Desconto (%)"><input type="number" min="0" max="100" step="any" disabled={!line.include} value={line.discountValue} onChange={e => change(index, { discountValue: e.target.value })} /></Field>
+          <Field label="IVA (%)"><select value={String(Number(line.vatValue))} onChange={e => change(index, { vatValue: e.target.value })}>
+            {[...new Set(["0", "6", "13", "23", String(Number(line.vatValue))])].map(v => <option key={v} value={v}>{v}</option>)}
+          </select></Field>
+  </>;
+  const articlesById = new Map(articles.map(article => [article.id, article]));
+  const detailLines = lines.flatMap((line, index) => line.include && line.choice !== OTHER &&
+    !(line.choice === NEW ? line.newArticle.service : articlesById.get(line.choice)?.service) ? [index] : []);
+
+  function renderInsights(index: number, expanded = false) {
+    if (!detailLines.includes(index)) return null;
+    const line = lines[index];
+    const article = articlesById.get(line.choice);
+    const figures = lineValues(line, globalDiscount);
+    const insight = lineInsight(line, figures, article, costInfo?.articles?.[line.choice], costInfo?.settings, historyState);
+    const position = detailLines.indexOf(index);
+    const move = (offset: number) => {
+      const next = detailLines[position + offset];
+      return next === undefined ? undefined : () => setDetailIndex(next);
+    };
+    return <LineInsights insight={insight} article={article} newArticleVat={line.newArticle?.vat_rate}
+      canChangePrice={canChangePrice} onPriceSaved={onPriceSaved} unit={article?.unit || line.newArticle?.unit || "un"}
+      articleName={article?.name || line.description} newArticle={line.choice === NEW} onOpen={() => setDetailIndex(index)}
+      detail={expanded ? { fields: lineFields(line, index), figures, unitPrice: Number(line.priceValue),
+        quantity: Number(line.qty), bonus: Number(line.bonusQty), lineIndex: index,
+        onClose: () => setDetailIndex(null), onPrevious: move(-1), onNext: move(1) } : undefined} />;
+  }
+
   return <AppDialog autoOpen busy={busy} className={`procurement-dialog invoice-receiving${split ? " has-pdf" : ""}`} onRequestClose={onClose} aria-labelledby="invoice-receiving-title">
     <div className="panel-title invoice-receiving-title">
       <h2 id="invoice-receiving-title">{editReceipt ? "Editar receção a partir de fatura" : "Receção a partir de fatura"}</h2>
@@ -322,11 +474,11 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
     <div className={split ? "invoice-receiving-split" : undefined}>
     {split && <aside className="invoice-receiving-pdf" aria-label="Original da fatura">
       {pdf ? (pdf.mime === "application/pdf"
-        ? <iframe title={`Original de ${reading.file || "fatura"}`} src={pdf.url} />
+        ? <iframe title={`Original de ${reading.file || "fatura"}`} src={`${pdf.url}#navpanes=0&view=FitH`} />
         : <img src={pdf.url} alt={`Original de ${reading.file || "fatura"}`} />)
         : pdfError ? <Notice tone="warning">{pdfError}</Notice> : <Processing label="A abrir o original" />}
     </aside>}
-    <div className="invoice-receiving-form">
+    <div className="invoice-receiving-form" ref={formArea}>
     {error && <Notice tone="error">{error}</Notice>}
     {!reading && <>
       <p className="footnote">Escolha a fatura do fornecedor guardada no Arquivo digital. As linhas são lidas do PDF (ou por OCR, nas digitalizações) e relacionadas com os artigos; nada entra em stock antes de confirmar.</p>
@@ -361,6 +513,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
         <Field label="Documento do fornecedor"><input required value={header.document} onChange={e => setHeader({ ...header, document: e.target.value })} /></Field>
         <Field label="Data do documento"><input required type="date" value={header.document_date} onChange={e => setHeader({ ...header, document_date: e.target.value })} /></Field>
         <Field label="Armazém de entrada"><select required value={header.warehouse_id} onChange={e => setHeader({ ...header, warehouse_id: e.target.value })}>
+          <option value="" disabled>{result.warehouses.length ? "Selecionar armazém" : "Sem armazéns ativos"}</option>
           {result.warehouses.map((w: Row) => <option key={w.id} value={w.id}>{w.name}</option>)}
         </select></Field>
         <Field label="Desconto global (%)"><input type="number" min="0" max="100" step="any" value={header.global_discount}
@@ -427,6 +580,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
         {result.check.matches === true && <li className="has-items invoice-receiving-ok"><CheckCircle2 size={16} aria-hidden="true" />Soma das linhas = base do documento ({euro(result.check.document_base_cents)})</li>}
       </ul>
       {result.warnings.map((w: string) => <Notice key={w} tone="warning">{w}</Notice>)}
+      <InvoiceOrderLink orders={result.orders || []} header={header} lines={lines} onChange={patch => setHeader(current => ({ ...current, ...patch }))} />
       <datalist id="invoice-receiving-articles">{active.map(a => <option key={a.id} value={`${a.code} · ${a.name}`} />)}</datalist>
       {lines.some(needsArticle) && <p className="invoice-receiving-pending" role="status">
         <CircleAlert size={16} aria-hidden="true" /> {plural(lines.filter(needsArticle).length, "linha precisa", "linhas precisam")} de artigo (criar ou associar): assinaladas a vermelho.
@@ -437,10 +591,11 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
             {line.manual ? <span>Linha {index + 1} (acrescentada)</span> : <b>{line.description}</b>}</label>
           {line.manual && <ActionButton type="button" className="danger" aria-label={`Remover linha ${index + 1}`} onClick={() => setLines(current => current.filter((_, i) => i !== index))}><Trash2 size={16} aria-hidden="true" />Remover</ActionButton>}
           {needsArticle(line) && <span className="invoice-receiving-badge"><CircleAlert size={14} aria-hidden="true" />{line.choice === NEW ? "Artigo por criar" : "Artigo por associar"}</span>}
-          {!line.manual && <small>{[line.reference && `Ref. ${line.reference}`, line.barcode && line.barcode !== line.reference && `EAN ${line.barcode}`, `${line.quantity}${Number(line.bonus) ? ` + ${line.bonus} bónus` : ""} × ${money(line.price)}${Number(line.discount) ? ` − ${line.discount} %` : ""}${Number(line.global_discount) ? ` − ${line.global_discount} % global` : ""} = ${money(line.total)}`].filter(Boolean).join(" · ")}</small>}
+          {!line.manual && <small>{[line.reference && `Ref. ${line.reference}`, line.barcode && line.barcode !== line.reference && `EAN ${line.barcode}`, `${formatQuantity(line.quantity)}${Number(line.bonus) ? ` + ${formatQuantity(line.bonus)} bónus` : ""} × ${money(line.price)}${Number(line.discount) ? ` − ${line.discount} %` : ""}${Number(line.global_discount) ? ` − ${line.global_discount} % global` : ""} = ${money(line.total)}`].filter(Boolean).join(" · ")}</small>}
           {line.service && <small className="invoice-receiving-hint">Parece portes/serviço: não entra em stock salvo se o incluir.</small>}
           {line.include && ((line.choice === NEW && line.newArticle.service) || (line.choice === line.selected?.article_id && line.selected?.service)) && <small className="invoice-receiving-hint">Serviço: conta no valor e no IVA da fatura, mas não entra em stock.</small>}
         </legend>
+        {attention?.line === index && <Notice tone="error">{attention.message}</Notice>}
         {line.manual && <Field label="Descrição"><input required value={line.description} placeholder="Como aparece na fatura"
           onChange={e => {
             const description = e.target.value;
@@ -460,19 +615,26 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           </Field>
           {line.choice === OTHER && <Field label="Procurar artigo"><input list="invoice-receiving-articles" value={line.search} placeholder="Código ou nome"
             onChange={e => { const found = byLabel.get(e.target.value); change(index, found ? { choice: found.id, search: "" } : { search: e.target.value }); }} /></Field>}
-          <Field label="Quantidade"><input required type="number" min="0.000001" step="any" disabled={!line.include} value={line.qty} onChange={e => change(index, { qty: e.target.value })} /></Field>
-          <Field label="Bónus"><input type="number" min="0" step="any" disabled={!line.include} value={line.bonusQty} onChange={e => change(index, { bonusQty: e.target.value })} /></Field>
-          <Field label="Preço unitário (€)"><input required type="number" min="0" step="any" disabled={!line.include} value={line.priceValue} onChange={e => change(index, { priceValue: e.target.value })} /></Field>
-          <Field label="Desconto (%)"><input type="number" min="0" max="100" step="any" disabled={!line.include} value={line.discountValue} onChange={e => change(index, { discountValue: e.target.value })} /></Field>
-          <Field label="IVA (%)"><select value={String(Number(line.vatValue))} onChange={e => change(index, { vatValue: e.target.value })}>
-            {[...new Set(["0", "6", "13", "23", String(Number(line.vatValue))])].map(v => <option key={v} value={v}>{v}</option>)}
-          </select></Field>
+          {lineFields(line, index)}
           {(() => { const v = lineValues(line, globalDiscount); return <div className="invoice-receiving-cost" aria-label={`Valores de ${line.description}`}>
             <span>Valor líquido <b>{money(v.net)}</b></span>
             <span>Custo unitário <b>{money(v.cost)}</b>{v.units !== Number(line.qty) ? ` · ${round(v.units, 6)} un. em stock` : ""}</span>
           </div>; })()}
+          {renderInsights(index)}
           <Field label="Lote"><input disabled={!line.include} value={line.lotValue} onChange={e => change(index, { lotValue: e.target.value })} /></Field>
           <Field label="Validade"><input type="date" disabled={!line.include} value={line.expiryValue} onChange={e => change(index, { expiryValue: e.target.value })} /></Field>
+          {line.include && (line.lotValue || line.expiryValue) && (() => {
+            // Lote/validade num artigo sem controlo de lotes: eram descartados ao lançar.
+            const existing = line.choice !== NEW ? active.find((x: Row) => x.id === line.choice) : null;
+            if (line.choice === NEW ? line.newArticle.lots : existing?.lots) return null;
+            if (line.choice === NEW) return <div className="invoice-receiving-lots"><Notice tone="warning">O artigo novo não controla lotes: o lote e a validade não seriam guardados.</Notice>
+              <ActionButton type="button" onClick={() => change(index, { newArticle: { ...line.newArticle, lots: true, expiry: !!line.expiryValue || line.newArticle.expiry, service: false } })}>Controlar lotes e validades neste artigo novo</ActionButton></div>;
+            const withStock = Number(existing?.quantity || 0) > 0;
+            return <div className="invoice-receiving-lots"><Notice tone="warning">«{existing?.name || line.description}» não controla lotes: o lote e a validade não seriam guardados.{withStock ? " O artigo já tem stock: ative os lotes na ficha do artigo (separador Validades e lotes), indicando o lote do stock existente." : ""}</Notice>
+              {!withStock && <label className="stock-check"><input type="checkbox" checked={!!line.enableLots} onChange={e => change(index, { enableLots: e.target.checked })} />Ativar «Controlar lotes e validades» na ficha deste artigo ao lançar</label>}</div>;
+          })()}
+          {line.include && <ExpiryHint expiry={line.expiryValue} documentDate={header?.document_date || ""}
+            required={line.choice === NEW ? !!line.newArticle.lots : !!active.find((x: Row) => x.id === line.choice)?.lots} />}
         </div>
         {line.include && line.choice === NEW && <div className="invoice-receiving-new">
           <span className="invoice-receiving-new-title"><PackagePlus size={16} aria-hidden="true" />Artigo novo</span>
@@ -489,7 +651,7 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
       <div className="actions">
         <ActionButton type="button" onClick={() => setLines(current => [...current, blankLine(globalDiscount)])}><Plus size={16} aria-hidden="true" />Adicionar linha</ActionButton>
       </div>
-      {lines.length > 0 && <section className="invoice-receiving-summary" aria-label="Resumo do documento">
+      {lines.length > 0 && <div className="receiving-document-summaries"><section className="invoice-receiving-summary" aria-label="Resumo do documento">
         <h3>Resumo do IVA e total do documento</h3>
         <div className="table-wrap"><table>
           <thead><tr><th>Taxa de IVA</th><th className="numeric">Incidência</th><th className="numeric">IVA</th><th className="numeric">Total</th></tr></thead>
@@ -531,11 +693,20 @@ export default function InvoiceReceiving({ articles, stores, categories, onClose
           return <div className="invoice-receiving-result is-different"><p><CircleAlert size={16} aria-hidden="true" /> Diferença de {euro(diff)} para o total da fatura: confira quantidades, descontos, taxas de IVA, portes ou linhas em falta.{canAdjust ? " Se for só arredondamento, pode acertar ao total da fatura." : ""}</p>{canAdjust && toggle}</div>;
         })()}
         {lines.some(line => !line.include) && <p className="footnote">Inclui as linhas desmarcadas (por exemplo, portes): fazem parte da fatura, mas não entram em stock.</p>}
-      </section>}
+      </section>
+      <CommercialBenefits lines={included.flatMap((line, index) => {
+        const article = articles.find(item => item.id === line.choice);
+        const service = line.choice === NEW ? !!line.newArticle.service : !!article?.service;
+        if (service && !header.document_type_id) return [];
+        const articleKey = line.choice === NEW ? `new:${index}` : article?.id;
+        return [{ ...line, service, articleKey }];
+      })} global={globalDiscount} figures={line => lineValues({ ...line, service: false }, globalDiscount)} settings={costInfo?.settings} />
+      </div>}
+      {detailIndex !== null && renderInsights(detailIndex, true)}
       <div className="ui-dialog-actions">
         <span className="invoice-receiving-total">{plural(included.length, "linha", "linhas")} · {money(total)} sem IVA</span>
         {!editReceipt && <ActionButton type="button" disabled={busy} onClick={() => { setReading(null); setResult(null); }}><Search size={16} aria-hidden="true" />Outra fatura</ActionButton>}
-        <ActionButton type="button" className="primary" disabled={busy || !included.length || !header.supplier_id || supplierMissing.length > 0 || !header.warehouse_id || !header.document_type_id || unresolved.length > 0 || (!!editReceipt && !result.receipt?.editable)} onClick={confirm}>
+        <ActionButton type="button" className="primary" disabled={busy || (!!editReceipt && !result.receipt?.editable)} onClick={confirm}>
           {busy ? "A registar…" : editReceipt ? `Guardar alterações (${included.length})` : `Confirmar receção (${included.length})`}
         </ActionButton>
       </div>

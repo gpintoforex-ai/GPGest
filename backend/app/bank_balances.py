@@ -151,7 +151,7 @@ def summary(db,account,start,end,allocated=None):
         'outgoing_cents':sum(r['remaining_cents'] for r in values if r['amount_cents']<0),'absolute_cents':sum(r['remaining_cents'] for r in values)}
     incoming=sum(r['associated_cents'] for r in bank_rows if r['amount_cents']>0)
     outgoing=sum(r['associated_cents'] for r in bank_rows if r['amount_cents']<0)
-    comparable=book is not None and last is not None and last.movement_date==end
+    comparable=book is not None and last is not None and last.balance_cents is not None and last.movement_date==end
     return {'account_id':account.id,'name':account.name,'bank':account.bank,'store_id':account.store_id,'currency':account.currency,'as_of':end,
         'period_start':start,'period_end':end,'book_balance_cents':book,'book_origin':'Saldo pelos registos da aplicação',
         'book_date':end if known else None,'opening_cents':opening.amount_cents if known else None,'opening_date':opening.reference_date if opening else None,
@@ -185,12 +185,24 @@ def balances(start:date|None=None,end:date|None=None,account_id:str='',store_id:
         'warnings':['Saldos baseados nos registos locais com conta identificada. Movimentos sem conta associada e saldos contabilísticos oficiais do ERP não são inferidos a partir do extrato.',
             'A diferença entre saldos pode incluir diferenças temporais, saldos iniciais ou movimentos em falta; não equivale necessariamente ao líquido por reconciliar.']}
 
+class RuleDraft(Strict):
+    name:str=Field(min_length=3,max_length=100)
+    pattern:str=Field(min_length=3,max_length=200)
+    # Vazio: a regra aplica-se a todas as contas; caso contrário, só à conta deste movimento.
+    all_accounts:bool=False
+
 class Resolution(Strict):
     kind:Literal['receipt','payment','fee','interest','transfer']
     description:str=Field(min_length=3,max_length=1000)
     reference:str=Field(default='',max_length=200)
     target_account_id:str|None=None
     purchase_id:str|None=None
+    # Movimentos sem documento: rubrica, funcionário (vencimentos) e se conta como custo nos mapas.
+    category_id:str|None=None
+    employee_id:str|None=None
+    counts_as_cost:bool=False
+    # Guardar o tratamento como regra para os movimentos seguintes com o mesmo texto.
+    rule:RuleDraft|None=None
     @field_validator('description')
     @classmethod
     def meaningful_description(cls,value):
@@ -218,6 +230,14 @@ def proposal(db,user,transaction_id,data):
         authorize(user,db,target.store_id,['administrador','gestor'])
         if target.id==account.id or target.currency!=account.currency:fail('Escolha outra conta própria na mesma moeda, sem conversão cambial automática.')
     elif data.target_account_id:fail('O destino de transferência só se aplica a transferências próprias.')
+    from .bank_rules import classification, clean_pattern
+    if data.purchase_id and (data.category_id or data.counts_as_cost):
+        fail('Com documento associado, a rubrica e o custo vêm do documento.')
+    labels=classification(db,data.kind,sign,data.category_id,data.employee_id,data.counts_as_cost)
+    if data.rule and clean_pattern(data.rule.pattern) not in normalized(transaction.description+' '+(transaction.reference or '')):
+        fail('O texto da regra tem de constar da descrição deste movimento do extrato.')
+    if data.rule and data.purchase_id:
+        fail('Uma regra não pode associar sempre o mesmo documento. Guarde a regra sem documento.')
     candidates=[]
     seen=set()
     def candidate(source,identifier,stamp,description,reference,amount,available=None):
@@ -283,6 +303,7 @@ def proposal(db,user,transaction_id,data):
     if data.kind=='transfer':entries.append({'account_id':target.id,'account_name':target.bank+' · '+target.name,'amount_cents':-remaining*sign})
     return {'account_id':account.id,'currency':account.currency,'date':transaction.movement_date,'amount_cents':remaining*sign,'entries':entries,
         'kind':data.kind,'description':data.description,'reference':data.reference,'target_account_id':data.target_account_id,
+        **labels,'counts_as_cost':data.counts_as_cost,'rule':data.rule.model_dump() if data.rule else None,
         'candidates':candidates,'preview_token':token,'effect':'Cria registo(s) explícito(s) na aplicação e associa o remanescente do extrato. Transferências não criam receita ou despesa.'}
 
 @router.post('/api/bank-transactions/{identifier}/resolution-preview')
@@ -293,6 +314,8 @@ def preview(identifier:str,data:Resolution,user=Depends(current),db:Session=Depe
 def resolve(identifier:str,data:Resolve,user=Depends(current),db:Session=Depends(db_session)):
     bank=db.scalar(select(BankTransaction).where(BankTransaction.id==identifier).with_for_update())
     if not bank:fail('Movimento não encontrado.',404)
+    from .reconciliation_center import assert_open
+    assert_open(db, bank.account_id, bank.movement_date)
     account=account_for(db,user,bank.account_id);authorize(user,db,account.store_id,['administrador','gestor'])
     prior=db.scalar(select(BankBookEntry).where(BankBookEntry.request_key==data.request_key))
     if prior:
@@ -309,9 +332,19 @@ def resolve(identifier:str,data:Resolve,user=Depends(current),db:Session=Depends
     if preview['preview_token']!=data.preview_token:fail('A pré-visualização mudou. Reveja os registos existentes e confirme novamente.',409)
     transfer_id=str(uuid4()) if data.kind=='transfer' else None
     entry=BankBookEntry(account_id=account.id,user_id=user.id,movement_date=bank.movement_date,amount_cents=preview['amount_cents'],
-        kind=data.kind,description=data.description,reference=data.reference,request_key=data.request_key,source_bank_id=bank.id,transfer_id=transfer_id)
+        kind=data.kind,description=data.description,reference=data.reference,request_key=data.request_key,source_bank_id=bank.id,transfer_id=transfer_id,
+        category_id=data.category_id,employee_id=data.employee_id,counts_as_cost=data.counts_as_cost)
     db.add(entry);db.flush()
+    if data.rule:
+        from .bank_rules import clean_pattern
+        from .models import BankRule
+        rule=BankRule(name=data.rule.name.strip(),pattern=clean_pattern(data.rule.pattern),account_id=None if data.rule.all_accounts else account.id,
+            direction=1 if entry.amount_cents>0 else -1,kind=data.kind,category_id=data.category_id,employee_id=data.employee_id,
+            target_account_id=data.target_account_id,description=data.rule.name.strip()[:300],counts_as_cost=data.counts_as_cost)
+        db.add(rule);db.flush()
+        record(db,user,'banco_regra_criada',rule.id,{'origem':'resolucao','movimento':bank.id,'nome':rule.name,'texto':rule.pattern},account.store_id)
     if transfer_id:
+        assert_open(db, data.target_account_id, bank.movement_date)
         db.add(BankBookEntry(account_id=data.target_account_id,user_id=user.id,movement_date=bank.movement_date,amount_cents=-entry.amount_cents,
             kind='transfer',description=data.description,reference=data.reference,request_key=data.request_key+':counterpart',transfer_id=transfer_id))
     group=Reconciliation(store_id=account.store_id,kind='transferencia' if transfer_id else 'pagamento',reason='Registo aprovado após pré-visualização: '+data.description)
@@ -337,6 +370,9 @@ class Reversal(Strict):
 def reverse(identifier:str,data:Reversal,user=Depends(current),db:Session=Depends(db_session)):
     entry=db.scalar(select(BankBookEntry).where(BankBookEntry.id==identifier).with_for_update())
     if not entry:fail('Registo não encontrado.',404)
+    from .reconciliation_center import assert_open
+    assert_open(db, entry.account_id, entry.movement_date)
+    assert_open(db, entry.account_id, str(data.movement_date))
     account=account_for(db,user,entry.account_id);authorize(user,db,account.store_id,['administrador','gestor'])
     if entry.transfer_id:fail('Reverta a transferência com uma transferência inversa entre as duas contas, nunca uma perna isolada.',409)
     if used(db,'book',entry.id) or db.scalar(select(PaymentDocumentLine.id).join(DocumentPayment).where(DocumentPayment.source=='book',DocumentPayment.source_id==entry.id)):

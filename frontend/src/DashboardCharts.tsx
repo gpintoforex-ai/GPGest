@@ -1,6 +1,7 @@
 import { ActionButton } from "./components/InteractionUI";
 import { useId, useState, type ReactNode } from "react";
 import { formatEuro } from "./utils/format";
+import "./DashboardCharts.css";
 
 /** Gráficos SVG do dashboard: legenda, tooltip (rato, toque e teclado) e tabela de detalhe. */
 
@@ -25,7 +26,7 @@ export function Legend({ series }: { series: Series[] }) {
     <svg width="18" height="10" aria-hidden="true">{s.form === "bar" ? <rect x="2" y="1" width="14" height="8" rx="2" className={`dash-fill-${i + 1}`} /> : <line x1="1" x2="17" y1="5" y2="5" className={`dash-stroke-${i + 1}`} strokeDasharray={s.dashed ? "4 3" : undefined} />}</svg>{s.label}</li>)}</ul>;
 }
 
-export function ChartFrame({ title, legend, children, table, footnote }: { title: string; legend?: ReactNode; children: ReactNode; table: { columns: string[]; rows: (string | number)[][] }; footnote?: ReactNode }) {
+export function ChartFrame({ title, legend, children, table, footnote }: { title: string; legend?: ReactNode; children: ReactNode; table: { columns: string[]; rows: ReactNode[][] }; footnote?: ReactNode }) {
   const [showTable, setShowTable] = useState(false);
   return <figure className="dash-chart">
     <figcaption><span>{title}</span><ActionButton type="button" className="dash-table-toggle" aria-pressed={showTable} onClick={() => setShowTable(!showTable)}>{showTable ? "Ver gráfico" : "Ver tabela"}</ActionButton></figcaption>
@@ -42,9 +43,9 @@ function Tooltip({ x, lines, title }: { x: number; title: string; lines: { label
   </div>;
 }
 
-function Axis({ min, max, y }: { min: number; max: number; y: (v: number) => number }) {
+function Axis({ min, max, y, format = compactEuro }: { min: number; max: number; y: (v: number) => number; format?: (v: number) => string }) {
   const ticks = Array.from(new Set([min, 0, max, (max + min) / 2].filter(v => Number.isFinite(v)))).sort((a, b) => a - b);
-  return <g className="dash-axis">{ticks.map(t => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? "dash-zero" : "dash-grid"} /><text x={L - 6} y={y(t) + 4} textAnchor="end">{compactEuro(t)}</text></g>)}</g>;
+  return <g className="dash-axis">{ticks.map(t => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? "dash-zero" : "dash-grid"} /><text x={L - 6} y={y(t) + 4} textAnchor="end">{format(t)}</text></g>)}</g>;
 }
 
 function XLabels({ labels, x }: { labels: string[]; x: (i: number) => number }) {
@@ -53,7 +54,8 @@ function XLabels({ labels, x }: { labels: string[]; x: (i: number) => number }) 
 }
 
 /** Colunas da série principal e, opcionalmente, linha da série de comparação (formas distintas). */
-export function ColumnsChart({ labels, series, values, ariaLabel }: { labels: string[]; series: Series[]; values: (number | null)[][]; ariaLabel: string }) {
+export function ColumnsChart({ labels, series, values, ariaLabel, formatValue }: { labels: string[]; series: Series[]; values: (number | null)[][]; ariaLabel: string; formatValue?: (v: number) => string }) {
+  const format = formatValue || formatEuro;
   const id = useId();
   const [active, setActive] = useState<number | null>(null);
   const all = values.flat().filter((v): v is number => v !== null);
@@ -64,7 +66,7 @@ export function ColumnsChart({ labels, series, values, ariaLabel }: { labels: st
   const barWidth = Math.max(2, Math.min(28, band * (bars.length > 1 ? 0.36 : 0.62)));
   return <div className="dash-plot" onPointerLeave={() => setActive(null)}>
     <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={id}><title id={id}>{ariaLabel}</title>
-      <Axis min={min} max={max} y={y} />
+      <Axis min={min} max={max} y={y} format={formatValue} />
       {bars.map((s, order) => values[s.i].map((v, i) => v === null ? null : <rect key={`${s.key}-${i}`} className={`dash-fill-${s.i + 1}${active === i ? " is-active" : ""}`}
         x={x(i) - (bars.length > 1 ? barWidth + 1 : barWidth / 2) + order * (barWidth + 2)} width={barWidth} y={Math.min(y(v), y(0))} height={Math.max(1, Math.abs(y(v) - y(0)))} rx="2" />))}
       {series.map((s, si) => s.form === "line" ? <g key={s.key}>
@@ -73,11 +75,11 @@ export function ColumnsChart({ labels, series, values, ariaLabel }: { labels: st
       </g> : null)}
       <XLabels labels={labels} x={x} />
       {labels.map((label, i) => <rect key={label + i} x={L + band * i} y={T} width={band} height={H - T - B} className="dash-hit" tabIndex={0}
-        aria-label={`${label}: ${series.map((s, si) => `${s.label} ${values[si][i] === null ? "sem dados" : formatEuro(values[si][i] as number)}`).join(", ")}`}
+        aria-label={`${label}: ${series.map((s, si) => `${s.label} ${values[si][i] === null ? "sem dados" : format(values[si][i] as number)}`).join(", ")}`}
         onPointerEnter={() => setActive(i)} onPointerDown={() => setActive(i)} onFocus={() => setActive(i)} onBlur={() => setActive(null)} />)}
       {active !== null && <line x1={x(active)} x2={x(active)} y1={T} y2={H - B} className="dash-crosshair" />}
     </svg>
-    {active !== null && <Tooltip x={x(active)} title={labels[active]} lines={series.map((s, si) => ({ label: s.label, value: values[si][active] === null ? "Sem dados" : formatEuro(values[si][active] as number), index: si + 1, form: s.form }))} />}
+    {active !== null && <Tooltip x={x(active)} title={labels[active]} lines={series.map((s, si) => ({ label: s.label, value: values[si][active] === null ? "Sem dados" : format(values[si][active] as number), index: si + 1, form: s.form }))} />}
   </div>;
 }
 
@@ -105,11 +107,14 @@ export function ForecastChart({ points, start, reserve, ariaLabel }: { points: {
 }
 
 /** Barras horizontais ordenadas por valor, com rótulos diretos (sem depender da cor). */
-export function BarList({ rows, ariaLabel }: { rows: { label: string; value: number; note?: string }[]; ariaLabel: string }) {
-  const max = Math.max(1, ...rows.map(r => Math.abs(r.value)));
-  return <ul className="dash-barlist" aria-label={ariaLabel}>{rows.map(row => <li key={row.label} tabIndex={0} aria-label={`${row.label}: ${formatEuro(row.value)}${row.note ? ` · ${row.note}` : ""}`}>
-    <span className="dash-barlist-label">{row.label}</span>
-    <span className="dash-barlist-track"><span className="dash-fill-1" style={{ width: `${Math.max(1, Math.abs(row.value) / max * 100)}%` }} /></span>
-    <span className="dash-barlist-value">{formatEuro(row.value)}{row.note && <small>{row.note}</small>}</span>
-  </li>)}</ul>;
+export function BarList({ rows, ariaLabel }: { rows: { label: string; value: number; note?: string; onOpen?: () => void }[]; ariaLabel: string }) {
+  const max = Math.max(1, ...rows.map(row => Math.abs(row.value)));
+  return <ul className="dash-barlist" aria-label={ariaLabel}>{rows.map(row => {
+    const label = `${row.label}: ${formatEuro(row.value)}${row.note ? ` · ${row.note}` : ""}`;
+    const bar = <><span className="dash-barlist-label">{row.label}</span>
+      <span className="dash-barlist-track"><span className="dash-fill-1" style={{ width: `${Math.max(1, Math.abs(row.value) / max * 100)}%` }} /></span>
+      <span className="dash-barlist-value">{formatEuro(row.value)}{row.note && <small>{row.note}</small>}</span></>;
+    return row.onOpen ? <li key={row.label} className="drilldown-bar-item"><button className="drilldown-bar" type="button" aria-label={label} onClick={row.onOpen}>{bar}</button></li>
+      : <li key={row.label} tabIndex={0} aria-label={label}>{bar}</li>;
+  })}</ul>;
 }

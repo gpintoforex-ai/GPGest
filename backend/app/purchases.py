@@ -165,6 +165,8 @@ def register_routes(app, current, authorize, scope, record, serial, cents):
         transaction = db.scalar(select(BankTransaction).where(BankTransaction.id == data.transaction_id).with_for_update())
         if not transaction:
             raise HTTPException(404, "Movimento bancário não encontrado.")
+        from .reconciliation_center import assert_open
+        assert_open(db, transaction.account_id, transaction.movement_date)
         row = get_purchase(db, user, purchase_id, True)
         row = db.scalar(select(Purchase).where(Purchase.id == row.id).with_for_update().execution_options(populate_existing=True))
         from .models import ReconciliationIgnore
@@ -193,7 +195,9 @@ def register_routes(app, current, authorize, scope, record, serial, cents):
         link = db.get(PurchaseAllocation, allocation_id)
         if not link or link.purchase_id != row.id:
             raise HTTPException(404, "Associação não encontrada.")
-        db.scalar(select(BankTransaction).where(BankTransaction.id == link.transaction_id).with_for_update())
+        bank = db.scalar(select(BankTransaction).where(BankTransaction.id == link.transaction_id).with_for_update())
+        from .reconciliation_center import assert_open
+        assert_open(db, bank.account_id, bank.movement_date)
         db.scalar(select(Purchase).where(Purchase.id == row.id).with_for_update())
         link = db.scalar(select(PurchaseAllocation).where(PurchaseAllocation.id == allocation_id).execution_options(populate_existing=True))
         if not link:

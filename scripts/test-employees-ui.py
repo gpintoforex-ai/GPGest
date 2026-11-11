@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
 import httpx
@@ -88,10 +88,10 @@ try:
             page.get_by_label("Email", exact=True).fill(email)
             page.get_by_label("Palavra-passe", exact=True).fill(password)
             page.get_by_role("button", name="Entrar", exact=True).click()
-            expect(page.get_by_role("button", name="Tabelas", exact=True)).to_be_visible()
+            expect(page.locator("#main-workspace")).to_be_visible()
         def directory():
-            page.get_by_role("button", name="Tabelas", exact=True).click()
-            page.get_by_role("button", name="Operadores / funcionários", exact=True).click()
+            # O catálogo de navegação (11 áreas) já não tem o menu «Tabelas»: abre-se o destino pelo endereço.
+            page.goto("http://127.0.0.1:5174/?pagina=" + quote("Operadores / funcionários"))
         login("admin@ui.test")
         directory()
         page.get_by_role("button", name="Novo funcionário", exact=True).click()
@@ -114,6 +114,7 @@ try:
         dialog.get_by_role("button", name="Guardar funcionário", exact=True).click()
         expect(row).to_contain_text("910000001")
         row.get_by_role("button", name="Inativar Joana UI", exact=True).click()
+        page.get_by_role("alertdialog", name="Inativar funcionário?", exact=True).get_by_role("button", name="Inativar funcionário", exact=True).click()
         expect(row.get_by_role("button", name="Ativar Joana UI", exact=True)).to_be_enabled()
         page.reload()
         directory()
@@ -138,8 +139,7 @@ try:
         page.screenshot(path=str(output / "directory-mobile.png"), full_page=True, animations="disabled")
         page.set_viewport_size({"width": 1440, "height": 1000})
         # Reproduce the supplied 5 EUR close using the current allocation contract.
-        page.get_by_role("button", name="Tesouraria", exact=True).click()
-        page.get_by_role("button", name="Folha de caixa", exact=True).click()
+        page.goto("http://127.0.0.1:5174/?pagina=" + quote("Folha de caixa"))
         page.get_by_text("Conferência e fecho", exact=True).click()
         page.get_by_role("button", name="Fechar caixa", exact=True).click()
         dialog = page.get_by_role("dialog", name="Identificar fornecedor", exact=True)

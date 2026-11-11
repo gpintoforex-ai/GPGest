@@ -26,6 +26,79 @@ Em **Integrações → Importar vendas Wintouch**, escolha loja e datas e execut
 Cada envio tem um identificador único e auditoria persistida antes da chamada externa. Uma falha com resultado desconhecido bloqueia novas liquidações desse saldo para impedir duplicados; deve verificar o documento na Wintouch antes de resolver a operação. A liquidação suporta EUR e documentos sem retenções. A atualização dos movimentos reais segue a importação de vendas/recebimentos.
 - Faturas, faturas-recibo, faturas simplificadas e notas de crédito de venda são selecionadas pelas classes 5, 3, 40 e 6, confirmadas nos tipos de documentos da instalação. Orçamentos, encomendas, guias e compras ficam excluídos. Os recibos de recebimento são consultados separadamente.
 
+## Movimentos de stock
+
+**Onde sincronizar:** em **Stocks → Movimentos de stock**, o quadro
+**Vendas Wintouch** mostra o período e a hora da última sincronização e as linhas por rever ou em conflito;
+o administrador tem **Sincronizar vendas** no cabeçalho da página. A janela abre com o período seguinte proposto: do último dia
+sincronizado (repetir não duplica) até hoje; sem histórico, desde o início do controlo de stock
+(`GET /api/integrations/wintouch/sales/stock-status`). Cada sincronização guarda o período no resultado.
+As vendas aplicadas aparecem nos movimentos como **Venda Wintouch** com o número do documento e o cliente.
+
+**Armazém das saídas:** cada linha sai do armazém ligado ao armazém da Wintouch (Tabelas → Armazéns), ou do
+escolhido na janela. Se faltar stock nesse armazém e houver noutro da mesma loja, a linha fica por aplicar com
+a indicação de onde está o stock (por exemplo, receções lançadas num armazém sem ligação ao ERP): transfira o
+stock para o armazém das saídas e mantenha um só armazém ativo por stock físico. Os formulários de compras só
+propõem armazéns ativos.
+
+Com o controlo de stock ativo (data de início em Artigos → Parâmetros), a importação lê também as
+linhas de artigo de todos os documentos cujo tipo a Wintouch marca como movimentando stock
+(`IsStockEnabled`), a partir dessa data, e aplica-os ao stock logo a seguir, com o utilizador que
+importou. O sentido vem do tipo de documento (`StockMode`: entra, sai ou transfere):
+
+| Documentos Wintouch (classe) | Movimento na IAZELA |
+|---|---|
+| Faturas, faturas-recibo, FS, guias a cliente, pedidos, amostras, contas de mesa (3, 5, 7, 19, 27, 39, 40) | Venda (saída, com a venda líquida) |
+| Notas de crédito e devoluções de cliente (4, 6, 8, 28) | Devolução de cliente, ao custo da venda original |
+| Faturas de compra e guias de entrada (32, 34, 36) | **Nenhum**: as compras entram no stock só pela receção na aplicação (ver abaixo) |
+| Devoluções e notas de crédito de fornecedor (33, 35, 37) | Devolução a fornecedor, só quando a compra original foi integrada; senão, por rever |
+| Entradas de stock (10) e outros tipos que entram | Acerto de entrada, com o custo da linha |
+| Saídas de stock (11), consumo interno (20) e outros que saem | Acerto de saída |
+| Transferências (12) | Transferência entre os armazéns associados ao ERP |
+
+Os documentos só de stock (entradas, saídas, transferências, compras, guias) ficam guardados à parte
+(tipo `stock`) e não aparecem nas vendas, nos pagamentos nem na folha de caixa. No mesmo dia, as
+entradas são aplicadas antes das saídas.
+
+- **Lotes:** o lote indicado na linha da Wintouch (`products/{id}/batches`, por artigo: número e validade; `products/product_batches` ignora a paginação) é
+  usado na entrada e na saída de um artigo que controla lotes cá; numa saída, o lote tem de existir no
+  stock local. Sem lote na Wintouch, a saída segue o FEFO e a entrada fica para registo manual. Num
+  artigo sem lotes cá, o lote da Wintouch é ignorado.
+- **Armazém:** o escolhido na sincronização; sem escolha, o armazém ligado ao armazém Wintouch da
+  linha (Tabelas → Armazéns) ou o único armazém ativo da loja.
+- **Devoluções:** a nota de crédito volta ao stock ao custo e no lote da venda original, quando a
+  linha de origem (`Sources`) já foi integrada; caso contrário fica listada para registo manual. A
+  devolução a fornecedor liga-se à compra original quando esta foi integrada; sem ela fica por rever
+  (regista-se em «Devolver mercadoria» na receção da aplicação, para sair o lote recebido).
+- **Compras:** a entrada de stock é a receção de mercadoria na aplicação, com lote, validade e custo
+  conferidos; as vendas da Wintouch são as saídas. Uma compra da Wintouch já recebida na aplicação
+  (associação ao documento ERP, ou o mesmo NIF, tipo e número) é ignorada e contada como «já recebida»;
+  as outras ficam por rever, sem entrada automática, para o mesmo stock não entrar duas vezes. As
+  compras da Wintouch integradas antes desta regra mantêm-se (e os seus estornos e devoluções).
+- **Uma vez por linha:** a identidade é a linha da Wintouch; repetir o período não volta a
+  movimentar o stock (as linhas só são relidas quando a versão do documento muda). Uma venda manual do mesmo documento e artigo impede a integração (e vice-versa).
+- **Documento anulado depois de integrado:** movimento inverso ligado a cada movimento (estorno: a
+  venda volta ao stock, a compra sai como devolução ao fornecedor, o acerto é invertido), sem apagar
+  movimentos; devoluções e transferências anuladas ficam em conflito para revisão. **Documento alterado** (linha mudada ou removida): fica em conflito,
+  sem novos movimentos; reveja e registe o acerto manualmente.
+- **Ficam por aplicar, listadas no resultado:** artigos sem ficha associada, entradas de artigos com
+  lotes sem lote na Wintouch, lote sem entrada no stock local, armazém por definir, transferências com
+  armazéns por associar e linhas recusadas pelas regras de stock (por exemplo, stock insuficiente). Uma linha
+  recusada não impede as restantes; repetir a importação volta a tentá-la.
+
+**Sincronizar a partir dos movimentos de stock:** em Artigos → Movimentos, o administrador usa
+**Sincronizar movimentos**, escolhe o período (atalhos ou datas), a loja e, se houver vários, o armazém. A
+sincronização corre em segundo plano (`POST /api/integrations/wintouch/sales/start`) e a janela mostra
+uma barra de progresso real: etapa em curso e documentos tratados de um total (leitura dos documentos
+e aplicação ao stock); nas etapas sem total conhecido a barra fica em movimento. Pode fechar a
+janela: ao reabrir, o acompanhamento é retomado (`/sales/running`). No fim mostra os registos importados
+e o resultado no stock, com as linhas por aplicar. Só uma sincronização de vendas corre de cada vez por
+empresa; uma execução sem sinal de vida há dez minutos é dada como interrompida.
+
+Cada aplicação fica na auditoria (`vendas_wintouch_stock`) com as quantidades de vendas, devoluções,
+estornos, pendentes e conflitos. Sem data de início do controlo de stock, a importação não lê linhas
+nem altera o stock.
+
 ## Consistência
 
 Cada ID de documento, pagamento ou pendente fica único por empresa API, no esquema da empresa GPGest. Repetir o período atualiza os registos. Pagamentos não são calculados a partir do total da fatura. Os totais documentais usam bases tributáveis e IVA, sem somar descontos novamente. Apenas EUR é suportado e os montantes são lidos com Decimal e convertidos em cêntimos.
@@ -40,7 +113,7 @@ As datas sem offset mantêm a data de calendário indicada pela origem, sem inve
 
 ## Limites atuais
 
-É um snapshot de consulta dos movimentos Wintouch. A importação não abre nem fecha caixas, não escreve na Wintouch e não gera lançamentos locais. Na **Folha de caixa**, os créditos e débitos Wintouch do dia e da loja entram automaticamente nos totais, juntamente com todos os movimentos reais manuais da mesma loja/dia, de todas as sessões. Os valores ficam conservados no relatório ao fechar. A atribuição do numerário Wintouch a uma caixa para autorizar pagamentos continua única por loja/dia; o total diário apresentado na folha não disponibiliza dinheiro de outras caixas. Não concilia automaticamente um pagamento Wintouch com um lançamento manual. A tabela apresenta ambas as origens identificadas, sem gerar um segundo lançamento local. Anexos e estornos locais só estão disponíveis nos registos GPGest; os registos importados são geridos na Wintouch.
+É um snapshot de consulta dos movimentos Wintouch. A importação não abre nem fecha caixas, não escreve na Wintouch e não gera lançamentos financeiros locais (as saídas de stock descritas acima são a exceção, só com o controlo de stock ativo). Na **Folha de caixa**, os créditos e débitos Wintouch do dia e da loja entram automaticamente nos totais, juntamente com todos os movimentos reais manuais da mesma loja/dia, de todas as sessões. Os valores ficam conservados no relatório ao fechar. A atribuição do numerário Wintouch a uma caixa para autorizar pagamentos continua única por loja/dia; o total diário apresentado na folha não disponibiliza dinheiro de outras caixas. Não concilia automaticamente um pagamento Wintouch com um lançamento manual. A tabela apresenta ambas as origens identificadas, sem gerar um segundo lançamento local. Anexos e estornos locais só estão disponíveis nos registos GPGest; os registos importados são geridos na Wintouch.
 
 Notas de crédito não são consideradas reembolsos pagos sem um pagamento identificado. Anulações com `DeletedDate` são preservadas como documento anulado e os seus pagamentos não são publicados como reais. Recibos com estado de processamento não validado são rejeitados. Descontos, retenções e valores pendentes não são convertidos automaticamente em dinheiro recebido.
 

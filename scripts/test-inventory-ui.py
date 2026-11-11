@@ -1,5 +1,6 @@
 """Fictitious intercepted APIs only. No real catalogue/stock mutations."""
 
+import re
 import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -61,8 +62,10 @@ erp_article = {
     "expiry": False,
     "origin": "ERP",
     "sale_net": None,
-    "erp_price": "4.5",
-    "erp_price_basis": "IVA não identificado pelo conector",
+    "erp_price": "5.54",
+    "erp_price_net": "4.5",
+    "erp_vat_rate": "23",
+    "erp_price_basis": "Com IVA",
     "synced_at": "2026-10-25T10:00:00Z",
     "quantity": "3",
 }
@@ -391,13 +394,13 @@ with sync_playwright() as p:
     expect(dialog.get_by_label("Código interno", exact=True)).to_have_attribute(
         "aria-invalid", "true"
     )
-    expect(dialog.get_by_role("alert")).to_contain_text("Reveja os campos assinalados")
+    expect(dialog.get_by_role("alert")).to_contain_text("Reveja: Código interno")
     expect(dialog.get_by_label("Designação", exact=True)).to_have_value("Produto fictício novo")
     dialog.get_by_role("button", name="Guardar", exact=True).click()
     expect(dialog).not_to_be_visible()
     # Artigo do ERP: aviso claro; código e nome só de leitura; dados locais editáveis.
     expect(page.get_by_text("o stock é registado aqui", exact=False).first).to_be_visible()
-    page.get_by_role("button", name="Artigos", exact=True).click()
+    page.get_by_role("navigation", name="Artigos e stock", exact=True).get_by_role("button", name="Artigos", exact=True).click()
     # Reference search and filters use actual catalogue fields.
     search = page.get_by_label("Pesquisar código, designação, barras ou referência do fornecedor")
     search.fill("FORN-REF-123")
@@ -446,7 +449,7 @@ with sync_playwright() as p:
     expect(local_dialog.get_by_label("Venda sem IVA (€)", exact=True)).to_have_value("20")
     local_dialog.get_by_label("Venda sem IVA (€)", exact=True).fill("0")
     expect(local_dialog.get_by_text("O preço sem IVA está abaixo do custo médio.")).to_be_visible()
-    expect(local_dialog.get_by_text("Não calculável", exact=True).first).to_be_visible()
+    expect(local_dialog.get_by_role("tabpanel", name="Preços e rentabilidade", exact=True).get_by_text("Não calculável", exact=True).first).to_be_visible()
     local_dialog.get_by_label("Venda sem IVA (€)", exact=True).fill("10")
     output = Path(".local/stock-ui")
     output.mkdir(parents=True, exist_ok=True)
@@ -462,8 +465,9 @@ with sync_playwright() as p:
         "aria-selected", "true"
     )
     local_dialog.get_by_label("Nível de reposição", exact=True).fill("10")
-    local_dialog.get_by_role("tab", name="Descrição e anexos", exact=True).click()
+    local_dialog.get_by_role("tab", name="Geral", exact=True).click()
     local_dialog.get_by_label("Observações internas", exact=True).fill("Nota interna fictícia")
+    local_dialog.get_by_role("tab", name="Descrição e anexos", exact=True).click()
     local_dialog.get_by_label("Anexos — nome | endereço HTTPS, um por linha", exact=True).fill(
         "Ficha | https://example.com/ficha.pdf"
     )
@@ -517,9 +521,15 @@ with sync_playwright() as p:
     page.get_by_label("Mais ações para Chá da Wintouch", exact=True).click()
     page.get_by_role("menuitem", name="Editar Chá da Wintouch", exact=True).click()
     erp_dialog = page.get_by_role("dialog", name="Editar artigo", exact=True)
+    erp_dialog.get_by_label("Informação da ficha do artigo", exact=True).click()
     expect(erp_dialog.get_by_text("Artigo da Wintouch", exact=False)).to_be_visible()
+    erp_dialog.get_by_label("Informação da ficha do artigo", exact=True).click()
+    # Preço da linha 1 da Wintouch: com IVA no resumo.
+    expect(erp_dialog.locator(".article-price-overview")).to_contain_text("Preço no ERP · Com IVA")
+    expect(erp_dialog.locator(".article-price-overview")).to_contain_text("5,54 €")
     expect(erp_dialog.get_by_label("Código interno", exact=True)).to_have_attribute("readonly", "")
     erp_dialog.get_by_role("tab", name="Stock", exact=True).click()
+    erp_dialog.get_by_role("tab", name="Geral", exact=True).click()
     expect(erp_dialog.get_by_label("Localização", exact=True)).not_to_have_attribute("readonly", "")
     expect(erp_dialog.get_by_label("Preço sem IVA (€)", exact=True)).to_have_count(0)
     page.keyboard.press("Escape")
@@ -527,15 +537,16 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Registar movimento", exact=True).click()
     movement = page.get_by_role("dialog", name="Registar movimento de stock", exact=True)
     # Os artigos do ERP aceitam movimentos de stock locais.
-    expect(
-        movement.get_by_label("Artigo", exact=True).locator("option", has_text="Chá da Wintouch")
-    ).to_have_count(1)
+    # Pesquisa pelo nome, sem acentos; os artigos do ERP aparecem nos resultados.
+    movement.get_by_label("Artigo", exact=True).fill("cha wint")
+    movement.get_by_role("option").filter(has_text="Chá da Wintouch").click()
+    expect(movement.get_by_label("Artigo", exact=True)).to_have_value(re.compile("Chá da Wintouch"))
     expect(movement.get_by_label("Quantidade (un)", exact=True)).to_have_value("1")
     movement.get_by_label("Movimento", exact=True).select_option("sale")
     movement.get_by_label("Motivo / observações", exact=True).fill("Venda fictícia de teste")
     movement.get_by_role("button", name="Registar movimento", exact=True).click()
     expect(movement).not_to_be_visible()
-    page.get_by_role("button", name="Lotes e validades", exact=True).click()
+    page.get_by_role("navigation", name="Artigos e stock", exact=True).get_by_role("button", name="Lotes e validades", exact=True).click()
     expect(page.get_by_text("LOTE-A", exact=True)).to_be_visible()
     page.get_by_role("button", name="Editar validade do lote LOTE-A", exact=True).click()
     expiry = page.get_by_role("dialog", name="Validade do lote", exact=True)
@@ -543,7 +554,7 @@ with sync_playwright() as p:
     page.keyboard.press("Escape")
     expect(expiry).not_to_be_visible()
     # Associação por código: pré-visualização e confirmação explícita.
-    page.get_by_role("button", name="Importações", exact=True).click()
+    page.get_by_role("navigation", name="Artigos e stock", exact=True).get_by_role("button", name="Importações", exact=True).click()
     page.get_by_role("button", name="Associar por código", exact=True).click()
     plan = page.get_by_role("region", name="Associação por código")
     expect(plan).to_contain_text("975 fichas locais com o mesmo código")
@@ -571,7 +582,7 @@ with sync_playwright() as p:
     ).to_be_visible()
     catalog["policy"] = {"mode": "local"}
     page.reload()
-    page.get_by_role("button", name="Painel", exact=True).click()
+    page.get_by_role("navigation", name="Artigos e stock", exact=True).get_by_role("button", name="Painel", exact=True).click()
     output = Path(".local/stock-ui")
     output.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(output / "desktop.png"), full_page=True)

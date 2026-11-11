@@ -16,7 +16,13 @@ A ativação/desativação em lote só admite artigos locais, exige confirmaçã
 
 ## Ficha
 
-Separadores (numa só linha; deslizam na horizontal quando não cabem): Geral; Preços e rentabilidade; Stock; Compras e fornecedores; Validades e lotes; Integração ERP; Histórico; Descrição e anexos.
+O cabeçalho fica fixo enquanto o conteúdo da ficha se desloca. «Artigo anterior» e «Artigo seguinte» percorrem a lista filtrada e ordenada do catálogo, incluindo a passagem entre páginas, mostram a posição atual e mantêm o separador e o modo de consulta/edição. Alterações pendentes pedem confirmação antes da troca; uma falha de carregamento conserva o rascunho. Os botões ficam desativados nos limites da lista e durante o carregamento. A navegação está disponível ao abrir um artigo da lista; não aparece em artigos ainda por criar.
+
+As secções aparecem numa navegação lateral à esquerda: Geral, Preços, Stocks, Fornecedores, Vendas, Compras, Documentos, Validades e lotes, Histórico e Integração ERP. Em telemóvel, a navegação fica numa barra compacta. A identificação e a fotografia ocupam o cabeçalho da ficha, com indicadores de stock, mínimo, encomendas, vendas em 30 dias e margem. A câmara abre o campo HTTPS, com **Pesquisar imagens no Google**: abre o Google Imagens num separador novo com a designação e o primeiro código de barras; na imagem escolhida, «Copiar endereço da imagem» e colar o endereço HTTPS na ficha (o mesmo botão existe junto às imagens adicionais, em Documentos). Nada é descarregado nem enviado automaticamente; retirar a associação pede confirmação. Quando a imagem falha, a ficha mostra «Fotografia indisponível».
+
+O «i» no canto superior abre a ajuda e as regras da ficha local/ERP. A navegação suporta setas, Home e End; mantêm-se validação, permissões e proteção de alterações por guardar. Geral agrupa preços, códigos, localização, observações e estados reais. O botão Duplicar prepara uma ficha local com código sugerido (novamente validado na API ao guardar), sem códigos de barras, movimentos ou ligação ERP. A pesquisa por código de barras abre a pesquisa existente do catálogo, protegendo primeiro o rascunho.
+
+Os resumos vêm da API de detalhes existente, sem migração de base de dados. Vendas de 30 dias e evolução usam movimentos de stock autorizados, líquidos de devoluções; não incluem vendas importadas ainda sem movimento de stock aplicado. Em encomenda usa encomendas confirmadas menos receções, pelas regras do Centro de Abastecimento. A ficha atualiza os dados consultados a cada minuto ou pelo botão Atualizar, sem substituir campos em edição. Ver [reformulação e validação](REFORMULACAO-FICHA-ARTIGO.md).
 
 **Preços e rentabilidade:** o preço e o IVA editam-se nos campos (nos artigos locais não se repetem por baixo); custo médio, último custo, margem e markup são calculados quando existem preço e custo válidos; a base de IVA desconhecida dos preços ERP continua a impedir cálculos indevidos. Inclui:
 
@@ -27,7 +33,11 @@ Separadores (numa só linha; deslizam na horizontal quando não cabem): Geral; P
 
 **Compras e fornecedores:** fornecedor principal e referência; **compras por fornecedor**, a partir das entradas de compra (receções e movimentos de compra) nos armazéns autorizados: número de compras, quantidade, último custo, mínimo/máximo e custo médio ponderado (sem IVA, por unidade), data e documento da última compra. Entradas substituídas por edição de uma receção ou anuladas (estorno) não contam. Sem permissão de consultar custos, aparecem os fornecedores e as quantidades, sem custos.
 
-**Condições por fornecedor** (tabela `article_supplier_terms`, migração **0070**): para cada fornecedor do artigo, a referência nesse fornecedor, o preço acordado sem IVA por unidade e a data de validade, o prazo de entrega (dias), a quantidade mínima e o múltiplo de encomenda, e observações. Um registo por artigo e fornecedor; o fornecedor principal aparece primeiro. Cada linha compara o preço acordado com o último custo real das compras desse fornecedor (ex.: «+11,1 % face ao acordado») e assinala o preço expirado. Gravam-se pela própria secção (Enter grava as condições, não a ficha), com revisão para evitar sobreposições, e ficam na auditoria (`stock_article_supplier_terms`, `stock_article_supplier_terms_removed`). Editar exige a permissão de ajustar artigos; o preço acordado só é visível e editável com a permissão de consultar custos (sem ela, o preço existente mantém-se). Funciona também nos artigos da Wintouch (o conector não tem estas condições). O preço acordado é um custo unitário com a precisão dos custos de stock, não um movimento de dinheiro. Um fornecedor com condições registadas conta como referenciado e não pode ser eliminado em Entidades. As condições ainda não são usadas para propor preços nas encomendas ou receções. As condições gerais do fornecedor (prazo e encomenda mínima) continuam na ficha do fornecedor.
+**Condições por fornecedor** (tabela `article_supplier_terms`, migração **0070**): para cada fornecedor do artigo, a referência nesse fornecedor, o preço acordado sem IVA por unidade e a data de validade, o prazo de entrega (dias), a quantidade mínima e o múltiplo de encomenda, e observações. Um registo por artigo e fornecedor; o fornecedor principal aparece primeiro. Cada linha compara o preço acordado com o último custo real das compras desse fornecedor (ex.: «+11,1 % face ao acordado») e assinala o preço expirado. Gravam-se pela própria secção (Enter grava as condições, não a ficha), com revisão para evitar sobreposições, e ficam na auditoria (`stock_article_supplier_terms`, `stock_article_supplier_terms_removed`). Editar exige a permissão de ajustar artigos; o preço acordado só é visível e editável com a permissão de consultar custos (sem ela, o preço existente mantém-se). Funciona também nos artigos da Wintouch (o conector não tem estas condições). O preço acordado é um custo unitário com a precisão dos custos de stock, não um movimento de dinheiro. Um fornecedor com condições registadas conta como referenciado e não pode ser eliminado em Entidades. **Bonificação** (migração **0073**): «na compra de X, oferta de Y». Os dois valores são obrigatórios em conjunto. A tabela mostra «X + Y oferta» e, com o preço acordado, o **custo efetivo por unidade** (preço × X ÷ (X + Y)). A bonificação é usada nas encomendas a fornecedores:
+- o simulador indica, em cada linha, quantas unidades vêm de oferta nessa quantidade, ou quanto falta comprar para a obter;
+- a encomenda emitida leva uma linha de **oferta** do mesmo artigo a **preço 0**, no fim da encomenda. A receção espera essas unidades, que entram em stock geral, e o custo médio reflete a oferta. As reservas dos clientes continuam a seguir as linhas compradas.
+
+As condições ainda não são usadas para propor preços nas encomendas ou receções. As condições gerais do fornecedor (prazo e encomenda mínima) continuam na ficha do fornecedor.
 
 O histórico mostra as últimas 30 alterações suportadas, com utilizador e data. Stock permanece calculado por movimentos. Os anexos e imagens existentes são preservados.
 
@@ -58,3 +68,17 @@ A origem ERP e a data de receção do catálogo não garantem que não tenham oc
 - `scripts/test-article-grid-ui.cjs`: 10 000 artigos simulados, navegação, consulta, duplicação, lote e preferências; gera imagens de desktop, tema escuro e telemóvel em `.local/stock-grid-ui`.
 
 O teste Node requer Playwright (`PLAYWRIGHT_NODE_PATH` permite indicar uma instalação existente). `GPGEST_UI_URL` permite apontar os testes de interface para um servidor Vite isolado. Todos os pedidos da aplicação são intercetados no teste Node.
+
+## Passar a controlar lotes num artigo com stock
+
+Num artigo com movimentos já não é possível desligar o controlo de lotes ou de validades. Ligá-lo continua possível. Ao ativar **Controlar lotes** num artigo existente, a ficha pede o **lote do stock existente** e, se o artigo controlar validades, a **validade desse lote**. Ao guardar:
+- o stock lançado sem lote passa para esse lote com dois ajustes registados por armazém: saída sem lote antes da mudança e entrada no lote depois, ao custo médio;
+- a quantidade e o valor do stock não mudam, e o histórico mantém-se;
+- é preciso a permissão de ajustar stock.
+
+Num artigo que já controla lotes, ligar também as validades é permitido; a validade dos lotes existentes indica-se no editor de lotes. A resposta indica as quantidades convertidas por armazém (`lot_conversion`).
+
+## Último preço e custo
+
+O **último preço** da ficha e das compras por fornecedor (último, mínimo, máximo e médio) é o **preço unitário do documento de compra**, líquido dos descontos indicados na linha e do desconto global, **sem repartir as unidades oferecidas**. O **custo médio** do stock continua a incluir a oferta, que é o valor real das unidades em stock. Exemplo: 3 + 1 de oferta a 27,60 € dá último preço 27,60 € e custo de entrada 20,70 €/un. As entradas a custo 0 (ofertas, linhas de bonificação) não contam como último preço. O preço do documento fica na entrada de stock (`document_price`); as entradas antigas usam o custo.
+

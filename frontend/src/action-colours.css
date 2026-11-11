@@ -8,6 +8,7 @@
   --action-transfer-bg: #38264d;
 }
 :is(.ui-action, .ui-action-link)[data-action-tone="success"] { --button-ink: var(--context-success); --button-bg: var(--context-success-bg); }
+:is(.ui-action, .ui-action-link)[data-action-tone="create"] { --button-ink: var(--context-accent); --button-bg: var(--context-accent-bg); }
 :is(.ui-action, .ui-action-link)[data-action-tone="warning"] { --button-ink: var(--context-warning); --button-bg: var(--context-warning-bg); }
 :is(.ui-action, .ui-action-link)[data-action-tone="danger"] { --button-ink: var(--action-danger); --button-bg: var(--context-danger-bg); }
 :is(.ui-action, .ui-action-link)[data-action-tone="info"] { --button-ink: var(--context-info); --button-bg: var(--context-info-bg); }
@@ -25,3 +26,10 @@
 .ui-action.primary[data-action-tone="success"]:not(:disabled) { color: #fff; background: var(--action-primary); border-color: var(--action-primary); }
 .ui-action.primary[data-action-tone="danger"]:not(:disabled) { color: var(--button-ink); background: var(--button-bg); border-color: var(--button-ink); }
 :is(.ui-action, .ui-action-link)[data-action-tone] > svg { color: currentColor; flex-shrink: 0; }
+/* Explicit variants take precedence; legacy text inference remains supported. */
+.workspace .ui-action[data-variant="primary"],dialog .ui-action[data-variant="primary"] {background:var(--action-primary);border-color:var(--action-primary);color:#fff;}
+.workspace .ui-action[data-variant="secondary"],dialog .ui-action[data-variant="secondary"] {background:var(--surface-primary);border-color:var(--border-control);color:var(--text-primary);}
+.workspace .ui-action[data-variant="success"],dialog .ui-action[data-variant="success"] {background:var(--context-success-bg);border-color:var(--context-success);color:var(--context-success);}
+.workspace .ui-action[data-variant="danger"],dialog .ui-action[data-variant="danger"] {background:var(--context-danger-bg);border-color:var(--action-danger);color:var(--action-danger);}
+.workspace .ui-action[data-variant="suggestion"],dialog .ui-action[data-variant="suggestion"] {background:var(--context-suggestion-bg);border-color:var(--context-suggestion);color:var(--context-suggestion);}
+.workspace .ui-action[data-variant="quiet"],dialog .ui-action[data-variant="quiet"] {background:transparent;border-color:transparent;color:var(--action-primary-ink);box-shadow:none;}

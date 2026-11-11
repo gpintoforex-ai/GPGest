@@ -9,12 +9,17 @@ Janelas, confirmações e acessibilidade: [revisão da interface](docs/REVISAO-I
 
 Organização dos módulos, separadores, contexto de navegação e validação: [auditoria e reestruturação da interface](docs/AUDITORIA-INTERFACE.md).
 
+Reformulação visual e funcional: [navegação, Centro de Encomendas e indicadores](docs/REFORMULACAO-ZELA.md), [design system](docs/DESIGN-SYSTEM-IAZELA.md), [dashboard global](docs/DASHBOARD-GLOBAL-FASE-D.md), [migração dos módulos e assistência contextual](docs/MIGRACAO-GLOBAL-FASES-E-H.md) e [pesquisa global](docs/PESQUISA-GLOBAL.md).
+
 Digitalizar fotografias e PDFs para anexos e dossiês: [guia de digitalização](docs/DIGITALIZACAO-DOCUMENTOS.md).
 Digitalização rápida por PIN a partir do ecrã de entrada, em dispositivos emparelhados: [digitalização rápida](docs/DIGITALIZACAO-RAPIDA.md).
 Arquivo central de todos os documentos, com caixa de entrada, extração, relações, pendências e assistente: [arquivo digital](docs/ARQUIVO-DIGITAL.md).
 Conferir e-Fatura, anexos e ERP: [assistente e-Fatura](docs/ASSISTENTE-EFATURA.md).
-Custos, proveitos e mapa de IVA indicativos: [mapas de gestão](docs/MAPAS-DE-GESTAO.md).
-Painel inicial com indicadores, gráficos e alertas: [dashboard de gestão](docs/DASHBOARD.md).
+Custos, proveitos e mapa de IVA indicativos: [mapas de gestão](docs/MAPAS-DE-GESTAO.md). Separar custos operacionais, compras, obrigações fiscais e saídas de tesouraria: [natureza das rubricas](docs/NATUREZA-DAS-RUBRICAS.md).
+Obrigações fiscais, contratos, viaturas, inspeções e outros prazos: [obrigações e prazos](docs/OBRIGACOES-E-PRAZOS.md).
+Planear despesas, comparar previsto com realizado e acompanhar desvios: [orçamento e previsão de despesas](docs/ORCAMENTO.md).
+Acompanhar cada operação do documento à liquidação: [motor central de relações e rastreabilidade](docs/MOTOR-CENTRAL-RELACOES.md).
+Painel inicial com indicadores, gráficos e alertas: [dashboard de gestão](docs/DASHBOARD.md). Levantamento e matriz para a modernização: [auditoria do dashboard](docs/DASHBOARD-AUDITORIA.md).
 Enviar documentação por SMTP: [email e dossiê contabilístico](docs/EMAIL-CONTABILIDADE.md), com pré-visualização, histórico e confirmação manual de receção.
 Separar faturação, recebimentos e conferência: [faturação e recebimentos](docs/FATURACAO-RECEBIMENTOS.md), sem duplicar o dinheiro já registado nas caixas e bancos.
 Importar faturação no modo local: [SAF-T (PT) de vendas](docs/IMPORTACAO-SAFT-VENDAS.md), com validação oficial, revisão de conflitos e referência nas folhas de caixa.
@@ -238,6 +243,10 @@ O módulo integrado está em **Tabelas → Artigos e validades**, com catálogo 
 
 ## Encomendas de clientes
 
-Disponível em **Compras e Stock → Encomendas de clientes**, com pedidos, reservas, simulação por fornecedor, compras, receções parciais, contactos e entregas. Consulte [utilização, arquitetura e limitações](docs/ENCOMENDAS-CLIENTES.md). Requer a migração 0057 antes de reiniciar o backend.
+Disponível em **Compras e Stock → Encomendas de clientes**, com pedidos, reservas, simulação por fornecedor, compras, receções parciais, contactos e entregas. Consulte [utilização, arquitetura e limitações](docs/ENCOMENDAS-CLIENTES.md). Os avisos de todos os módulos estão no sino da barra do menu: ver [Avisos](docs/AVISOS.md). Necessidades, propostas e condições por fornecedor: [centro de abastecimento](docs/CENTRO-ABASTECIMENTO.md). Requer a migração 0057 antes de reiniciar o backend.
 
 A evolução do [ciclo integrado de encomendas](docs/CICLO-ENCOMENDAS.md) acrescenta recomendações de reposição, originais/OCR/cloud, conferência tripla, propostas e escritas Wintouch confirmadas, e automatizações autorizadas por loja. Requer a migração 0058; consulte os limites do stock ERP e dos documentos suportados antes de ativar escritas.
+
+Loja online Raizpura: [configuração e sincronização de famílias, artigos, stock e encomendas](docs/INTEGRACAO-RAIZPURA.md).
+
+Assistente IAZELA (perguntas sobre validades, reposição, vendas, clientes, IVA e documentos, com a Claude API; só consulta): [ativação, ferramentas e privacidade](docs/ASSISTENTE-IAZELA.md).

@@ -1,11 +1,14 @@
-import { currentMonthRange } from "./components/DatePresets";
+import { ContextSuggestion } from "./components/OverviewUI";
+import { useRecordHandoff } from "./components/useRecordHandoff";
 import { useEffect, useRef, useState } from "react";
 import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
+import { ARCHIVE_PAGES } from "./navigationCatalog";
 import type { ReactNode } from "react";
 import { Archive as ArchiveIcon, CheckCircle2, Download, FileSearch, Link2, RefreshCw, Search, ShieldCheck, Upload, XCircle } from "lucide-react";
 import { api } from "./lib/api";
 import { ManagedForm, ActionButton, AppDialog, Notice, confirmAction } from "./components/InteractionUI";
 import { Field } from "./components/Form";
+import { DataTable } from "./components/DataTable";
 import { MetricCard, StatusBadge } from "./components/BusinessUI";
 import AssistantIdentity from "./components/AssistantIdentity";
 import { formatEuro } from "./utils/format";
@@ -14,7 +17,7 @@ import "./Archive.css";
 
 type Row = Record<string, any>;
 type Store = Row;
-export const ARCHIVE_PAGES = ["Arquivo — Visão geral", "Caixa de entrada", "Todos os documentos", "Associações", "Pendências", "Dossiês contabilísticos", "Arquivo — Auditoria", "Arquivo — Configurações"] as const;
+export { ARCHIVE_PAGES } from "./navigationCatalog";
 
 const TYPE_LABELS: Row = { fatura: "Fatura", fatura_recibo: "Fatura-recibo", fatura_simplificada: "Fatura simplificada", nota_credito: "Nota de crédito", nota_debito: "Nota de débito", recibo: "Recibo", comprovativo_pagamento: "Comprovativo de pagamento", extrato_bancario: "Extrato bancário", despesa: "Despesa", documento_caixa: "Documento de caixa", contrato: "Contrato", outro: "Outro", por_classificar: "Por classificar" };
 const STATUS: Row = { pendente: ["A processar", "neutral"], processado: ["Processado", "success"], erro: ["Erro", "danger"], duplicado: ["Duplicado", "warning"] };
@@ -322,6 +325,7 @@ function Uploader({ stores, store, onDone }: { stores: Store[]; store: string; o
 export default function Archive({ page, stores, store, navigate }: { page: string; stores: Store[]; store: string; navigate: (page: string) => void }) {
   const [meta, reloadMeta] = useOverview();
   const [open, setOpen] = useState<string | null>(null), [version, setVersion] = useState(0), [notice, setNotice] = useState(""), [error, setError] = useState("");
+  useRecordHandoff("document", [page], id => { setOpen(id); return true; });
   const canManage = !!meta?.can_manage;
   const changed = () => { setVersion(v => v + 1); void reloadMeta(); };
   async function run(task: () => Promise<void>) {
@@ -350,6 +354,11 @@ export default function Archive({ page, stores, store, navigate }: { page: strin
     </div>}
     {meta && !meta.ocr_available && <Notice tone="info">OCR local indisponível no servidor: documentos digitalizados sem texto nem QR ficam para preenchimento manual.</Notice>}
     {(meta?.integrity_failed || 0) > 0 && <Notice tone="error">{meta?.integrity_failed} documento(s) com falha de integridade. Veja Arquivo — Configurações.</Notice>}
+    {meta && (meta.inbox > 0 || meta.proposals > 0) && <ContextSuggestion title="Rever as pendências do arquivo"
+      evidence={[`${meta.inbox} documentos na caixa de entrada; ${meta.proposals} propostas de associação`,"Origem: visão geral do arquivo, com as permissões atuais. Rever não significa pagar, lançar no ERP ou entregar à contabilidade."]}
+      actionLabel={meta.inbox > 0 ? "Rever caixa de entrada" : "Rever associações"} onReview={()=>navigate(meta.inbox > 0 ? "Caixa de entrada" : "Associações")}>
+      Confirme o original e os dados extraídos antes de validar uma associação ou preparar um envio.
+    </ContextSuggestion>}
     <Assistant open={setOpen} navigate={navigate} canManage={canManage} />
     {meta && <section className="panel"><h3>Recebidos recentemente</h3><DocumentTable rows={meta.latest} onOpen={setOpen} empty="Ainda não há documentos. Use «Atualizar arquivo» para indexar os existentes ou carregue ficheiros na Caixa de entrada." />
       <p className="arc-muted">Origens: {meta.origins.map((o: Row) => `${o.label} (${o.count})`).join(" · ") || "—"} · Última atualização: {when(meta.last_sync_at)}</p></section>}
@@ -370,14 +379,17 @@ export default function Archive({ page, stores, store, navigate }: { page: strin
   else if (page === "Dossiês contabilísticos") body = <>{header("Dossiês contabilísticos", "Documentos por mês de emissão. O fecho do período e a exportação ou envio continuam em «Entrega à contabilidade».", <ActionButton type="button" onClick={() => navigate("Entrega à contabilidade")}>Abrir Entrega à contabilidade</ActionButton>)}{messages}<Periods navigate={navigate} /></>;
   else if (page === "Arquivo — Auditoria") body = <>{header("Auditoria do arquivo", "Histórico de alterações, decisões e acessos a documentos.")}{messages}<AuditLog open={setOpen} /></>;
   else if (page === "Arquivo — Configurações") body = <>{header("Configurações do arquivo", "Conservação, processamento automático, OCR e verificação de integridade.")}{messages}<Settings admin={!!meta?.is_admin} /></>;
-  return <div className="arc">{body}{detail}</div>;
+  return <div className="arc">{ARCHIVE_PAGES.slice(0, 5).includes(page) && <ModuleTabs label="Arquivo documental" tabs={ARCHIVE_PAGES.slice(0, 5).map(name => ({ id: name, label: name === "Arquivo — Visão geral" ? "Visão geral" : name }))} value={page} onChange={navigate} />}{body}{detail}</div>;
 }
 
+const emptyDocumentFilters = { q: "", doc_type: "", origin: "", status: "", relation: "", start: "", end: "" };
+
 function DocumentList({ inbox, stores, store, canManage, open, onChanged, meta }: { inbox?: boolean; stores: Store[]; store: string; canManage: boolean; open: (id: string) => void; onChanged: () => void; meta?: Row | null }) {
-  const [filters, setFilters] = useState<Row>({ q: "", doc_type: "", origin: "", status: "", relation: "", start: currentMonthRange().from, end: currentMonthRange().to });
+  const [filters, setFilters] = useState<Row>(emptyDocumentFilters);
   const [data, setData] = useState<Row | null>(null), [offset, setOffset] = useState(0), [selected, setSelected] = useState<Set<string>>(new Set()), [error, setError] = useState(""), [notice, setNotice] = useState("");
-  const load = () => {
-    const params = new URLSearchParams({ ...filters, store_id: store, offset: String(offset), limit: "50", ...(inbox ? { inbox: "true" } : {}) });
+  const load = (queryFilters = filters, pageOffset = offset) => {
+    setError("");
+    const params = new URLSearchParams({ ...queryFilters, store_id: store, offset: String(pageOffset), limit: "50", ...(inbox ? { inbox: "true" } : {}) });
     return api("/archive/documents?" + params).then(setData).catch(e => setError((e as Error).message));
   };
   useEffect(() => { void load(); }, [offset, store, inbox]);
@@ -393,7 +405,7 @@ function DocumentList({ inbox, stores, store, canManage, open, onChanged, meta }
     } catch (e) { setError((e as Error).message); }
   }
   return <section className="panel">
-    {!inbox && <ManagedForm className="arc-filters filter-bar" data-ignore-dirty onSubmit={event => { event.preventDefault(); setOffset(0); void load(); }}>
+    {!inbox && <ManagedForm className="arc-filters filter-bar" data-ignore-dirty onSubmit={event => { event.preventDefault(); setOffset(0); setSelected(new Set()); void load(filters, 0); }}>
       <Field label="Pesquisar"><input value={filters.q} placeholder="Nome, entidade, NIF, número…" onChange={e => setFilters({ ...filters, q: e.target.value })} /></Field>
       <Field label="Tipo"><select value={filters.doc_type} onChange={e => setFilters({ ...filters, doc_type: e.target.value })}><option value="">Todos</option>{Object.entries(meta?.types || {}).map(([k, v]) => <option key={k} value={k}>{String(v)}</option>)}</select></Field>
       <Field label="Origem"><select value={filters.origin} onChange={e => setFilters({ ...filters, origin: e.target.value })}><option value="">Todas</option>{Object.entries(meta?.origin_labels || {}).map(([k, v]) => <option key={k} value={k}>{String(v)}</option>)}</select></Field>
@@ -402,6 +414,7 @@ function DocumentList({ inbox, stores, store, canManage, open, onChanged, meta }
       <Field label="Emitido desde"><input type="date" value={filters.start} onChange={e => setFilters({ ...filters, start: e.target.value })} /></Field>
       <Field label="Até"><input type="date" value={filters.end} onChange={e => setFilters({ ...filters, end: e.target.value })} /></Field>
       <ActionButton className="primary"><Search size={16} aria-hidden="true" />Filtrar</ActionButton>
+      <ActionButton type="button" onClick={() => { setFilters(emptyDocumentFilters); setOffset(0); setSelected(new Set()); void load(emptyDocumentFilters, 0); }}>Limpar filtros</ActionButton>
     </ManagedForm>}
     {error && <Notice tone="error">{error}</Notice>}
     {notice && <Notice tone="success">{notice}</Notice>}
@@ -493,13 +506,24 @@ function Periods({ navigate }: { navigate: (page: string) => void }) {
 
 function AuditLog({ open }: { open: (id: string) => void }) {
   const [rows, setRows] = useState<Row[] | null>(null), [action, setAction] = useState(""), [error, setError] = useState("");
-  useEffect(() => { api(`/archive/audit?action=${action}`).then(setRows).catch(e => setError((e as Error).message)); }, [action]);
+  useEffect(() => {
+    let alive = true; setRows(null); setError("");
+    api(`/archive/audit?action=${action}`).then(result => { if (alive) setRows(result); }).catch(e => { if (alive) setError((e as Error).message); });
+    return () => { alive = false; };
+  }, [action]);
+  const detail = (r: Row) => Object.entries(r.detail || {}).map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · ");
   return <section className="panel">
-    <Field label="Ação"><select value={action} onChange={e => setAction(e.target.value)}><option value="">Todas</option>{Object.entries(ACTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
-    {error && <Notice tone="error">{error}</Notice>}
-    {!rows ? <p role="status">A carregar…</p> : !rows.length ? <p className="arc-empty">Sem registos.</p> :
-      <div className="table-wrap"><table><thead><tr><th>Data</th><th>Utilizador</th><th>Ação</th><th>Documento</th><th>Detalhe</th></tr></thead>
-        <tbody>{rows.map(r => <tr key={r.id}><td>{when(r.created_at)}</td><td>{r.user}</td><td>{ACTIONS[r.action] || r.action}</td><td>{r.document_id ? <ActionButton type="button" className="arc-link" onClick={() => open(r.document_id)}>{r.document || "Documento"}</ActionButton> : "—"}</td><td className="arc-detail-cell">{Object.entries(r.detail || {}).map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · ")}</td></tr>)}</tbody></table></div>}
+    <DataTable<Row> label="auditoria do arquivo" rows={rows || []} rowKey={r => r.id} loading={!rows && !error} error={error}
+      emptyText="Sem registos." exportName="auditoria-arquivo.csv"
+      searchText={r => [r.user, ACTIONS[r.action] || r.action, r.document, detail(r)].join(" ")}
+      toolbar={<Field label="Ação"><select value={action} onChange={e => setAction(e.target.value)}><option value="">Todas</option>{Object.entries(ACTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>}
+      columns={[
+        { id: "data", label: "Data", render: r => when(r.created_at), sortValue: r => r.created_at || "", exportValue: r => when(r.created_at) },
+        { id: "utilizador", label: "Utilizador", render: r => r.user, sortValue: r => r.user || "", exportValue: r => r.user },
+        { id: "acao", label: "Ação", render: r => ACTIONS[r.action] || r.action, sortValue: r => ACTIONS[r.action] || r.action, exportValue: r => ACTIONS[r.action] || r.action },
+        { id: "documento", label: "Documento", render: r => r.document_id ? <ActionButton type="button" className="arc-link" onClick={() => open(r.document_id)}>{r.document || "Documento"}</ActionButton> : "—", exportValue: r => r.document || "" },
+        { id: "detalhe", label: "Detalhe", render: r => <span className="arc-detail-cell">{detail(r)}</span>, exportValue: detail },
+      ]} />
   </section>;
 }
 

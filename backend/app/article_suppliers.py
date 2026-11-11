@@ -1,4 +1,4 @@
-"""Condições por fornecedor de cada artigo: referência, preço acordado, prazo e quantidades.
+"""Condições por fornecedor de cada artigo: referência, preço, prazo, quantidades e bonificação.
 
 Complementa o fornecedor principal da ficha (um só) e as condições gerais de encomenda do
 fornecedor (supplier_order_terms). O preço acordado é um custo unitário sem IVA, como os custos
@@ -10,7 +10,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -31,12 +31,20 @@ class TermsInput(Strict):
     lead_days: int | None = Field(default=None, ge=0, le=3650)
     min_quantity: Decimal | None = Field(default=None, gt=0, le=10**12, max_digits=18, decimal_places=6)
     pack_quantity: Decimal | None = Field(default=None, gt=0, le=10**12, max_digits=18, decimal_places=6)
+    bonus_buy_quantity: Decimal | None = Field(default=None, gt=0, le=10**12, max_digits=18, decimal_places=6)
+    bonus_free_quantity: Decimal | None = Field(default=None, gt=0, le=10**12, max_digits=18, decimal_places=6)
     notes: str = Field(default="", max_length=300)
 
     @field_validator("supplier_reference", "notes")
     @classmethod
     def strip(cls, value):
         return " ".join(value.split())
+
+    @model_validator(mode="after")
+    def bonus_pair(self):
+        if (self.bonus_buy_quantity is None) != (self.bonus_free_quantity is None):
+            raise ValueError("Indique a bonificação completa: na compra de quantas unidades e quantas de oferta.")
+        return self
 
 
 def text(value):
@@ -54,6 +62,8 @@ def view(row, names, main, cost_visible):
         "lead_days": row.lead_days,
         "min_quantity": text(row.min_quantity),
         "pack_quantity": text(row.pack_quantity),
+        "bonus_buy_quantity": text(row.bonus_buy_quantity),
+        "bonus_free_quantity": text(row.bonus_free_quantity),
         "notes": row.notes,
         "revision": row.revision,
         "updated_at": row.updated_at,
@@ -128,6 +138,8 @@ def save_terms(
     row.lead_days = data.lead_days
     row.min_quantity = data.min_quantity
     row.pack_quantity = data.pack_quantity
+    row.bonus_buy_quantity = data.bonus_buy_quantity
+    row.bonus_free_quantity = data.bonus_free_quantity
     row.notes = data.notes
     row.revision += 1
     row.updated_by = user.id

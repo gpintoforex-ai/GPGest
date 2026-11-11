@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 from app.models import BusinessEntity, DocumentPayment, ProcurementDocument, ProcurementLink, Purchase, StockEntry, PlannedMovement
+from conftest import supplier_fields
 from test_inventory import stock_case, product, view, move, login
 
 
@@ -13,7 +14,7 @@ from test_inventory import stock_case, product, view, move, login
 def case(stock_case, monkeypatch):
     monkeypatch.setattr('app.procurement.policy', lambda _: {'mode':'local','provider':'none'})
     with stock_case[2].begin() as db:
-        s=BusinessEntity(name='Fornecedor Compras',tax_number='500000000',is_supplier=True,category_id=stock_case[1]['category'],email='fornecedor@example.com')
+        s=BusinessEntity(name='Fornecedor Compras',tax_number='500000000',is_supplier=True,email='fornecedor@example.com',**supplier_fields(db,stock_case[1]['category']))
         db.add(s);db.flush();sid=s.id
     return stock_case,sid
 
@@ -263,17 +264,21 @@ def test_procurement_migration_recreates_tables_and_purchase_link(case,monkeypat
     # Roll back that dependent migration before exercising the older one.
     customer_migration=importlib.import_module('migrations.versions.0057_customer_orders')
     cycle_migration=importlib.import_module('migrations.versions.0058_order_cycle')
+    # Webshop orders reference customer orders, so they must be removed first too.
+    webshop_migration=importlib.import_module('migrations.versions.0074_webshop')
     helper=importlib.import_module('migrations.versions.0006_cash_sheet')
     with stock[2].kw['bind'].begin() as conn:
         schema=conn.scalar(text('SELECT current_schema()'))
         monkeypatch.setattr(helper,'schemas',lambda _:[schema])
         before=conn.scalar(text('SELECT count(*) FROM users'))
         with Operations.context(MigrationContext.configure(conn)):
+            webshop_migration.downgrade()
             cycle_migration.downgrade()
             customer_migration.downgrade()
             migration.downgrade();migration.upgrade();migration.upgrade()
             customer_migration.upgrade()
             cycle_migration.upgrade()
+            webshop_migration.upgrade()
         assert {'procurement_documents','procurement_links'} <= set(inspect(conn).get_table_names(schema=schema))
         assert 'purchase_id' in {c['name'] for c in inspect(conn).get_columns('planned_movements',schema=schema)}
         assert conn.scalar(text('SELECT count(*) FROM users'))==before
@@ -351,9 +356,10 @@ def test_lines_without_any_rubric_are_refused_in_local_mode(case):
     stock, sid = case
     with stock[2].begin() as db:
         db.get(BusinessEntity, sid).category_id = None
+    # O rascunho grava-se; lançar sem rubrica (na linha ou na ficha do fornecedor) é recusado.
     row = draft(case, 'invoice', category_id=None, lines=[{'description': 'Serviço', 'nature': 'service', 'unit': 'h', 'quantity': '1', 'price': '10', 'vat': '23'}])
     response = stock[0].post('/api/procurement/' + row['id'] + '/confirm', json={'revision': row['revision']})
-    assert response.status_code == 422 and 'rubrica de cada linha' in response.json()['detail']
+    assert response.status_code == 422 and 'rubrica' in response.json()['detail'].casefold()
 
 
 def test_confirmed_receipt_is_edited_in_place_and_regenerates_stock(case):
@@ -396,3 +402,97 @@ def test_confirmed_receipt_is_edited_in_place_and_regenerates_stock(case):
     refreshed = next(d for d in c.get('/api/procurement').json()['documents'] if d['id'] == current['id'])
     blocked = edit(refreshed, '8')
     assert blocked.status_code == 409 and 'devolução' in blocked.json()['detail']
+
+
+def test_supplier_without_rubric_term_or_method_cannot_be_used(case):
+    stock, _ = case
+    with stock[2].begin() as db:
+        incomplete = BusinessEntity(name='Fornecedor incompleto', tax_number='500000019', is_supplier=True)
+        db.add(incomplete); db.flush(); sid = incomplete.id
+    article = product(stock)
+    data = {'kind': 'order', 'store_id': stock[4], 'supplier_id': sid, 'document': 'ENC-' + uuid4().hex[:6],
+            'document_date': date.today().isoformat(), 'due_date': date.today().isoformat(),
+            'category_id': stock[1]['category'], 'request_key': str(uuid4()),
+            'lines': [{'article_id': article, 'description': 'Artigo', 'quantity': '1', 'price': '1', 'vat': '23', 'warehouse_id': stock[3][0]}]}
+    # O rascunho grava-se; lançar (confirmar) exige a ficha completa.
+    saved = stock[0].post('/api/procurement', json=data)
+    assert saved.status_code == 200, saved.text
+    response = stock[0].post(f"/api/procurement/{saved.json()['id']}/confirm", json={'revision': saved.json()['revision']})
+    assert response.status_code == 422
+    detail = response.json()['detail']
+    assert 'Fornecedor incompleto' in detail and all(f in detail for f in ('Rubrica', 'Meio de pagamento', 'Prazo de pagamento'))
+    with stock[2].begin() as db:
+        entity = db.get(BusinessEntity, sid)
+        for key, value in supplier_fields(db).items():
+            setattr(entity, key, value)
+    confirmed = stock[0].post(f"/api/procurement/{saved.json()['id']}/confirm", json={'revision': saved.json()['revision']})
+    assert confirmed.status_code == 200, confirmed.text
+
+
+def test_lot_articles_need_expiry_short_expiry_warns_and_under_a_year_opens_a_claim(case):
+    stock, _ = case
+    article = product(stock, lots=True, expiry=True)
+    def receipt(expiry, lot):
+        line = {'article_id': article, 'description': 'Artigo com lote', 'quantity': '5', 'price': '2', 'vat': '23',
+                'warehouse_id': stock[3][0], 'lot_number': lot, 'expiry': expiry}
+        return draft(case, 'receipt', lines=[line], document_type='FT')
+    missing = receipt(None, 'L-SEM')
+    refused = stock[0].post(f"/api/procurement/{missing['id']}/confirm", json={'revision': missing['revision']})
+    assert refused.status_code == 422 and 'validade' in refused.json()['detail'] and 'L-SEM' in refused.json()['detail']
+    short = confirm(case, receipt((date.today() + timedelta(days=200)).isoformat(), 'L-CURTO'))
+    assert short['expiry_alerts'][0]['level'] == 'reclamar' and short['expiry_claim'] == {'status': 'pendente'}
+    claimed = stock[0].post(f"/api/procurement/{short['id']}/expiry-claim",
+                            json={'revision': short['revision'], 'status': 'reclamada', 'note': 'Email ao fornecedor'})
+    assert claimed.status_code == 200 and claimed.json()['expiry_claim']['status'] == 'reclamada'
+    medium = confirm(case, receipt((date.today() + timedelta(days=540)).isoformat(), 'L-MEDIO'))
+    assert medium['expiry_alerts'][0]['level'] == 'aviso' and 'expiry_claim' not in medium
+    long = confirm(case, receipt((date.today() + timedelta(days=900)).isoformat(), 'L-LONGO'))
+    assert 'expiry_alerts' not in long
+
+
+def test_stock_ledger_lists_receipts_by_document_and_registration_date(case):
+    """Receção com fatura antiga: aparece no período do registo e no do documento, agrupada por documento."""
+    stock, _ = case
+    c = stock[0]
+    old = (date.today() - timedelta(days=45)).isoformat()
+    receipt = confirm(case, draft(case, 'receipt', document_date=old, due_date=old))
+    today = date.today().isoformat()
+
+    def ledger(**params):
+        response = c.get('/api/procurement-ledger', params={'store_id': stock[4], **params})
+        assert response.status_code == 200, response.text
+        return response.json()['rows']
+
+    documents = ledger(start=today, end=today, view='documents')
+    row = next(r for r in documents if r['procurement_id'] == receipt['id'])
+    assert row['group'] == receipt['id'] and row['document'] == receipt['document']
+    assert row['document_type'] == 'Receção de mercadoria' and row['entity_name'] == 'Fornecedor Compras'
+    assert row['occurred_on'] == old and D(row['inbound']) == 20 and D(row['outbound']) == 0
+    assert row['lines'] == 1 and row['articles'] == 1 and row['kinds'] == ['purchase']
+    assert any(r['procurement_id'] == receipt['id'] for r in ledger(start=old, end=old, view='documents'))
+    before = (date.today() - timedelta(days=60)).isoformat()
+    assert not any(r['procurement_id'] == receipt['id'] for r in ledger(start=before, end=before, view='documents'))
+    # Linhas do documento, sem filtro de período, com o tipo de documento.
+    lines = ledger(group=receipt['id'], start=before, end=before)
+    assert len(lines) == 1 and lines[0]['document_type'] == 'Receção de mercadoria' and D(lines[0]['quantity']) == 20
+    assert any(r['procurement_id'] == receipt['id'] for r in ledger(start=today, end=today))
+    # Indicadores com os mesmos filtros; o critério de data restringe a uma das datas.
+    body = c.get('/api/procurement-ledger', params={'store_id': stock[4], 'start': today, 'end': today, 'view': 'lines'}).json()
+    summary = body['summary']
+    assert summary['count'] >= 1 and summary['inbound'].get('un') and summary['transfers'] == 0
+    assert D(summary['net_value']) == D(summary['inbound_value']) - D(summary['outbound_value'])
+    assert stock[3] and summary['warehouses']
+    by_document = ledger(start=today, end=today, view='documents', date_basis='document')
+    assert not any(r['procurement_id'] == receipt['id'] for r in by_document)
+    assert any(r['procurement_id'] == receipt['id'] for r in ledger(start=today, end=today, view='documents', date_basis='record'))
+    assert any(r['procurement_id'] == receipt['id'] for r in ledger(start=old, end=old, view='documents', date_basis='document'))
+    assert any(r['procurement_id'] == receipt['id'] for r in ledger(start=old, end=old, origin='procurement', q=receipt['document'][-5:].upper()))
+    assert not ledger(start=old, end=old, origin='Wintouch')
+    assert not ledger(start=old, end=old, q='%')  # o texto é literal, não um padrão
+    # Stock acumulado do artigo no armazém, antes e depois de cada linha (pela ordem de registo).
+    article = lines[0]['article_id']
+    sale = c.post('/api/stock/movements', json={'article_id': article, 'warehouse_id': stock[3][0], 'kind': 'sale', 'quantity': '5',
+                                                'reason': 'Venda de teste', 'request_key': str(uuid4())})
+    assert sale.status_code == 200, sale.text
+    rows = [r for r in ledger(start=today, end=today, article_id=article)]
+    assert [(r['kind'], D(r['stock_before']), D(r['stock_after'])) for r in rows] == [('sale', 20, 15), ('purchase', 0, 20)]

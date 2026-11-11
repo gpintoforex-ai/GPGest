@@ -1,9 +1,13 @@
 """Mapas de gestão indicativos: custos e proveitos, e mapa de IVA por período.
 
-Proveitos e IVA liquidado: SAF-T de vendas (faturação líquida de IVA; notas de crédito subtraem).
+Proveitos e IVA liquidado: SAF-T de vendas (faturação líquida de IVA; notas de crédito subtraem) ou,
+no modo integrado, as vendas Wintouch sincronizadas (devoluções subtraem; anulados excluídos).
 Custos e IVA suportado: documentos de compra (e-Fatura, Compras e registos manuais), uma vez por
 documento, mais as compras do ERP sem documento correspondente. A rubrica vem das linhas da compra
-lançada, da rubrica definida no documento ERP ou da rubrica do fornecedor.
+lançada, da rubrica definida no documento ERP, da repartição confirmada na classificação de rubricas ou da
+rubrica do fornecedor. Os custos sem documento
+(impostos, vencimentos, encargos) entram pelos registos bancários aprovados com rubrica e marcados
+como custo, sem IVA.
 
 No regime normal, o custo é a base tributável mais o IVA não dedutível estimado (percentagem de
 dedução da rubrica); nos restantes regimes, o custo é o total. Não substitui a contabilidade nem a
@@ -23,12 +27,15 @@ from .access import authorize, current, scope
 from .db import db_session
 from .invoice_evidence import invoice_key, nif_key
 from .models import (
+    BankAccount,
+    BankBookEntry,
     Category,
     DocumentERPLink,
     ERPDocument,
     ERPDocumentRubric,
     ProcurementDocument,
     Purchase,
+    PurchaseRubric,
 )
 from .rubric_expenses import supplier_rubrics
 
@@ -70,6 +77,9 @@ def purchase_documents(db, stores, start, end):
     for row in db.scalars(select(ERPDocumentRubric)):
         erp_rubrics[row.erp_document_id].append(row)
     by_supplier = supplier_rubrics(db)
+    own_rubrics = defaultdict(list)
+    for row in db.scalars(select(PurchaseRubric).where(PurchaseRubric.purchase_id.in_(ids))) if ids else []:
+        own_rubrics[row.purchase_id].append(row)
     result = []
 
     def split(total_base, total_tax, weights):
@@ -101,6 +111,9 @@ def purchase_documents(db, stores, start, end):
             shares = [(category, sign * values[0], sign * values[1]) for category, values in parts.items()]
         elif purchase.id in links and erp_rubrics.get(links[purchase.id]):
             shares = [(c, sign * b, sign * t) for c, b, t in split(base, tax, [(r.category_id, r.amount_cents) for r in erp_rubrics[links[purchase.id]]])]
+        elif own_rubrics.get(purchase.id):
+            # Repartição confirmada na classificação de rubricas (compra sem linhas nem documento ERP com rubrica).
+            shares = [(c, sign * b, sign * t) for c, b, t in split(base, tax, [(r.category_id, r.amount_cents) for r in own_rubrics[purchase.id]])]
         else:
             shares = [(by_supplier.get(nif_key(purchase.supplier_nif), UNCLASSIFIED), sign * base, sign * tax)]
         result.append((purchase.document_date, purchase.id, shares))
@@ -116,6 +129,25 @@ def purchase_documents(db, stores, start, end):
         weights = [(r.category_id, r.amount_cents) for r in erp_rubrics.get(erp.id, [])] or [(by_supplier.get(nif_key(erp.supplier_nif), UNCLASSIFIED), 1)]
         result.append((erp.document_date, "erp:" + erp.id, [(c, sign * b, sign * t) for c, b, t in split(base, tax, weights)]))
     return result
+
+
+def bank_costs(db, stores, start, end):
+    """[(data, id, [(rubrica, valor, 0)])]: pagamentos e comissões do banco sem documento, com rubrica e
+    marcados como custo. Registos corrigidos (com correção posterior) e correções ficam de fora."""
+    corrected = select(BankBookEntry.original_id).where(BankBookEntry.original_id.is_not(None))
+    rows = db.scalars(select(BankBookEntry).join(BankAccount, BankAccount.id == BankBookEntry.account_id).where(
+        BankAccount.store_id.in_(stores), BankBookEntry.counts_as_cost.is_(True), BankBookEntry.category_id.is_not(None),
+        BankBookEntry.amount_cents < 0, BankBookEntry.original_id.is_(None), BankBookEntry.id.not_in(corrected),
+        BankBookEntry.movement_date >= str(start), BankBookEntry.movement_date <= str(end)))
+    # Rubrica de análise reclassificada (fiscal_payments): o registo bancário não muda.
+    from .fiscal_payments import reclassified
+    moved = reclassified(db)
+    return [(row.movement_date, "bank:" + row.id, [(moved.get("bank:" + row.id, row.category_id), -row.amount_cents, 0)]) for row in rows]
+
+
+def cost_documents(db, stores, start, end):
+    """Documentos de compra e custos sem documento registados no banco."""
+    return [*purchase_documents(db, stores, start, end), *bank_costs(db, stores, start, end)]
 
 
 def deductible(tax, category, percents):
@@ -136,7 +168,7 @@ def context(user, db, start, end, store_id):
 
 @router.get("/api/management/costs-revenues")
 def costs_revenues(start: date, end: date, group: str = "month", store_id: str = "", user=Depends(current), db: Session = Depends(db_session)):
-    from .billing_conference import documents
+    from .dashboard import sales_by_day, sales_source
     from .settings import vat_settings
     if group not in ("month", "quarter"):
         raise HTTPException(422, "Agrupe por mês ou por trimestre.")
@@ -146,19 +178,32 @@ def costs_revenues(start: date, end: date, group: str = "month", store_id: str =
     percents = {c.id: c.vat_deduction_percent for c in categories.values()}
     periods = set()
     revenue = defaultdict(int)
-    for doc in documents(db, stores, str(start), str(end)):
-        if doc["eligible"]:
-            key = period_key(doc["date"], group)
-            periods.add(key)
-            revenue[key] += doc["net_cents"] * doc["direction"]
+    # Proveitos: a mesma faturação sem IVA do dashboard (SAF-T ou, no modo integrado, vendas Wintouch).
+    source = "erp" if sales_source(db)[0] == "erp" else "saft"
+    net, _, _, missing = sales_by_day(db, stores, start, end, source)
+    for day, cents in net.items():
+        key = period_key(day, group)
+        periods.add(key)
+        revenue[key] += cents
     costs = defaultdict(lambda: defaultdict(int))
-    for day, _, shares in purchase_documents(db, stores, start, end):
+    # IVA das compras por período (os mesmos documentos dos custos): suportado e dedutível estimado.
+    vat_input, vat_deductible = defaultdict(int), defaultdict(int)
+    from .rubric_nature import flag, flags
+    table = flags(db)
+    excluded = defaultdict(int)
+    for day, _, shares in cost_documents(db, stores, start, end):
         key = period_key(day, group)
         periods.add(key)
         for category, base, tax in shares:
             # Regime normal: base + IVA não dedutível; restantes regimes: o IVA também é custo.
             cost = base + (tax - deductible(tax, category, percents) if regime == "normal" else tax)
-            costs[category][key] += cost
+            # Custos: rubricas de custos operacionais ou de compras; pagamentos ao Estado e movimentos financeiros ficam de fora.
+            if flag(table, category, "in_operating_costs") or flag(table, category, "in_purchases"):
+                costs[category][key] += cost
+            else:
+                excluded[category] += cost
+            vat_input[key] += tax
+            vat_deductible[key] += deductible(tax, category, percents) if regime == "normal" else 0
     ordered = sorted(periods)
     rubrics = sorted(costs, key=lambda c: (c == UNCLASSIFIED, -sum(costs[c].values())))
     total_costs = {key: sum(costs[c][key] for c in costs) for key in ordered}
@@ -170,12 +215,25 @@ def costs_revenues(start: date, end: date, group: str = "month", store_id: str =
                    "values": {key: costs[c][key] for key in ordered}, "total_cents": sum(costs[c].values())} for c in rubrics],
         "total_costs": total_costs,
         "margin": {key: revenue[key] - total_costs[key] for key in ordered},
+        "purchase_vat": {
+            "input": {key: vat_input[key] for key in ordered}, "deductible": {key: vat_deductible[key] for key in ordered},
+            "non_deductible": {key: vat_input[key] - vat_deductible[key] for key in ordered},
+            "totals": {"input_cents": sum(vat_input.values()), "deductible_cents": sum(vat_deductible.values()),
+                       "non_deductible_cents": sum(vat_input.values()) - sum(vat_deductible.values())},
+        },
         "totals": {"revenue_cents": sum(revenue.values()), "costs_cents": sum(total_costs.values()),
                    "margin_cents": sum(revenue.values()) - sum(total_costs.values())},
+        "revenue_source": source, "revenue_missing_documents": missing,
+        "excluded": [{"category_id": c or None, "category_name": categories[c].name if c in categories else "Por classificar", "total_cents": v}
+                     for c, v in sorted(excluded.items(), key=lambda item: -item[1]) if v],
         "notes": [
-            "Proveitos: faturação SAF-T líquida de IVA, pela data do documento. Custos: todos os documentos de compra pela data do documento, incluindo faturas do e-Fatura ainda não lançadas (com a rubrica do fornecedor).",
+            *(["Fora dos custos pela natureza da rubrica (obrigações fiscais ou movimentos financeiros): "
+               + ", ".join(f"{categories[c].name if c in categories else 'Por classificar'}" for c, v in excluded.items() if v) + "."] if any(excluded.values()) else []),
+            *([f"Atenção: {missing} documento(s) de venda do ERP sem base tributável não entram nos proveitos. Volte a sincronizar as vendas do período."] if missing else []),
+            ("Proveitos: vendas Wintouch líquidas de IVA (anulados excluídos; devoluções subtraem)" if source == "erp"
+             else "Proveitos: faturação SAF-T líquida de IVA") + ", pela data do documento. Custos: todos os documentos de compra pela data do documento, incluindo faturas do e-Fatura ainda não lançadas (com a rubrica do fornecedor), e os custos sem documento (impostos, vencimentos, encargos) registados na reconciliação bancária com rubrica, pela data do movimento.",
             "Custo no regime normal = base tributável + IVA não dedutível estimado; nos restantes regimes, o IVA é custo." if regime else "Configure o regime de IVA para calcular os custos corretamente.",
-            "Mapa de gestão indicativo: não inclui amortizações, acréscimos e diferimentos nem salários não registados como compras.",
+            "Mapa de gestão indicativo: não inclui amortizações, acréscimos e diferimentos, nem custos pagos sem registo com rubrica.",
         ],
     }
 
@@ -194,7 +252,22 @@ def vat_map(start: date, end: date, store_id: str = "", user=Depends(current), d
     categories = {c.id: c for c in db.scalars(select(Category))}
     percents = {c.id: c.vat_deduction_percent for c in categories.values()}
     rows = defaultdict(lambda: {"output_cents": 0, "input_cents": 0, "deductible_cents": 0, "sales_documents": 0, "purchase_documents": 0})
-    for doc in documents(db, stores, str(start), str(end)):
+    from .dashboard import sales_source
+    source, _ = sales_source(db)
+    sales_documents = documents(db, stores, str(start), str(end))
+    if source == "erp":
+        from .models import WintouchSaleRecord
+        sales_documents = []
+        for sale in db.scalars(select(WintouchSaleRecord).where(
+                WintouchSaleRecord.kind == "documento", WintouchSaleRecord.active.is_(True), WintouchSaleRecord.store_id.in_(stores),
+                WintouchSaleRecord.document_date >= str(start), WintouchSaleRecord.document_date <= str(end))):
+            data = json.loads(sale.data)
+            if data.get("document_group") != "vendas" or data.get("cancelled"):
+                continue
+            if data.get("tax_cents") is None:
+                return {"available": False, "message": "Há vendas do ERP sem IVA discriminado. Volte a sincronizar o período."}
+            sales_documents.append({"eligible": True, "date": sale.document_date, "tax_cents": int(data["tax_cents"]), "direction": data.get("direction") or 1})
+    for doc in sales_documents:
         if doc["eligible"]:
             row = rows[period_key(doc["date"], group)]
             row["output_cents"] += doc["tax_cents"] * doc["direction"]
@@ -217,7 +290,7 @@ def vat_map(start: date, end: date, store_id: str = "", user=Depends(current), d
         "rubrics": [{"category_id": c or None, "category_name": categories[c].name if c in categories else "Por classificar",
                      "vat_deduction_percent": percents.get(c), **values} for c, values in sorted(by_rubric.items(), key=lambda item: -item[1]["input_cents"])],
         "notes": [
-            "IVA liquidado: SAF-T de vendas (documentos normais; notas de crédito subtraem). IVA suportado: documentos de compra, incluindo os ainda não lançados.",
+            ("IVA liquidado: vendas Wintouch (anulados excluídos; devoluções subtraem)." if source == "erp" else "IVA liquidado: SAF-T de vendas (documentos normais; notas de crédito subtraem).") + " IVA suportado: documentos de compra, incluindo os ainda não lançados.",
             "Mapa indicativo: a dedutibilidade depende da natureza da despesa e é confirmada pelo contabilista. Não substitui a declaração periódica.",
             "Pequenos retalhistas: o imposto devido segue regras próprias (art. 60.º do CIVA); o saldo apresentado é apenas uma referência." if fiscal["vat_regime"] == "pequenos_retalhistas" else "",
         ],

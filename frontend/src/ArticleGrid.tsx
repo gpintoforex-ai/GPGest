@@ -1,3 +1,6 @@
+import { useRecordHandoff } from "./components/useRecordHandoff";
+import { formatQuantity } from "./lib/quantity";
+import { useLocationSearch } from "./components/WorkspaceUI";
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { MoreHorizontal, SlidersHorizontal } from "lucide-react";
 import { api } from "./lib/api";
@@ -18,12 +21,7 @@ type Column = {
   cost?: boolean;
   render: (row: Row) => ReactNode;
 };
-const number = (value: unknown) =>
-  value == null
-    ? "Sem informação"
-    : new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 6 }).format(
-        Number(value),
-      );
+const number = (value: unknown) => formatQuantity(value);
 const money = (value: unknown) =>
   value == null
     ? "Sem informação"
@@ -300,14 +298,14 @@ function RowMenu({ label, children }: { label: string; children: ReactNode }) {
 export default function ArticleGrid({
   catalog,
   revision,
-  onOpen,
+  onOpen: openArticle,
   onDuplicate,
   onPrice,
   onChanged,
 }: {
   catalog: Row;
   revision: number;
-  onOpen: (row: Row, readOnly?: boolean) => void;
+  onOpen: (row: Row, readOnly?: boolean, browse?: import("./articleValues").ArticleBrowse) => void;
   onDuplicate: (row: Row) => void;
   onPrice: (row: Row) => void;
   onChanged: (message: string) => void;
@@ -333,6 +331,7 @@ export default function ArticleGrid({
       return defaults;
     }
   });
+  const handoffLocation = useLocationSearch();
   const [query, setQuery] = useState(""),
     [search, setSearch] = useState("");
   const [filters, setFilters] = useState<Row>(emptyFilters);
@@ -416,7 +415,30 @@ export default function ArticleGrid({
       current = false;
     };
   }, [search, filters, page, prefs.size, sort, revision, retry]);
+  useEffect(() => {
+    const params = new URLSearchParams(handoffLocation);
+    if (params.get("pagina") === "Artigos e validades" && (params.has("pesquisa.artigos") || params.get("consulta.tipo") === "article")) {
+      const text = params.get("pesquisa.artigos") || "";
+      setQuery(text); setSearch(text); setFilters(emptyFilters); setPage(1);
+    }
+  }, [handoffLocation]);
+  useRecordHandoff("article", ["Artigos e validades"], (id, stillCurrent) => {
+    void api(`/stock/catalog?${new URLSearchParams({record_id:id,page:"1",size:"1"})}`,undefined,{preserveDraft:true}).then(result => {
+      if (!stillCurrent()) return;
+      const article = result.articles?.find((row:Row) => row.id === id);
+      if (article) onOpen(article,true); else setActionError("O artigo já não está disponível para consulta. Atualize a pesquisa.");
+    }).catch(error => { if (stillCurrent()) setActionError(error.message); });
+    return true;
+  });
   const rows: Row[] = data?.articles || [];
+  function onOpen(row: Row, readOnly = false) {
+    const index = rows.findIndex(item => item.id === row.id);
+    openArticle(row, readOnly, index < 0 ? undefined : {
+      params: { ...filters, q: search, sort: sort.id, direction: sort.direction },
+      position: ((data?.page || page) - 1) * prefs.size + index,
+      total: Number(data?.total ?? rows.length), size: prefs.size,
+    });
+  }
   const visible = columns.filter(
     (c) => !prefs.hidden.includes(c.id) && (!c.cost || rights.view_cost),
   );
@@ -817,7 +839,7 @@ export default function ArticleGrid({
                   }
                 >
                   {c.sort ? (
-                    <button
+                    <ActionButton
                       type="button"
                       className="article-sort"
                       onClick={() => {
@@ -839,7 +861,7 @@ export default function ArticleGrid({
                             : " ↓"
                           : ""}
                       </span>
-                    </button>
+                    </ActionButton>
                   ) : (
                     c.label
                   )}
@@ -880,7 +902,7 @@ export default function ArticleGrid({
                   <td key={c.id} data-label={c.label} className={`article-col-${c.id}`}>
                     <div>
                       {c.id === "name" ? (
-                        <button
+                        <ActionButton
                           type="button"
                           className="article-name"
                           title="Consultar artigo"
@@ -888,7 +910,7 @@ export default function ArticleGrid({
                           onClick={() => onOpen(r, true)}
                         >
                           {c.render(r)}
-                        </button>
+                        </ActionButton>
                       ) : (
                         c.render(r)
                       )}

@@ -1,0 +1,70 @@
+/* Rentabilidade e custos na receção a partir de fatura. Só tokens do design system (claro e escuro). */
+.receiving-insights { grid-column: 1 / -1; display: grid; gap: 6px; min-width: 0; }
+.receiving-insights-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.receiving-insights-alert { display: flex; gap: 6px; align-items: flex-start; margin: 0; padding: 8px 10px; border-radius: 8px; font-size: 13px;
+  color: var(--color-text); background: var(--color-danger-bg); border: 1px solid var(--color-danger); }
+.receiving-insights-alert svg { flex: none; margin-top: 1px; color: var(--color-danger); }
+.receiving-open-detail { justify-self: start; }
+.ui-dialog.receiving-detail-dialog {
+  width: min(1360px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px);
+  padding: 0; overflow: auto; color: var(--color-text); background: var(--color-surface);
+  border: 1px solid var(--color-border); border-radius: 20px;
+}
+.receiving-detail-dialog > .ui-dialog-dismissbar { display: none; }
+.receiving-detail-header, .receiving-detail-footer {
+  display: flex; align-items: center; gap: 14px; padding: 16px 22px;
+  background: var(--color-surface-raised, var(--color-surface));
+}
+.receiving-detail-header { border-bottom: 1px solid var(--color-border); }
+.receiving-detail-header > svg, .receiving-detail-card h3 svg, .receiving-detail-footer svg { flex: none; color: var(--color-info); }
+.receiving-detail-header h2, .receiving-detail-header p, .receiving-detail-footer p { margin: 0; }
+.receiving-detail-navigation { display: flex; gap: 6px; margin-inline-start: auto; }
+.receiving-detail-top, .receiving-detail-panels {
+  display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(0, 1fr); gap: 16px; padding: 16px 22px;
+}
+.receiving-detail-inputs, .receiving-detail-stack { display: grid; align-content: start; gap: 12px; min-width: 0; }
+.receiving-detail-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 108px), 1fr)); gap: 12px; }
+.receiving-detail-fields input, .receiving-detail-fields select { width: 100%; min-width: 0; }
+.receiving-detail-net { padding: 12px 16px; background: var(--color-success-bg); border: 1px solid var(--color-border); border-radius: 12px; }
+.receiving-detail-net h3 { margin: 0; font-size: 1rem; }
+.receiving-detail-net > strong { display: block; font-size: 1.7rem; }
+.receiving-detail-net p { display: flex; justify-content: space-between; gap: 8px; margin: 8px 0 2px; padding-top: 8px; border-top: 1px solid var(--color-border); }
+.receiving-detail-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 22px; padding-bottom: 10px; border-bottom: 1px solid var(--color-border); }
+.receiving-detail-panels { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); }
+.receiving-detail-panels.single { grid-template-columns: minmax(0, 1fr); }
+.receiving-detail-card, .receiving-price-simulation { min-width: 0; border: 1px solid var(--color-border); border-radius: 12px; }
+.receiving-detail-card h3, .receiving-price-simulation h4 { display: flex; align-items: center; gap: 8px; margin: 0; padding: 12px 14px; background: var(--color-info-bg, var(--color-surface)); border-radius: 11px 11px 0 0; font-size: 1rem; }
+.receiving-detail-card > p, .receiving-detail-card > .table-wrap { margin: 12px; }
+.receiving-detail-calculations, .receiving-cost-comparison, .receiving-price-simulation dl { margin: 0; padding: 12px 14px; }
+.receiving-detail-calculations > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 0; border-bottom: 1px solid var(--color-border); }
+.receiving-detail-calculations > div:last-child { border-bottom: 0; }
+.receiving-detail-calculations small { grid-column: 1 / -1; }
+.receiving-cost-comparison, .receiving-price-simulation dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 96px), 1fr)); gap: 8px; }
+.receiving-detail-dialog dd { margin: 3px 0 0; font-weight: 650; font-variant-numeric: tabular-nums; }
+.receiving-detail-dialog small { color: var(--color-muted); }
+.receiving-price-simulation { display: grid; gap: 8px; padding-bottom: 12px; }
+.receiving-price-simulation label { display: grid; gap: 4px; width: fit-content; }
+.receiving-price-simulation > :is(label, small, button, .notice) { margin-inline: 14px; }
+.receiving-price-simulation > button { justify-self: start; }
+.receiving-price-simulation input { max-width: 12rem; }
+.receiving-price-simulation dl > div { padding: 8px; border-radius: 8px; background: var(--color-info-bg, var(--color-surface)); }
+.receiving-detail-footer { justify-content: space-between; border-top: 1px solid var(--color-border); }
+.receiving-detail-footer p { display: flex; align-items: center; gap: 8px; }
+@media (max-width: 840px) {
+  .receiving-detail-top, .receiving-detail-panels { grid-template-columns: minmax(0, 1fr); }
+  .receiving-detail-header, .receiving-detail-footer { flex-wrap: wrap; }
+}
+.receiving-benefits dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 8px 16px; margin: 8px 0; }
+.receiving-benefits dt { font-size: 12.5px; color: var(--color-muted); }
+.receiving-benefits dd { margin: 2px 0 0; display: grid; gap: 2px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--color-text); }
+.receiving-benefits dd small { font-weight: 400; color: var(--color-muted); }
+.receiving-document-summaries {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.receiving-document-summaries > section { min-width: 0; }
+.receiving-benefits { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
+.receiving-benefits h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1rem; }
+.receiving-benefits .footnote { margin: 0; }

@@ -15,7 +15,7 @@ from app.models import (
     Register,
     now,
 )
-from conftest import movement, open_cash
+from conftest import movement, open_cash, supplier_fields
 from pypdf import PdfReader
 from sqlalchemy import func, select
 
@@ -761,7 +761,7 @@ def test_manual_debits_require_supplier_even_when_credits_cancel_them(local, pay
         assert response.status_code == 422 and "fornecedor" in response.json()["detail"]
     with factory.begin() as db:
         assert db.get(CashSession, identifier).closed_at is None
-        supplier = BusinessEntity(name="Fornecedor local", tax_number="500000000", is_supplier=True)
+        supplier = BusinessEntity(name="Fornecedor local", tax_number="500000000", is_supplier=True, **supplier_fields(db))
         inactive = BusinessEntity(name="Inativo", is_supplier=True, active=False)
         customer = BusinessEntity(name="Cliente", is_supplier=False, is_customer=True)
         db.add_all([supplier, inactive, customer])

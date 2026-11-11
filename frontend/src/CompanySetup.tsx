@@ -15,6 +15,16 @@ const steps = [
   ["company", "Empresa"], ["mode", "Modo de trabalho"], ["registers", "Caixas"], ["banks", "Contas bancárias"],
   ["payments", "Meios de pagamento"], ["terminals", "Terminais TPA"], ["preferences", "Preferências"], ["saft", "Faturação SAF-T"], ["summary", "Resumo"],
 ] as const;
+// Erros da validação do servidor que pertencem a uma etapa: o aviso leva diretamente até ela.
+const errorSteps: [string, (typeof steps)[number][0]][] = [
+  ["Preencha o nome da empresa", "company"], ["Indique o nome comercial", "company"], ["Escolha o regime de IVA", "company"], ["Indique o nome do armazém", "company"],
+  ["Escolha um conector", "mode"], ["Teste a ligação ao ERP", "mode"],
+  ["Adicione ou associe pelo menos uma caixa", "registers"], ["Use nomes de caixa diferentes", "registers"], ["Indique a data de início do saldo inicial de cada caixa", "registers"], ["Escolha um responsável ativo", "registers"],
+  ["Escolha apenas uma conta bancária principal", "banks"], ["Indique o banco de cada conta", "banks"], ["Indique a data do saldo inicial bancário", "banks"], ["O IBAN", "banks"], ["O comprimento do IBAN", "banks"], ["A mesma conta bancária ou IBAN", "banks"], ["Escolha um banco ativo", "banks"],
+  ["Confirme o numerário", "payments"], ["Reveja o nome, a utilização e o destino de cada meio", "payments"], ["Use um nome diferente para cada meio", "payments"], ["O numerário movimenta a gaveta", "payments"], ["Associe cada meio ERP", "payments"], ["Escolha um meio de pagamento desta empresa", "payments"], ["Escolha uma conta de destino do estabelecimento principal para o meio", "payments"], ["O meio ERP não pertence", "payments"],
+  ["Escolha a conta bancária onde recebe os pagamentos de cada terminal", "terminals"], ["A comissão percentual", "terminals"], ["O terminal, a caixa e a conta de destino", "terminals"], ["Escolha um terminal desta empresa", "terminals"],
+];
+const errorStep = (message: string) => steps.findIndex(([id]) => id === errorSteps.find(([start]) => message.startsWith(start))?.[1]);
 const key = () => crypto.randomUUID();
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Lisbon" });
 const money = (text: string | null, currency = "EUR") => text?.trim() ? new Intl.NumberFormat("pt-PT", { style: "currency", currency }).format(Number(text.replace(",", "."))) : "Por configurar";
@@ -99,6 +109,8 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
   const [confirmDemo, setConfirmDemo] = useState(false);
   const [includeERPMethods, setIncludeERPMethods] = useState(true);
   const [done, setDone] = useState(false);
+  // Ao saltar para a etapa de um erro, o foco vai para o primeiro campo assinalado.
+  const focusInvalid = useRef(false);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const element = dialog.current!;
@@ -108,8 +120,10 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
     return () => { active = false; element.close(); previous?.focus(); };
   }, []);
   useEffect(() => {
-    heading.current?.focus();
-    dialog.current?.querySelector(".setup-content")?.scrollTo({ top: 0 });
+    const invalid = focusInvalid.current ? dialog.current?.querySelector<HTMLElement>("[aria-invalid=true]") : null;
+    focusInvalid.current = false;
+    if (invalid) { invalid.focus(); invalid.scrollIntoView({ block: "center" }); }
+    else { heading.current?.focus(); dialog.current?.querySelector(".setup-content")?.scrollTo({ top: 0 }); }
     const rail = dialog.current?.querySelector<HTMLElement>(".setup-step-nav");
     if (!rail) return;
     const centerStep = () => {
@@ -157,6 +171,9 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
   }
   function deleteButton(section: string, index: number) { return <ActionButton type="button" className="setup-remove" aria-label={`Retirar ${section === "registers" ? "caixa" : section === "accounts" ? "conta" : "terminal"} ${index + 1}`} onClick={() => remove(section, index)}><Trash2 size={17} />Retirar da configuração</ActionButton>; }
   const currency = data?.company.currency || "EUR";
+  const target = error ? errorStep(error) : -1;
+  // Meio ERP associado a mais do que um meio local selecionado: nome do primeiro meio que o usa.
+  const erpTaken = (p: Row) => p.selected && p.erp_id ? data!.payments.find((other: Row) => other !== p && other.selected && other.erp_id === p.erp_id)?.name : undefined;
   return <AppDialog busy={busy} dirty={!!data && !!state && !done && JSON.stringify(data) !== JSON.stringify(state.data)} ref={dialog} className="setup-dialog surface-light" aria-labelledby="setup-title" onRequestClose={() => { if (!busy) onClose(); }}>
     <header className="setup-dialog-header"><div><small>CONFIGURAÇÃO DA EMPRESA</small><h2 id="setup-title">Vamos preparar a sua IAZELA</h2></div></header>
     <p className="footnote">Introduza apenas os dados necessários à configuração e informe as pessoas cujos acessos cria. <a href="/legal/privacidade">Informação de privacidade</a> · <a href="/legal/direitos">Direitos e contacto</a>. A configuração não subscreve publicidade.</p>
@@ -257,8 +274,8 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
                 {p.selected && <><div className="setup-grid"><Field label={`Nome do meio de pagamento ${i + 1}`}><input value={p.name} maxLength={100} onChange={e => itemChange("payments", i, "name", e.target.value)} /></Field>
                   {p.bank_receivable && <Field label={`Conta de destino de ${p.name}`}>{accountSelect(p.account, value => itemChange("payments", i, "account", value || null), "Definir depois / por terminal")}</Field>}
                   {p.key === "mbway" && <Field label="Liquidação do MB WAY"><select value={p.mbway_via} onChange={e => itemChange("payments", i, "mbway_via", e.target.value)}><option value="account">Serviço ou conta própria</option><option value="terminal">Através de um terminal TPA</option></select></Field>}
-                  {!!state.erp_methods.length && <Field label={`Meio ERP para ${p.name}`}><select value={p.erp_id || ""} onChange={e => itemChange("payments", i, "erp_id", e.target.value || null)}><option value="">Sem associação</option>{state.erp_methods.map((m: Row) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>}
-                </div><div className="setup-check-grid"><label><input type="checkbox" checked={p.cash} disabled={["numerario", "cartao", "mbway", "transferencia"].includes(p.key)} onChange={e => { itemChange("payments", i, "cash", e.target.checked); if (e.target.checked) itemChange("payments", i, "bank_receivable", false); }} />Movimenta numerário da gaveta</label>
+                  {!!state.erp_methods.length && <Field label={`Meio ERP para ${p.name}`}><select value={p.erp_id || ""} aria-invalid={erpTaken(p) !== undefined || undefined} aria-describedby={erpTaken(p) !== undefined ? `setup-erp-taken-${p.key}` : undefined} onChange={e => itemChange("payments", i, "erp_id", e.target.value || null)}><option value="">Sem associação</option>{state.erp_methods.map((m: Row) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>}
+                </div>{erpTaken(p) !== undefined && <small id={`setup-erp-taken-${p.key}`} className="ui-field-error">Este meio ERP também está associado a «{erpTaken(p) || "Meio personalizado"}». Escolha outro meio ERP ou «Sem associação» num deles.</small>}<div className="setup-check-grid"><label><input type="checkbox" checked={p.cash} disabled={["numerario", "cartao", "mbway", "transferencia"].includes(p.key)} onChange={e => { itemChange("payments", i, "cash", e.target.checked); if (e.target.checked) itemChange("payments", i, "bank_receivable", false); }} />Movimenta numerário da gaveta</label>
                   <label><input type="checkbox" checked={p.bank_receivable} disabled={p.cash} onChange={e => itemChange("payments", i, "bank_receivable", e.target.checked)} />Gera valor a receber no banco</label>
                   <label><input type="checkbox" checked={p.receipts} disabled={p.key === "numerario"} onChange={e => itemChange("payments", i, "receipts", e.target.checked)} />Recebimentos</label>
                   <label><input type="checkbox" checked={p.payments} disabled={p.key === "numerario"} onChange={e => itemChange("payments", i, "payments", e.target.checked)} />Pagamentos</label></div></>}
@@ -306,7 +323,7 @@ function SetupWizard({ boot, onClose, onChanged, onNavigate, onAction, hasOpenSe
             </>}
           </fieldset>
           {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
-          {error && <Notice className="error" role="alert">{error}</Notice>}
+          {error && <Notice className="error" role="alert">{error}{target >= 0 && target !== step && <> <ActionButton type="button" disabled={busy} onClick={() => { focusInvalid.current = true; void go(target); }}>Corrigir em {steps[target][1]}<ArrowRight size={16} /></ActionButton></>}</Notice>}
         </div>
         <footer className="setup-footer"><span>{busy ? "A guardar…" : "Progresso partilhado pela empresa"}</span><div className="setup-footer-actions">
           <ActionButton type="button" disabled={busy || step === 0} onClick={() => void go(step - 1)}><ArrowLeft size={16} />Anterior</ActionButton>

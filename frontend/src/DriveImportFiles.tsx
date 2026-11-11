@@ -3,6 +3,7 @@ import { RefreshCw } from "lucide-react";
 import { api } from "./lib/api";
 import { ActionButton, Notice } from "./components/InteractionUI";
 import { StatusBadge } from "./components/BusinessUI";
+import { DataTable } from "./components/DataTable";
 import { DRIVE_IMPORTED_EVENT } from "./DrivePendingNotice";
 
 export type DriveFile = { id: string; name: string; size: number; modified_at: string; imported: boolean; status?: "new" | "imported" | "updated"; format?: string; note?: string };
@@ -16,6 +17,7 @@ export type DriveSearch = {
 };
 
 const size = (bytes: number) => bytes >= 1_000_000 ? `${(bytes / 1_000_000).toFixed(1).replace(".", ",")} MB` : `${Math.max(1, Math.round(bytes / 1000))} kB`;
+const fileState = (file: DriveFile) => file.imported ? "Já importado" : file.status === "updated" ? "Alterado desde a importação" : "Novo";
 const when = (value: string) => value ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Lisbon" }).format(new Date(value)) : "—";
 
 /** Procura, na pasta Google Drive configurada, os ficheiros do endpoint indicado (null: não procura). */
@@ -64,7 +66,7 @@ export default function DriveImportFiles({ search, title, actionLabel, disabled,
   notConfigured?: string;
 }) {
   const { data, refresh } = search;
-  const [error, setError] = useState(""), [busy, setBusy] = useState("");
+  const [error, setError] = useState(""), [busy, setBusy] = useState(""), [show, setShow] = useState<"all" | "fresh" | "imported">("all");
   async function pick(file: DriveFile) {
     setBusy(file.id); setError("");
     try { await onPick(file); refresh(); window.dispatchEvent(new Event(DRIVE_IMPORTED_EVENT)); }
@@ -79,13 +81,20 @@ export default function DriveImportFiles({ search, title, actionLabel, disabled,
     {search.searching && <p role="status">A procurar no Google Drive…</p>}
     {failure && <Notice tone="warning">Google Drive: {failure}</Notice>}
     {data && !data.files.length && <p>Não foram encontrados ficheiros deste tipo na pasta configurada nem nas subpastas.</p>}
-    {!!data?.files.length && <div className="table-wrap"><table><thead><tr><th>Ficheiro</th><th>Alterado</th><th className="numeric">Tamanho</th><th>Estado</th><th>Ações</th></tr></thead><tbody>
-      {data.files.map(file => <tr key={file.id}>
-        <td>{file.name}{(file.format || file.note) && <><br /><small>{[file.format, file.note].filter(Boolean).join(" · ")}</small></>}</td><td>{when(file.modified_at)}</td><td className="numeric">{size(file.size)}</td>
-        <td><StatusBadge tone={file.imported ? "success" : "warning"}>{file.imported ? "Já importado" : file.status === "updated" ? "Alterado desde a importação" : "Novo"}</StatusBadge></td>
-        <td><ActionButton disabled={disabled || !!busy} onClick={() => pick(file)}>{busy === file.id ? "A obter do Drive…" : actionLabel}</ActionButton></td>
-      </tr>)}
-    </tbody></table></div>}
+    {!!data?.files.length && <DataTable<DriveFile> label="ficheiros no Google Drive" rowKey={file => file.id}
+      rows={data.files.filter(file => show === "all" || (show === "imported") === file.imported)}
+      emptyText={show === "fresh" ? "Não há ficheiros novos por importar." : "Nenhum ficheiro neste estado."}
+      searchText={file => [file.name, file.format, file.note].filter(Boolean).join(" ")}
+      toolbar={<label>Estado<select value={show} onChange={event => setShow(event.target.value as typeof show)}>
+        <option value="all">Todos</option><option value="fresh">Por importar</option><option value="imported">Já importados</option>
+      </select></label>}
+      columns={[
+        { id: "ficheiro", label: "Ficheiro", sortValue: file => file.name, render: file => <>{file.name}{(file.format || file.note) && <><br /><small>{[file.format, file.note].filter(Boolean).join(" · ")}</small></>}</> },
+        { id: "alterado", label: "Alterado", sortValue: file => file.modified_at || "", render: file => when(file.modified_at) },
+        { id: "tamanho", label: "Tamanho", numeric: true, sortValue: file => file.size, render: file => size(file.size) },
+        { id: "estado", label: "Estado", sortValue: file => fileState(file), render: file => <StatusBadge tone={file.imported ? "success" : "warning"}>{fileState(file)}</StatusBadge> },
+        { id: "acoes", label: "Ações", render: file => <ActionButton disabled={disabled || !!busy} onClick={() => pick(file)}>{busy === file.id ? "A obter do Drive…" : actionLabel}</ActionButton> },
+      ]} />}
     <ActionButton disabled={!!busy || search.searching} onClick={refresh}><RefreshCw size={16} />Procurar novamente</ActionButton>
   </div>;
 }

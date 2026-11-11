@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { ActionButton, AppDialog, Notice } from "../components/InteractionUI";
 import { Field } from "../components/Form";
 import Processing from "./Processing";
-import { DIRECTION_LABELS, type Direction, type Plan, type PlanItem, type SyncRun, type TableContext, type TableInfo } from "./types";
+import { DIRECTION_LABELS, type ConflictPolicy, type Direction, type Plan, type PlanItem, type SyncRun, type TableContext, type TableInfo } from "./types";
 
 const SUMMARY: { key: PlanItem["summary"]; label: string; Icon: typeof PlusCircle }[] = [
   { key: "criar", label: "A criar", Icon: PlusCircle },
@@ -65,6 +65,8 @@ export default function SyncDialog({ table, context, direction, ids, onClose, on
   const [plan, setPlan] = useState<Plan | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [resolutions, setResolutions] = useState<Record<string, Resolution>>({});
+  // Seleção proposta pela pré-visualização: só uma escolha diferente fica «por guardar».
+  const [proposed, setProposed] = useState<Set<string>>(new Set());
   // Execução em segundo plano: progresso enquanto corre; resultados quando termina.
   const [run, setRun] = useState<SyncRun | null>(null);
   const [checked, setChecked] = useState(false);
@@ -74,13 +76,27 @@ export default function SyncDialog({ table, context, direction, ids, onClose, on
   const [error, setError] = useState("");
   const labels = DIRECTION_LABELS[direction];
   const importOptions = table.erp.import_options || [];
+  const [policy, setPolicy] = useState<ConflictPolicy>(table.erp.conflict_policy || "perguntar");
+  const canSetPolicy = table.permissions.erp_remove;
+
+  /** Regra para conflitos da tabela (só administradores); a pré-visualização é refeita com ela. */
+  async function changePolicy(value: ConflictPolicy) {
+    setBusy(true); setError("");
+    try { await api(`/tables/${table.key}/settings`, { conflict_policy: value }); setPolicy(value); }
+    catch (e) { setError((e as Error).message); setBusy(false); return; }
+    setBusy(false);
+    onDone();
+    await preview();
+  }
 
   async function preview(preselect?: string[]) {
     setBusy(true); setError(""); setPlan(null); setRun(null);
     try {
       const data: Plan = await api(`/tables/${table.key}/sync/plan`, { direction, ids: scope, options, confirm_demo: true });
       setPlan(data);
-      setSelected(new Set(data.items.filter(i => i.action !== "ignorar" && (preselect ? preselect.includes(i.key) : !i.optional)).map(i => i.key)));
+      const initial = new Set(data.items.filter(i => i.action !== "ignorar" && (preselect ? preselect.includes(i.key) : !i.optional)).map(i => i.key));
+      setSelected(initial);
+      setProposed(initial);
       setResolutions(Object.fromEntries(data.items.filter(i => i.action === "conflito").map(i => [i.key, "ignorar" as Resolution])));
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -143,11 +159,27 @@ export default function SyncDialog({ table, context, direction, ids, onClose, on
   const allMarked = actionable.length > 0 && marked === actionable.length;
   const setAll = (on: boolean) => setSelected(on ? new Set(actionable.map(i => i.key)) : new Set());
   const toggle = (key: string, on: boolean) => setSelected(current => { const next = new Set(current); if (on) next.add(key); else next.delete(key); return next; });
+  // Depois de executar não há nada por guardar: os resultados já estão gravados (ou a correr no servidor).
+  const dirty = !!plan && !run && (selected.size !== proposed.size || [...selected].some(k => !proposed.has(k))
+    || Object.values(resolutions).some(r => r !== "ignorar"));
 
-  return <AppDialog autoOpen busy={busy} className="modal table-dialog table-sync-dialog" onRequestClose={onClose} aria-labelledby="table-sync-title">
+  return <AppDialog autoOpen busy={busy} dirty={dirty} className="modal table-dialog table-sync-dialog" onRequestClose={onClose} aria-labelledby="table-sync-title">
     <div className="panel-title"><h2 id="table-sync-title">{labels.title} — {table.title}</h2></div>
     <Notice className={direction === "import" ? "info" : "warning"} role="status"><b>Destino:</b> {labels.destination}</Notice>
     <p className="footnote">{scope.length ? `Registos selecionados: ${scope.length}.` : "Todos os registos da tabela."} Nada é alterado antes de confirmar.</p>
+    <details className="table-capabilities">
+      <summary>Regra para conflitos e operações do conector</summary>
+      {table.erp.available && <label className="table-policy">Em conflito
+        <select aria-label="Regra para conflitos" value={policy} disabled={!canSetPolicy || busy || !!run} title={canSetPolicy ? undefined : "Só um administrador pode alterar esta regra."} onChange={e => void changePolicy(e.target.value as ConflictPolicy)}>
+          <option value="perguntar">Perguntar em cada registo</option>
+          <option value="erp">Prevalece o ERP</option>
+          <option value="local">Prevalece a IAZELA</option>
+        </select>
+      </label>}
+      <ul aria-label="Operações suportadas pelo conector">{Object.entries(table.erp.operations).map(([key, op]) => op && <li key={key} className={op.supported ? "is-supported" : "is-unsupported"}>
+        <b>{op.label}:</b> {op.supported ? "disponível" : `indisponível — ${op.reason}`}
+      </li>)}</ul>
+    </details>
     {direction !== "export" && importOptions.length > 0 && <div className="table-sync-options">
       {importOptions.map(f => <Field key={f.name} label={f.label}>
         {f.type === "store"

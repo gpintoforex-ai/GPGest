@@ -1,3 +1,4 @@
+import OperationsOverview from "./components/OperationsOverview";
 import { ActionButton, AppDialog, ManagedForm, Notice } from "./components/InteractionUI";
 import { ScanButton } from "./DocumentScanner";
 import { useEffect, useRef, useState } from "react";
@@ -45,6 +46,12 @@ export default function AccountingDelivery({ admin, onSettings, onEmailSettings,
   }
   return <>
     <div className="page-intro"><div><h1>Entrega à contabilidade</h1><p>Encerre os períodos da empresa e prepare o dossiê de documentos e anexos.</p></div>{admin && <div className="actions"><ScanButton onSaved={load} /><ActionButton onClick={onSettings}>Configurar regime de IVA</ActionButton></div>}</div>
+    {admin && <OperationsOverview source={periods} title="Situação dos dossiês" scope={`Períodos contabilísticos carregados de ${year} · empresa e todas as lojas · encerramento não significa envio`} loaded={!loading} error={!!error && !periods.length} metrics={[
+      {label:"Períodos carregados",value:periods.length,description:"Períodos disponibilizados para este ano",tone:"info"},
+      {label:"Por encerrar",value:periods.filter(p=>p.calendar_ended&&!p.closed_at).length,description:"Calendário terminado, sem encerramento registado",tone:"warning"},
+      {label:"Encerrados",value:periods.filter(p=>!!p.closed_at).length,description:"O envio e a receção dos ficheiros têm estados próprios",tone:"success"},
+      {label:"Períodos com anexos em falta",value:periods.filter(p=>p.without_attachment>0).length,description:"Períodos com pelo menos um documento sem cópia digital; não soma documentos entre períodos",tone:"warning"}
+    ]}/>}
     <AssistantIdentity assistant="clara" />
     {admin && <><AccountingEmail company={company} stores={stores} store={store} admin={admin}/>{onEmailSettings && <ActionButton onClick={onEmailSettings}>Configurar email da contabilidade</ActionButton>}</>}
     {!admin ? <section className="panel"><p>O fecho dos períodos e a exportação do dossiê completo da empresa estão reservados ao administrador.</p></section> : <section className="panel">

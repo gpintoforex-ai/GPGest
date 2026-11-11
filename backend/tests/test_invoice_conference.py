@@ -1,5 +1,6 @@
 """Conferência e-Fatura ↔ anexos ↔ compras: Drive, estados independentes, propostas e lançamentos."""
 
+from conftest import supplier_fields
 import hashlib
 import json
 
@@ -328,7 +329,8 @@ def test_launch_proposal_needs_supplier_rubric_and_due_date_then_launches_once(c
     assert not item["ready"] and any("Fornecedor" in m for m in item["missing"]) and any("Vencimento" in m for m in item["missing"])
     with factory.begin() as db:
         category = Category(name="Serviços externos"); db.add(category); db.flush(); category_id = category.id
-        db.add(BusinessEntity(name="Fornecedor Alfa", tax_number="510774318", is_supplier=True, category_id=category_id, payment_days=30))
+        db.add(BusinessEntity(name="Fornecedor Alfa", tax_number="510774318", is_supplier=True, payment_days=30,
+                              **supplier_fields(db, category_id)))
     item = next(p for p in client.get("/api/invoice-workflow/launch-proposals?start=2026-10-01&end=2026-10-31").json()["proposals"] if p["id"] == identifier)
     assert item["ready"] and item["due_date"] == "2026-11-09" and item["due_source"].startswith("prazo do fornecedor")
     assert item["lines"] == [{"description": "Fornecedor Alfa · FT FT ABC/1", "nature": "expense", "unit": "un", "quantity": "1", "price": "123.00", "vat": "0"}]
@@ -357,7 +359,12 @@ def test_launch_creates_missing_supplier_only_when_asked_and_uses_due_date_from_
     body = {"items": [{"id": identifier, "category_id": category_id}], "confirmed": True}
     refused = client.post("/api/invoice-workflow/launch-proposals/confirm", json=body).json()
     assert not refused["launched"] and "Fornecedor por criar" in refused["skipped"][0]["reason"]
-    done = client.post("/api/invoice-workflow/launch-proposals/confirm", json={**body, "create_missing_suppliers": True}).json()
+    # O fornecedor criado na hora não tem prazo nem meio de pagamento: o lançamento espera pela ficha.
+    pending = client.post("/api/invoice-workflow/launch-proposals/confirm", json={**body, "create_missing_suppliers": True}).json()
+    assert not pending["launched"] and "Complete a ficha do fornecedor" in pending["skipped"][0]["reason"]
+    with factory.begin() as db:
+        db.add(BusinessEntity(name="Fornecedor 510774318", tax_number="510774318", is_supplier=True, **supplier_fields(db, category_id)))
+    done = client.post("/api/invoice-workflow/launch-proposals/confirm", json=body).json()
     assert len(done["launched"]) == 1
     with factory() as db:
         assert db.scalar(select(BusinessEntity).where(BusinessEntity.tax_number == "510774318")).category_id == category_id

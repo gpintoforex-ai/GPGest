@@ -1,3 +1,4 @@
+import { ContextSuggestion } from "./components/OverviewUI";
 import { currentMonthRange } from "./components/DatePresets";
 import { ActionMenu, ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
 import { DetailDrawer, TaskWorkspace } from "./components/WorkspaceUI";
@@ -88,12 +89,15 @@ export default function DocumentControl({
   manager,
   admin,
   integration,
+  navigate,
 }: {
   stores: Row[];
   store: string;
   manager: boolean;
   admin: boolean;
   integration?: Row;
+  // «Receber mercadoria»: abre as receções com esta compra (fatura do arquivo ou receção preenchida).
+  navigate?: (page: string, parameters?: Record<string, string>) => unknown;
 }) {
   const canReadErp = (integration?.capabilities?.read_documents ?? true) && integration?.resources?.includes("purchase_documents") !== false;
   const [rows, setRows] = useState<Row[]>([]),
@@ -363,8 +367,8 @@ export default function DocumentControl({
       (tab !== "despesas" || r.erp_status !== "confirmada") &&
       (tab !== "contabilidade" || r.treatment !== "nao_aplicavel"),
   ).sort((a, b) => {
-    const result = sort.key === "amount_cents"
-      ? a.amount_cents - b.amount_cents
+    const result = ["amount_cents", "base_cents", "tax_cents"].includes(sort.key)
+      ? (a[sort.key] ?? 0) - (b[sort.key] ?? 0)
       : String(a[sort.key] || "").localeCompare(String(b[sort.key] || ""), "pt-PT", { numeric: true });
     return (sort.ascending ? result : -result) || String(a.id).localeCompare(String(b.id));
   });
@@ -445,14 +449,19 @@ export default function DocumentControl({
       </div>
       <AssistantIdentity assistant="clara" />
       <div className="doc-overview-grid">
-        <MetricCard label="Documentos importados" value={loading ? "—" : storeRows.filter(r => Boolean(r.import_id)).length} description="Documentos associados a uma importação" />
-        <MetricCard label="Relacionados com o ERP" value={loading ? "—" : storeRows.filter(r => r.erp_status === "confirmada").length} description="Correspondências confirmadas" tone="success" />
-        <MetricCard label="Não encontrados no ERP" value={loading ? "—" : storeRows.filter(r => r.erp_status === "sem_correspondencia").length} description="Sem correspondência nos dados consultados" tone="warning" />
-        <MetricCard label="Sem anexo" value={loading ? "—" : storeRows.filter(r => r.attachment_status === "sem_anexo").length} description="Cópia digital ainda por associar" tone="warning" />
-        <MetricCard label="Com divergências" value={loading ? "—" : storeRows.filter(r => r.erp_status === "divergencias").length} description="Diferenças que exigem revisão" tone="danger" />
-        <MetricCard label="A aguardar aprovação" value={loading ? "—" : storeRows.filter(r => r.draft?.status === "preparado").length} description="Propostas preparadas por rever; sem aprovação formal" />
+        <MetricCard label="Documentos importados" value={loading || error ? "—" : storeRows.filter(r => Boolean(r.import_id)).length} description="Documentos associados a uma importação" />
+        <MetricCard label="Relacionados com o ERP" value={loading || error ? "—" : storeRows.filter(r => r.erp_status === "confirmada").length} description="Correspondências confirmadas" tone="success" />
+        <MetricCard label="Não encontrados no ERP" value={loading || error ? "—" : storeRows.filter(r => r.erp_status === "sem_correspondencia").length} description="Sem correspondência nos dados consultados" tone="warning" />
+        <MetricCard label="Sem anexo" value={loading || error ? "—" : storeRows.filter(r => r.attachment_status === "sem_anexo").length} description="Cópia digital ainda por associar" tone="warning" />
+        <MetricCard label="Com divergências" value={loading || error ? "—" : storeRows.filter(r => r.erp_status === "divergencias").length} description="Diferenças que exigem revisão" tone="danger" />
+        <MetricCard label="A aguardar aprovação" value={loading || error ? "—" : storeRows.filter(r => r.draft?.status === "preparado").length} description="Propostas preparadas por rever; sem aprovação formal" />
       </div>
-      <details className="pending-breakdown">
+      {!loading && !error && filtered.some(r=>r.attachment_status === "sem_anexo") && <ContextSuggestion title="Rever documentos sem anexo"
+        evidence={[`${filtered.filter(r=>r.attachment_status === "sem_anexo").length} documentos filtrados sem cópia digital associada`,`Período ${filters.from} a ${filters.to}`,"Origem: conferência documental carregada; ausência de anexo não prova ausência de lançamento no ERP."]}
+        actionLabel="Consultar documento sem anexo" onReview={()=>{const row=filtered.find(r=>r.attachment_status === "sem_anexo");if(row)void openDoc(row);}}>
+        Consulte o documento e a sua origem antes de associar a cópia digital ou preparar a entrega.
+      </ContextSuggestion>}
+      {!loading && !error && <details className="pending-breakdown">
       <summary>Outras pendências a acompanhar</summary>
       <div className="doc-dashboard-section-title"><h2>Pendências a acompanhar</h2><span>{store ? stores.find(s => s.id === store)?.name : "Todas as lojas"} · Indicadores da seleção de loja</span></div>
       {!catalog.some((row) => !store || row.store_id === store) && (
@@ -461,6 +470,7 @@ export default function DocumentControl({
           Consulte o ERP para atualizar as correspondências.
         </p>
       )}
+
       <div className="doc-pending-grid">
         {[
           [
@@ -512,7 +522,7 @@ export default function DocumentControl({
           </div>
         ))}
       </div>
-      </details>
+      </details>}
       <ModuleTabs label="Áreas da conferência documental" value={tab} tabs={[{"id": "conferencia", "label": "Faturas e conferência"}, {"id": "anexos", "label": "Documentos e anexos"}, {"id": "despesas", "label": "Despesas por tratar"}, {"id": "contabilidade", "label": "Estado contabilístico"}]} onChange={value => { setTab(value);  }} />
       {error && !modal && (
         <Notice role="alert" className="error">
@@ -672,7 +682,7 @@ export default function DocumentControl({
             <thead>
               <tr>
                 <th>Selecionar</th>
-                {[ ["document_date", "Data"], ["supplier_name", "Fornecedor"], ["document", "Documento"], ["amount_cents", "Total"] ].map(([key, label]) => <th key={key} aria-sort={sort.key === key ? sort.ascending ? "ascending" : "descending" : "none"}><ActionButton onClick={() => sortBy(key)}>{label} {sort.key === key ? sort.ascending ? "↑" : "↓" : "↕"}</ActionButton></th>)}
+                {[ ["document_date", "Data"], ["supplier_name", "Fornecedor"], ["document", "Documento"], ["base_cents", "Base"], ["tax_cents", "IVA"], ["amount_cents", "Total"] ].map(([key, label]) => <th key={key} aria-sort={sort.key === key ? sort.ascending ? "ascending" : "descending" : "none"}><ActionButton onClick={() => sortBy(key)}>{label} {sort.key === key ? sort.ascending ? "↑" : "↓" : "↕"}</ActionButton></th>)}
                 <th>Origem</th>
                 <th>Disponibilidade / anexos</th>
                 <th>ERP</th>
@@ -703,6 +713,8 @@ export default function DocumentControl({
                     <td>{day(r.document_date)}</td>
                     <td>{r.supplier_name}<br /><small>NIF {r.supplier_nif || "Não indicado"}</small></td>
                     <td><strong>{r.document}</strong></td>
+                    <td className="numeric">{r.base_cents == null ? "—" : euro(r.base_cents)}</td>
+                    <td className="numeric">{r.tax_cents == null ? "—" : euro(r.tax_cents)}</td>
                     <td className="numeric">{euro(r.amount_cents)}</td>
                     <td>{r.origin === "efatura_testes" ? "e-Fatura (teste)" : r.origin === "efatura" ? "e-Fatura" : r.origin === "manual" ? "Manual" : r.origin}</td>
                     <td>
@@ -735,6 +747,12 @@ export default function DocumentControl({
                         Conferir
                       </ActionButton>
                       <ActionButton disabled={busy} onClick={() => act(async () => setListPreview(await api(`/documents/${r.id}/detail`)))}>Anexo</ActionButton>
+                      {navigate && manager && r.amount_cents > 0 && !r.procurement_documents?.length && (
+                        <ActionButton disabled={busy} title="Sem receção nem compra no circuito de compras: dar entrada da mercadoria desta fatura no stock"
+                          onClick={() => navigate("Receções de mercadoria", { "rececao.compra": r.id })}>
+                          Receber mercadoria
+                        </ActionButton>
+                      )}
                     </td>
                   </tr>
                 ))}

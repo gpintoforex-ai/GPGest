@@ -1,0 +1,64 @@
+/* Margem bruta e cobertura de custos (dashboard). Só tokens do design system: as cores vêm de .ui-tone. */
+.margin-summary { display: grid; gap: 6px; justify-items: start; width: 100%; }
+.margin-summary small b { color: var(--color-text); font-weight: 650; }
+.margin-summary-links { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.margin-panel > .dash-link { justify-self: start; }
+
+.margin-coverage { position: relative; width: 100%; min-width: 120px; height: 8px; border-radius: 999px; overflow: hidden;
+  background: var(--surface-secondary); border: 1px solid var(--ui-tone-edge); }
+.margin-coverage > span { display: block; height: 100%; border-radius: inherit; background: var(--ui-tone-ink); transition: width .25s ease; }
+@media (prefers-reduced-motion: reduce) { .margin-coverage > span { transition: none; } }
+
+.margin-panel { display: grid; gap: 14px; }
+.margin-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 12px; }
+.margin-tile { display: flex; gap: 12px; align-items: flex-start; min-width: 0; padding: 14px; border: 1px solid var(--ui-tone-edge); border-radius: 14px;
+  background: linear-gradient(135deg, var(--ui-tone-bg), var(--color-surface) 75%); }
+.margin-tile > div { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.margin-tile-icon { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--ui-tone-ink);
+  background: var(--ui-tone-bg); border: 1px solid var(--ui-tone-edge); }
+.margin-tile-label { font-size: 13px; color: var(--color-text); }
+.margin-tile strong { font-size: 1.4rem; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.margin-tile small { color: var(--color-muted); font-size: 12.5px; }
+
+.margin-reasons h3, .margin-negative h3 { margin: 0 0 8px; font-size: 1rem; }
+.margin-reasons ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.margin-reasons li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.margin-reasons li > span:last-child { color: var(--color-muted); font-size: 13px; }
+.margin-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 14px; align-items: start; }
+.margin-negative { padding: 14px 16px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); }
+.margin-negative ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.margin-negative li { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; justify-content: space-between; }
+.margin-negative li > span { display: grid; min-width: 0; }
+.margin-negative li small { color: var(--color-muted); font-size: 12.5px; }
+
+.margin-articles-dialog { width: min(1280px, 96vw); }
+.margin-articles-head { display: flex; gap: 12px; align-items: flex-start; }
+.margin-articles-head h2 { margin: 0; }
+.margin-articles-head p { margin: 4px 0 0; color: var(--color-muted); }
+.margin-articles-summary { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 12px 0; }
+.margin-articles-summary .margin-coverage { flex: 1 1 200px; max-width: 320px; }
+.margin-articles-filters { margin-bottom: 10px; }
+.margin-articles-grid td small { display: block; color: var(--color-muted); font-size: 12px; }
+.margin-articles-grid tr.needs-review > td:first-child { box-shadow: inset 3px 0 0 var(--context-warning); }
+.ui-dialog .margin-articles-grid th > button.margin-sort { display: inline-flex; gap: 4px; align-items: center; min-height: 0; padding: 0; border: 0; border-radius: 0;
+  background: none; box-shadow: none; color: inherit; font: inherit; font-weight: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; }
+.margin-sort:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: 4px; }
+th.numeric .margin-sort { justify-content: flex-end; width: 100%; }
+
+.margin-assist { display: grid; gap: 10px; padding: 6px 0; }
+.margin-tip { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border: 1px solid var(--ui-tone-edge); border-radius: 10px;
+  background: var(--ui-tone-bg); color: var(--color-text); }
+.margin-tip > svg { color: var(--ui-tone-ink); flex: none; }
+.margin-tip > span { flex: 1 1 260px; }
+.margin-assist-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.margin-assist-grid section { display: grid; gap: 6px; align-content: start; min-width: 0; overflow-x: auto; padding: 10px 12px; border: 1px solid var(--color-border);
+  border-radius: 10px; background: var(--color-surface); }
+.margin-assist-grid th, .margin-assist-grid td { padding: 6px 8px; }
+.margin-assist-grid section > .dash-link { justify-self: start; max-width: 100%; white-space: normal; text-align: left; }
+.margin-assist-grid h4 { margin: 0; font-size: .95rem; }
+.margin-assist-grid dl { display: grid; gap: 4px; margin: 0; }
+.margin-assist-grid dl > div { display: flex; justify-content: space-between; gap: 8px; }
+.margin-assist-grid dt { color: var(--color-muted); }
+.margin-assist-grid dd { margin: 0; font-variant-numeric: tabular-nums; }
+.margin-assist-grid small { color: var(--color-muted); }
+.margin-assist-grid table { width: 100%; font-size: 13px; }

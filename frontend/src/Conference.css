@@ -1,0 +1,30 @@
+/* Centro de Conferência. Só tokens do design system; cores por estado em .ui-tone. */
+.conf { display: grid; gap: 14px; }
+.conf-filters { align-items: end; }
+.conf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; align-items: start; }
+.conf-card { min-width: 0; padding: 14px 16px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); box-shadow: var(--ui-card-shadow, none); }
+.conf-inner { display: grid; gap: 8px; min-width: 0; margin: -14px -16px 0; padding: 12px 16px 0; border-top: 4px solid var(--ui-tone-ink); border-radius: 14px 14px 0 0; }
+.conf-automation { display: grid; gap: 8px; }
+.conf-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.conf-card h2 { margin: 0; font-size: 1rem; }
+.conf-head small { display: block; color: var(--color-muted); font-size: 12px; }
+.conf-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; color: var(--ui-tone-ink); background: var(--ui-tone-bg); border: 1px solid var(--ui-tone-edge); }
+.conf-count { font-size: 1.7rem; line-height: 1; color: var(--ui-tone-ink); font-variant-numeric: tabular-nums; }
+.conf-amount { margin: 0; font-weight: 700; }
+.conf-items { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.conf-items li { display: flex; gap: 8px; justify-content: space-between; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--color-border); font-size: 13px; }
+.conf-items li span { min-width: 0; overflow-wrap: anywhere; }
+.conf-items small { display: block; color: var(--color-muted); font-size: 12px; }
+.conf-items b { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.conf-ok { margin: 0; color: var(--context-success); font-weight: 600; }
+.conf-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.conf-notes { margin: 0; padding-left: 18px; color: var(--color-muted); font-size: 12.5px; }
+.conf-automation h2 { display: flex; gap: 8px; align-items: center; }
+.conf-automation fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin: 0; padding: 0; border: 0; min-width: 0; align-items: end; }
+@media (max-width: 720px) { .conf-automation fieldset { grid-template-columns: 1fr; } }
+.conf-automation fieldset > label:not(.checkbox) { display: grid; gap: 4px; }
+.conf-never { padding: 10px 12px; border: 1px dashed var(--color-border); border-radius: 10px; }
+.conf-never h3 { margin: 0 0 6px; font-size: .95rem; }
+.conf-never ul { margin: 0 0 6px; padding-left: 18px; }
+.conf-never small, .conf-last { color: var(--color-muted); }
+.ui-dialog.conf-dialog { width: min(560px, calc(100vw - 24px)); }

@@ -1,0 +1,12 @@
+.ui-dialog.price-review-dialog { width: min(1480px, calc(100vw - 32px)); }
+.price-review-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 10px; margin-block: 12px; }
+.price-review-metrics > div { display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-info-bg, var(--color-surface)); }
+.price-review-metrics strong { margin-inline-start: auto; }
+.price-review-rounding { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-block: 12px; }
+.price-review-grid td { vertical-align: top; }
+.price-review-grid small { display: block; margin-block: 2px; color: var(--color-muted); }
+.price-review-grid td :is(select, input[type="number"]) { display: block; min-width: 120px; width: 100%; margin-bottom: 4px; }
+.price-review-confirmation { max-width: 100%; }
+.price-review-confirmation small { display: block; }
+.price-review-erp-note { margin: 10px 0 0; color: var(--color-muted); font-size: 13px; }
+.price-review-erp-issues { margin: 6px 0 0; padding-left: 18px; }

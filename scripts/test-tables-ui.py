@@ -138,9 +138,11 @@ with sync_playwright() as playwright:
     expect(table.get_by_role("row", name="ANTIGO").get_by_text("Inativo", exact=True)).to_be_visible()
     expect(table.get_by_role("columnheader", name="Estado")).to_have_count(0)
     page.get_by_label("Estado", exact=True).select_option("active")
-    # Capacidades do conector com motivo visível.
-    page.get_by_text("Operações suportadas pelo conector", exact=True).click()
-    expect(page.get_by_text("indisponível — Os prazos da Wintouch não têm estado ativo/inativo.").first).to_be_visible()
+    # Sem painel próprio de integração: Sincronizar fica no cabeçalho, junto a «Novo».
+    expect(page.get_by_role("region", name="Integração com o ERP")).to_have_count(0)
+    header = page.locator(".table-page-actions")
+    expect(header.get_by_role("button", name="Sincronizar", exact=True)).to_be_enabled()
+    expect(header.get_by_role("button", name="Novo prazo de pagamento")).to_be_visible()
 
     # Último erro acessível.
     table.get_by_role("button", name="Ver erro").click()
@@ -171,6 +173,15 @@ with sync_playwright() as playwright:
     sync = page.get_by_role("dialog", name="Sincronizar — Prazos de pagamento")
     expect(sync.get_by_text("Recebe as alterações do ERP e envia as da IAZELA", exact=False)).to_be_visible()
     expect(sync.get_by_role("list", name="Resumo")).to_contain_text("1 A criar")
+    # Capacidades do conector e regra para conflitos dentro da janela de sincronização.
+    sync.get_by_text("Regra para conflitos e operações do conector", exact=True).click()
+    expect(sync.get_by_text("indisponível — Os prazos da Wintouch não têm estado ativo/inativo.").first).to_be_visible()
+    plans = sum(1 for c in calls if c[1].endswith("/sync/plan"))
+    sync.get_by_label("Regra para conflitos", exact=True).select_option("erp")
+    expect(sync.get_by_label("Regra para conflitos", exact=True)).to_have_value("erp")
+    expect(sync.get_by_role("list", name="Resumo")).to_contain_text("1 A criar")
+    assert any(c[0] == "POST" and c[1].endswith("/settings") and c[2] == {"conflict_policy": "erp"} for c in calls)
+    assert sum(1 for c in calls if c[1].endswith("/sync/plan")) > plans
     expect(sync.get_by_label("Resolução de 90DIAS — 90 Dias")).to_have_value("ignorar")
     sync.get_by_label("Resolução de 90DIAS — 90 Dias").select_option("erp")
     assert not any(c[1].endswith("/execute") for c in calls)

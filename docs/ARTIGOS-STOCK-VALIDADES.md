@@ -4,7 +4,7 @@ Disponível em **Tabelas → Artigos e validades**. O catálogo começa vazio; a
 
 ## Começar no modo local
 
-1. Em **Parâmetros**, crie os armazéns dos estabelecimentos e confirme o tratamento do IVA das compras. Configure os alertas e as permissões por utilizador.
+1. Em **Parâmetros**, crie os armazéns dos estabelecimentos e confirme o tratamento do IVA das compras. Configure os alertas, as permissões por utilizador e as **casas decimais das quantidades** (2 por omissão, de 0 a 6), usadas na apresentação das quantidades em todos os ecrãs de artigos, stock e encomendas; os valores registados mantêm a precisão de cada artigo.
 2. Crie artigos ou importe um CSV em **Importações**. Associe as colunas, consulte os artigos e os erros, e confirme. A pré-visualização não cria artigos. Códigos e códigos de barras existentes são recusados; o CSV não substitui fichas nem altera stock.
 3. Registe o **Saldo inicial**, com armazém, quantidade, custo conhecido e lote/validade quando aplicável. Deixe o custo vazio quando não o conhece: zero significa custo efetivamente zero.
 4. Registe compras, vendas líquidas de descontos e IVA, devoluções, transferências, perdas e ajustes. Os valores não criam documentos fiscais nem lançamentos de tesouraria.
@@ -26,7 +26,7 @@ Um leitor de códigos de barras que funcione como teclado pode preencher o campo
 
 Um lote é identificado pelo artigo e pelo número e pode existir em vários armazéns. As entradas conservam fornecedor, documento, data e custo. A ficha do lote conserva os dados da primeira entrada; as compras posteriores com custos diferentes permanecem rastreáveis no histórico.
 
-As saídas propõem **FEFO**, primeiro a validade mais próxima. Lotes sem data ficam por último. Escolher outro lote exige permissão específica e justificação. Inventários ajustam a posição contada, sem substituir o lote escolhido por FEFO.
+As saídas propõem **FEFO**, primeiro a validade mais próxima; entre lotes com a mesma validade, sai primeiro o que entrou primeiro no armazém (**FIFO**). Lotes sem data ficam por último. É esta regra que escolhe o lote das vendas da Wintouch sem lote indicado; lotes caducados não são propostos para venda. Escolher outro lote exige permissão específica e justificação. Inventários ajustam a posição contada, sem substituir o lote escolhido por FEFO.
 
 Lotes expirados não podem sair por venda ou transferência normal, mesmo se a data do movimento for anterior. Podem ser tratados como perda, devolução ao fornecedor ou ajuste justificado. A data atual e a data do documento são consideradas; mudar de dia nunca remove stock. A entrada de uma devolução pode receber um lote expirado, que continua bloqueado para uma nova venda.
 
@@ -69,7 +69,7 @@ O painel distingue stock atual de resultados do período. Inclui reposição, va
 
 ## ERP e SAF-T
 
-**ERP:** o catálogo sincronizado existente é reutilizado por associação explícita. O artigo e preço continuam a ser consultados do registo ERP original. A base de IVA do preço não é presumida quando o conector não a identifica. A ficha ERP não aceita edição local ou movimentos de stock. O conector Wintouch atual não implementa quantidades de stock: são sempre **indisponíveis**, independentemente de a sincronização de catálogo terminar, falhar ou estar pendente. Não existe escrita automática para o ERP.
+**ERP:** o catálogo sincronizado existente é reutilizado por associação explícita. O artigo e preço continuam a ser consultados do registo ERP original. A base de IVA do preço não é presumida quando o conector não a identifica. A ficha ERP não aceita edição local ou movimentos de stock. O conector Wintouch atual não implementa quantidades de stock: são sempre **indisponíveis**, independentemente de a sincronização de catálogo terminar, falhar ou estar pendente. Não existe escrita automática para o ERP. Os **documentos Wintouch que movimentam stock** (vendas, entradas, saídas, transferências e devoluções) geram os movimentos de stock dos artigos associados a partir do início do controlo; as **compras** entram no stock só pela receção de mercadoria na aplicação (uma compra da Wintouch já recebida cá é ignorada, as outras ficam por rever), com o lote indicado pela Wintouch (ver [VENDAS-WINTOUCH.md](VENDAS-WINTOUCH.md#movimentos-de-stock)); sem lote, as saídas de artigos com lotes seguem o FEFO.
 
 **SAF-T:** a importação fiscal existente continua a servir a análise de vendas sem gerar stock. A passagem para stock exige:
 

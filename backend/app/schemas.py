@@ -138,6 +138,8 @@ class SalesImport(Strict):
     start_date: date
     end_date: date
     confirm_demo: bool = False
+    # Armazém das saídas de stock das vendas; sem ele usa a ligação ao ERP ou o único da loja.
+    warehouse_id: str | None = None
 
 
 class WintouchSettlement(Strict):

@@ -13,9 +13,11 @@ de um documento a dinheiro não se duplica.
 Cada registo guarda a referência à receção, ao documento e ao tipo (rastreabilidade nos dois sentidos).
 """
 
+import hashlib
 import json
 import re
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal as D
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
@@ -24,12 +26,15 @@ from sqlalchemy.dialects.postgresql import insert
 
 from .document_identity import identity, number_key
 from .models import (
+    ArchiveDocument,
+    ArchiveLink,
     BusinessEntity,
     CashSession,
     Category,
     DocumentERPLink,
     DocumentPayment,
     DocumentState,
+    DriveDocumentAttachment,
     ERPDocument,
     ExpenseDraft,
     Movement,
@@ -38,6 +43,7 @@ from .models import (
     PlannedMovement,
     PlannedSettlement,
     Purchase,
+    PurchaseAttachment,
     PurchaseDocumentType,
     Register,
     WintouchSaleRecord,
@@ -109,6 +115,38 @@ def default_category(db, supplier, payload):
     return db.scalar(select(Category.id).where(Category.name == DEFAULT_CATEGORY))
 
 
+def rubric_split(payload, fallback_category, total_cents):
+    """Repartição do documento pelas rubricas das linhas (rubrica da linha, do documento ou a de recurso),
+    IVA incluído. A diferença de cêntimos para o total (desconto global, acerto) vai para a maior rubrica,
+    para a repartição somar sempre o total do documento. Devolve [(rubrica, cêntimos)], da maior para a menor."""
+    from .procurement import allocations  # importação tardia: procurement importa este módulo
+
+    split = [[category or fallback_category, amount] for category, amount in allocations(payload, fallback_category)]
+    merged = {}
+    for category, amount in split:
+        merged[category] = merged.get(category, 0) + amount
+    rows = sorted(([c, a] for c, a in merged.items() if a > 0), key=lambda item: (-item[1], item[0] or ""))
+    if not rows:
+        return [(fallback_category, total_cents)]
+    rows[0][1] += total_cents - sum(amount for _, amount in rows)
+    return [(c, a) for c, a in rows if a > 0] or [(fallback_category, total_cents)]
+
+
+def expense_lines(db, payload):
+    """Linhas da proposta de despesa, com a rubrica de cada uma (como na compra direta)."""
+    from .procurement import money, net_price
+
+    names = {c.id: c.name for c in db.scalars(select(Category))}
+    result = []
+    for line in payload["lines"]:
+        net = D(line["quantity"]) * net_price(line)
+        category = line.get("category_id") or payload.get("category_id")
+        result.append({"category": names.get(category, "Por classificar") if category else "Por classificar",
+                       "description": line.get("description", ""), "base": str(D(money(net)) / 100),
+                       "rate": str(line.get("vat", "0")), "tax": str(D(money(net * D(line.get("vat", 0)) / 100)) / 100)})
+    return result
+
+
 def due_date_of(payload, kind):
     if payload.get("due_date") and payload["due_date"] != payload["document_date"]:
         return payload["due_date"]
@@ -125,6 +163,12 @@ def process(db, user, row, payload, audit):
         fail("O total do documento tem de ser positivo.")
     signed = total * kind.sign
     code = purchase_code(kind)
+    category = default_category(db, supplier, payload)
+    # A receção com documento é um lançamento de compra: a repartição pelas rubricas das linhas alimenta
+    # o previsto (PlannedAllocation), a proposta de despesa e as Despesas por rubrica, como na fatura.
+    split = rubric_split(payload, category, total)
+    payload["allocations"] = [{"category_id": c, "amount_cents": a} for c, a in split]
+    category = split[0][0]
     summary = {"document_type_id": kind.id, "document_type_code": kind.code, "amount_cents": signed, "payment_ids": []}
     # Compra (documento em dívida ou já pago): reutiliza a importada (e-Fatura, ERP) com a mesma identidade.
     target = identity(supplier.tax_number, code, payload["document"])
@@ -147,16 +191,19 @@ def process(db, user, row, payload, audit):
         db.add(ExpenseDraft(purchase_id=purchase.id, status="preparado", payload=json.dumps({
             "supplier_nif": supplier.tax_number, "supplier_name": supplier.name, "document": purchase.document,
             "document_type": code, "document_date": purchase.document_date, "total": f"{abs(signed) / 100:.2f}",
-            "reason": f"Receção de mercadoria confirmada ({kind.code}); proposta por rever", "lines": [],
+            "reason": f"Receção de mercadoria confirmada ({kind.code}); proposta por rever", "lines": expense_lines(db, payload),
         }, ensure_ascii=False)))
     row.purchase_id = purchase.id
     summary["purchase_id"] = purchase.id
+    restore_attachments(db, row, purchase)
+    attached = attach_originals(db, user, payload, purchase)
+    if attached:
+        summary["attached_archive_ids"] = attached
     # Documento da Wintouch já importado: associa (sem duplicar compras).
     erp = next((e for e in db.scalars(select(ERPDocument).where(ERPDocument.supplier_nif == supplier.tax_number, ERPDocument.cancelled.is_(False)))
                 if identity(e.supplier_nif, e.document_type, e.document) == target and e.amount_cents == signed), None)
     if erp and not db.scalar(select(DocumentERPLink).where(DocumentERPLink.erp_id == erp.id, DocumentERPLink.undone_at.is_(None))):
         db.add(DocumentERPLink(purchase_id=purchase.id, erp_id=erp.id, reason=f"Receção confirmada ({kind.code}): identidade e total coincidem"))
-    category = default_category(db, supplier, payload)
     remaining = total
     if kind.creates_debt and payload.get("credit_note_purchase_ids"):
         # NC que abate faturas em aberto: compensação sem dinheiro (fatura e NC ficam saldadas pelo valor).
@@ -189,6 +236,8 @@ def process(db, user, row, payload, audit):
         )
         db.add(planned)
         db.flush()
+        for category_id, amount in split:
+            db.add(PlannedAllocation(planned_id=planned.id, category_id=category_id, amount_cents=amount))
         summary["planned_id"] = planned.id
     if kind.creates_cash_movement:
         movement = real_movement(db, user, row, payload, kind, supplier, category, total)
@@ -278,6 +327,112 @@ def real_movement(db, user, row, payload, kind, supplier, category, amount):
     return movement
 
 
+CARRIED = "receipt_purchase_attachments"
+
+
+def attach_originals(db, user, payload, purchase):
+    """O original da receção (fatura lida do arquivo e PDF anexados) fica anexo da compra e associado no
+    Arquivo digital, como na associação confirmada à mão. Associações rejeitadas ou anuladas mantêm-se."""
+    from .archive import confirm as confirm_link
+
+    attached = []
+    for identifier in dict.fromkeys(i for i in [payload.get("archive_document_id"), *payload.get("archive_attachment_ids", [])] if i):
+        if not db.get(ArchiveDocument, identifier):
+            continue
+        link = db.scalar(select(ArchiveLink).where(
+            ArchiveLink.document_id == identifier, ArchiveLink.target_kind == "purchase", ArchiveLink.target_id == purchase.id))
+        if link is not None and link.status != "proposta":
+            continue
+        if link is None:
+            link = ArchiveLink(document_id=identifier, target_kind="purchase", target_id=purchase.id, status="proposta",
+                               score=100, strength="forte", method="rececao_mercadoria",
+                               reasons=json.dumps(["Documento de origem da receção de mercadoria"], ensure_ascii=False))
+            db.add(link)
+            db.flush()
+        confirm_link(db, link, user, "Receção de mercadoria: documento de origem da compra")
+        attached.append(identifier)
+    db.flush()
+    return attached
+
+
+def archive_copy(db, model, values, links):
+    """Anexo que é só uma cópia de um documento guardado no Arquivo digital (pode sair sem perda)."""
+    for link in links:
+        doc = db.get(ArchiveDocument, link.document_id) if link.status == "confirmada" else None
+        if doc is None:
+            continue
+        if model is DriveDocumentAttachment and doc.storage == "drive" and values["drive_id"] == doc.storage_ref:
+            return True
+        if model is PurchaseAttachment and doc.storage != "drive" and doc.storage_ref != f"purchase_attachments:{values['id']}":
+            from .archive import read_bytes
+
+            if hashlib.sha256(values["data"]).hexdigest() == (doc.sha256 or hashlib.sha256(read_bytes(db, doc)[0]).hexdigest()):
+                return True
+    return False
+
+
+def carry_attachments(db, row, purchase):
+    """A compra desta receção sai (edição ou anulação): guarda os anexos e as associações do arquivo para a
+    compra que a substitui; sem substituta, `settle_attachments` decide."""
+    links = list(db.scalars(select(ArchiveLink).where(ArchiveLink.target_kind == "purchase", ArchiveLink.target_id == purchase.id)))
+    items = []
+    for model in (PurchaseAttachment, DriveDocumentAttachment):
+        for item in db.scalars(select(model).where(model.purchase_id == purchase.id)):
+            values = {column.key: getattr(item, column.key) for column in model.__table__.columns}
+            items.append((model, values, archive_copy(db, model, values, links)))
+            db.delete(item)
+    state = db.get(DocumentState, purchase.id)
+    db.flush()
+    if items or links:
+        db.info.setdefault(CARRIED, {})[row.id] = {
+            "items": items, "links": [link.id for link in links], "availability": state.availability if state else None,
+        }
+
+
+def restore_attachments(db, row, purchase):
+    """Edição da receção: os anexos e as associações da compra anterior passam para a nova."""
+    carried = db.info.get(CARRIED, {}).pop(row.id, None)
+    if not carried:
+        return
+    for model, values, _ in carried["items"]:
+        db.add(model(**{**values, "purchase_id": purchase.id}))
+    for link in (db.get(ArchiveLink, identifier) for identifier in carried["links"]):
+        duplicate = db.scalar(select(ArchiveLink.id).where(
+            ArchiveLink.document_id == link.document_id, ArchiveLink.target_kind == "purchase", ArchiveLink.target_id == purchase.id))
+        if duplicate:
+            db.delete(link)
+        else:
+            link.target_id = purchase.id
+    db.flush()
+    state = db.get(DocumentState, purchase.id)
+    if state is not None and carried["availability"] and carried["items"]:
+        state.availability = carried["availability"]
+
+
+def settle_attachments(db, user, row):
+    """Compra da receção retirada sem substituta (anulação, ou edição sem tipo de documento): saem as
+    cópias de documentos do Arquivo digital (o original fica lá, com a associação anulada); anexos
+    próprios da compra não se perdem em silêncio."""
+    from .archive import event
+
+    carried = db.info.get(CARRIED, {}).pop(row.id, None)
+    if not carried:
+        return
+    own = [values["name"] for _, values, copy in carried["items"] if not copy]
+    if own:
+        fail(
+            f"A compra desta receção tem anexos próprios ({', '.join(own)}), que se perderiam com ela. "
+            "Mantenha o tipo de documento na receção, ou guarde esses anexos noutro documento, e volte a tentar.",
+            409,
+        )
+    for link in (db.get(ArchiveLink, identifier) for identifier in carried["links"]):
+        if link.status in ("proposta", "confirmada"):
+            link.status, link.decided_by, link.decided_at = "anulada", getattr(user, "id", None), now()
+            event(db, link.document_id, user, "associacao_anulada", {"alvo": "purchase", "id": link.target_id,
+                                                                       "nota": "A compra da receção deixou de existir"})
+    db.flush()
+
+
 def undo(db, user, row, payload, audit, reason):
     """Desfaz o efeito financeiro (edição ou anulação): estorno dos movimentos reais, sem os apagar."""
     summary = payload.get("financial") or {}
@@ -328,6 +483,7 @@ def undo(db, user, row, payload, audit, reason):
         db.flush()  # A receção deixa de apontar para a compra antes de a compra sair.
         if not summary.get("reused_purchase") and purchase.origin == "rececao":
             # A compra nasceu desta receção e não tem outros pagamentos: deixa de existir com ela.
+            carry_attachments(db, row, purchase)
             for model in (DocumentState, ExpenseDraft):
                 item = db.get(model, purchase.id)
                 if item is not None:

@@ -26,6 +26,10 @@
 .invoice-receiving-hint { color: var(--color-warning); }
 .invoice-receiving-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0 12px; align-items: end; }
 .invoice-receiving-grid > .field:first-child { grid-column: 1 / -1; }
+/* Aviso de lotes num artigo sem controlo de lotes: linha inteira da grelha, com a ação ao lado. */
+.invoice-receiving-grid > .invoice-receiving-lots { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 4px 0 12px; }
+.invoice-receiving-lots > :first-child { flex: 1 1 320px; margin: 0; }
+.invoice-receiving-lots > .stock-check { flex: 0 1 auto; margin: 0; }
 .invoice-receiving-new { display: flex; flex-wrap: wrap; align-items: end; gap: 0 12px; margin-top: 4px; padding: 10px 12px; border-radius: 8px; background: var(--color-subtle); }
 .invoice-receiving-new .field { flex: 1; min-width: 150px; }
 .invoice-receiving-new-title { display: inline-flex; align-items: center; gap: 6px; width: 100%; margin-bottom: 6px; font-weight: 600; }
@@ -61,7 +65,7 @@
 .invoice-receiving-summary p { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; }
 /* Linhas que ainda precisam de artigo (criar ou associar): a vermelho, com texto além da cor. */
 .invoice-receiving-line.needs-article { border-color: var(--color-danger); border-width: 2px; background: var(--color-danger-bg); }
-.invoice-receiving-badge { display: inline-flex; align-items: center; gap: 4px; width: fit-content; padding: 2px 8px; border-radius: 999px; background: var(--color-danger); color: #fff; font-size: .78rem; font-weight: 600; }
+.invoice-receiving-badge { display: inline-flex; align-items: center; gap: 4px; width: fit-content; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--color-danger); background: var(--color-danger-bg); color: var(--color-danger); font-size: .78rem; font-weight: 600; }
 .invoice-receiving .invoice-receiving-pending, .procurement-dialog p.invoice-receiving-pending { display: flex; align-items: center; gap: 6px; margin: 8px 0; color: var(--color-danger); font-weight: 600; }
 .invoice-receiving-line.needs-article .invoice-receiving-new { background: var(--color-surface); }
 /* Calculado vs. fatura: igual (verde), arredondamento até 2 cêntimos (âmbar), diferente (vermelho). */
@@ -94,3 +98,56 @@ div.invoice-receiving-result p { margin: 0; flex: 1 1 280px; }
 .invoice-receiving-supplier { display: flex; align-items: flex-end; gap: 8px; min-width: 0; }
 .invoice-receiving-supplier > :first-child { flex: 1 1 auto; min-width: 0; }
 .invoice-receiving-supplier > .invoice-receiving-supplier-edit { flex: none; min-width: 44px; min-height: 44px; padding: 0; justify-content: center; }
+
+/* Encomendas por receber: clientes à espera e PDF anexados. */
+.procurement-to-receive td .status-badge {
+  display: inline-block;
+  margin: 2px 4px 2px 0;
+}
+.procurement-customers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.procurement-attached {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.procurement-attached .status-badge {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+/* Encomenda recebida com a fatura: escolha, comparação por linha e entrega superior. */
+.invoice-order-link { margin: 12px 0; padding: 14px 16px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-subtle); display: grid; gap: 10px; }
+.invoice-order-link h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1rem; }
+.invoice-order-link tr.is-different td { background: var(--color-warning-bg, #fff8e8); }
+.invoice-order-link small { display: block; color: var(--color-muted); }
+.invoice-order-state { display: inline-flex; align-items: flex-start; gap: 6px; }
+.invoice-order-state svg { flex: 0 0 auto; margin-top: 1px; }
+.invoice-order-state.is-ok svg { color: var(--color-success); }
+.invoice-order-state.is-off svg { color: var(--color-danger); }
+.invoice-order-over { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+/* Campo a corrigir indicado ao confirmar a receção a partir de fatura. */
+.invoice-receiving-form .needs-attention { outline: 3px solid var(--color-danger); outline-offset: 2px; }
+.invoice-order-consult { display: flex; justify-content: flex-end; }
+
+/* Percurso da compra: etapas, documentos ligados e lado financeiro (só consulta). */
+.purchase-process { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--border-default, var(--color-border)); border-radius: var(--radius-panel, 12px); background: var(--surface-primary, #fff); }
+.purchase-process-loading { color: var(--text-secondary, var(--color-muted)); margin: 0; }
+.purchase-process-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 16px; margin: 0; }
+.purchase-process-steps > div { display: grid; gap: 2px; padding-left: 10px; border-left: 3px solid var(--border-default, #d7e8e5); }
+.purchase-process-steps > div[data-state="done"] { border-left-color: var(--context-success, #176b45); }
+.purchase-process-steps > div[data-state="partial"] { border-left-color: var(--context-warning, #805400); }
+.purchase-process-steps > div[data-state="pending"] { border-left-color: var(--context-info, #24559a); }
+.purchase-process-steps dt { font-weight: 650; color: var(--text-primary, inherit); }
+.purchase-process-steps dd { margin: 0; color: var(--text-secondary, var(--color-muted)); font-size: 13px; }
+.purchase-process-documents { display: grid; gap: 8px; }
+.purchase-process-document { border: 1px solid var(--border-default, var(--color-border)); border-radius: var(--radius-control, 8px); padding: 8px 12px; }
+.purchase-process-document > summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; cursor: pointer; }
+.purchase-process-document > summary span { color: var(--text-secondary, var(--color-muted)); font-size: 13px; }
+.purchase-process-document .table-wrap { margin-top: 8px; }
+.purchase-process-financial { margin: 8px 0 0; font-size: 13px; color: var(--text-secondary, var(--color-muted)); }

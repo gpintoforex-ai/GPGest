@@ -89,3 +89,17 @@ def test_supplier_with_article_terms_counts_as_referenced(stock_case):
         rows = [{"id": alpha, "name": "Fornecedor Alfa"}, {"id": beta, "name": "Fornecedor Beta"}]
         annotate_entity_movement_history(rows, db)
     assert rows[0]["has_movements"] and not rows[1]["has_movements"]
+
+
+def test_bonus_buy_x_get_y_is_saved_and_needs_both_quantities(stock_case):
+    client, _, factory, _, _ = stock_case
+    alpha, _, _ = suppliers(factory)
+    pid = product(stock_case, supplier_id=alpha)
+    half = client.put(url(pid, alpha), json={"bonus_buy_quantity": "10"})
+    assert half.status_code == 422 and "bonificação" in half.text
+    saved = client.put(url(pid, alpha), json={"agreed_cost": "3", "bonus_buy_quantity": "10", "bonus_free_quantity": "2"})
+    assert saved.status_code == 200, saved.text
+    terms = saved.json()["terms"][0]
+    assert (float(terms["bonus_buy_quantity"]), float(terms["bonus_free_quantity"])) == (10, 2)
+    listed = client.get(url(pid)).json()["terms"][0]
+    assert (float(listed["bonus_buy_quantity"]), float(listed["bonus_free_quantity"])) == (10, 2)

@@ -54,6 +54,11 @@ def test_erp_purchases_use_supplier_rubric_can_be_split_and_are_not_double_count
     lines = [{"description": "Serviço", "nature": "service", "unit": "h", "quantity": "1", "price": "100", "vat": "23"}]
     local = confirm(case, draft(case, "invoice", lines=lines))
     assert report(stock)["total_cents"] == 12300 - 2460 + 5000 + 12300
+    # Base e IVA por documento: a compra local traz os das linhas; o ERP sem detalhe fica «sem IVA discriminado».
+    data = report(stock)
+    own = next(d for d in data["documents"] if d["id"] == "proc:" + local["id"])
+    assert (own["base_cents"], own["tax_cents"]) == (10000, 2300)
+    assert data["tax_cents"] == 2300 and data["without_vat_breakdown"] == 3
     with stock[2].begin() as db:
         db.add(DocumentERPLink(purchase_id=local["purchase_id"], erp_id=first, reason="Teste"))
     assert report(stock)["total_cents"] == 12300 - 2460 + 5000

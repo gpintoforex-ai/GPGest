@@ -1,35 +1,49 @@
-/* IAZELA logo colours for navigation inside the workspace. */
-.workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button {
-  position: relative;
-  border-color: color-mix(in srgb, var(--border-default) 65%, #00b8b8);
-  background: linear-gradient(115deg, color-mix(in srgb, var(--surface-primary) 94%, #00dec2), color-mix(in srgb, var(--surface-primary) 94%, #009dce));
-  color: var(--text-primary);
-  box-shadow: 0 2px 5px rgb(0 121 150 / 8%);
-  transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
-}
-.workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button:hover:not(:disabled) {
-  border-color: #00a9b3;
-  background: linear-gradient(115deg, color-mix(in srgb, var(--surface-primary) 80%, #00dec2), color-mix(in srgb, var(--surface-primary) 82%, #009dce));
-  color: var(--text-primary);
-  box-shadow: 0 3px 12px rgb(0 188 189 / 22%);
-}
-.workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button:is(.is-active, .active, [aria-selected="true"], [aria-pressed="true"], [aria-current="page"]) {
-  background: linear-gradient(115deg, #00dec2 0%, #00c8c6 50%, #04a8d0 100%);
-  border-color: #008eaa;
-  color: #042c38;
-  box-shadow: 0 3px 12px rgb(0 188 189 / 22%), inset 0 1px 0 rgb(255 255 255 / 32%);
-  font-weight: 700;
-}
-.workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button:focus-visible {
-  outline: 3px solid var(--border-focus);
-  outline-offset: 3px;
-}
-.workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button:disabled {
-  background: var(--surface-secondary);
-  color: var(--text-disabled);
-  border-color: var(--border-default);
-  box-shadow: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .workspace :is(.module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs) > button { transition: none; }
+/* Navigation uses the shared semantic contract; brand assets remain unchanged. */
+:root .shell, :root .shell>.workspace { background:var(--surface-secondary); color:var(--text-primary); }
+.workspace :is(.module-tabs,.doc-tabs,.deposit-tabs,.conference-tabs)>button { background:var(--surface-primary); color:var(--text-secondary); border-color:var(--border-default); box-shadow:none; transition:background .15s ease,border-color .15s ease; }
+.workspace :is(.module-tabs,.doc-tabs,.deposit-tabs,.conference-tabs)>button:hover:not(:disabled) { background:var(--surface-secondary);color:var(--text-primary);border-color:var(--border-control); }
+.workspace :is(.module-tabs,.doc-tabs,.deposit-tabs,.conference-tabs)>button:is(.is-active,.active,[aria-selected="true"],[aria-pressed="true"],[aria-current="page"]) {background:var(--action-primary);color:#fff;border-color:var(--action-primary);font-weight:650;box-shadow:none;}
+.workspace :is(.module-tabs,.doc-tabs,.deposit-tabs,.conference-tabs)>button:disabled {background:var(--surface-secondary);color:var(--text-disabled);border-color:var(--border-default);}
+:root .sidebar,:root[data-theme="dark"] .sidebar {background:var(--surface-primary);color:var(--text-primary);border-right:1px solid var(--border-default);}
+:root .sidebar nav button {color:var(--text-primary);background:transparent;box-shadow:none;}
+:root .sidebar nav button:hover:not(:disabled) {background:var(--surface-secondary);color:var(--action-primary-ink);}
+:root .sidebar nav button.active {background:var(--surface-secondary);color:var(--action-primary-ink);box-shadow:inset 3px 0 var(--action-primary-ink);}
+:root .sidebar .brand small {color:var(--text-secondary);}
+:root .sidebar .sidebar-collapse,:root[data-theme="dark"] .sidebar .sidebar-collapse {background:var(--surface-primary);color:var(--text-primary);border-color:var(--border-control);box-shadow:none;}
+:root .workspace>header {background:var(--surface-primary);border-color:var(--border-default);}
+.workspace-navigation .workspace-destination {padding-left:20px;min-height:42px;font-size:13px;}
+.workspace-navigation .workspace-destination>.workspace-destination-icon {width:17px;height:17px;flex-shrink:0;}
+.workspace-navigation .workspace-group {min-height:46px;}
+.sidebar .workspace-navigation {min-height:0;flex:1;overflow-y:auto;align-content:start;}
+.order-center-mode .sidebar {padding:18px 12px;background:linear-gradient(165deg,var(--surface-primary),color-mix(in srgb,var(--surface-primary) 96%,#a2eadd));}
+.order-center-mode .sidebar .brand {padding:0 9px;}
+.order-center-mode .sidebar .brand img {max-height:60px;width:auto;max-width:100%;object-fit:contain;}
+.order-center-mode .sidebar .brand>small {font-size:8px;letter-spacing:1.5px;margin-top:3px;}
+.order-center-mode .sidebar .sidebar-collapse {min-height:27px;padding:4px 9px;margin:10px 5px 0;font-size:10px;}
+.order-center-mode .sidebar .workspace-navigation {margin-top:12px;gap:2px;}
+.order-center-mode .workspace-navigation .workspace-group {min-height:40px;padding:8px 10px;font-size:12px;}
+.order-center-mode .workspace-navigation .workspace-destination {min-height:34px;padding:7px 9px 7px 13px;font-size:11px;}
+.order-center-mode .workspace-navigation .finance-submenu {margin-top:2px;margin-bottom:3px;gap:1px;}
+.order-center-mode .sidebar-footer {padding-top:9px;}
+.order-center-mode .sidebar-mode {min-height:30px;font-size:10px;padding:6px 8px;margin-bottom:8px;}
+.navigation-help {display:none;position:relative;flex-shrink:0;margin-top:10px;}
+.order-center-mode .navigation-help {display:block;}
+.order-center-mode.sidebar-collapsed .navigation-help {display:none;}
+.navigation-help>summary {display:flex;align-items:center;gap:9px;padding:10px;background:color-mix(in srgb,var(--surface-primary) 55%,#baf2de);border:1px solid var(--border-default);border-radius:11px;cursor:pointer;list-style:none;}
+.navigation-help-icon {display:grid;place-items:center;width:32px;height:32px;background:#008c70;color:white;border-radius:50%;flex-shrink:0;}
+.navigation-help strong {display:block;color:var(--text-primary);font-size:11px;}.navigation-help small {display:block;color:var(--text-secondary);font-size:10px;}.navigation-help>summary>svg {margin-left:auto;}
+.navigation-help>div {position:absolute;bottom:calc(100% + 8px);left:0;right:0;background:var(--surface-primary);border:1px solid var(--border-control);padding:10px;border-radius:10px;box-shadow:var(--shadow-panel);z-index:30;}
+.navigation-help p {font-size:11px;color:var(--text-secondary);}.navigation-help .ui-action {width:100%;font-size:11px;margin-top:5px;white-space:normal;}
+:root[data-theme="dark"] .navigation-help>summary {background:#123c35;}
+.workspace-navigation .finance-submenu {margin-left:10px;border-left:1px solid var(--border-default);padding-left:7px;}
+.workspace-navigation .finance-submenu button {line-height:1.4;white-space:normal;}
+@media(prefers-reduced-motion:reduce){.workspace :is(.module-tabs,.doc-tabs)>button{transition:none;}}
+
+/* User preference: dark turquoise navigation and moving edge light. */
+:root { --navigation-current-base:#075e61; --navigation-current:linear-gradient(115deg,#064b50 0%,#075e61 55%,#087477 100%); --navigation-hover:#e2f3f1; --navigation-ink:#075e61; }
+:root[data-theme="dark"] { --navigation-hover:#123b40; --navigation-ink:#a2efe4; }
+:root .sidebar nav button:hover:not(:disabled) { background:var(--navigation-hover);color:var(--navigation-ink); }
+:root .sidebar nav button:is(.active,[aria-current="page"]):not(:disabled),
+.workspace :is(.module-tabs,.doc-tabs,.deposit-tabs,.conference-tabs)>button:is(.is-active,.active,[aria-selected="true"],[aria-pressed="true"],[aria-current="page"]):not(:disabled) {
+  background-color:var(--navigation-current-base); background-image:var(--navigation-current); color:#fff; border-color:#087477; box-shadow:0 3px 12px rgb(0 121 128 / 20%),inset 0 1px 0 rgb(255 255 255 / 16%);font-weight:700;
 }

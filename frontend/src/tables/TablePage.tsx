@@ -1,5 +1,7 @@
+import OperationsOverview from "../components/OperationsOverview";
+import { useRecordHandoff } from "../components/useRecordHandoff";
 import { useCallback, useEffect, useState } from "react";
-import { CircleMinus, Eye, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { CircleMinus, Eye, Pencil, RefreshCw, RotateCcw, Settings, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import { ActionButton, Notice, confirmAction } from "../components/InteractionUI";
 import { FilterBar, SearchInput } from "../components/DataTable";
@@ -9,7 +11,7 @@ import Processing from "./Processing";
 import RecordDialog from "./RecordDialog";
 import RemoveDialog from "./RemoveDialog";
 import SyncDialog from "./SyncDialog";
-import { DIRECTION_LABELS, displayValue, formatDateTime, gendered, type ConflictPolicy, type Direction, type TableContext, type TableInfo, type TableRow } from "./types";
+import { DIRECTION_LABELS, displayValue, formatDateTime, gendered, type Direction, type TableContext, type TableInfo, type TableRow } from "./types";
 import "./TablePage.css";
 
 type Listing = { rows: TableRow[]; total: number; total_all: number; page: number; pages: number; size: number };
@@ -25,12 +27,13 @@ const SYNC_FILTERS: [string, string][] = [["all", "Todos"], ["apenas_local", "Ap
  * Página comum a todas as tabelas: mesmas ações, posições, mensagens e confirmações.
  * A configuração (campos, permissões, capacidades do ERP) vem de /api/tables/{key}.
  */
-export default function TablePage({ tableKey, context, active = true, store = "", onChanged }: {
+export default function TablePage({ tableKey, context, active = true, store = "", onChanged, onCommercialTerms }: {
   tableKey: string;
   context: TableContext;
   active?: boolean;
   store?: string;
   onChanged?: () => Promise<void> | void;
+  onCommercialTerms?: () => void;
 }) {
   const [table, setTable] = useState<TableInfo | null>(null);
   const [listing, setListing] = useState<Listing | null>(null);
@@ -48,6 +51,10 @@ export default function TablePage({ tableKey, context, active = true, store = ""
   const [warning, setWarning] = useState("");
   const [busy, setBusy] = useState("");
 
+  useRecordHandoff(tableKey, [tableKey === "customers" ? "Clientes" : tableKey === "suppliers" ? "Fornecedores" : ""], id => {
+    if (!active || !table || !listing || table.key !== tableKey || !["customers","suppliers"].includes(tableKey)) return false;
+    setDialog({kind:"record",mode:"view",id}); return true;
+  });
   const load = useCallback(async () => {
     const params = new URLSearchParams({ q: query, status, origin, sync, store, sort: sort.id, direction: sort.direction, page: String(page), size: String(size) });
     for (const [name, value] of Object.entries(fieldFilters)) if (value) params.set("f_" + name, value);
@@ -86,14 +93,6 @@ export default function TablePage({ tableKey, context, active = true, store = ""
     finally { setBusy(""); }
   }
 
-  async function setPolicy(policy: ConflictPolicy) {
-    try {
-      await api(`/tables/${tableKey}/settings`, { conflict_policy: policy });
-      await load();
-      setNotice("Regra para conflitos guardada.");
-    } catch (e) { setError((e as Error).message); }
-  }
-
   if (!table || !listing) return <>{error ? <Notice className="error" role="alert">{error}</Notice> : <Processing label="A carregar" />}</>;
 
   const erp = table.erp;
@@ -112,47 +111,30 @@ export default function TablePage({ tableKey, context, active = true, store = ""
     }
     return "";
   };
+  // Motivo do conector (não do perfil) fica visível junto à descrição; o do perfil fica na dica do botão.
+  const syncBlocked = !erp.available || !erp.operations.read?.supported ? syncReason("sync") : "";
   const showSync = (direction: Direction) => setDialog({ kind: "sync", direction, ids: [] });
   const label = (row: TableRow) => row.code ? `${row.code} — ${row.description}` : row.description;
 
   return <>
     <div className="page-intro">
-      <div><h1>{table.title}</h1><p>{table.description}</p></div>
-      {table.allow_create && permissions.create && <div className="table-page-actions">
-        <ActionButton className="primary" onClick={() => setDialog({ kind: "record", mode: "create" })}>{gendered(table, "Novo")} {table.singular}</ActionButton>
+      <div><h1>{table.title}</h1><p>{table.description}</p>
+        {integrated && syncBlocked && <small className="table-sync-reason">Sincronização com o ERP indisponível: {syncBlocked}</small>}</div>
+      {(integrated || table.allow_create && permissions.create || onCommercialTerms) && <div className="table-page-actions">
+        {onCommercialTerms && <ActionButton type="button" onClick={onCommercialTerms}><Settings size={17} aria-hidden="true" />Condições comerciais</ActionButton>}
+        {integrated && <ActionButton type="button" disabled={!!syncReason("sync") || !!busy} title={syncReason("sync") || DIRECTION_LABELS.sync.destination} onClick={() => showSync("sync")}><RefreshCw size={17} aria-hidden="true" />{DIRECTION_LABELS.sync.button}</ActionButton>}
+        {table.allow_create && permissions.create && <ActionButton className="primary" onClick={() => setDialog({ kind: "record", mode: "create" })}>{gendered(table, "Novo")} {table.singular}</ActionButton>}
       </div>}
     </div>
     {error && <Notice className="error" role="alert">{error}</Notice>}
     {notice && <Notice onDismiss={() => setNotice("")} className="success" role="status">{notice}</Notice>}
     {warning && <Notice className="warning" role="status">{warning}</Notice>}
-    {integrated && <section className="panel table-erp-bar" aria-label="Integração com o ERP">
-      <div className="table-erp-heading">
-        <h2>Integração com o ERP{erp.provider ? ` (${erp.provider === "wintouch" ? "Wintouch" : erp.provider})` : ""}</h2>
-        <p>Recebe as alterações do ERP e envia as da IAZELA; mostra primeiro o que muda e só executa depois de confirmar. Os registos novos são gravados no ERP ao criar.</p>
-      </div>
-      <div className="table-erp-actions">
-        {(["sync"] as Direction[]).map(direction => {
-          const reason = syncReason(direction);
-          return <span key={direction} className="table-erp-action">
-            <ActionButton type="button" disabled={!!reason || !!busy} title={reason || DIRECTION_LABELS[direction].destination} onClick={() => showSync(direction)}>{DIRECTION_LABELS[direction].button}</ActionButton>
-            {reason && <small>{reason}</small>}
-          </span>;
-        })}
-        {erp.available && <label className="table-policy">Em conflito
-          <select aria-label="Regra para conflitos" value={erp.conflict_policy || "perguntar"} disabled={!permissions.erp_remove} title={permissions.erp_remove ? undefined : "Só um administrador pode alterar esta regra."} onChange={e => setPolicy(e.target.value as ConflictPolicy)}>
-            <option value="perguntar">Perguntar em cada registo</option>
-            <option value="erp">Prevalece o ERP</option>
-            <option value="local">Prevalece a IAZELA</option>
-          </select>
-        </label>}
-      </div>
-      <details className="table-capabilities">
-        <summary>Operações suportadas pelo conector</summary>
-        <ul>{Object.entries(erp.operations).map(([key, op]) => op && <li key={key} className={op.supported ? "is-supported" : "is-unsupported"}>
-          <b>{op.label}:</b> {op.supported ? "disponível" : `indisponível — ${op.reason}`}
-        </li>)}</ul>
-      </details>
-    </section>}
+    <OperationsOverview source={listing} title={`Resumo de ${table.title.toLocaleLowerCase("pt-PT")}`} heading={false} error={!!error} metrics={[
+      {label:"Resultados filtrados",value:listing.total,description:"Registos de todas as páginas que correspondem à pesquisa",tone:"info"},
+      {label:"Registos nesta página",value:rows.length,description:`Página ${listing.page} de ${listing.pages}`,tone:"neutral"}
+    ]} suggestion={rows.some(r=>r.sync_state === "conflito" || r.sync_state === "erro") && permissions.view ? {
+      title:"Rever o estado de integração",reason:"Consulte a ficha e a origem do conflito antes de sincronizar ou alterar o registo.",evidence:["Há conflitos ou erros entre os registos da página atual.","Origem: estados de sincronização devolvidos pela tabela, sem novas consultas externas por linha."],actionLabel:"Consultar registo com conflito",onReview:()=>{const row=rows.find(r=>r.sync_state === "conflito" || r.sync_state === "erro");if(row)setDialog({kind:"record",mode:"view",id:row.id});}
+    }:null}/>
     <section className="panel">
       <FilterBar label={`Filtros de ${table.title.toLowerCase()}`}>
         <SearchInput label="Pesquisar" value={query} onChange={e => { setQuery(e.target.value); setPage(1); }} />

@@ -1,0 +1,162 @@
+/* Avisos na barra do menu: sino com o total; vermelho quando há algo urgente. */
+.top-alerts {
+  position: relative;
+}
+.top-alerts > summary {
+  list-style: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.top-alerts > summary::-webkit-details-marker {
+  display: none;
+}
+.top-alerts > summary:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+/* Toque breve a cada quatro segundos; o contador fica estável e legível. */
+.top-alerts.has-alerts:not([open]) > summary > svg {
+  transform-origin: 50% 15%;
+  animation: top-alerts-ring 4s ease-in-out infinite;
+}
+@keyframes top-alerts-ring {
+  0%, 24%, 100% { transform: rotate(0deg); }
+  4%, 12% { transform: rotate(14deg); }
+  8%, 16% { transform: rotate(-14deg); }
+  20% { transform: rotate(7deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .top-alerts.has-alerts:not([open]) > summary > svg {
+    animation: none;
+  }
+}
+.top-alerts-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  background: #24559a;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  color: #fff;
+}
+.top-alerts-count > span {
+  padding: 0 5px;
+}
+.top-alerts-count .is-danger {
+  background: #b42318;
+}
+.top-alerts-count .is-warning {
+  background: #8a5300;
+}
+/* Um único contador: avisos/Drive, com as cores de cada origem. */
+.top-alerts-count .is-info {
+  background: #24559a;
+}
+.top-alerts-count .top-alerts-separator {
+  padding: 0 1px;
+}
+.top-alerts-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  z-index: 1000; /* por cima do menu lateral */
+  width: min(420px, calc(100vw - 24px));
+  max-height: 70vh;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+.top-alerts-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.top-alerts-title .ui-action {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px;
+}
+.top-alerts-panel .top-alerts-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 4px 0 10px;
+}
+.top-alerts-panel .top-alerts-error {
+  font-size: 12px;
+  color: var(--action-danger);
+  background: var(--context-danger-bg);
+  padding: 8px;
+  border-radius: 6px;
+}
+.top-alerts-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.top-alert {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-border);
+  border-radius: 8px;
+}
+.top-alert-danger {
+  border-left-color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+.top-alert-warning {
+  border-left-color: var(--color-warning);
+}
+.top-alert-info {
+  border-left-color: var(--color-info);
+  background: var(--color-info-bg);
+}
+.top-alerts-subtitle {
+  display: block;
+  margin: 12px 0 8px;
+}
+.top-alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.top-alert-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.top-alert small {
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+.top-alerts.align-left .top-alerts-panel {
+  left: 0;
+}
+.top-alerts.align-right .top-alerts-panel {
+  right: 0;
+}

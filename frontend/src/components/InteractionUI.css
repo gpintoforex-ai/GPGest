@@ -263,6 +263,10 @@
   margin-top: 6px;
   line-height: 1.5;
 }
+/* Mais específica do que a cor secundária geral de p/small nas áreas de trabalho e janelas. */
+:root :is(.workspace, .platform-page, dialog) .ui-field-error {
+  color: var(--color-danger, #ab2036);
+}
 [aria-invalid="true"] {
   border-color: var(--color-danger, #ab2036) !important;
   box-shadow: 0 0 0 1px var(--color-danger, #ab2036);

@@ -28,9 +28,14 @@ export function updateLocationParam(
   value: string,
   replace = false,
 ) {
+  updateLocationParams({ [name]: value || null }, replace);
+}
+export function updateLocationParams(values: Record<string, string | null>, replace = false) {
   const url = new URL(window.location.href);
-  if (value) url.searchParams.set(name, value);
-  else url.searchParams.delete(name);
+  for (const [name, value] of Object.entries(values)) {
+    if (value !== null) url.searchParams.set(name, value);
+    else url.searchParams.delete(name);
+  }
   if (url.href === window.location.href) return;
   window.history[replace ? "replaceState" : "pushState"](null, "", url);
   window.dispatchEvent(new Event(changed));
@@ -135,6 +140,7 @@ export function ModuleTabs({
         <ActionButton
           type="button"
           key={tab.id}
+          inferAction={false}
           id={`${prefix}-tab-${encodeURIComponent(tab.id)}`}
           role={panels ? "tab" : undefined}
           aria-selected={panels ? value === tab.id : undefined}
@@ -310,7 +316,7 @@ export function DetailDrawer(props: React.ComponentProps<typeof AppDialog>) {
  * Ações secundárias agrupadas num menu («Mais ações»): as principais ficam visíveis e estas a um clique.
  * Fecha com Escape, clique fora ou depois de escolher uma ação; o foco regressa ao botão.
  */
-export function ActionMenu({ label = "Mais ações", children }: { label?: string; children: ReactNode }) {
+export function ActionMenu({ label = "Mais ações", icon, children }: { label?: string; icon?: ReactNode; children: ReactNode }) {
   const menu = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     const outside = (event: PointerEvent) => {
@@ -328,7 +334,10 @@ export function ActionMenu({ label = "Mais ações", children }: { label?: strin
         if ((event.target as HTMLElement).closest(".action-menu-panel button") && menu.current) menu.current.open = false;
       }}
     >
-      <summary className="ui-action">{label}<ChevronDown size={16} aria-hidden="true" /></summary>
+      {/* Com ícone (ex.: ações de uma linha), o botão é compacto e o nome fica para leitores de ecrã e dica. */}
+      {icon
+        ? <summary className="ui-action action-menu-icon" aria-label={label} title={label}>{icon}</summary>
+        : <summary className="ui-action">{label}<ChevronDown size={16} aria-hidden="true" /></summary>}
       <div className="action-menu-panel" role="group" aria-label={label}>{children}</div>
     </details>
   );

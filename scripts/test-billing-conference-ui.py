@@ -70,7 +70,7 @@ with sync_playwright() as playwright:
     page = browser.new_page(viewport={"width": 1440, "height": 1000}, locale="pt-PT")
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.route("**/api/**", mock_api)
-    page.goto("http://127.0.0.1:5174")
+    page.goto("http://127.0.0.1:5174/entrar?pagina=Fatura%C3%A7%C3%A3o+e+recebimentos")
     # Painel: medidas lado a lado, nunca somadas.
     panel = page.get_by_label("Indicadores de faturação e tesouraria")
     expect(panel.get_by_text("Total faturado com IVA", exact=True)).to_be_visible()
@@ -78,11 +78,9 @@ with sync_playwright() as playwright:
     expect(panel.get_by_text("Por justificar/conferir: 100,00 €", exact=False)).to_be_visible()
     if shots:
         page.screenshot(path=str(shots / "conf-painel.png"), full_page=False)
-    page.get_by_role("button", name="Tesouraria", exact=True).click()
-    page.get_by_role("button", name="Faturação e recebimentos", exact=True).click()
     expect(page.get_by_role("heading", name="Faturação e recebimentos", level=1)).to_be_visible()
     expect(page.get_by_text("Por conferir").first).to_be_visible()
-    page.get_by_role("tab", name="Sugestões (1)").click()
+    page.get_by_role("button", name="Sugestões (1)").click()
     expect(page.get_by_text("Movimento agregado do fecho de caixa").first).to_be_visible()
     page.get_by_role("button", name="Rever e associar").click()
     assert not writes, "Rever não pode escrever"
@@ -98,10 +96,10 @@ with sync_playwright() as playwright:
     assert body["kind"] == "individual" and body["confirmed"] is True
     assert body["documents"] == [{"record_id": "d1", "amount_cents": 60000}]
     assert body["receipts"] == [{"source": "movement", "id": "m1", "amount_cents": 60000}]
-    page.get_by_role("tab", name="Totais diários").click()
+    page.get_by_role("button", name="Totais diários").click()
     expect(page.get_by_role("button", name="Confirmar totais")).to_be_visible()
     page.set_viewport_size({"width": 390, "height": 844})
-    page.get_by_role("tab", name="Documentos").click()
+    page.get_by_role("button", name="Documentos", exact=True).click()
     overflow = page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
     assert overflow <= 1, f"Deslocamento horizontal na página: {overflow}px"
     if shots:

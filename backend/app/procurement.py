@@ -2,15 +2,17 @@
 import hashlib
 import io
 import json
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 from decimal import Decimal as D, ROUND_HALF_UP
 from typing import Literal
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Response
 from pydantic import Field, model_validator
-from sqlalchemy import select, func
+from sqlalchemy import and_, case, cast, func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from .db import db_session
@@ -20,14 +22,15 @@ from . import inventory as stock
 from .models import (ArchiveDocument, BusinessEntity, Category, DocumentERPLink, DocumentState,
     DriveDocumentAttachment, ERPDocument, ExpenseDraft, ProcurementDocument as Doc,
     ProcurementLink as Link, Purchase, PurchaseAttachment, PlannedAllocation, PlannedMovement, StockArticle, StockEntry,
-    StockLot, StockWarehouse, Store, User, now, CustomerOrderReservation)
+    StockLot, StockWarehouse, Store, User, now, CustomerOrderReservation, WintouchSaleRecord)
 from .document_identity import identity
 from . import purchase_financials as financials
 from .operating_modes import policy
 from .email_delivery import SendInput
 
 ZERO = D(0)
-KINDS = Literal['order', 'receipt', 'invoice', 'return', 'credit']
+LISBON = ZoneInfo('Europe/Lisbon')
+KINDS =Literal['order', 'receipt', 'invoice', 'return', 'credit']
 LABELS = {'order': 'Encomenda', 'receipt': 'Receção', 'invoice': 'Compra', 'return': 'Devolução', 'credit': 'Nota de crédito'}
 
 def fail(message, status=422):
@@ -45,6 +48,9 @@ class Line(Strict):
     quantity: D = Field(gt=0, le=10**9, decimal_places=6)
     rejected: D = Field(default=ZERO, ge=0, le=10**9, decimal_places=6)
     price: D = Field(default=ZERO, ge=0, le=10**9, decimal_places=6)
+    # Preço unitário da fatura (líquido dos descontos indicados), sem repartir unidades oferecidas:
+    # é o «último preço» do artigo; o custo em stock continua a incluir a oferta.
+    document_price: D | None = Field(default=None, ge=0, le=10**9, decimal_places=6)
     discount: D = Field(default=ZERO, ge=0, le=100, decimal_places=4)
     vat: D = Field(default=D(23), ge=0, le=100, decimal_places=3)
     warehouse_id: str | None = None
@@ -86,6 +92,8 @@ class Draft(Strict):
     category_id: str | None = None
     # Fatura original no Arquivo digital (receção a partir de fatura e respetiva correção).
     archive_document_id: str | None = Field(default=None, max_length=36)
+    # PDF anexados ao documento (guia, fatura…), guardados no Arquivo digital.
+    archive_attachment_ids: list[str] = Field(default_factory=list, max_length=10)
     # Tipo de documento de compra (FC, FCD, NCC…): efeito financeiro ao confirmar a receção.
     document_type_id: str | None = Field(default=None, max_length=36)
     payment_method: str | None = Field(default=None, max_length=20)
@@ -116,6 +124,11 @@ class Confirm(Strict):
 class Cancel(Strict):
     revision: int
     reason: str = Field(min_length=3, max_length=2000)
+
+class ExpiryClaim(Strict):
+    revision: int
+    status: Literal['reclamada', 'sem_reclamacao']
+    note: str = Field(min_length=3, max_length=2000)
 
 class EditConfirmed(Draft):
     """Edição de uma receção confirmada: os mesmos campos do lançamento e as autorizações."""
@@ -188,19 +201,24 @@ def document_view(db, row, cost_visible=True, usage=None):
     supplier = db.get(BusinessEntity, row.supplier_id)
     paid_cents = paid_total(db, row.purchase_id) if row.purchase_id else 0
     purchase = db.get(Purchase, row.purchase_id) if row.purchase_id else None
-    has_attachment = bool(payload.get('attachments')) or bool(purchase and (
+    has_attachment = bool(payload.get('attachments')) or bool(payload.get('archive_attachment_ids')) or bool(purchase and (
         db.scalar(select(PurchaseAttachment.id).where(PurchaseAttachment.purchase_id == purchase.id).limit(1)) or
         db.scalar(select(DriveDocumentAttachment.id).where(DriveDocumentAttachment.purchase_id == purchase.id).limit(1))))
     erp = db.scalar(select(DocumentERPLink.id).where(DocumentERPLink.purchase_id == row.purchase_id, DocumentERPLink.undone_at.is_(None))) if row.purchase_id else None
+    price_review = payload.pop('price_review', {})
     frozen_supplier=payload.get('supplier_snapshot',{})
     result = {**payload, 'id': row.id, 'kind': row.kind, 'store_id': row.store_id, 'supplier_id': row.supplier_id,
         'supplier_name': frozen_supplier.get('name',supplier.name if supplier else ''), 'supplier_nif': frozen_supplier.get('nif',supplier.tax_number if supplier else ''),
+        'price_review_pending': len(price_review.get('pending', [])) if cost_visible else 0,
         'purchase_id': row.purchase_id, 'revision': row.revision, 'status': order_status(db, row, usage) if row.kind == 'order' else row.status,
         'created_at': row.created_at, 'confirmed_at': row.confirmed_at,
         'paid_cents': paid_cents, 'remaining_cents': max(0, abs(purchase.amount_cents) - paid_cents) if purchase else None,
         'payment_status': 'paid' if purchase and paid_cents >= abs(purchase.amount_cents) else 'partial' if paid_cents else 'unpaid',
         'attachment_status': 'present' if has_attachment else 'missing', 'erp_status': 'linked' if erp else 'not_linked',
         'check_status': 'checked' if purchase and purchase.validated else 'pending'}
+    if row.kind == 'order':
+        from .customer_orders import order_customers
+        result['customer_orders'] = order_customers(db, row.id)
     from .models import EmailDispatch
     result['email_history'] = [{'id': e.id, 'status': e.status, 'started_at': e.started_at, 'created_at': e.created_at,
         'error': e.error, 'uncertain': e.uncertain} for identifier in payload.get('email_ids', []) if (e := db.get(EmailDispatch, identifier))]
@@ -261,6 +279,8 @@ def validate(db, user, payload, authorize):
             fail('Documento ERP indisponível ou anulado neste estabelecimento.')
     if payload.archive_document_id and not db.get(ArchiveDocument, payload.archive_document_id):
         fail('A fatura original do arquivo já não existe.')
+    if any(not db.get(ArchiveDocument, identifier) for identifier in payload.archive_attachment_ids):
+        fail('Um dos PDF anexados já não existe no Arquivo digital.')
 
 def resolve_source(db, row, line, allowed):
     source = db.get(Doc, line['source_id'])
@@ -306,6 +326,37 @@ def valuation(db, user, original_entry, quantity, invoice_price, invoice_vat, do
     db.add(adjustment)
     return {'value_delta': str(delta), 'inventory_value_delta': str(residual), 'consumed_value_delta': str(delta-residual)}
 
+# Validades na receção (dias desde a data do documento): aviso a menos de 2 anos, reclamação a menos de 1.
+EXPIRY_WARN_DAYS, EXPIRY_CLAIM_DAYS = 730, 365
+
+def expiry_review(db, payload):
+    """Validade obrigatória nos artigos com lotes; devolve os avisos de validade curta das linhas."""
+    received_on = date.fromisoformat(payload['document_date'])
+    alerts, missing = [], []
+    for index, line in enumerate(payload['lines']):
+        if line.get('nature') != 'goods' or not line.get('article_id') or accepted(line) <= 0:
+            continue
+        article = db.get(StockArticle, line['article_id'])
+        if not article or not json.loads(article.data or '{}').get('lots'):
+            continue
+        expiry, lot = line.get('expiry'), None
+        if line.get('lot_id'):
+            lot = db.get(StockLot, line['lot_id'])
+        elif (line.get('lot_number') or '').strip():
+            lot = db.scalar(select(StockLot).where(StockLot.article_id == article.id, StockLot.number == line['lot_number'].strip()))
+        expiry = expiry or (lot.expiry if lot else None)
+        label = f"«{line.get('description') or article.name}»" + (f" (lote {line.get('lot_number') or lot.number})" if (line.get('lot_number') or lot) else '')
+        if not expiry:
+            missing.append(label)
+            continue
+        days = (date.fromisoformat(str(expiry)[:10]) - received_on).days
+        if days < EXPIRY_WARN_DAYS:
+            alerts.append({'line': index, 'description': line.get('description') or article.name, 'lot': line.get('lot_number') or (lot.number if lot else ''),
+                'expiry': str(expiry)[:10], 'days': days, 'level': 'reclamar' if days < EXPIRY_CLAIM_DAYS else 'aviso'})
+    if missing:
+        fail('Indique a validade dos artigos com lote antes de lançar: ' + ', '.join(missing) + '.')
+    return alerts
+
 def confirm_document(db, user, row, options, authorize, audit):
     if row.confirmed_at:
         return row
@@ -316,8 +367,20 @@ def confirm_document(db, user, row, options, authorize, audit):
         fail('Não pode confirmar movimentos/documentos futuros.')
     if row.kind in ('receipt','return') and policy(db).get('authority',{}).get('stock')=='erp':
         fail('O stock desta empresa é controlado pelo ERP. O conector não suporta escrever estes movimentos.',409)
+    # Rascunhos aceitam fichas incompletas; lançar exige rubrica, prazo e meio de pagamento do fornecedor.
+    from .entities import require_complete_supplier
+    require_complete_supplier(user, db, row.supplier_id, 'lançar o documento')
+    if row.kind == 'receipt':
+        # Antes de qualquer movimento: sem validade nos artigos com lote, a receção não é lançada.
+        payload.pop('expiry_alerts', None)
+        alerts = expiry_review(db, payload)
+        if alerts:
+            payload['expiry_alerts'] = alerts
+            if any(a['level'] == 'reclamar' for a in alerts) and not payload.get('expiry_claim'):
+                payload['expiry_claim'] = {'status': 'pendente'}
     # Serialize with imports and stock writers, before stock/duplicate checks.
     differences = []
+    received_articles = set()
     # A direct goods invoice creates an explicit, traceable receipt first; invoice posting
     # then follows the same path as an invoice linked to an earlier delivery.
     direct = [(i, line) for i, line in enumerate(payload['lines']) if row.kind=='invoice' and line['nature']=='goods' and not line.get('source_id')]
@@ -373,18 +436,24 @@ def confirm_document(db, user, row, options, authorize, audit):
                 fail('Uma compra importada/integrada exige ligação a uma receção local explícita, para evitar duplicar stock.')
             original_entry = original.get('stock_entry_ids', [None])[0] if original and row.kind == 'return' else None
             entry_price=net_price(line)
+            document_price=D(line['document_price']) if line.get('document_price') is not None else None
             if row.kind!='return' and not stock.settings(db)['recoverable_vat']:
                 meta=json.loads(db.get(StockArticle,line['article_id']).data)
-                entry_price=entry_price*(1+D(line['vat'])/100)/(1+D(meta.get('vat_rate',0))/100)
+                factor=(1+D(line['vat'])/100)/(1+D(meta.get('vat_rate',0))/100)
+                entry_price=entry_price*factor
+                document_price=document_price*factor if document_price is not None else None
             outgoing = row.kind == 'return' or credit_note  # Nota de crédito: saída de stock.
             entries = stock.post(db, user, stock.MovementInput(
                 article_id=line['article_id'], warehouse_id=line['warehouse_id'], kind='supplier_return' if outgoing else 'purchase',
                 quantity=q, unit_cost=entry_price.quantize(D('0.00000001')) if not outgoing else None,
+                document_price=document_price.quantize(D('0.00000001')) if document_price is not None and not outgoing else None,
                 occurred_on=payload['document_date'], document=payload['document'] or row.id,
                 reason=line['reason'] or LABELS[row.kind] + ' confirmada', request_key=f'procurement:{row.id}:{i}' + (f":e{payload['edition']}" if payload.get('edition') else ''),
                 supplier_id=row.supplier_id, lot_id=line.get('lot_id'), lot_number=line.get('lot_number',''),
                 expiry=line.get('expiry'), original_id=original_entry, override_reason=line['reason'] if row.kind=='return' else ''), authorize, source='procurement')
             line['stock_entry_ids'] = [entry.id for entry in entries]
+            if row.kind == 'receipt' and not outgoing and entries:
+                received_articles.add(line['article_id'])
             for entry in entries:
                 detail=json.loads(entry.data);detail['procurement_id']=row.id;entry.data=stock.dump(detail)
         if row.kind == 'invoice' and line['nature']=='goods' and source and q:
@@ -459,6 +528,8 @@ def confirm_document(db, user, row, options, authorize, audit):
     row.confirmed_at = now()
     row.revision += 1
     payload['differences'] = differences
+    if received_articles:
+        payload['price_review'] = {'pending': sorted(received_articles), 'batches': {}}
     entity=supplier(db,row.supplier_id)
     payload['supplier_snapshot']={'name':entity.name,'nif':entity.tax_number}
     row.data = stock.dump(payload)
@@ -498,7 +569,8 @@ def undo_entries(db, user, row, payload, authorize, keep=frozenset(), always_rev
                 unit_cost=D(entry.unit_cost).quantize(D('0.00000001')) if entry.unit_cost is not None else None,
                 document=payload['document'] or row.id,
                 reason=f'Edição da receção {payload["document"] or row.id}: substitui a entrada anterior',
-                request_key=f'procurement-edit:{row.id}:{edition}:{index}:{number}'), authorize, source='procurement', bypass=True)
+                request_key=f'procurement-edit:{row.id}:{edition}:{index}:{number}'), authorize,
+                source='procurement', bypass=True, receipt_reversal=True)
             for item in reversal:
                 detail = json.loads(item.data)
                 detail.update(procurement_id=row.id, reversal_of=entry.id)
@@ -533,6 +605,8 @@ def replace_confirmed(db, user, row, data, authorize, audit, extra=None):
     db.flush()
     confirm_document(db, user, row, Confirm(revision=row.revision, allow_overdelivery=data.allow_overdelivery,
         acknowledge_differences=data.acknowledge_differences), authorize, audit)
+    # Sem tipo de documento na edição, a compra anterior não tem substituta: decide os anexos dela.
+    financials.settle_attachments(db, user, row)
     # Só depois de gerar as entradas novas se retiram as antigas: o stock nunca fica negativo pelo caminho.
     fresh = {entry_id for line in json.loads(row.data)['lines'] for entry_id in line.get('stock_entry_ids', [])}
     removed, reversed_ = undo_entries(db, user, row, old, authorize, keep=fresh)
@@ -541,6 +615,212 @@ def replace_confirmed(db, user, row, data, authorize, audit, extra=None):
          'linhas_anteriores': [{'artigo': line.get('article_id'), 'quantidade': line['quantity'], 'preco': line['price']} for line in old['lines']]},
         row.store_id)
     return row
+
+def next_order_sequence(db):
+    """Próximo número das encomendas a fornecedores (EC-0001, …), chamado sob o bloqueio da empresa."""
+    rows = db.scalars(select(Doc.data).where(Doc.kind == 'order'))
+    return max((json.loads(data).get('order_sequence') or 0 for data in rows), default=0) + 1
+
+def order_label(sequence):
+    return f'EC-{sequence:04d}'
+
+def reserved_for_customers(db, row):
+    """Uma receção já distribuída pelos pedidos dos clientes não se anula nem se reescreve aqui."""
+    from .customer_orders import distributed
+    if distributed(db, row.id):
+        fail('Esta receção reservou produtos para pedidos de clientes. Liberte essas reservas nas '
+             'Encomendas de clientes e corrija com uma devolução ao fornecedor.', 409)
+
+def expiry_return_items(db, stores):
+    """Lotes em stock de fornecedores que aceitam devolver produtos a acabar a validade, dentro do aviso."""
+    import calendar
+
+    from .customer_orders import terms as supplier_terms
+    from .models import StockArticle, StockEntry, StockLot, StockWarehouse
+
+    warehouses = {w.id: w for w in db.scalars(select(StockWarehouse).where(StockWarehouse.store_id.in_(stores)))}
+    today = date.today()
+    # Aviso máximo: 36 meses; cada fornecedor filtra depois pelo seu prazo.
+    horizon = (today + timedelta(days=36 * 31)).isoformat()
+    lots = {lot.id: lot for lot in db.scalars(select(StockLot).where(
+        StockLot.expiry.is_not(None), StockLot.expiry >= today.isoformat(), StockLot.expiry <= horizon))}
+    if not lots or not warehouses:
+        return {'items': []}
+    stock_rows = db.execute(select(StockEntry.lot_id, StockEntry.warehouse_id, func.sum(StockEntry.quantity))
+        .where(StockEntry.lot_id.in_(lots), StockEntry.warehouse_id.in_(warehouses))
+        .group_by(StockEntry.lot_id, StockEntry.warehouse_id)).all()
+    conditions, names, items = {}, {}, []
+    for lot_id, warehouse_id, quantity in stock_rows:
+        if quantity <= 0:
+            continue
+        lot = lots[lot_id]
+        article = db.get(StockArticle, lot.article_id)
+        supplier_id = json.loads(lot.data or '{}').get('supplier_id') or json.loads(article.data).get('supplier_id')
+        if not supplier_id:
+            continue
+        if supplier_id not in conditions:
+            conditions[supplier_id] = supplier_terms(db, supplier_id)
+            entity = db.get(BusinessEntity, supplier_id)
+            names[supplier_id] = entity.name if entity else ''
+        config = conditions[supplier_id]
+        if not config.accepts_expiry_returns:
+            continue
+        expiry = date.fromisoformat(lot.expiry)
+        # Aviso N meses antes: mesmo dia do mês, recuado (fim de mês quando o dia não existe).
+        month = expiry.month - config.expiry_return_months
+        year = expiry.year + (month - 1) // 12
+        month = (month - 1) % 12 + 1
+        warn_from = date(year, month, min(expiry.day, calendar.monthrange(year, month)[1]))
+        if today < warn_from:
+            continue
+        items.append({'article_id': article.id, 'code': article.code, 'description': article.name,
+            'unit': json.loads(article.data).get('unit', 'un'), 'lot_id': lot.id, 'lot_number': lot.number,
+            'expiry': lot.expiry, 'days_left': (expiry - today).days, 'warn_from': warn_from.isoformat(),
+            'quantity': str(quantity), 'warehouse_id': warehouse_id, 'warehouse_name': warehouses[warehouse_id].name,
+            'store_id': warehouses[warehouse_id].store_id, 'supplier_id': supplier_id, 'supplier_name': names[supplier_id],
+            'months': config.expiry_return_months})
+    return {'items': sorted(items, key=lambda i: (i['expiry'], i['description']))}
+
+# Origem gravada em cada movimento de stock (`inventory.post(..., source=...)`).
+LEDGER_ORIGINS = {
+    'procurement': 'Compras', 'customer_order': 'Encomenda de cliente', 'Wintouch': 'Wintouch',
+    'SAF-T': 'Vendas SAF-T', 'inventory': 'Inventário', 'import': 'Importação de stock',
+    'article_lots': 'Ficha do artigo (lotes)', 'manual': 'Movimento manual',
+}
+PROCUREMENT_DOCUMENTS = {'order': 'Encomenda', 'receipt': 'Receção de mercadoria', 'invoice': 'Compra',
+    'return': 'Devolução ao fornecedor', 'credit': 'Nota de crédito'}
+
+
+def ledger_group_key():
+    """Documento que deu origem ao movimento: o documento de compras, ou origem + número/operação."""
+    payload = cast(StockEntry.data, JSONB)
+    return func.coalesce(
+        func.nullif(payload['procurement_id'].astext, ''),
+        func.concat(func.coalesce(payload['origin'].astext, ''), '|',
+                    func.coalesce(func.nullif(payload['document'].astext, ''), StockEntry.request_key)),
+    )
+
+
+def document_label(db, row, cache=None):
+    """Tipo e número do documento que movimentou o stock, para apresentar no livro."""
+    cache = {} if cache is None else cache
+    origin = row.get('origin') or 'manual'
+    result = {'origin_label': LEDGER_ORIGINS.get(origin, origin), 'document_type': LEDGER_ORIGINS.get(origin, origin),
+              'entity_name': ''}
+    procurement_id = row.get('procurement_id')
+    if procurement_id:
+        if procurement_id not in cache:
+            cache[procurement_id] = db.get(Doc, procurement_id)
+        doc = cache[procurement_id]
+        if doc:
+            result['document_type'] = PROCUREMENT_DOCUMENTS.get(doc.kind, doc.kind)
+            result['procurement_kind'] = doc.kind
+    if origin == 'Wintouch':
+        # Documento Wintouch: o tipo vem do motivo (Venda, Entrada de stock, ...) e o cliente do registo importado.
+        if row.get('reason'):
+            result['document_type'] = row['reason']
+        record_id = row.get('source_record')
+        if record_id:
+            key = 'wt:' + record_id
+            if key not in cache:
+                record = db.get(WintouchSaleRecord, record_id)
+                cache[key] = (json.loads(record.data).get('entity') or '') if record else ''
+            result['entity_name'] = '' if cache[key] == 'Entidade não indicada' else cache[key]
+    supplier_id = row.get('supplier_id')
+    if supplier_id:
+        key = 'entity:' + supplier_id
+        if key not in cache:
+            entity = db.get(BusinessEntity, supplier_id)
+            cache[key] = entity.name if entity else ''
+        result['entity_name'] = cache[key]
+    return result
+
+
+TRANSFERS = ('transfer_in', 'transfer_out')
+
+
+def ledger_summary(db, key, conditions, visible):
+    """Indicadores do livro de stock com os filtros ativos.
+
+    Entradas e saídas somam-se por unidade de medida (não se juntam unidades diferentes); as
+    transferências entre armazéns não contam como entradas nem saídas. O valor líquido é entradas
+    menos saídas ao custo do movimento, não o valor do stock.
+    """
+    unit = func.coalesce(func.nullif(cast(StockEntry.data, JSONB)['unit'].astext, ''), 'un')
+    moving = StockEntry.kind.not_in(TRANSFERS)
+    value = case((StockEntry.unit_cost.is_not(None), StockEntry.quantity * StockEntry.unit_cost), else_=0)
+    base = select().select_from(StockEntry).join(StockWarehouse).where(*conditions)
+    totals = db.execute(base.add_columns(
+        func.count(), func.count(func.distinct(key)), func.count(func.distinct(StockEntry.article_id)),
+        func.sum(case((and_(moving, StockEntry.quantity > 0), value), else_=0)),
+        func.sum(case((and_(moving, StockEntry.quantity < 0), -value), else_=0)),
+        func.sum(case((StockEntry.kind.in_(TRANSFERS), 1), else_=0)),
+        func.count(case((StockEntry.unit_cost.is_(None), 1))),
+    )).one()
+    count, documents, articles, inbound_value, outbound_value, transfers, unknown_cost = totals
+    by_unit = {'inbound': {}, 'outbound': {}}
+    sign = func.sign(StockEntry.quantity)
+    for unit_name, direction, quantity in db.execute(base.add_columns(unit, sign, func.sum(func.abs(StockEntry.quantity)))
+                                                     .where(moving, StockEntry.quantity != 0).group_by(unit, sign)):
+        by_unit['inbound' if direction > 0 else 'outbound'][unit_name] = str(quantity)
+    warehouses = [name for (name,) in db.execute(
+        select(StockWarehouse.name).where(StockWarehouse.id.in_(base.add_columns(StockEntry.warehouse_id).distinct().scalar_subquery()))
+        .order_by(StockWarehouse.name))]
+    money_value = (lambda amount: str(amount or ZERO)) if visible else (lambda amount: None)
+    return {
+        'count': count, 'documents': documents, 'articles': articles, 'warehouses': warehouses, 'transfers': transfers,
+        'inbound': by_unit['inbound'], 'outbound': by_unit['outbound'],
+        'inbound_value': money_value(inbound_value), 'outbound_value': money_value(outbound_value),
+        'net_value': money_value((inbound_value or ZERO) - (outbound_value or ZERO)),
+        'unknown_cost': unknown_cost if visible else 0,
+    }
+
+
+def running_balances(db, entries):
+    """Stock acumulado do artigo no armazém de cada movimento, logo a seguir a ele.
+
+    Soma todos os movimentos do mesmo artigo e armazém pela ordem de registo (a ordem em que o stock
+    foi validado), independentemente dos filtros da consulta.
+    """
+    if not entries:
+        return {}
+    pairs = {(e.article_id, e.warehouse_id) for e in entries}
+    balance = func.sum(StockEntry.quantity).over(
+        partition_by=(StockEntry.article_id, StockEntry.warehouse_id),
+        order_by=(StockEntry.created_at, StockEntry.id))
+    window = (select(StockEntry.id.label('id'), balance.label('balance'))
+              .where(StockEntry.article_id.in_({a for a, _ in pairs}), StockEntry.warehouse_id.in_({w for _, w in pairs}))
+              .subquery())
+    ids = [e.id for e in entries]
+    return dict(db.execute(select(window.c.id, window.c.balance).where(window.c.id.in_(ids))).all())
+
+
+def ledger_documents(db, key, conditions, page, visible):
+    """Livro de stock agrupado por documento (receção, venda, inventário, ...), 50 por página."""
+    value = func.sum(case((StockEntry.unit_cost.is_not(None), StockEntry.quantity * StockEntry.unit_cost), else_=0))
+    query = (select(key.label('group'), func.min(StockEntry.occurred_on), func.max(StockEntry.created_at),
+                    func.count(), func.count(func.distinct(StockEntry.article_id)),
+                    func.sum(case((StockEntry.quantity > 0, StockEntry.quantity), else_=0)),
+                    func.sum(case((StockEntry.quantity < 0, -StockEntry.quantity), else_=0)), value,
+                    func.min(StockEntry.id), func.array_agg(func.distinct(StockEntry.warehouse_id)),
+                    func.array_agg(func.distinct(StockEntry.kind)))
+             .join(StockWarehouse).where(*conditions).group_by(key)
+             .order_by(func.max(StockEntry.created_at).desc(), key).offset((page - 1) * 50).limit(51))
+    groups = list(db.execute(query))
+    cache, warehouses, rows = {}, {}, []
+    for group, occurred_on, created_at, lines, articles, inbound, outbound, total, sample_id, wh_ids, kinds in groups[:50]:
+        sample = stock.entry_view(db.get(StockEntry, sample_id), visible)
+        for wh_id in wh_ids:
+            if wh_id not in warehouses:
+                warehouses[wh_id] = db.get(StockWarehouse, wh_id).name
+        rows.append({'group': group, 'occurred_on': occurred_on, 'created_at': created_at, 'lines': lines,
+            'articles': articles, 'inbound': str(inbound), 'outbound': str(outbound),
+            'value': str(total) if visible else None, 'kinds': sorted(kinds),
+            'warehouse_name': ', '.join(sorted(warehouses[w] for w in wh_ids)),
+            'document': sample['document'] or '', 'origin': sample['origin'], 'procurement_id': sample['procurement_id'],
+            'user_name': db.get(User, sample['user_id']).name, **document_label(db, sample, cache)})
+    return {'rows': rows, 'more': len(groups) > 50}
+
 
 def register_routes(app, current, authorize, scope, audit):
     def get(db, user, identifier, write=False):
@@ -562,26 +842,66 @@ def register_routes(app, current, authorize, scope, audit):
         return {'documents': docs, 'mode': policy(db), 'can_write': user.role in ('administrador','gestor') and visible,
             'integration_note': 'Circuito local. Não envia encomendas, compras ou stock ao ERP. Nos artigos do ERP, o stock é registado aqui; código, nome e preço vêm do ERP.'}
 
+    @app.get('/api/procurement/expiry-returns')
+    def expiry_returns(user=Depends(current), db: Session=Depends(db_session)):
+        """Lotes em stock de fornecedores que aceitam devolver produtos a acabar a validade."""
+        return expiry_return_items(db, scope(user, db))
+
     @app.get('/api/procurement-ledger')
-    def ledger(store_id:str='',start:date|None=None,end:date|None=None,article_id:str='',kind:str='',page:int=1,user=Depends(current),db:Session=Depends(db_session)):
+    def ledger(store_id:str='',start:date|None=None,end:date|None=None,article_id:str='',kind:str='',page:int=1,
+               view:Literal['lines','documents']='lines',group:str='',date_basis:Literal['both','document','record']='both',
+               warehouse_id:str='',origin:str='',q:str='',user=Depends(current),db:Session=Depends(db_session)):
+        """Livro de stock por linha ou agrupado pelo documento que movimentou o stock, com indicadores.
+
+        Por omissão o período apanha a data do movimento (data do documento) ou a data de registo: uma
+        receção lançada hoje com fatura do mês anterior aparece no mês em que foi registada e no do
+        documento. `date_basis` restringe a uma das datas. Com `group` (um documento), mostram-se todas
+        as linhas desse documento, sem filtro de período. Os indicadores (`summary`) usam os mesmos filtros.
+        """
         if page<1 or start and end and start>end:fail('Filtros de período/página inválidos.')
         stores=scope(user,db)
         if store_id:
             authorize(user,db,store_id);stores=[store_id]
-        query=select(StockEntry).join(StockWarehouse).where(StockWarehouse.store_id.in_(stores))
-        if start:query=query.where(StockEntry.occurred_on>=str(start))
-        if end:query=query.where(StockEntry.occurred_on<=str(end))
-        if article_id:query=query.where(StockEntry.article_id==article_id)
-        if kind:query=query.where(StockEntry.kind==kind)
-        entries=list(db.scalars(query.order_by(StockEntry.created_at.desc(),StockEntry.id.desc()).offset((page-1)*50).limit(51)))
+        key=ledger_group_key()
+        payload=cast(StockEntry.data,JSONB)
+        conditions=[StockWarehouse.store_id.in_(stores)]
+        if group:
+            conditions.append(key==group)
+        else:
+            by_date,by_record=[],[]
+            if start:
+                by_date.append(StockEntry.occurred_on>=str(start))
+                by_record.append(StockEntry.created_at>=datetime.combine(start,time(0),LISBON))
+            if end:
+                by_date.append(StockEntry.occurred_on<=str(end))
+                by_record.append(StockEntry.created_at<datetime.combine(end+timedelta(days=1),time(0),LISBON))
+            if by_date:
+                conditions.append(and_(*by_date) if date_basis=='document' else and_(*by_record) if date_basis=='record'
+                                  else or_(and_(*by_date),and_(*by_record)))
+        if article_id:conditions.append(StockEntry.article_id==article_id)
+        if kind:conditions.append(StockEntry.kind==kind)
+        if warehouse_id:conditions.append(StockEntry.warehouse_id==warehouse_id)
+        if origin:conditions.append(func.coalesce(payload['origin'].astext,'manual')==origin)
+        if q.strip():
+            conditions.append(func.lower(payload['document'].astext).contains(q.strip().lower(), autoescape=True))
         visible=stock.permissions(user,stock.settings(db))['view_cost']
-        rows=[]
-        for entry in entries[:50]:
+        summary=ledger_summary(db,key,conditions,visible)
+        if view=='documents' and not group:
+            return {**ledger_documents(db,key,conditions,page,visible),'summary':summary}
+        query=select(StockEntry,key).join(StockWarehouse).where(*conditions)
+        entries=list(db.execute(query.order_by(StockEntry.created_at.desc(),StockEntry.id.desc()).offset((page-1)*50).limit(51)))
+        rows,labels=[],{}
+        balances=running_balances(db,[entry for entry,_ in entries[:50]])
+        for entry,entry_group in entries[:50]:
             article=db.get(StockArticle,entry.article_id);wh=db.get(StockWarehouse,entry.warehouse_id);lot=db.get(StockLot,entry.lot_id) if entry.lot_id else None
-            rows.append({**stock.entry_view(entry,visible),'article_name':article.name,'article_code':article.code,
+            view_row=stock.entry_view(entry,visible)
+            after=balances.get(entry.id,ZERO)
+            rows.append({**view_row,**document_label(db,view_row,labels),'group':entry_group,'article_name':article.name,'article_code':article.code,
+                'stock_before':str(after-entry.quantity),'stock_after':str(after),
+                'photo':json.loads(article.data or '{}').get('photo') or '',
                 'warehouse_name':wh.name,'lot_number':lot.number if lot else '', 'expiry':lot.expiry if lot else '',
                 'user_name':db.get(User,entry.user_id).name,'value':str(entry.quantity*entry.unit_cost) if visible and entry.unit_cost is not None else None})
-        return {'rows':rows,'more':len(entries)>50}
+        return {'rows':rows,'more':len(entries)>50,'summary':summary}
 
     @app.post('/api/procurement')
     def create(data: Draft, user=Depends(current), db: Session=Depends(db_session)):
@@ -597,6 +917,10 @@ def register_routes(app, current, authorize, scope, audit):
             return document_view(db,prior)
         raw.update(totals(raw['lines']))
         raw['creation_digest'] = digest
+        if data.kind == 'order' and not data.document.strip():
+            # Encomenda sem número do utilizador: numerador sequencial EC-0001, …
+            raw['order_sequence'] = next_order_sequence(db)
+            raw['document'] = order_label(raw['order_sequence'])
         row = Doc(kind=data.kind,store_id=data.store_id,supplier_id=data.supplier_id,user_id=user.id,request_key=data.request_key,data=stock.dump(raw))
         db.add(row);db.flush()
         audit(db,user,'compra_circuito_rascunho',row.id,{'kind':row.kind},row.store_id)
@@ -629,6 +953,10 @@ def register_routes(app, current, authorize, scope, audit):
                     if key not in Line.model_fields: line.pop(key)
             validate(db,user,Draft(**editable),authorize)
         result=confirm_document(db,user,row,data,authorize,audit)
+        if result.kind=='receipt':
+            # Reserva logo aos clientes o que chega das encomendas feitas para os pedidos deles.
+            from .customer_orders import distribute_receipt
+            distribute_receipt(db,user,result)
         db.commit()
         return document_view(db,result)
 
@@ -649,7 +977,24 @@ def register_routes(app, current, authorize, scope, audit):
         row = get(db, user, identifier, True)
         if row.revision != data.revision:
             fail('A receção mudou entretanto. Atualize antes de gravar.', 409)
+        reserved_for_customers(db, row)
         replace_confirmed(db, user, row, data, authorize, audit)
+        db.commit()
+        return document_view(db, row)
+
+    @app.post('/api/procurement/{identifier}/expiry-claim')
+    def expiry_claim(identifier: str, data: ExpiryClaim, user=Depends(current), db: Session=Depends(db_session)):
+        """Regista a reclamação ao fornecedor (ou a decisão de não reclamar) de uma validade curta."""
+        stock.lock(db)
+        row = get(db, user, identifier, True)
+        payload = json.loads(row.data)
+        if row.kind != 'receipt' or not payload.get('expiry_claim'):
+            fail('Esta receção não tem validades curtas por reclamar.', 409)
+        if row.revision != data.revision:
+            fail('A receção mudou entretanto. Atualize antes de gravar.', 409)
+        payload['expiry_claim'] = {'status': data.status, 'note': data.note.strip(), 'user_id': user.id, 'at': now().isoformat()}
+        row.data, row.revision = stock.dump(payload), row.revision + 1
+        audit(db, user, 'compra_circuito_reclamacao_validade', row.id, {'estado': data.status, 'nota': data.note.strip()}, row.store_id)
         db.commit()
         return document_view(db, row)
 
@@ -662,11 +1007,13 @@ def register_routes(app, current, authorize, scope, audit):
             fail('Só uma receção confirmada pode ser anulada.', 409)
         if row.revision != data.revision:
             fail('A receção mudou entretanto. Atualize antes de anular.', 409)
+        reserved_for_customers(db, row)
         payload = json.loads(row.data)
         for index in range(len(payload['lines'])):
             if used(db, row.id, index, 'invoice') or used(db, row.id, index, 'return'):
                 fail('Esta receção já tem fatura ou devolução associada: corrija com uma devolução ao fornecedor.', 409)
         financials.undo(db, user, row, payload, audit, data.reason.strip())
+        financials.settle_attachments(db, user, row)
         removed, reversed_ = undo_entries(db, user, row, payload, authorize, always_reverse=True)
         for link in db.scalars(select(Link).where(Link.document_id == row.id)):
             db.delete(link)
@@ -752,9 +1099,11 @@ def register_routes(app, current, authorize, scope, audit):
         config_row,config=configuration(db)
         if not config_row or not config['enabled']:fail('Ative o SMTP nas configurações de Email.')
         payload=json.loads(row.data)
+        # Encomenda alterada depois do envio: o reenvio é permitido (não com envios em curso/incertos).
+        settled=('accepted','received') if not payload.get('needs_resend') else ()
         for email_id in payload.get('email_ids',[]):
             prior=db.get(EmailDispatch,email_id)
-            if prior and prior.status in ('sending','accepted','received') or prior and prior.uncertain:
+            if prior and prior.status in ('sending',*settled) or prior and prior.uncertain:
                 fail('Já existe um envio aceite, em curso ou de resultado incerto. Consulte o histórico antes de repetir.',409)
         raw=pdf_bytes(db,row);key=f'encomenda-{row.id}.pdf';entity=supplier(db,row.supplier_id)
         dispatch=EmailDispatch(id=str(uuid4()),kind='supplier_order',request_key=str(uuid4()),created_by=user.id,
@@ -774,7 +1123,15 @@ def register_routes(app, current, authorize, scope, audit):
         row=get(db,user,identifier,True)
         stock.require(user,stock.settings(db),'view_cost')
         if dispatch_id not in json.loads(row.data).get('email_ids',[]) or row.status=='cancelled':fail('Este envio não pertence à encomenda ativa.',409)
-        return submit_dispatch(db,get_dispatch(db,dispatch_id,True),data,user,audit)
+        result=submit_dispatch(db,get_dispatch(db,dispatch_id,True),data,user,audit)
+        # Reenvio aceite da versão alterada: deixa de estar por reenviar.
+        if result.get('status') in ('accepted','received'):
+            fresh = db.get(Doc, row.id)
+            payload = json.loads(fresh.data)
+            if payload.pop('needs_resend', None) is not None:
+                fresh.data = stock.dump(payload)
+                db.commit()
+        return result
 
 def pdf_bytes(db,row):
     from reportlab.lib import colors

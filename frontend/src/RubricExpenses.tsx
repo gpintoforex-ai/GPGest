@@ -73,7 +73,8 @@ export default function RubricExpenses({ stores, store, categories, admin, integ
     </section>
     {loading && <p role="status">A carregar despesas…</p>}
     {data && <section className="panel">
-      <div className="panel-title"><h3>Total do período · {formatEuro(data.total_cents)}</h3>{!!data.unclassified && <StatusBadge tone="warning">{data.unclassified} documento(s) por classificar</StatusBadge>}</div>
+      <div className="panel-title"><h3>Total do período · {formatEuro(data.total_cents)}</h3>{data.tax_cents !== undefined && <span className="rubric-expenses-vat">Base {formatEuro(data.base_cents)} · IVA {formatEuro(data.tax_cents)}{data.without_vat_breakdown ? ` · ${data.without_vat_breakdown} documento(s) sem IVA discriminado` : ""}</span>}{!!data.unclassified && <StatusBadge tone="warning">{data.unclassified} documento(s) por classificar</StatusBadge>}</div>
+      {!!data.pending_receipts?.count && <Notice tone="warning">{data.pending_receipts.count} receção(ões) de mercadoria neste período ({formatEuro(data.pending_receipts.total_cents)}) ainda sem documento de compra: não entram nestes totais. Em Compras → Receções de mercadoria use «Definir tipo» (a receção é a compra) ou «Associar fatura» (a fatura chega à parte).</Notice>}
       {!!data.pending_efatura?.count && <Notice tone="warning">{data.pending_efatura.count} fatura(s) do e-Fatura neste período ({formatEuro(data.pending_efatura.total_cents)}) ainda não foram lançadas e não entram nestes totais. {integrated ? "Confirme o lançamento no ERP e atualize as compras do ERP." : "Lance-as na Conferência documental → Rever propostas."}</Notice>}
       {integrated && !data.erp_documents && <Notice tone="info">Não há compras do ERP neste período na IAZELA. {admin ? "Use «Atualizar compras do ERP» para as consultar." : "Peça a um administrador para atualizar as compras do ERP."}</Notice>}
       <div className="table-wrap"><table className="rubric-expenses-table"><thead><tr><th>Rubrica</th><th className="numeric">Total</th><th className="numeric">Documentos</th><th>Peso</th></tr></thead><tbody>
@@ -89,9 +90,11 @@ export default function RubricExpenses({ stores, store, categories, admin, integ
       <div className="panel-title"><h3>Documentos{rubricFilter !== null && ` · ${data.rubrics.find((r: Row) => (r.category_id || "") === rubricFilter)?.category_name}`}</h3>
         {rubricFilter !== null && <ActionButton type="button" onClick={() => setRubricFilter(null)}>Ver todas as rubricas</ActionButton>}</div>
       <Field label="Fornecedor ou documento"><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Nome, NIF ou número" /></Field>
-      <div className="table-wrap"><table><thead><tr><th>Data</th><th>Fornecedor</th><th>Documento</th><th>Origem</th><th className="numeric">Total</th><th>Rubrica</th><th>Ações</th></tr></thead><tbody>
+      <div className="table-wrap"><table><thead><tr><th>Data</th><th>Fornecedor</th><th>Documento</th><th>Origem</th><th className="numeric">Base</th><th className="numeric">IVA</th><th className="numeric">Total</th><th>Rubrica</th><th>Ações</th></tr></thead><tbody>
         {documents.slice(0, 200).map(doc => <tr key={doc.id}>
           <td>{day(doc.document_date)}</td><td>{doc.supplier_name}<br /><small>{doc.supplier_nif}</small></td><td>{doc.document_type} {doc.document}</td><td>{doc.source}<br /><small>{doc.store}</small></td>
+          <td className="numeric">{doc.base_cents == null ? "—" : formatEuro(doc.base_cents)}</td>
+          <td className="numeric">{doc.tax_cents == null ? <small title="A origem não indica a base e o IVA deste documento">Sem detalhe</small> : formatEuro(doc.tax_cents)}</td>
           <td className="numeric">{formatEuro(doc.amount_cents)}</td>
           <td>{doc.allocations.map((a: Row) => <div key={a.category_id || "none"}>{a.category_name || <StatusBadge tone="warning">Por classificar</StatusBadge>}{doc.allocations.length > 1 && <small> · {formatEuro(a.amount_cents)}</small>}</div>)}<small>{SOURCES[doc.rubric_source]}</small></td>
           <td>{doc.source === "ERP" && <ActionButton type="button" className="rubric-expenses-link" disabled={busy} onClick={() => startEdit(doc)}>Definir rubrica</ActionButton>}</td>

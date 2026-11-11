@@ -5,7 +5,7 @@ import re
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from app.models import Audit, BankAccount, CashSession, Movement, Register, User
-from conftest import movement, open_cash
+from conftest import movement, open_cash, supplier_fields
 from sqlalchemy import func, inspect, select, text
 from test_cash_local import declared, local, sheet
 from test_platform import create, enter, platform
@@ -159,7 +159,7 @@ def test_partial_supplier_allocation_is_not_assigned_to_the_whole_new_debit(loca
 
     c, ids, factory = local
     with factory.begin() as db:
-        supplier = BusinessEntity(name="Fornecedor parcial", is_supplier=True)
+        supplier = BusinessEntity(name="Fornecedor parcial", is_supplier=True, **supplier_fields(db))
         db.add(supplier)
         db.flush()
         supplier_id = "local:" + supplier.id

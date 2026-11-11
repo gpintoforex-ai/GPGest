@@ -68,7 +68,10 @@ router = APIRouter()
 MANAGE = ["administrador", "gestor"]
 WRITE = ["administrador", "gestor", "operador"]
 PAGES = {"purchase": "Compras", "erp_document": "Conferência documental", "bank_transaction": "Extratos",
-         "document_payment": "Movimentos previstos", "cash_movement": "Folha de caixa", "bank_deposit": "Depósitos"}
+         "document_payment": "Movimentos previstos", "cash_movement": "Folha de caixa", "bank_deposit": "Depósitos",
+         "obligation_occurrence": "Obrigações e Prazos", "obligation": "Obrigações e Prazos", "contract": "Obrigações e Prazos",
+         "vehicle": "Obrigações e Prazos"}
+OBLIGATION_TARGETS = ("obligation_occurrence", "obligation", "contract", "vehicle")
 
 
 def visible(user, db):
@@ -161,7 +164,30 @@ def target_view(db, kind, identifier):
         row = db.get(BankDeposit, identifier)
         return row and {"label": f"Depósito {row.number}", "entity": "", "nif": "", "date": row.preparation_date,
                         "amount_cents": None, "store": stores.get(row.store_id, ""), "detail": row.status}
+    if kind in OBLIGATION_TARGETS:
+        return obligation_target(db, kind, identifier, stores)
     return None
+
+
+def obligation_target(db, kind, identifier, stores):
+    """Prazos, obrigações, contratos e viaturas como destino de documentos do arquivo."""
+    from .models import Contract, Obligation, ObligationOccurrence, Vehicle
+    if kind == "obligation_occurrence":
+        row = db.get(ObligationOccurrence, identifier)
+        ob = db.get(Obligation, row.obligation_id) if row else None
+        return ob and {"label": ob.title, "entity": ob.entity_name, "nif": "", "date": row.due_date, "amount_cents": row.actual_cents or row.expected_cents,
+                       "store": stores.get(ob.store_id, "") if ob.store_id else "", "detail": f"Prazo de {row.due_date}"}
+    if kind == "obligation":
+        row = db.get(Obligation, identifier)
+        return row and {"label": row.title, "entity": row.entity_name, "nif": "", "date": row.start_date, "amount_cents": row.amount_cents,
+                        "store": stores.get(row.store_id, "") if row.store_id else "", "detail": "Obrigação"}
+    if kind == "contract":
+        row = db.get(Contract, identifier)
+        return row and {"label": f"{row.entity_name} · {row.contract_type}".strip(" ·"), "entity": row.entity_name, "nif": "", "date": row.start_date,
+                        "amount_cents": row.amount_cents, "store": stores.get(row.store_id, "") if row.store_id else "", "detail": f"Contrato {row.number}".strip()}
+    row = db.get(Vehicle, identifier)
+    return row and {"label": row.plate, "entity": " ".join(filter(None, [row.make, row.model])), "nif": "", "date": row.first_registration,
+                    "amount_cents": None, "store": stores.get(row.store_id, "") if row.store_id else "", "detail": "Viatura"}
 
 
 def link_view(db, link, doc=None, stores=None):
@@ -577,7 +603,7 @@ def decide(data: DecideInput, user=Depends(access.current), db: Session = Depend
 
 class ManualLink(Strict):
     document_id: str = Field(max_length=36)
-    target_kind: str = Field(pattern="^(purchase|erp_document|bank_transaction|document_payment)$")
+    target_kind: str = Field(pattern="^(purchase|erp_document|bank_transaction|document_payment|obligation_occurrence|obligation|contract|vehicle)$")
     target_id: str = Field(max_length=36)
     amount_cents: int | None = Field(default=None, strict=True, gt=0, le=10**13)
 
@@ -622,9 +648,25 @@ def targets(kind: str, q: str = "", user=Depends(access.current), db: Session = 
     elif kind == "document_payment":
         rows = db.scalars(select(DocumentPayment).where(DocumentPayment.store_id.in_(stores), or_(DocumentPayment.entity.ilike(term), DocumentPayment.reference.ilike(term)))
                           .order_by(DocumentPayment.payment_date.desc()).limit(30))
+    elif kind in OBLIGATION_TARGETS:
+        rows = obligation_search(db, kind, term, stores)
     else:
         raise HTTPException(422, "Tipo de registo inválido.")
     return [{"id": r.id, **target_view(db, kind, r.id)} for r in rows]
+
+
+def obligation_search(db, kind, term, stores):
+    from .models import Contract, Obligation, ObligationOccurrence, Vehicle
+    in_scope = lambda column: or_(column.is_(None), column.in_(stores))  # noqa: E731
+    if kind == "obligation_occurrence":
+        return db.scalars(select(ObligationOccurrence).join(Obligation, Obligation.id == ObligationOccurrence.obligation_id).where(
+            in_scope(Obligation.store_id), or_(Obligation.title.ilike(term), Obligation.entity_name.ilike(term), Obligation.kind.ilike(term)))
+            .order_by(ObligationOccurrence.due_date.desc()).limit(30))
+    if kind == "obligation":
+        return db.scalars(select(Obligation).where(in_scope(Obligation.store_id), or_(Obligation.title.ilike(term), Obligation.entity_name.ilike(term))).limit(30))
+    if kind == "contract":
+        return db.scalars(select(Contract).where(in_scope(Contract.store_id), or_(Contract.entity_name.ilike(term), Contract.number.ilike(term), Contract.contract_type.ilike(term))).limit(30))
+    return db.scalars(select(Vehicle).where(in_scope(Vehicle.store_id), or_(Vehicle.plate.ilike(term), Vehicle.make.ilike(term), Vehicle.model.ilike(term))).limit(30))
 
 
 # --- Pendências, dossiês, auditoria -------------------------------------------------------------

@@ -232,6 +232,12 @@ def process_image(raw, edit):
             warnings.append("Imagem com pouco detalhe ou possivelmente desfocada. Confirme a legibilidade; o aviso é uma estimativa.")
         if min(image.size) < 700:
             warnings.append("Resolução reduzida. Amplie a pré-visualização para confirmar o texto.")
+        elif max(image.size) < 2000:
+            # Abaixo disto o OCR troca algarismos pequenos (preços das linhas de uma fatura A4).
+            warnings.append(
+                f"Resolução baixa para ler valores pequenos ({image.width} × {image.height} px). Aproxime o "
+                "telemóvel da folha ou use «Fotografar» (aplicação da câmara)."
+            )
         image.thumbnail((3200, 8000), Image.Resampling.LANCZOS)
         output = io.BytesIO(); image.save(output, format="JPEG", quality=edit.quality, optimize=True)
         return output.getvalue(), image.size, warnings

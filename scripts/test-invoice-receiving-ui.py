@@ -252,14 +252,20 @@ with sync_playwright() as p:
     expect(omega_line).to_have_count(1)
     expect(omega_line).to_contain_text("Artigo por criar")
     page.screenshot(path=str(OUT / "review.png"), full_page=True)
-    # Procurar outro artigo bloqueia a confirmação até escolher.
+    # Procurar outro artigo: confirmar indica a linha e leva ao artigo por escolher (nada é enviado).
     arthron.select_option("__outro__")
-    expect(dialog.get_by_role("button", name="Confirmar receção (2)")).to_be_disabled()
+    dialog.get_by_role("button", name="Confirmar receção (2)").click()
+    expect(dialog.get_by_text("Linha 1: escolha o artigo em «Procurar outro artigo…».")).to_be_visible()
+    expect(arthron).to_be_focused()
+    assert not sent
     dialog.get_by_label("Procurar artigo", exact=True).fill("1847 · ARTHRON 250mL")
     expect(arthron).to_have_value("a2")
     arthron.select_option("a1")
-    # Tipo de documento obrigatório: FC (crédito) propõe o vencimento pelo prazo do fornecedor (45 dias, após editar a ficha).
-    expect(dialog.get_by_role("button", name="Confirmar receção (2)")).to_be_disabled()
+    # Tipo de documento obrigatório: confirmar leva ao campo. FC (crédito) propõe o vencimento pelo prazo do fornecedor (45 dias, após editar a ficha).
+    dialog.get_by_role("button", name="Confirmar receção (2)").click()
+    expect(dialog.get_by_text("Escolha o tipo de documento", exact=False)).to_be_visible()
+    expect(dialog.get_by_label("Tipo de documento", exact=True)).to_be_focused()
+    assert not sent
     dialog.get_by_label("Tipo de documento", exact=True).select_option("t-fc")
     expect(dialog.get_by_label("Vencimento", exact=True)).to_have_value("2026-12-04")
     expect(dialog.get_by_text("dívida ao fornecedor e movimento previsto no vencimento", exact=False)).to_be_visible()
@@ -288,7 +294,9 @@ with sync_playwright() as p:
     dialog = page.get_by_role("dialog", name="Receção a partir de fatura")
     dialog.get_by_role("row").filter(has_text="Fornecedor Novo").get_by_role("button", name="Ler fatura").click()
     expect(dialog.get_by_text("O NIF 503916099 não corresponde a nenhum fornecedor.", exact=False)).to_be_visible()
-    expect(dialog.get_by_role("button", name="Confirmar receção (2)")).to_be_disabled()
+    dialog.get_by_role("button", name="Confirmar receção (2)").click()
+    expect(dialog.get_by_text("Escolha o fornecedor do documento.")).to_be_visible()
+    expect(dialog.get_by_role("combobox", name="Fornecedor")).to_be_focused()
     dialog.get_by_role("button", name="Criar fornecedor", exact=True).click()
     supplier = page.get_by_role("dialog", name="Novo fornecedor")
     expect(supplier.get_by_label("NIF", exact=True)).to_have_value("503916099")

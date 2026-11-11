@@ -46,6 +46,10 @@ export function useCamera(active: boolean) {
         media = stream;
         // Foco automático contínuo, quando o telemóvel o permite (Chrome em Android); ignorado nos restantes.
         const track = stream.getVideoTracks()[0];
+        // Resolução máxima que a câmara anuncia: o pedido «4K, se possível» fica muitas vezes em 1920 × 1080,
+        // pouco para ler os algarismos pequenos de uma fatura A4.
+        const sizes = track?.getCapabilities?.() as { width?: { max?: number }; height?: { max?: number } } | undefined;
+        if (sizes?.width?.max && sizes?.height?.max) void track.applyConstraints({ width: { ideal: sizes.width.max }, height: { ideal: sizes.height.max } }).catch(() => undefined);
         const modes = (track?.getCapabilities?.() as { focusMode?: unknown } | undefined)?.focusMode;
         if (Array.isArray(modes) && modes.includes("continuous")) void track.applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] }).catch(() => undefined);
         if (video.current) { video.current.srcObject = stream; void video.current.play().catch(() => undefined); }

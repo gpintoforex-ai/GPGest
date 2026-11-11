@@ -1,0 +1,22 @@
+.ui-dialog.drilldown-dialog { width: min(1000px, calc(100vw - 28px)); }
+.ui-dialog.drilldown-panel { width: min(780px, 100vw); max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0 0 0 auto; border-radius: 12px 0 0 12px; }
+.ui-dialog.drilldown-full { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+.drilldown-header { padding-inline-end: 48px; }
+.drilldown-header p { color: var(--color-muted); }
+.drilldown-toolbar, .drilldown-breadcrumb, .drilldown-modes, .drilldown-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.drilldown-toolbar { margin-block: 12px; }
+.drilldown-modes { margin-inline-start: auto; }
+.drilldown-breadcrumb { padding: 0; margin: 0; list-style: none; }
+.drilldown-breadcrumb li + li::before { content: "/"; margin-inline-end: 8px; color: var(--color-muted); }
+.drilldown-breadcrumb button { color: var(--color-info); background: none; border: 0; text-decoration: underline; cursor: pointer; padding: 4px; }
+.drilldown-trigger { text-align: start; }
+.drilldown-pagination { justify-content: flex-end; margin-block: 12px; }
+.dash-barlist .drilldown-bar-item { display: block; }
+.dash-barlist .drilldown-bar {
+  display: grid; grid-template-columns: minmax(90px, 32%) 1fr auto; gap: 10px; align-items: center;
+  width: 100%; padding: 4px; font: inherit; color: inherit; text-align: start;
+  border: 0; border-radius: 6px; background: transparent; cursor: pointer;
+}
+.dash-barlist .drilldown-bar:hover { background: var(--color-subtle); }
+.dash-barlist .drilldown-bar:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+@media (max-width: 640px) { .dash-barlist .drilldown-bar { grid-template-columns: 1fr auto; } }

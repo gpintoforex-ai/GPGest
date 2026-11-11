@@ -1,6 +1,7 @@
 """Importação manual e atómica de catálogos, exclusivamente por GET."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from time import monotonic
@@ -283,6 +284,60 @@ def catalog_rows(client, url, path, key, enterprise, maximum=5000):
             raise SyncError(f"{path} excede {maximum} registos.")
 
 
+def price_value(value, maximum=Decimal("100000000000000")):
+    """Valor decimal da API (preço, taxa) ou None quando falta ou é inválido."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        result = Decimal(str(value))
+    except ArithmeticError:
+        return None
+    return result.quantize(Decimal(".0001")) if result.is_finite() and 0 <= result < maximum else None
+
+
+def product_prices(client, url, key, enterprise, external_ids, budget=240, workers=8):
+    """Preço de venda da linha 1 (sem e com IVA) e taxa de IVA de cada artigo; só GET.
+
+    A lista de artigos não devolve preços (embed=ProductPrices dá HTTP 500 «nº de registos demasiado
+    elevado»): lê-se /products/{id}/prices por artigo, em paralelo e com tempo limitado. A taxa de
+    IVA vem de /product_prices_change (lista paginada; os preços dessa lista vêm a zero).
+    Devolve ({id: (sem IVA, com IVA, taxa)}, artigos não lidos).
+    """
+    headers = {"Authorization": "ApiKey " + key, "Accept": "application/json", "x-current-enterprise": enterprise}
+    rates = {}
+    try:
+        for row in catalog_rows(client, url, "/product_prices_change", key, enterprise, maximum=50000):
+            if isinstance(row, dict) and row.get("ID"):
+                rates[str(row["ID"])] = price_value(row.get("TaxRate"), Decimal("100"))
+    except (SyncError, httpx.HTTPError, ValueError):
+        pass  # Sem taxa: o preço com IVA continua a vir da Wintouch.
+    deadline = monotonic() + budget
+
+    def read(external_id):
+        if monotonic() >= deadline:
+            return external_id, None
+        try:
+            response = client.get(url + f"/products/{external_id}/prices", params={}, headers=headers)
+            rows = json.loads(response.text, parse_float=Decimal) if response.status_code == 200 else None
+        except (httpx.HTTPError, ValueError):
+            return external_id, None
+        if not isinstance(rows, list):
+            return external_id, None
+        main = next((r for r in rows if isinstance(r, dict) and r.get("Row") == 1), None)
+        if main is None:
+            return external_id, (None, None)
+        return external_id, (price_value(main.get("PriceWithoutVAT")), price_value(main.get("PriceWithVAT")))
+
+    prices, missing = {}, 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for external_id, found in pool.map(read, external_ids):
+            if found is None:
+                missing += 1
+            else:
+                prices[external_id] = (*found, rates.get(external_id))
+    return prices, missing
+
+
 def term_days(value):
     if value is None:
         return None
@@ -362,6 +417,7 @@ def synchronize(bind, enterprise, resource, url, key):
         inserted = updated = 0
         new_ids = set()
         reported_total = None
+        warning = ""
         deadline = monotonic() + 180
         try:
             with httpx.Client(timeout=20, follow_redirects=False) as client:
@@ -471,6 +527,21 @@ def synchronize(bind, enterprise, resource, url, key):
                             + ("…" if len(repeated) > 20 else "") + "."
                         )
                         warning = f"{warning} {note}" if warning else note
+                if resource == "products":
+                    # Preços por artigo: uma falha não anula o catálogo; os não lidos mantêm o preço anterior.
+                    prices, missing = product_prices(client, url, key, enterprise, sorted(seen))
+                    for item in db.scalars(
+                        select(WintouchProduct).where(
+                            WintouchProduct.enterprise_id == enterprise,
+                            WintouchProduct.external_id.in_(prices),
+                        )
+                    ):
+                        item.sale_price, item.sale_price_vat, item.vat_rate = prices[item.external_id]
+                    if missing:
+                        warning = (
+                            f"Preço de venda não lido para {missing} de {len(seen)} artigos "
+                            "(ficam com o preço anterior). Repita a sincronização."
+                        )
             state = db.scalar(
                 select(WintouchSyncState).where(
                     WintouchSyncState.enterprise_id == enterprise,
@@ -488,7 +559,7 @@ def synchronize(bind, enterprise, resource, url, key):
             run.read_count = len(seen)
             run.inserted_count = inserted
             run.updated_count = updated
-            if resource == "entities" and warning:
+            if warning:
                 run.error_message = warning
             db.commit()
         except Exception as exc:

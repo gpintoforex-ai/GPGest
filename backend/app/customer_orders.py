@@ -6,6 +6,7 @@ import json
 import re
 from datetime import date, timedelta
 from decimal import Decimal as D
+from types import SimpleNamespace
 from typing import Literal
 from urllib.parse import quote
 from uuid import uuid4
@@ -20,7 +21,7 @@ from . import procurement as buying
 from .access import authorize, current, record, scope
 from .db import db_session
 from .email_delivery import SendInput, parts_for
-from .entities import effective_flags
+from .entities import effective_flags, supplier_missing
 from .models import (
     BusinessEntity,
     EmailDispatch,
@@ -145,6 +146,11 @@ class CommercialTerms(Strict):
     pending_days: int = Field(default=7, ge=1, le=3650)
     confirmation_days: int = Field(default=3, ge=1, le=3650)
     pickup_days: int = Field(default=7, ge=1, le=3650)
+    # Vendas recentes consideradas na reposição automática do simulador (dias).
+    sales_period_days: int = Field(default=90, ge=7, le=730)
+    # Devolução de produtos a acabar a validade e aviso (meses antes da validade).
+    accepts_expiry_returns: bool = False
+    expiry_return_months: int = Field(default=3, ge=1, le=36)
     email: str = Field(default="", max_length=254)
     notes: str = Field(default="", max_length=3000)
     prices: dict[str, D] = Field(default_factory=dict, max_length=500)
@@ -181,6 +187,9 @@ class SimLine(Strict):
     unit_cost: D = Field(ge=0, le=10**9, decimal_places=6)
     discount: D | None = Field(default=None, ge=0, le=100, decimal_places=4)
     vat: D | None = Field(default=None, ge=0, le=100, decimal_places=3)
+    # Unidades de oferta do fornecedor; vazio = calculada pela bonificação acordada («na compra de X,
+    # oferta de Y»). Um valor indicado prevalece (ex.: oferta diferente combinada nesta encomenda).
+    bonus_quantity: D | None = Field(default=None, ge=0, le=10**9, decimal_places=6)
     allocations: list[Allocation] = Field(default_factory=list, max_length=200)
 
 
@@ -207,6 +216,30 @@ class OrderDetails(Change):
     due_date: date | None = None
     priority: Literal["normal", "urgent"] = "normal"
     notes: str = Field(default="", max_length=5000)
+
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, value):
+        return OrderInput.email_valid(value)
+
+
+class EditedLine(RequestedLine):
+    id: str | None = None
+
+
+class OrderEdit(Change):
+    customer_id: str | None = None
+    customer_name: str = Field(min_length=1, max_length=300)
+    phone: str = Field(default="", max_length=60)
+    email: str = Field(default="", max_length=254)
+    preferred_channel: Literal["email", "whatsapp", "phone", "none"] = "none"
+    contact_allowed: bool = False
+    requested_at: str | None = Field(default=None, max_length=40)
+    due_date: date | None = None
+    priority: Literal["normal", "urgent"] = "normal"
+    notes: str = Field(default="", max_length=5000)
+    reason: str = Field(default="", max_length=2000)
+    lines: list[EditedLine] = Field(default_factory=list, max_length=100)
 
     @field_validator("email")
     @classmethod
@@ -583,6 +616,19 @@ def line_view(db, line, notified=False):
     }
 
 
+def order_label(sequence):
+    return f"PC-{sequence:04d}"
+
+
+def next_order_sequence(db):
+    """Próximo número sequencial de pedido da empresa.
+
+    Chamado ao criar, sob o bloqueio de escrita da empresa (`replay`): dois pedidos em simultâneo
+    nunca recebem o mesmo número.
+    """
+    return max((json.loads(data).get("sequence") or 0 for data in db.scalars(select(Order.data))), default=0) + 1
+
+
 def order_number(row):
     return json.loads(row.data).get("number") or "PC-" + row.id[:8].upper()
 
@@ -605,6 +651,10 @@ def order_view(db, row):
         "notified": notified,
         "lines": lines,
         "ready": any(D(line_item["quantities"]["available"]) > 0 for line_item in lines),
+        "fully_ready": any(line_item["state"] not in ("delivered", "cancelled") for line_item in lines) and all(
+            line_item["state"] in ("delivered", "cancelled") or D(line_item["quantities"]["available"]) >=
+            D(line_item["quantities"]["requested"]) - D(line_item["quantities"]["delivered"]) - D(line_item["quantities"]["cancelled"])
+            for line_item in lines),
         "closed": all(line_item["state"] in ("delivered", "cancelled") for line_item in lines),
         "late": bool(
             data.get("due_date")
@@ -670,6 +720,9 @@ def calculate(lines, config):
         "total_cents": total,
         "eligible_cents": eligible,
         "missing_cents": max(0, config.minimum_cents - eligible),
+        "free_shipping_cents": config.free_shipping_cents,
+        "shipping_missing_cents": max(0, config.free_shipping_cents - net) if config.free_shipping_cents is not None else None,
+        "free_shipping_reached": config.free_shipping_cents is not None and net >= config.free_shipping_cents,
         "currency": config.currency,
         "tier_discount": str(tier),
         "lines": result,
@@ -706,7 +759,7 @@ def free_balances(db, article_id, warehouse_id):
     return available
 
 
-def reserve(db, user, line, warehouse_id, quantity, *, lot_id=None):
+def reserve(db, user, line, warehouse_id, quantity, *, lot_id=None, as_of=None):
     article = stock.article(db, line.article_id, True, stock=True)
     if buying.policy(db).get("authority", {}).get("stock") == "erp":
         fail(
@@ -725,7 +778,7 @@ def reserve(db, user, line, warehouse_id, quantity, *, lot_id=None):
     candidates = []
     for (_, batch), q in available.items():
         lot = db.get(StockLot, batch) if batch else None
-        if q <= 0 or lot and lot.expiry and lot.expiry < date.today().isoformat():
+        if q <= 0 or lot and lot.expiry and lot.expiry < (as_of or date.today()).isoformat():
             continue
         if lot_id is not None and lot_id != batch:
             continue
@@ -801,11 +854,22 @@ def catalog(user=Depends(current), db: Session = Depends(db_session)):
     for item in items:
         key = item["id"]
         local = by_id.get(key.removeprefix("local:")) if key.startswith("local:") else by_erp.get(key.removeprefix("wt:"))
-        entities.append({**item, "id": local.id if local else key})
+        # `record_id` é o identificador da ficha nas Tabelas (wt:… para entidades do ERP, mesmo
+        # quando já têm referência local), para abrir a edição a partir das encomendas.
+        entities.append({**item, "id": local.id if local else key, "record_id": key})
     can_buy = (
         user.role in ("administrador", "gestor")
         and stock.permissions(user, stock.settings(db))["view_cost"]
     )
+    from .supply_terms import article_terms
+
+    bonuses = {}
+    for (article_id, supplier_id), agreement in article_terms(db).items():
+        if agreement.bonus_buy_quantity and agreement.bonus_free_quantity:
+            bonuses.setdefault(supplier_id, {})[article_id] = {
+                "buy": str(agreement.bonus_buy_quantity),
+                "free": str(agreement.bonus_free_quantity),
+            }
     return {
         "customers": [
             {"id": e["id"], "name": e["name"], "phone": e["phone"], "email": e["email"]}
@@ -816,6 +880,10 @@ def catalog(user=Depends(current), db: Session = Depends(db_session)):
             {
                 "id": e["id"],
                 "name": e["name"],
+                "tax_number": e.get("tax_number") or "",
+                "record_id": e["record_id"],
+                "missing": supplier_missing(e),
+                "bonuses": bonuses.get(e["id"], {}),
                 "email": e["email"] if can_buy else "",
                 "terms": terms(db, e["id"]).model_dump(mode="json") if can_buy else None,
                 "revision": db.get(TermsRow, e["id"]).revision
@@ -846,26 +914,8 @@ def create(data: OrderInput, user=Depends(current), db: Session = Depends(db_ses
     raw.pop("request_key")
     raw.pop("revision")
     raw.pop("allow_duplicate")
-    if data.requested_at:
-        from datetime import datetime
-
-        try:
-            requested = datetime.fromisoformat(data.requested_at)
-        except ValueError:
-            fail("Data/hora do pedido inválida.")
-        if requested.tzinfo is None or requested > now() + timedelta(minutes=5):
-            fail("A data/hora deve incluir fuso horário e não pode ser futura.")
-    else:
-        raw["requested_at"] = now().isoformat()
-    fingerprint = hashlib.sha256(
-        dump(
-            {
-                k: v
-                for k, v in data.model_dump(mode="json").items()
-                if k not in ("request_key", "revision", "allow_duplicate", "requested_at")
-            }
-        ).encode()
-    ).hexdigest()
+    raw["requested_at"] = requested_time(data.requested_at)
+    fingerprint = order_fingerprint(data.model_dump(mode="json"))
     if not data.allow_duplicate:
         for existing in db.scalars(select(Order).where(Order.store_id == data.store_id)):
             if (
@@ -885,27 +935,11 @@ def create(data: OrderInput, user=Depends(current), db: Session = Depends(db_ses
     )
     db.add(row)
     db.flush()
-    raw["number"] = "PC-" + row.id.replace("-", "").upper()
+    raw["sequence"] = next_order_sequence(db)
+    raw["number"] = order_label(raw["sequence"])
     row.data = dump(raw)
     for item in data.lines:
-        if not item.description.strip():
-            fail("Indique a descrição de cada produto.")
-        preferred_supplier = supplier(db, item.supplier_id)
-        if item.article_id:
-            article = stock.article(db, item.article_id)
-            meta = json.loads(article.data)
-            if not article.active:
-                fail("Artigo inativo.")
-            if item.quantity != item.quantity.quantize(D(1).scaleb(-meta.get("precision", 0))):
-                fail("Quantidade incompatível com a precisão do artigo.")
-        elif item.ean:
-            for article in db.scalars(select(StockArticle)):
-                meta = json.loads(article.data)
-                if item.ean in meta.get("barcodes", []) or item.ean == article.code:
-                    fail(
-                        "Este EAN/referência já corresponde a um artigo. Selecione-o no catálogo.",
-                        409,
-                    )
+        preferred_supplier = checked_line(db, item)
         db.add(
             Line(
                 order_id=row.id,
@@ -916,6 +950,183 @@ def create(data: OrderInput, user=Depends(current), db: Session = Depends(db_ses
             )
         )
     event(db, user, "create", data, digest, row.id, row.store_id, row.id)
+    db.commit()
+    return order_view(db, row)
+
+
+def requested_time(value):
+    if not value:
+        return now().isoformat()
+    from datetime import datetime
+
+    try:
+        requested = datetime.fromisoformat(value)
+    except ValueError:
+        fail("Data/hora do pedido inválida.")
+    if requested.tzinfo is None or requested > now() + timedelta(minutes=5):
+        fail("A data/hora deve incluir fuso horário e não pode ser futura.")
+    return value
+
+
+def order_fingerprint(values):
+    """Identifica pedidos iguais em aberto (mesmo cliente, produtos e quantidades)."""
+    ignored = ("request_key", "revision", "allow_duplicate", "requested_at", "reason")
+    # Mesma ordem de campos do registo, para que um pedido editado continue comparável.
+    ordered = {k: values[k] for k in OrderInput.model_fields if k in values and k not in ignored}
+    return hashlib.sha256(dump(ordered).encode()).hexdigest()
+
+
+def checked_line(db, item, *, article_changed=True, quantity_changed=True, ean_changed=True):
+    """Valida um produto pedido e devolve o fornecedor preferencial (ou `None`)."""
+    if not item.description.strip():
+        fail("Indique a descrição de cada produto.")
+    preferred_supplier = supplier(db, item.supplier_id)
+    if item.article_id:
+        article = stock.article(db, item.article_id)
+        meta = json.loads(article.data)
+        if article_changed and not article.active:
+            fail("Artigo inativo.")
+        if (article_changed or quantity_changed) and item.quantity != item.quantity.quantize(
+            D(1).scaleb(-meta.get("precision", 0))
+        ):
+            fail("Quantidade incompatível com a precisão do artigo.")
+    elif item.ean and ean_changed:
+        for article in db.scalars(select(StockArticle)):
+            meta = json.loads(article.data)
+            if item.ean in meta.get("barcodes", []) or item.ean == article.code:
+                fail(
+                    "Este EAN/referência já corresponde a um artigo. Selecione-o no catálogo.",
+                    409,
+                )
+    return preferred_supplier
+
+
+@router.put("/{identifier}")
+def edit_order(
+    identifier: str, data: OrderEdit, user=Depends(current), db: Session = Depends(db_session)
+):
+    """Corrige o pedido como na janela de registo, sem tocar no que já está em curso.
+
+    Produtos reservados, em compra ou entregues mantêm o artigo e não descem abaixo do que já
+    está comprometido. Retirar um produto cancela a quantidade em falta (fica no histórico).
+    """
+    row = get_order(db, user, identifier, True)
+    digest, prior = replay(db, user, "edit", data, identifier)
+    if prior:
+        return order_view(db, row)
+    revision(row, data)
+    if not data.customer_name.strip():
+        fail("Indique o nome do cliente.")
+    customer = (
+        entity_reference(db, data.customer_id, "customer", True) if data.customer_id else None
+    )
+    existing = {line.id: line for line in db.scalars(select(Line).where(Line.order_id == row.id))}
+    seen, added, changed, removed = set(), 0, 0, 0
+    for item in data.lines:
+        values = item.model_dump(mode="json", exclude={"id"})
+        if not item.id:
+            preferred_supplier = checked_line(db, item)
+            db.add(
+                Line(
+                    order_id=row.id,
+                    article_id=item.article_id,
+                    supplier_id=preferred_supplier.id if preferred_supplier else None,
+                    quantity=item.quantity,
+                    data=dump(values),
+                )
+            )
+            added += 1
+            continue
+        line = existing.get(item.id)
+        if not line or item.id in seen:
+            fail("Produto do pedido não encontrado.", 404)
+        seen.add(item.id)
+        before = json.loads(line.data)
+        if line.delivered + line.cancelled >= line.quantity:
+            if (
+                item.article_id != line.article_id
+                or item.quantity != line.quantity
+                or item.description != before.get("description")
+            ):
+                fail(f"«{before.get('description')}» já está entregue ou cancelado.", 409)
+        committed = line.quantity - quantities(db, line)["to_order"]
+        if item.article_id != line.article_id and committed > 0:
+            fail(
+                f"«{before.get('description')}» já está reservado, em compra, entregue ou "
+                "cancelado: o artigo não pode mudar.",
+                409,
+            )
+        if item.quantity < committed:
+            fail(
+                f"A quantidade de «{before.get('description')}» não pode ser inferior a "
+                f"{committed.normalize():f} (já reservada, em compra, entregue ou cancelada).",
+                409,
+            )
+        preferred_supplier = checked_line(
+            db,
+            item,
+            article_changed=item.article_id != line.article_id,
+            quantity_changed=item.quantity != line.quantity,
+            ean_changed=item.ean != before.get("ean", ""),
+        )
+        new_supplier = preferred_supplier.id if preferred_supplier else None
+        if (
+            item.article_id != line.article_id
+            or item.quantity != line.quantity
+            or new_supplier != line.supplier_id
+            or values != {k: before.get(k) for k in values}
+        ):
+            changed += 1
+        line.article_id = item.article_id
+        line.supplier_id = new_supplier
+        line.quantity = item.quantity
+        line.data = dump({**before, **values})
+    for line in existing.values():
+        if line.id in seen or line.delivered + line.cancelled >= line.quantity:
+            continue
+        free = quantities(db, line)["to_order"]
+        if free < line.quantity - line.cancelled - line.delivered:
+            fail(
+                f"«{json.loads(line.data).get('description')}» tem reservas ou compras em curso. "
+                "Use «Cancelar quantidade» no detalhe do pedido.",
+                409,
+            )
+        if len(data.reason.strip()) < 3:
+            fail("Indique o motivo para retirar produtos do pedido.")
+        line.cancelled += free
+        removed += 1
+    original = json.loads(row.data)
+    header = data.model_dump(mode="json", exclude={"lines", "request_key", "revision", "reason"})
+    header["requested_at"] = (
+        requested_time(data.requested_at)
+        if data.requested_at and data.requested_at != original.get("requested_at")
+        else original.get("requested_at")
+    )
+    original.update(header)
+    original["fingerprint"] = order_fingerprint(
+        {
+            **header,
+            "store_id": row.store_id,
+            "lines": [
+                {k: v for k, v in item.model_dump(mode="json").items() if k != "id"}
+                for item in data.lines
+            ],
+        }
+    )
+    row.customer_id = customer.id if customer else None
+    row.data = dump(original)
+    row.revision += 1
+    event(
+        db,
+        user,
+        "edit",
+        data,
+        digest,
+        row.id,
+        row.store_id,
+        row.id,
+        {"reason": data.reason, "added": added, "changed": changed, "removed": removed},
+    )
     db.commit()
     return order_view(db, row)
 
@@ -1088,7 +1299,8 @@ def line_action(
         line.id,
         row.store_id,
         row.id,
-        {"quantity": str(data.quantity), "reason": data.reason},
+        {"quantity": str(data.quantity), "reason": data.reason,
+         **({"due_date_at_delivery": json.loads(row.data).get("due_date")} if action == "deliver" else {})},
     )
     db.commit()
     return order_view(db, row)
@@ -1207,11 +1419,13 @@ def edit_sim(
     revision(row, data)
     data.supplier_id = supplier(db, data.supplier_id).id
     if (
-        row.status != "draft"
+        row.status not in ("draft", "prepared")
         or row.store_id != data.store_id
         or row.supplier_id != data.supplier_id
     ):
-        fail("Só pode editar o rascunho da mesma loja e fornecedor.", 409)
+        fail("Só pode editar simulações ou encomendas ativas da mesma loja e fornecedor.", 409)
+    if row.status == "prepared":
+        issued_order(db, row)
     config = validate_sim(db, user, data, row.id)
     for link in db.scalars(select(Supply).where(Supply.simulation_id == row.id)):
         db.delete(link)
@@ -1226,16 +1440,27 @@ def edit_sim(
                     quantity=alloc.quantity,
                 )
             )
-    row.data = dump(
-        {
-            "lines": [line_item.model_dump(mode="json") for line_item in data.lines],
-            "terms": config.model_dump(mode="json"),
-            "totals": calculate(data.lines, config),
-            "notes": data.notes,
-        }
-    )
+    previous = json.loads(row.data)
+    raw = {
+        **{k: v for k, v in previous.items() if k in ("supplier_confirmation", "previous_confirmations")},
+        "lines": [line_item.model_dump(mode="json") for line_item in data.lines],
+        "terms": config.model_dump(mode="json"),
+        "totals": calculate(data.lines, config),
+        "notes": data.notes,
+    }
+    resend = revise_order(db, user, row, raw, config) if row.status == "prepared" else False
+    row.data = dump(raw)
     row.revision += 1
-    event(db, user, "simulation_edit", data, digest, row.id, row.store_id)
+    event(
+        db,
+        user,
+        "simulation_edit",
+        data,
+        digest,
+        row.id,
+        row.store_id,
+        detail={"issued": row.status == "prepared", "needs_resend": resend},
+    )
     db.commit()
     return sim_view(db, row)
 
@@ -1283,41 +1508,12 @@ def prepare(
     wh = stock.warehouse(db, user, data.warehouse_id, authorize)
     if wh.store_id != row.store_id:
         fail("Armazém de outra loja.")
-    lines = []
-    for index, item in enumerate(raw["lines"]):
-        if not item["article_id"]:
-            fail("Associe os produtos provisórios a artigos reais antes de preparar a compra.")
-        article = stock.article(db, item["article_id"])
-        meta = json.loads(article.data)
-        values = raw["totals"]["lines"][index]
-        lines.append(
-            buying.Line(
-                article_id=article.id,
-                description=item["description"],
-                quantity=item["quantity"],
-                price=item["unit_cost"],
-                discount=values["discount"],
-                vat=values["vat"],
-                warehouse_id=wh.id,
-                unit=meta.get("unit", "un"),
-                supplier_reference=meta.get("supplier_reference", ""),
-            )
-        )
-    if raw["totals"]["shipping_cents"]:
-        lines.append(
-            buying.Line(
-                nature="service",
-                description="Portes de transporte",
-                quantity=1,
-                price=D(raw["totals"]["shipping_cents"]) / 100,
-                vat=config.shipping_vat,
-            )
-        )
+    lines = order_lines(db, raw, config, wh.id, row.supplier_id)
     payload = buying.Draft(
         kind="order",
         store_id=row.store_id,
         supplier_id=row.supplier_id,
-        document="EC-" + row.id.replace("-", "").upper(),
+        document=buying.order_label(sequence := buying.next_order_sequence(db)),
         expected_date=date.today() + timedelta(days=config.lead_days),
         contact=config.email or supplier(db, row.supplier_id).email,
         notes=raw.get("notes", ""),
@@ -1328,6 +1524,7 @@ def prepare(
     buying.validate(db, user, payload, authorize)
     saved = payload.model_dump(mode="json")
     saved.update(buying.totals(saved["lines"]))
+    saved["order_sequence"] = sequence
     doc = Document(
         kind="order",
         store_id=row.store_id,
@@ -1347,6 +1544,146 @@ def prepare(
     )
     db.commit()
     return sim_view(db, row)
+
+
+def bonus_quantity(quantity, agreement, precision=0):
+    """Unidades de oferta pela bonificação «na compra de X, oferta de Y» (por cada X completo)."""
+    if not agreement or not agreement.bonus_buy_quantity or not agreement.bonus_free_quantity:
+        return ZERO
+    blocks = (D(quantity) / agreement.bonus_buy_quantity).to_integral_value(rounding="ROUND_FLOOR")
+    return (blocks * agreement.bonus_free_quantity).quantize(
+        D(1).scaleb(-precision), rounding="ROUND_DOWN"
+    )
+
+
+def order_lines(db, raw, config, warehouse_id, supplier_id=None):
+    """Linhas da encomenda real (mercadorias, portes e ofertas) a partir de uma simulação.
+
+    As ofertas da bonificação ficam no fim, a preço 0: a receção espera-as e o custo médio do
+    stock reflete a oferta. Não deslocam os índices das linhas, que ligam as receções aos clientes.
+    """
+    from .supply_terms import article_terms
+
+    agreements = article_terms(db) if supplier_id else {}
+    bonuses = []
+    lines = []
+    for index, item in enumerate(raw["lines"]):
+        if not item["article_id"]:
+            fail("Associe os produtos provisórios a artigos reais antes de preparar a compra.")
+        article = stock.article(db, item["article_id"])
+        meta = json.loads(article.data)
+        values = raw["totals"]["lines"][index]
+        lines.append(
+            buying.Line(
+                article_id=article.id,
+                description=item["description"],
+                quantity=item["quantity"],
+                price=item["unit_cost"],
+                discount=values["discount"],
+                vat=values["vat"],
+                warehouse_id=warehouse_id,
+                unit=meta.get("unit", "un"),
+                supplier_reference=meta.get("supplier_reference", ""),
+            )
+        )
+        agreement = agreements.get((article.id, supplier_id))
+        precision = meta.get("precision", 0)
+        if item.get("bonus_quantity") not in (None, ""):
+            free = D(str(item["bonus_quantity"]))
+            if free != free.quantize(D(1).scaleb(-precision)):
+                fail(f"A quantidade de oferta de «{item['description']}» não respeita a precisão do artigo.")
+        else:
+            free = bonus_quantity(item["quantity"], agreement, precision)
+        if free > 0:
+            terms = (
+                f"na compra de {agreement.bonus_buy_quantity.normalize():f}, oferta de "
+                f"{agreement.bonus_free_quantity.normalize():f}"
+                if agreement and agreement.bonus_buy_quantity and agreement.bonus_free_quantity
+                else "indicada na encomenda"
+            )
+            bonuses.append(
+                buying.Line(
+                    article_id=article.id,
+                    description=f"{item['description']} · oferta ({terms})",
+                    quantity=free,
+                    price=ZERO,
+                    vat=values["vat"],
+                    warehouse_id=warehouse_id,
+                    unit=meta.get("unit", "un"),
+                    supplier_reference=meta.get("supplier_reference", ""),
+                )
+            )
+    if raw["totals"]["shipping_cents"]:
+        lines.append(
+            buying.Line(
+                nature="service",
+                description="Portes de transporte",
+                quantity=1,
+                price=D(raw["totals"]["shipping_cents"]) / 100,
+                vat=config.shipping_vat,
+            )
+        )
+    return lines + bonuses
+
+
+def issued_order(db, row):
+    """Encomenda real ainda editável: ativa e sem receções nem faturas."""
+    doc = db.get(Document, row.procurement_id)
+    if not doc or doc.status == "cancelled":
+        fail("A encomenda real foi cancelada; crie uma nova simulação.", 409)
+    payload = json.loads(doc.data)
+    if any(
+        buying.used(db, doc.id, index, kind)
+        for index in range(len(payload["lines"]))
+        for kind in ("receipt", "invoice")
+    ):
+        fail(
+            "A encomenda já tem receções ou faturas: receba o que chegou e faça outra encomenda "
+            "para o resto.",
+            409,
+        )
+    return doc, payload
+
+
+def revise_order(db, user, row, raw, config):
+    """Atualiza a encomenda real já emitida com a simulação editada (mesmo número, nova versão).
+
+    Só antes de receções ou faturas: depois disso as linhas estão ligadas a movimentos e
+    corrigem-se com a receção do que chegou e uma nova encomenda.
+    """
+    doc, payload = issued_order(db, row)
+    warehouse_id = next(
+        (line["warehouse_id"] for line in payload["lines"] if line.get("warehouse_id")), None
+    )
+    lines = order_lines(db, raw, config, warehouse_id, row.supplier_id)
+    draft = buying.Draft(
+        **{
+            **{k: v for k, v in payload.items() if k in buying.Draft.model_fields},
+            "lines": lines,
+            "notes": raw.get("notes", ""),
+            "request_key": payload.get("request_key") or doc.request_key,
+            "revision": 0,
+        }
+    )
+    buying.validate(db, user, draft, authorize)
+    previous_total = payload.get("total_cents")
+    updated = draft.model_dump(mode="json")
+    updated.update(buying.totals(updated["lines"]))
+    sent = any(
+        (e := db.get(EmailDispatch, i)) and e.status in ("accepted", "received")
+        for i in payload.get("email_ids", [])
+    )
+    payload.update({k: updated[k] for k in ("lines", "notes", "base_cents", "tax_cents", "total_cents") if k in updated})
+    payload.setdefault("versions", []).append(
+        {"at": now().isoformat(), "user_id": user.id, "previous_total_cents": previous_total}
+    )
+    payload["needs_resend"] = bool(sent or payload.get("needs_resend"))
+    doc.data = dump(payload)
+    doc.revision += 1
+    # A confirmação do fornecedor referia-se à versão anterior: fica no histórico.
+    if raw.get("supplier_confirmation"):
+        raw.setdefault("previous_confirmations", []).append(raw.pop("supplier_confirmation"))
+    return sent
 
 
 @router.post("/simulations/{identifier}/supplier-confirm")
@@ -1391,6 +1728,140 @@ def confirm_supplier(
     )
     db.commit()
     return sim_view(db, row)
+
+
+def distributed(db, receipt_id, simulation_id=None):
+    """A receção já foi distribuída pelos pedidos (desta simulação, ou de qualquer uma)."""
+    query = select(Event).where(Event.action == "receive")
+    if simulation_id:
+        query = query.where(Event.target_id == simulation_id)
+    return any(json.loads(e.data).get("receipt_id") == receipt_id for e in db.scalars(query))
+
+
+def allocate_receipt(db, user, sim, order, receipt, *, tolerant=False):
+    """Reserva aos clientes as quantidades aceites da receção que pertencem à encomenda `order`.
+
+    Devolve (havia linhas da encomenda, reservas feitas, avisos). Com `tolerant`, uma reserva
+    impossível (ex.: stock já consumido) fica como aviso em vez de anular a receção.
+    """
+    raw = json.loads(sim.data)
+    matching, done, warnings = False, [], []
+    for received in json.loads(receipt.data)["lines"]:
+        if received.get("source_id") != order.id:
+            continue
+        index = received["source_line"]
+        if index >= len(raw["lines"]):
+            continue  # transport/service lines do not satisfy goods
+        matching = True
+        remaining = buying.accepted(received)
+        for link in db.scalars(
+            select(Supply)
+            .where(Supply.simulation_id == sim.id, Supply.simulation_line == index)
+            .order_by(Supply.id)
+        ):
+            amount = min(remaining, max(ZERO, link.quantity - link.released - link.received))
+            if not amount:
+                continue
+            line = db.get(Line, link.line_id)
+            customer = db.get(Order, line.order_id)
+            label = json.loads(line.data).get("description", "")
+            try:
+                with db.begin_nested():
+                    reserve(
+                        db, user, line, received["warehouse_id"], amount, lot_id=received.get("lot_id")
+                    )
+            except HTTPException as exc:
+                if not tolerant:
+                    raise
+                warnings.append(f"{order_number(customer)} · {label}: {exc.detail}")
+                continue
+            link.received += amount
+            customer.revision += 1
+            remaining -= amount
+            done.append(
+                {
+                    "order_id": customer.id,
+                    "number": order_number(customer),
+                    "customer": json.loads(customer.data).get("customer_name", ""),
+                    "description": label,
+                    "quantity": str(amount),
+                }
+            )
+    return matching, done, warnings
+
+
+def order_customers(db, procurement_id):
+    """Pedidos de clientes servidos por uma encomenda ao fornecedor, com o que ainda falta receber."""
+    result = []
+    for sim in db.scalars(
+        select(Simulation).where(
+            Simulation.procurement_id == procurement_id, Simulation.status != "cancelled"
+        )
+    ):
+        for link in db.scalars(
+            select(Supply).where(Supply.simulation_id == sim.id).order_by(Supply.id)
+        ):
+            line = db.get(Line, link.line_id)
+            customer = db.get(Order, line.order_id)
+            data = json.loads(customer.data)
+            result.append(
+                {
+                    "order_id": customer.id,
+                    "number": order_number(customer),
+                    "customer": data.get("customer_name", ""),
+                    "description": json.loads(line.data).get("description", ""),
+                    "waiting": str(max(ZERO, link.quantity - link.released - link.received)),
+                    "urgent": data.get("priority") == "urgent",
+                    "due_date": data.get("due_date"),
+                }
+            )
+    return result
+
+
+def distribute_receipt(db, user, receipt):
+    """Ao confirmar uma receção nas Compras: reserva logo aos clientes o que vem das encomendas deles.
+
+    Guarda o resumo na própria receção. A receção pela simulação continua a usar
+    `allocate_receipt` diretamente, por isso nada é distribuído duas vezes.
+    """
+    sources = {
+        line.get("source_id") for line in json.loads(receipt.data)["lines"] if line.get("source_id")
+    }
+    if receipt.kind != "receipt" or not sources:
+        return
+    done, warnings = [], []
+    for sim in db.scalars(
+        select(Simulation).where(
+            Simulation.procurement_id.in_(sources), Simulation.status != "cancelled"
+        )
+    ):
+        if distributed(db, receipt.id, sim.id):
+            continue
+        order = db.get(Document, sim.procurement_id)
+        _, reserved_now, problems = allocate_receipt(db, user, sim, order, receipt, tolerant=True)
+        done += reserved_now
+        warnings += problems
+        sim.revision += 1
+        key = SimpleNamespace(request_key=f"auto-receive:{receipt.id}:{sim.id}")
+        event(
+            db,
+            user,
+            "receive",
+            key,
+            "automatico",
+            sim.id,
+            sim.store_id,
+            detail={
+                "receipt_id": receipt.id,
+                "document": json.loads(receipt.data)["document"],
+                "automatic": True,
+            },
+        )
+    if done or warnings:
+        payload = json.loads(receipt.data)
+        payload["customer_reservations"] = done
+        payload["customer_warnings"] = warnings
+        receipt.data = dump(payload)
 
 
 @router.post("/simulations/{identifier}/receive")
@@ -1461,32 +1932,9 @@ def receive(
         db.flush()
         buying.confirm_document(db, user, receipt, buying.Confirm(revision=0), authorize, record)
     # A confirmed receipt is attached only once, including across distinct request keys.
-    for previous in db.scalars(select(Event).where(Event.action == "receive")):
-        if json.loads(previous.data).get("receipt_id") == receipt.id:
-            fail("Esta receção já foi distribuída pelos pedidos.", 409)
-    receipt_data = json.loads(receipt.data)
-    matching = False
-    for received in receipt_data["lines"]:
-        if received.get("source_id") != order.id:
-            continue
-        index = received["source_line"]
-        if index >= len(raw["lines"]):
-            continue  # transport/service lines do not satisfy goods
-        matching = True
-        remaining = buying.accepted(received)
-        for link in db.scalars(
-            select(Supply)
-            .where(Supply.simulation_id == row.id, Supply.simulation_line == index)
-            .order_by(Supply.id)
-        ):
-            amount = min(remaining, max(ZERO, link.quantity - link.released - link.received))
-            if not amount:
-                continue
-            line = db.get(Line, link.line_id)
-            reserve(db, user, line, received["warehouse_id"], amount, lot_id=received.get("lot_id"))
-            link.received += amount
-            db.get(Order, line.order_id).revision += 1
-            remaining -= amount
+    if distributed(db, receipt.id, row.id):
+        fail("Esta receção já foi distribuída pelos pedidos.", 409)
+    matching, _, _ = allocate_receipt(db, user, row, order, receipt)
     if not matching:
         fail("A receção não contém linhas desta encomenda.")
     row.revision += 1

@@ -6,3 +6,5 @@
 .rubric-expenses-bar span { display: block; height: 100%; background: var(--color-accent-ink); }
 .rubric-expenses-edit { display: flex; flex-direction: column; gap: 12px; }
 .rubric-expenses-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Base e IVA do período, ao lado do total (documentos de compra com IVA discriminado). */
+.rubric-expenses-vat { font-size: 13px; color: var(--color-muted); font-variant-numeric: tabular-nums; }

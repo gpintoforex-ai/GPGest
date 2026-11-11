@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import {
   AlignLeft, Building2, CalendarClock, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, CreditCard, Hash,
-  Info, ListChecks, Mail, Mailbox, MapPin, Palette, Percent, Phone, Shapes, Store, Tag, Type, User,
+  Euro, Info, ListChecks, Mail, Mailbox, MapPin, Palette, Percent, Phone, Shapes, Store, Tag, Truck, Type, User,
   type LucideIcon,
 } from "lucide-react";
+import EntityRecordSheet, { entitySection } from "./EntityRecordSheet";
+import { Save, Pencil } from "lucide-react";
 import { api } from "../lib/api";
 import { ActionButton, AppDialog, Notice, confirmFormExit, markDialogSaved } from "../components/InteractionUI";
 import { Field, Form } from "../components/Form";
@@ -13,6 +15,9 @@ import { ModuleTabs } from "../components/WorkspaceUI";
 import { ActiveBadge, OriginBadge, SyncBadge } from "./Badges";
 import Processing from "./Processing";
 import { displayValue, formatDateTime, gendered, type FieldSpec, type RecordDetails, type TableContext, type TableInfo } from "./types";
+// A ficha também abre fora das Tabelas (ex.: Encomendas de clientes): sem estes estilos, os
+// separadores apareciam todos ao mesmo tempo.
+import "./TablePage.css";
 
 type Mode = "create" | "edit" | "view";
 
@@ -56,6 +61,7 @@ const FIELD_ICONS: Record<string, LucideIcon> = {
   locality: Building2, category_id: Tag, payment_term_id: CalendarClock, payment_method_id: CreditCard,
   store_id: Store, days: CalendarDays, discount_percent: Percent, term_type: CalendarClock, icon: Shapes,
   color: Palette, vat_deduction_percent: Percent,
+  order_minimum: Euro, shipping: Truck, free_shipping: Truck, lead_days: CalendarDays,
 };
 const TYPE_ICONS: Partial<Record<FieldSpec["type"], LucideIcon>> = {
   text: Type, textarea: AlignLeft, number: Hash, decimal: Percent, select: ListChecks, email: Mail, nif: Hash,
@@ -112,6 +118,8 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const lastLookup = useRef("");
+  const entitySheet = table.key === "customers" || table.key === "suppliers";
+  const [entityTab, setEntityTab] = useState(0);
   const [mode, setMode] = useState<Mode>(startMode);
   const [details, setDetails] = useState<RecordDetails | null>(null);
   const [values, setValues] = useState<Record<string, any>>(() => ({ ...initial(table, null), ...(initialValues || {}) }));
@@ -127,15 +135,19 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
 
   useEffect(() => {
     if (!recordId) return;
+    let current = true;
+    setDetails(null);
     setError("");
     setLookup(null);
     lastLookup.current = "";
     api(`/tables/${table.key}/records/${encodeURIComponent(recordId)}/details`)
       .then((data: RecordDetails) => {
+        if (!current) return;
         setDetails(data);
         setValues(initial(table, data));
       })
-      .catch(e => setError(e.message));
+      .catch(e => { if (current) setError(e.message); });
+    return () => { current = false; };
   }, [recordId, table]);
 
   // O registo acabado de mostrar passa a ser a referência para «alterações por guardar»,
@@ -198,7 +210,7 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
       case "boolean":
         return <label className="checkbox table-checkbox"><input type="checkbox" {...common} checked={!!value} onChange={e => set(field.name, e.target.checked)} /> {field.label}</label>;
       case "textarea":
-        return <textarea {...common} rows={2} maxLength={field.max_length || undefined} minLength={field.min_length || undefined} value={value} onChange={e => set(field.name, e.target.value)} />;
+        return <textarea {...common} rows={(field.span ?? 3) >= 6 ? 2 : 1} maxLength={field.max_length || undefined} minLength={field.min_length || undefined} value={value} onChange={e => set(field.name, e.target.value)} />;
       case "number":
         return <input type="number" step="1" {...common} min={field.minimum ?? undefined} max={field.maximum ?? undefined} value={value ?? ""} onChange={e => set(field.name, e.target.value)} />;
       case "decimal":
@@ -233,6 +245,61 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
 
   const title = mode === "create" ? `${gendered(table, "Novo")} ${singular}` : mode === "edit" ? `Editar ${singular}` : `Detalhes ${gendered(table, "do")} ${singular}`;
   const preview = table.fields.some(f => f.name === "icon") && table.fields.some(f => f.name === "color");
+
+  const saveRecord = async () => {
+      const body = { values: payload(table, values) };
+      if (mode === "create") {
+        // Obrigatórios só ao criar (ex.: rubrica, que não é um campo nativo): indica o separador certo.
+        const missing = table.fields.find(f => f.create_required && (values[f.name] === "" || values[f.name] == null));
+        if (missing) {
+          if (entitySheet) setEntityTab(entitySection(missing));
+          else if (tabs.length > 1) setTab(tabOf(missing.name));
+          throw new Error(`Preencha o campo «${missing.label}» para criar o registo.`);
+        }
+        // Em modo integrado, o servidor grava logo no ERP e devolve o resultado.
+        const created = await api(`/tables/${table.key}/records`, body) as { id: string; erp?: { ok: boolean; message: string } | null };
+        onCreated?.(created.id, values);
+        const saved = `${singular.charAt(0).toUpperCase() + singular.slice(1)} ${gendered(table, "criado")}.`;
+        if (created.erp && !created.erp.ok) onSaved(saved, created.erp.message);
+        else onSaved(created.erp ? `${saved} ${created.erp.message}` : saved);
+      } else {
+        await api(`/tables/${table.key}/records/${encodeURIComponent(recordId!)}`, body);
+        onSaved("Alterações guardadas.");
+      }
+    };
+  if (entitySheet) {
+    const navigation = mode !== "create" && position >= 0 && recordIds.length > 1 && onNavigate && <>
+      <ActionButton type="button" aria-label="Registo anterior" disabled={position <= 0} onClick={() => go(-1)}><ChevronLeft size={20} /></ActionButton>
+      <span aria-live="polite">{position + 1} de {recordIds.length}</span>
+      <ActionButton type="button" aria-label="Registo seguinte" disabled={position >= recordIds.length - 1} onClick={() => go(1)}><ChevronRight size={20} /></ActionButton>
+    </>;
+    const sheet = <EntityRecordSheet key={recordId || "novo"} table={table} details={details} values={values} title={title} active={entityTab} onSelect={setEntityTab}
+      actions={<>{navigation}{mode === "view" ? table.permissions.edit && details && <ActionButton type="button" onClick={() => setMode("edit")}><Pencil size={16} />Editar</ActionButton> : <ActionButton type="submit" className="record-save" variant="primary" disabled={mode === "edit" && !details}><Save size={16} />{mode === "create" ? `Criar ${singular}` : "Guardar alterações"}</ActionButton>}</>}
+      renderFields={fields => mode === "view" ? <dl className="table-details">{fields.map(f => <div key={f.name}><dt>{f.label}</dt><dd>{details ? displayValue(f, details.values[f.name], details.labels[f.name]) : "—"}</dd></div>)}</dl> : <div className="table-form-grid">{fields.map(field => <div key={field.name} style={{ "--span": span(field) } as CSSProperties}>
+        {field.type === "boolean" ? input(field) : <Field label={<FieldLabel field={field} suffix={managed.has(field.name) && mode === "edit" ? " (ERP)" : ""} />}>{input(field)}</Field>}
+        {field.type === "nif" && <NifStatus state={lookup || checkNif(String(values[field.name] || ""))} />}
+        {mode === "create" && field.create_required && field.type === "category" && !values[field.name] && <small>Obrigatório para criar.</small>}
+        {field.help && <small>{field.help}</small>}
+      </div>)}</div>}
+      metadata={<>{error && <Notice tone="error">{error}</Notice>}{details && <>
+        <dl className="table-details">
+          {table.extra_columns.map(c => <div key={c.name}><dt>{c.label}</dt><dd>{details.labels[c.name] || "—"}</dd></div>)}
+          {details.labels.erp_payment_method !== undefined && <div><dt>Meio de pagamento (ERP)</dt><dd>{details.labels.erp_payment_method || "—"}</dd></div>}
+          <div><dt>Estado</dt><dd><ActiveBadge active={details.active} /></dd></div>
+          <div><dt>Origem</dt><dd><OriginBadge origin={details.origin} /></dd></div>
+          <div><dt>Código no ERP</dt><dd>{details.erp_code || "—"}</dd></div>
+          <div><dt>Identificador no ERP</dt><dd>{details.erp_id || "—"}</dd></div>
+          <div><dt>Sincronização</dt><dd><SyncBadge state={details.sync_state} label={details.sync_label} /></dd></div>
+          <div><dt>Última sincronização</dt><dd>{formatDateTime(details.last_sync_at)}</dd></div>
+        </dl>
+        {details.last_error && <Notice tone="error">{details.last_error}</Notice>}
+        {!!managed.size && <p>Campos geridos pelo ERP: {table.fields.filter(f => managed.has(f.name)).map(f => f.label).join(", ")}.</p>}
+        <h3>Utilização</h3>{details.dependencies.length ? <ul>{details.dependencies.map(d => <li key={d.label}>{d.count} {d.label}</li>)}</ul> : <p>Sem registos dependentes.</p>}
+      </>}</>} />;
+    return <AppDialog ref={dialogRef} autoOpen className="modal table-dialog business-record-dialog" onRequestClose={onClose} aria-label={title}>
+      {mode !== "create" && !details ? <><h2>{title}</h2>{error ? <Notice tone="error">{error}</Notice> : <Processing label="A carregar" />}</> : mode === "view" ? sheet : <div className="business-record-form"><Form key={recordId || "novo"} hideSubmit onSubmit={saveRecord}>{sheet}</Form></div>}
+    </AppDialog>;
+  }
 
   return <AppDialog ref={dialogRef} autoOpen className="modal table-dialog" onRequestClose={onClose} aria-labelledby="table-record-title">
     <div className="panel-title table-dialog-title">
@@ -270,26 +337,8 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
         <ActionButton type="button" onClick={onClose}>Fechar</ActionButton>
         {details && table.permissions.edit && <ActionButton type="button" className="primary" onClick={() => setMode("edit")}>Editar</ActionButton>}
       </div>
-    </> : (mode === "edit" && !details) ? (!error && <Processing label="A carregar" />) : <Form key={recordId || "novo"} submitLabel={mode === "create" ? `Criar ${singular}` : "Guardar alterações"} onCancel={onClose} onSubmit={async () => {
-      const body = { values: payload(table, values) };
-      if (mode === "create") {
-        // Obrigatórios só ao criar (ex.: rubrica, que não é um campo nativo): indica o separador certo.
-        const missing = table.fields.find(f => f.create_required && (values[f.name] === "" || values[f.name] == null));
-        if (missing) {
-          if (tabs.length > 1) setTab(tabOf(missing.name));
-          throw new Error(`Preencha o campo «${missing.label}» para criar o registo.`);
-        }
-        // Em modo integrado, o servidor grava logo no ERP e devolve o resultado.
-        const created = await api(`/tables/${table.key}/records`, body) as { id: string; erp?: { ok: boolean; message: string } | null };
-        onCreated?.(created.id, values);
-        const saved = `${singular.charAt(0).toUpperCase() + singular.slice(1)} ${gendered(table, "criado")}.`;
-        if (created.erp && !created.erp.ok) onSaved(saved, created.erp.message);
-        else onSaved(created.erp ? `${saved} ${created.erp.message}` : saved);
-      } else {
-        await api(`/tables/${table.key}/records/${encodeURIComponent(recordId!)}`, body);
-        onSaved("Alterações guardadas.");
-      }
-    }}>
+    </> : (mode === "edit" && !details) ? (!error && <Processing label="A carregar" />) : <Form key={recordId || "novo"} submitLabel={mode === "create" ? `Criar ${singular}` : "Guardar alterações"} onCancel={onClose} onSubmit={saveRecord}
+    >
       {tabs.length > 1 && <ModuleTabs label={`Separadores da ficha de ${singular}`} id="table-record" panels tabs={tabs.map(name => ({ id: name, label: name }))} value={tab} onChange={setTab} />}
       <div onInvalidCapture={event => {
         // Campo obrigatório num separador escondido: mostra esse separador e o campo.

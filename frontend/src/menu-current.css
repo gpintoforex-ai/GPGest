@@ -33,3 +33,5 @@
 @media (prefers-reduced-motion: reduce) {
   :is(.sidebar nav, .module-tabs, .doc-tabs, .deposit-tabs, .conference-tabs, .setup-step-nav) button::after { animation: none !important; transition: none; }
 }
+
+:is(.sidebar nav,.module-tabs,.doc-tabs,.deposit-tabs,.conference-tabs,.setup-step-nav) button:focus-visible {outline:3px solid var(--border-focus);outline-offset:3px;}
