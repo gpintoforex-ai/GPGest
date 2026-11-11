@@ -96,3 +96,8 @@
   .se-kpi strong { font-size: 1.05rem; }
   .se-tabs { justify-self: stretch; }
 }
+.se-originals { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.se-originals a { display: inline-flex; align-items: center; gap: 6px; color: var(--color-text); font-weight: 600; }
+/* Dentro dos diálogos, o estilo global dos botões não pode apagar o separador ativo (texto branco em fundo branco). */
+.ui-dialog .se-tabs button[role="tab"][aria-selected="true"], .ui-dialog .se-tabs button[aria-pressed="true"] { background: var(--color-primary); color: #fff; }
+.ui-dialog .se-tabs button[role="tab"]:not([aria-selected="true"]) { background: none; color: var(--color-text); }

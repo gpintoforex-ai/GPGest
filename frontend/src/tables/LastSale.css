@@ -1,0 +1,20 @@
+/* «Última venda» na tabela de Clientes. Só tokens do design system; o estado tem sempre texto (não só cor). */
+.last-sale { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.last-sale-date { padding: 0; border: 0; background: none; color: var(--color-text); font: inherit; font-weight: 600; font-variant-numeric: tabular-nums;
+  text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--color-text) 35%, transparent); text-underline-offset: 2px; cursor: pointer; }
+.last-sale-date:hover { text-decoration-color: currentColor; }
+.last-sale-date:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: 4px; }
+.last-sale-none { color: var(--color-muted); }
+.last-sale-filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; margin: 10px 0; }
+.last-sale-filters > label { display: grid; gap: 3px; font-size: 12px; font-weight: 600; color: var(--color-text); }
+.last-sale-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 100%; }
+.last-sale-chips button { min-height: 32px; padding: 4px 12px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface);
+  color: var(--color-text); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.last-sale-chips button[aria-pressed="true"] { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.last-sale-chips button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.last-sale-coverage { margin: 8px 0 0; font-size: 12.5px; color: var(--color-muted); }
+.last-sale-coverage.is-stale { padding: 6px 10px; border-left: 3px solid var(--color-warning); border-radius: 6px; background: var(--color-warning-bg); color: var(--color-text); }
+.ui-dialog.last-sale-settings { width: min(480px, calc(100vw - 28px)); display: grid; gap: 12px; }
+.last-sale-form { display: grid; gap: 10px; }
+.last-sale-form label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; color: var(--color-text); }
+.last-sale-actions { display: flex; flex-wrap: wrap; gap: 8px; }

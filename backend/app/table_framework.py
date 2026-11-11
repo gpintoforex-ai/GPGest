@@ -649,10 +649,14 @@ def build_rows(ctx, spec):
     rows = spec.rows(ctx)
     labels = spec.labels(ctx, rows)
     links = spec.erp.links.all(ctx) if spec.erp and enterprise_of(ctx) else {}
+    # Dados calculados por linha (ex.: última venda dos clientes), lidos de uma vez para todas as linhas.
+    extras = spec.extras(ctx, rows) if hasattr(spec, "extras") else {}
     result = []
     for row in rows:
         identifier = spec.record_id(row)
         values = spec.values(ctx, row)
+        if identifier in extras:
+            labels.setdefault(identifier, {}).update(extras[identifier].pop("_labels", {}))
         item = {
             "id": identifier,
             "values": values,
@@ -662,6 +666,8 @@ def build_rows(ctx, spec):
             "active": spec.is_active(row),
             **link_view(ctx, spec.erp, row, links.get(identifier)),
         }
+        if identifier in extras:
+            item["extra"] = extras[identifier]
         result.append(item)
     return result
 
@@ -727,6 +733,8 @@ def list_records(
         rows = [r for r in rows if r["sync_state"] == sync]
     if store:
         rows = [r for r in rows if r["values"].get("store_id") in (None, store)]
+    if hasattr(spec, "filter_rows") and request is not None:
+        rows = spec.filter_rows(ctx, rows, request.query_params)
     if q.strip():
         needle = normalized(q)
         rows = [
@@ -764,6 +772,7 @@ def list_records(
         "page": page,
         "pages": pages,
         "size": size,
+        **({"meta": spec.list_meta(ctx)} if hasattr(spec, "list_meta") else {}),
     }
 
 

@@ -5,7 +5,7 @@ import {
 import { StatusBadge, type BusinessTone } from "./components/BusinessUI";
 import { ActionButton, Notice } from "./components/InteractionUI";
 import { BarList, ChartFrame, ColumnsChart, Legend } from "./DashboardCharts";
-import { DocumentPreview, DrilldownPanel, type DrilldownStep } from "./Drilldown";
+import { DrilldownPanel, type DrilldownStep } from "./Drilldown";
 import { useLocationSearch } from "./components/WorkspaceUI";
 import { api } from "./lib/api";
 import { formatEuro } from "./utils/format";
@@ -242,6 +242,25 @@ export default function SalesExplorer({ store, start, end, navigate }: {
   </div>;
 }
 
+/** Documento de venda num painel de consulta (ex.: «Última venda» na tabela de Clientes), com a mesma navegação
+ * da análise comercial: artigos, recebimentos, original, cliente e ficha do artigo. */
+export function SalesDocumentPanel({ id, label, date, store = "", company = "Clientes", navigate, onClose }: {
+  id: string; label: string; date: string; store?: string; company?: string;
+  navigate?: (page: string, params?: Record<string, string>) => void; onClose: () => void;
+}) {
+  const leave = (page: string, params: Record<string, string>) => { onClose(); window.setTimeout(() => navigate?.(page, params), 0); };
+  return <DrilldownPanel<Row> label="Consulta comercial" context={{ company, store, start: date, end: date }} endpoint="/sales/detail"
+    initial={[{ label, params: { view: "document", id } }]} onClose={onClose}>
+    {(value, { step, open: push }) => <Detail key={JSON.stringify(step.params)} value={value}
+      onDocument={row => push({ label: `${row.type_label || "Documento"} ${row.document}`, params: { view: "document", id: row.id } })}
+      onCustomer={(key, name) => push({ label: name, params: { view: "customer", key } })}
+      onArticle={(code, name) => push({ label: `${code} · ${name}`, params: { view: "article", code } })}
+      onReceipt={(receipt, name) => push({ label: name, params: { view: "receipt", id: receipt } })}
+      onLeave={leave}
+      onFilter={changes => { persist({ ...DEFAULTS, ...changes }, null); leave("Faturação e recebimentos", {}); }} />}
+  </DrilldownPanel>;
+}
+
 function DocumentsTable({ list, filters, onSort, onOpen, onCustomer }: { list: Row; filters: Filters; onSort: (field: string) => void; onOpen: (row: Row) => void; onCustomer: (key: string, name: string) => void }) {
   const t: Row = list.totals || {};
   return <>
@@ -336,7 +355,9 @@ function DocumentDetail({ value: d, onCustomer, onArticle, onReceipt, onLeave }:
       <p className="se-hint">Recebido {euro(d.received_cents)} · em dívida {euro(d.pending_cents)}. Um recibo e um recebimento registado no GPGest para o mesmo documento não se somam.</p>
     </>}
     {tab === "original" && <>
-      {d.originals.length ? <DocumentPreview identifiers={d.originals} /> : <Notice tone="info">{d.original_note}</Notice>}
+      {d.originals.length ? <ul className="se-originals">{d.originals.map((id: string, index: number) => <li key={id}>
+        <a href={`/api/archive/documents/${encodeURIComponent(id)}/file`} target="_blank" rel="noreferrer"><FileText size={15} aria-hidden="true" />Abrir original {index + 1}<ExternalLink size={13} aria-hidden="true" /></a>
+      </li>)}</ul> : <Notice tone="info">{d.original_note}</Notice>}
     </>}
   </div>;
 }
