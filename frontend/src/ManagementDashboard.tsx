@@ -8,6 +8,7 @@ import { ActionButton, Notice } from "./components/InteractionUI";
 import DatePresets from "./components/DatePresets";
 import { BarList, ChartFrame, ColumnsChart, ForecastChart, Legend } from "./DashboardCharts";
 import ExpenseDrilldown from "./ExpenseDrilldown";
+import RubricMovements from "./RubricMovements";
 import { DrilldownTrigger, type DrilldownStep } from "./Drilldown";
 import { formatEuro } from "./utils/format";
 import { handOffPeriod } from "./utils/periodHandoff";
@@ -98,6 +99,9 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
   const [loading, setLoading] = useState(true), [error, setError] = useState("");
   const [customizing, setCustomizing] = useState(false), [version, setVersion] = useState(0);
   const [expenseDrill, setExpenseDrill] = useState<{ key: string; steps: DrilldownStep[] } | null>(null);
+  // Movimentos da rubrica (consulta e correção): administrador e gestor.
+  const [movements, setMovements] = useState<{ key: string; category: string | null; name: string; view: Row } | null>(null);
+  const [byParent, setByParent] = useState(false);
   // Vista das saídas: custos operacionais, compras e investimentos, obrigações fiscais ou saídas de tesouraria.
   const [expenseView, setExpenseView] = useState("operating");
   const [marginArticles, setMarginArticles] = useState(false);
@@ -129,15 +133,36 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
   const topArticles = data?.top_articles || unavailable || (data ? { status: "empty", message: "Atualize o servidor para disponibilizar o top de artigos." } : undefined);
   const expenseViews: Row[] = expenses?.views || [];
   const shownView: Row | undefined = expenseViews.find(v => v.key === expenseView) || (expenses?.rows ? { key: "operating", label: "Custos e despesas operacionais", basis: expenses.vat_basis, ...expenses } : undefined);
+  const canCorrect = role === "administrador" || role === "gestor";
   const explainExpenses = (row?: Row, view: Row | undefined = expenseViews.find(v => v.key === "operating") || shownView) => {
+    if (row && canCorrect) {
+      setMovements({ key: dataKey, category: row.category_id === "outras" ? "" : row.category_id ?? null, name: row.name, view: view || {} });
+      return;
+    }
     const base: Record<string, string> = view && view.key !== "operating" ? { view: view.key } : {};
     const steps: DrilldownStep[] = [{ label: view?.label || "Custos e despesas operacionais", params: base, expected: view?.total_cents ?? expenses?.total_cents }];
     if (row) steps.push({ label: row.name, params: { ...base, category: row.category_id ?? "" }, expected: row.amount_cents });
     setExpenseDrill({ key: dataKey, steps });
   };
   const fiscalVat = shownView?.key === "fiscal" ? shownView.vat : null;
-  const expenseDialog = expenseDrill?.key === dataKey && <ExpenseDrilldown context={{ company: companyName, store, start, end }}
-    initial={expenseDrill.steps} onClose={() => setExpenseDrill(null)} />;
+  const shownRows: Row[] = (byParent && shownView?.parent_rows) || shownView?.rows || [];
+  const expenseDialog = <>
+    {movements?.key === dataKey && <RubricMovements context={{ company: companyName, store, start, end, view: movements.view.key || "operating", viewLabel: movements.view.label }}
+      category={movements.category} categoryName={movements.name} onClose={() => setMovements(null)}
+      onChanged={() => { setVersion(v => v + 1); window.dispatchEvent(new Event("iazela-expenses-changed")); }}
+      onConsult={row => {
+        const base: Record<string, string> = movements.view.key && movements.view.key !== "operating" ? { view: movements.view.key } : {};
+        setExpenseDrill({ key: dataKey, steps: [{ label: movements.view.label || "Custos e despesas operacionais", params: base },
+          { label: row.label, params: { ...base, document_id: row.id }, expected: row.amount_cents }] });
+      }}
+      onReconcile={row => {
+        // A navegação só é permitida sem janelas abertas: fecha o painel e navega a seguir.
+        setMovements(null);
+        window.setTimeout(() => navigate("Reconciliação automática", { pesquisa: row.entity || row.label }), 0);
+      }} />}
+    {expenseDrill?.key === dataKey && <ExpenseDrilldown context={{ company: companyName, store, start, end }}
+      initial={expenseDrill.steps} onClose={() => setExpenseDrill(null)} />}
+  </>;
   const salesPage = data?.mode === "local" ? "Faturação e recebimentos" : "Movimentos reais";
 
   // Gráficos da Evolução: os mesmos blocos nas duas versões (a nova acrescenta cartões, sem alterar estes).
@@ -174,7 +199,7 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
           values={[DUE.map(([k]) => treasury.due.receivable[k].amount_cents), DUE.map(([k]) => treasury.due.payable[k].amount_cents)]} />
       </ChartFrame>}</BlockState>,
     expenses: data?.permissions?.costs && <BlockState block={expenseViews.length ? { status: "ok" } : expenses}>{shownView && <ChartFrame title={`${shownView.label} (${shownView.basis})`}
-        table={{ columns: ["Rubrica", "Período", "Comparação"], rows: shownView.rows.map((r: Row) => [<DrilldownTrigger onOpen={() => explainExpenses(r, shownView)}>{r.name}</DrilldownTrigger>, formatEuro(r.amount_cents), formatEuro(r.previous_cents)]) }}
+        table={{ columns: ["Rubrica", "Período", "Comparação"], rows: shownRows.map((r: Row) => [<DrilldownTrigger onOpen={() => explainExpenses(r, shownView)}>{r.name}</DrilldownTrigger>, formatEuro(r.amount_cents), formatEuro(r.previous_cents)]) }}
         footnote={<><DrilldownTrigger onOpen={() => explainExpenses(undefined, shownView)}>Total {formatEuro(shownView.total_cents)}</DrilldownTrigger> · <Delta value={shownView.change_percent} inverse /> <MetaInfo meta={expenses.meta} /></>}>
         {expenseViews.length > 0 && <div className="dash-views" role="group" aria-label="Vista das saídas">
           {expenseViews.map(v => <button key={v.key} type="button" aria-pressed={v.key === shownView.key} onClick={() => setExpenseView(v.key)}>
@@ -186,7 +211,9 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
           <ul>{expenses.config_notes.map((n: Row, i: number) => <li key={i}>{n.text}</li>)}</ul>
           {data?.permissions?.costs && <ActionButton type="button" className="dash-link" onClick={() => navigate("Rubricas", { "area.rubricas": "natureza" })}>Ver histórico</ActionButton>}
         </div>}
-        {shownView.rows.length ? <BarList ariaLabel={shownView.label} rows={shownView.rows.map((r: Row) => ({ label: r.name, value: r.amount_cents, onOpen: () => explainExpenses(r, shownView), note: r.previous_cents ? `comparação ${formatEuro(r.previous_cents)}` : undefined }))} />
+        {expenses?.has_parents && <ActionButton type="button" className="dash-link" aria-pressed={byParent} onClick={() => setByParent(v => !v)}>
+          {byParent ? "Mostrar sub-rubricas" : "Agrupar por rubrica-mãe"}</ActionButton>}
+        {shownRows.length ? <BarList ariaLabel={shownView.label} rows={shownRows.map((r: Row) => ({ label: r.name, value: r.amount_cents, onOpen: () => explainExpenses(r, shownView), note: r.previous_cents ? `comparação ${formatEuro(r.previous_cents)}` : undefined }))} />
           : <p className="dash-muted">Sem valores nesta vista no período.{shownView.key !== "operating" && expenses?.rubrics_without_nature ? " As rubricas por definir entram nos custos operacionais." : ""}</p>}
         {fiscalVat && <div className="dash-vat-block"><dl className="dash-vat-detail" aria-label="IVA do período">
           {([["IVA liquidado nas vendas", fiscalVat.output_cents == null ? "Indisponível" : formatEuro(fiscalVat.output_cents)],

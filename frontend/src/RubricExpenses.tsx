@@ -8,6 +8,9 @@ import { Field } from "./components/Form";
 import { StatusBadge } from "./components/BusinessUI";
 import DatePresets from "./components/DatePresets";
 import { formatEuro } from "./utils/format";
+import ExpenseDrilldown from "./ExpenseDrilldown";
+import RubricMovements from "./RubricMovements";
+import type { DrilldownStep } from "./Drilldown";
 import "./RubricExpenses.css";
 
 type Row = Record<string, any>;
@@ -35,6 +38,9 @@ export default function RubricExpenses({ stores, store, categories, admin, integ
     finally { setLoading(false); }
   }
   useEffect(() => { setError(""); load().catch(e => setError((e as Error).message)); }, [start, end, store]);
+  // Movimentos da rubrica (consulta e correção) e detalhe do documento com os originais.
+  const [movements, setMovements] = useState<{ category: string | null; name: string } | null>(null);
+  const [detail, setDetail] = useState<DrilldownStep[] | null>(null);
   async function run(task: () => Promise<void>) {
     setBusy(true); setError(""); setNotice("");
     try { await task(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
@@ -77,11 +83,12 @@ export default function RubricExpenses({ stores, store, categories, admin, integ
       {!!data.pending_receipts?.count && <Notice tone="warning">{data.pending_receipts.count} receção(ões) de mercadoria neste período ({formatEuro(data.pending_receipts.total_cents)}) ainda sem documento de compra: não entram nestes totais. Em Compras → Receções de mercadoria use «Definir tipo» (a receção é a compra) ou «Associar fatura» (a fatura chega à parte).</Notice>}
       {!!data.pending_efatura?.count && <Notice tone="warning">{data.pending_efatura.count} fatura(s) do e-Fatura neste período ({formatEuro(data.pending_efatura.total_cents)}) ainda não foram lançadas e não entram nestes totais. {integrated ? "Confirme o lançamento no ERP e atualize as compras do ERP." : "Lance-as na Conferência documental → Rever propostas."}</Notice>}
       {integrated && !data.erp_documents && <Notice tone="info">Não há compras do ERP neste período na IAZELA. {admin ? "Use «Atualizar compras do ERP» para as consultar." : "Peça a um administrador para atualizar as compras do ERP."}</Notice>}
-      <div className="table-wrap"><table className="rubric-expenses-table"><thead><tr><th>Rubrica</th><th className="numeric">Total</th><th className="numeric">Documentos</th><th>Peso</th></tr></thead><tbody>
+      <div className="table-wrap"><table className="rubric-expenses-table"><thead><tr><th>Rubrica</th><th className="numeric">Total</th><th className="numeric">Documentos</th><th>Peso</th><th><span className="sr-only">Movimentos</span></th></tr></thead><tbody>
         {data.rubrics.map((item: Row) => { const key = item.category_id || ""; const share = positive ? Math.max(0, item.total_cents) / positive : 0; return <tr key={key} className={rubricFilter === key ? "selected" : ""}>
           <td><ActionButton type="button" className="rubric-expenses-link" onClick={() => setRubricFilter(rubricFilter === key ? null : key)}>{item.category_name}</ActionButton></td>
           <td className="numeric">{formatEuro(item.total_cents)}</td><td className="numeric">{item.documents}</td>
           <td><div className="rubric-expenses-bar" aria-label={`${Math.round(share * 100)}%`}><span style={{ width: `${share * 100}%` }} /></div><small>{Math.round(share * 100)}%</small></td>
+          <td><ActionButton type="button" className="rubric-expenses-link" aria-label={`Ver movimentos de ${item.category_name}`} onClick={() => setMovements({ category: item.category_id || null, name: item.category_name })}>Ver movimentos</ActionButton></td>
         </tr>; })}
       </tbody></table></div>
       {!data.rubrics.length && <p>Sem faturas de compra neste período.</p>}
@@ -101,6 +108,11 @@ export default function RubricExpenses({ stores, store, categories, admin, integ
         </tr>)}
       </tbody></table></div>
       {documents.length > 200 && <p className="footnote">A mostrar 200 de {documents.length} documentos; use os filtros para restringir.</p>}
+      {movements && <RubricMovements context={{ company: "Despesas por rubrica", store, start, end, view: "operating" }} category={movements.category} categoryName={movements.name}
+        onClose={() => setMovements(null)} onChanged={() => { void load(); window.dispatchEvent(new Event("iazela-expenses-changed")); }}
+        onConsult={row => setDetail([{ label: "Custos e despesas operacionais", params: {} }, { label: row.label, params: { document_id: row.id }, expected: row.amount_cents }])}
+        onReconcile={row => window.location.assign(`?${new URLSearchParams({ pagina: "Reconciliação automática", pesquisa: row.entity || row.label })}`)} />}
+      {detail && <ExpenseDrilldown context={{ company: "Despesas por rubrica", store, start, end }} initial={detail} onClose={() => setDetail(null)} />}
       <p className="footnote">A rubrica de uma compra do ERP é a do fornecedor (Tabelas → Fornecedores), salvo se for definida no documento. Definir aqui a rubrica não altera o ERP. As compras da IAZELA usam a rubrica de cada linha.</p>
     </section>}
     {editing && <section className="panel rubric-expenses-edit" aria-label="Rubrica do documento">

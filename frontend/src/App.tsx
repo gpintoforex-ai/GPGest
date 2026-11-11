@@ -812,7 +812,7 @@ export default function App() {
           {page === "Conferência documental" && <DocumentControl stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} integration={boot.integration} navigate={navigatePage} />}
           {page === "Obrigações e Prazos" && manager && <Obligations stores={boot.stores} store={store} categories={boot.categories} admin={boot.user.role === "administrador"} />}
           {page === "Despesas por rubrica" && manager && <RubricExpenses stores={boot.stores} store={store} categories={boot.categories} admin={boot.user.role === "administrador"} integrated={integratedMode} />}
-          {page === "Mapas de gestão" && manager && <ManagementMaps store={store} />}
+          {page === "Mapas de gestão" && manager && <ManagementMaps store={store} mode={boot.integration?.mode || "local"} navigate={navigatePage} />}
           {page === "Entrega à contabilidade" && <AccountingDelivery admin={boot.user.role === "administrador"} company={boot.company || {}} stores={boot.stores} store={store} onEmailSettings={() => navigatePage("Email")} onSettings={() => navigatePage(manager ? "Regime de IVA" : "Organização")} />}
           {page === "Email" && <EmailSettings admin={boot.user.role === "administrador"} company={boot.company || {}} stores={boot.stores}/>}
           {page === "Importar SAF-T de vendas" && <SaftSales stores={boot.stores} store={store} admin={boot.user.role === "administrador"} local={boot.integration?.mode === "local"}/>}
@@ -1025,7 +1025,7 @@ export default function App() {
           {page === "Depósitos" && <Deposits boot={boot} store={store} reload={reload} />}
           {page === "Previsão de liquidez" && <Liquidity boot={boot} store={store} />}
           {page === "Orçamento" && manager && <Budget stores={boot.stores} />}
-          {page === "Faturação e recebimentos" && <BillingConference stores={boot.stores} store={store} manager={manager} />}
+          {page === "Faturação e recebimentos" && <BillingConference stores={boot.stores} store={store} manager={manager} mode={boot.integration?.mode || "local"} navigate={navigatePage} />}
           {page === "Armazéns" && <TablePage tableKey="warehouses" context={tableContext} active={activePage === page} store={store} />}
           {page === "Artigos e validades" && <Suspense fallback={<p role="status">A carregar artigos e stock…</p>}><Inventory stores={boot.stores} admin={boot.user.role === "administrador"} /></Suspense>}
           {page === "Encomendas de clientes" && <Suspense fallback={<LoadingState />}><CustomerOrders stores={boot.stores} store={store} company={boot.company} navigate={navigatePage} onStoreChange={changeWorkspaceStore} /></Suspense>}

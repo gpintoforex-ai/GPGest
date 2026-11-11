@@ -54,7 +54,7 @@ function XLabels({ labels, x }: { labels: string[]; x: (i: number) => number }) 
 }
 
 /** Colunas da série principal e, opcionalmente, linha da série de comparação (formas distintas). */
-export function ColumnsChart({ labels, series, values, ariaLabel, formatValue }: { labels: string[]; series: Series[]; values: (number | null)[][]; ariaLabel: string; formatValue?: (v: number) => string }) {
+export function ColumnsChart({ labels, series, values, ariaLabel, formatValue, onSelect }: { labels: string[]; series: Series[]; values: (number | null)[][]; ariaLabel: string; formatValue?: (v: number) => string; onSelect?: (index: number) => void }) {
   const format = formatValue || formatEuro;
   const id = useId();
   const [active, setActive] = useState<number | null>(null);
@@ -74,8 +74,11 @@ export function ColumnsChart({ labels, series, values, ariaLabel, formatValue }:
         {values[si].map((v, i) => v === null ? null : <circle key={i} cx={x(i)} cy={y(v)} r={active === i ? 4.5 : 3} className={`dash-dot-${si + 1}`} />)}
       </g> : null)}
       <XLabels labels={labels} x={x} />
-      {labels.map((label, i) => <rect key={label + i} x={L + band * i} y={T} width={band} height={H - T - B} className="dash-hit" tabIndex={0}
-        aria-label={`${label}: ${series.map((s, si) => `${s.label} ${values[si][i] === null ? "sem dados" : format(values[si][i] as number)}`).join(", ")}`}
+      {labels.map((label, i) => <rect key={label + i} x={L + band * i} y={T} width={band} height={H - T - B} className={onSelect ? "dash-hit is-selectable" : "dash-hit"} tabIndex={0}
+        role={onSelect ? "button" : undefined}
+        aria-label={`${label}: ${series.map((s, si) => `${s.label} ${values[si][i] === null ? "sem dados" : format(values[si][i] as number)}`).join(", ")}${onSelect ? ". Ver movimentos" : ""}`}
+        onClick={onSelect ? () => onSelect(i) : undefined}
+        onKeyDown={onSelect ? event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(i); } } : undefined}
         onPointerEnter={() => setActive(i)} onPointerDown={() => setActive(i)} onFocus={() => setActive(i)} onBlur={() => setActive(null)} />)}
       {active !== null && <line x1={x(active)} x2={x(active)} y1={T} y2={H - B} className="dash-crosshair" />}
     </svg>
@@ -107,13 +110,13 @@ export function ForecastChart({ points, start, reserve, ariaLabel }: { points: {
 }
 
 /** Barras horizontais ordenadas por valor, com rótulos diretos (sem depender da cor). */
-export function BarList({ rows, ariaLabel }: { rows: { label: string; value: number; note?: string; onOpen?: () => void }[]; ariaLabel: string }) {
+export function BarList({ rows, ariaLabel, format = formatEuro }: { rows: { label: string; value: number; note?: string; onOpen?: () => void }[]; ariaLabel: string; format?: (value: number) => string }) {
   const max = Math.max(1, ...rows.map(row => Math.abs(row.value)));
   return <ul className="dash-barlist" aria-label={ariaLabel}>{rows.map(row => {
-    const label = `${row.label}: ${formatEuro(row.value)}${row.note ? ` · ${row.note}` : ""}`;
+    const label = `${row.label}: ${format(row.value)}${row.note ? ` · ${row.note}` : ""}`;
     const bar = <><span className="dash-barlist-label">{row.label}</span>
       <span className="dash-barlist-track"><span className="dash-fill-1" style={{ width: `${Math.max(1, Math.abs(row.value) / max * 100)}%` }} /></span>
-      <span className="dash-barlist-value">{formatEuro(row.value)}{row.note && <small>{row.note}</small>}</span></>;
+      <span className="dash-barlist-value">{format(row.value)}{row.note && <small>{row.note}</small>}</span></>;
     return row.onOpen ? <li key={row.label} className="drilldown-bar-item"><button className="drilldown-bar" type="button" aria-label={label} onClick={row.onOpen}>{bar}</button></li>
       : <li key={row.label} tabIndex={0} aria-label={label}>{bar}</li>;
   })}</ul>;

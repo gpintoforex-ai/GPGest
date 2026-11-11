@@ -23,6 +23,7 @@
 .dash-crosshair { stroke: var(--color-muted); stroke-width: 1; pointer-events: none; }
 .dash-hit { fill: transparent; cursor: crosshair; outline: none; }
 .dash-hit:focus-visible { fill: rgb(127 127 127 / 12%); }
+.dash-hit.is-selectable { cursor: pointer; }
 .dash-tooltip { position: absolute; top: 0; transform: translateX(-50%); display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); color: var(--color-text); box-shadow: 0 6px 18px rgb(0 0 0 / 14%); font-size: 12.5px; pointer-events: none; white-space: nowrap; }
 .dash-tooltip span { display: flex; align-items: center; gap: 6px; }
 .dash-barlist { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }

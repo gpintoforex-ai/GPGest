@@ -124,6 +124,15 @@ def intercept(route):
         boot = copy.deepcopy(ns["boot"])
         boot["user"]["role"] = state["role"]
         return route.fulfill(json=boot)
+    if path == "/api/rubric-movements":
+        params = {k: v[0] for k, v in parse_qs(url.query).items()}
+        drills.append({**params, "panel": True})
+        row = {"id": "bank:b1", "date": "2026-11-05", "payment_date": None, "label": "IVA", "entity": "PAGAMENTO AO ESTADO", "source": "Banco",
+               "origin": "bank", "origin_label": "Banco", "shares": [{"category_id": "iva", "name": "IVA", "base_cents": 201852, "tax_cents": 0, "amount_cents": 201852}],
+               "amount_cents": 201852, "base_cents": 201852, "tax_cents": 0, "category_amount_cents": 201852, "mode": "bank", "editable": True, "blocked": "",
+               "state": "reconciliado", "account_id": None, "account": "", "annotation": {"cost_center_id": None, "notes": "", "revision": 0}}
+        return route.fulfill(json={"rows": [row], "total_cents": 201852, "can_edit_payments": True, "accounts": [], "cost_centers": [],
+                                   "categories": [{"id": "iva", "name": "IVA", "parent_id": None, "color": "#245fc5", "icon": "landmark"}]})
     if path == "/api/dashboard/expenses/drilldown":
         params = {k: v[0] for k, v in parse_qs(url.query).items()}
         drills.append(params)
@@ -187,6 +196,8 @@ def intercept(route):
 
 
 def audit(page):
+    page.mouse.move(1, 1)  # sem estado de passagem do rato por cima de botões
+    page.wait_for_timeout(400)  # fim das transições de cor (botões que acabaram de ficar ativos)
     result = page.evaluate((ROOT / "scripts/contrast-audit.js").read_text(encoding="utf-8"))
     assert not result.get("failures"), result.get("failures")
     assert not page.evaluate("document.documentElement.scrollWidth > innerWidth"), "A página transborda na horizontal."
@@ -226,10 +237,12 @@ with sync_playwright() as p:
         expect(notes.get_by_role("button", name="Ver histórico")).to_be_visible()
         audit(page)
         page.screenshot(path=str(OUT / f"dashboard-fiscal-{theme}-{width}.png"), full_page=True)
+        # Administrador: a rubrica abre os movimentos (consulta e correção) na vista escolhida.
         card.get_by_role("button", name="IVA").first.click()
-        dialog = page.get_by_role("dialog")
+        dialog = page.get_by_role("dialog", name="Movimentos da rubrica")
         expect(dialog).to_contain_text("PAGAMENTO AO ESTADO")
-        assert drills and drills[-1].get("view") == "fiscal" and drills[-1].get("category") == "iva", drills
+        expect(dialog).to_contain_text("Obrigações fiscais")
+        assert drills and drills[-1].get("panel") and drills[-1].get("view") == "fiscal", drills
         page.keyboard.press("Escape")
         # 2) Rubricas → Natureza financeira: sugestão, simulação e aprovação com motivo.
         page.goto("http://127.0.0.1:5174/?pagina=Rubricas&area.rubricas=natureza")

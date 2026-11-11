@@ -700,18 +700,39 @@ def expenses_block(db, stores, period, compare):
         for _, _, category, _, _, amount in rubric_nature.contributions(previous_data, view, regime, percents, table):
             previous_values[category] += amount
         ordered = sorted(current_values, key=lambda key: -current_values[key])
-        rows = [{"category_id": key or None, "name": categories[key].name if key in categories else "Por classificar",
-                 "amount_cents": current_values[key], "previous_cents": previous_values.get(key, 0)} for key in ordered if current_values[key]]
-        top, rest = rows[:8], rows[8:]
-        if rest:
-            top.append({"category_id": "outras", "name": f"Outras ({len(rest)})", "amount_cents": sum(r["amount_cents"] for r in rest),
-                        "previous_cents": sum(r["previous_cents"] for r in rest)})
+        def label(key):
+            item = categories.get(key)
+            parent = categories.get(item.parent_id) if item and item.parent_id else None
+            return f"{parent.name} › {item.name}" if parent else item.name if item else "Por classificar"
+
+        def shorten(rows):
+            top, rest = rows[:8], rows[8:]
+            if rest:
+                top.append({"category_id": "outras", "name": f"Outras ({len(rest)})", "amount_cents": sum(r["amount_cents"] for r in rest),
+                            "previous_cents": sum(r["previous_cents"] for r in rest)})
+            return top
+
+        rows = [{"category_id": key or None, "name": label(key), "amount_cents": current_values[key], "previous_cents": previous_values.get(key, 0)}
+                for key in ordered if current_values[key]]
+        top = shorten(rows)
+        # Agregado pela rubrica-mãe (sub-rubricas somadas na mãe), para a opção «Agrupar por rubrica-mãe».
+        grouped = {}
+        for row in rows:
+            item = categories.get(row["category_id"] or "")
+            parent = item.parent_id if item and item.parent_id in categories else None
+            key = parent or row["category_id"]
+            entry = grouped.setdefault(key, {"category_id": key, "name": categories[key].name if key in categories else "Por classificar",
+                                             "amount_cents": 0, "previous_cents": 0, "children": 0, "parent": bool(parent)})
+            entry["amount_cents"] += row["amount_cents"]
+            entry["previous_cents"] += row["previous_cents"]
+            entry["children"] += 1 if parent else 0
+        parent_rows = shorten(sorted(grouped.values(), key=lambda r: -r["amount_cents"]))
         total, previous = sum(current_values.values()), sum(previous_values.values())
         return {"key": view, "label": rubric_nature.VIEWS[view][0], "rows": top, "total_cents": total, "previous_cents": previous,
                 "change_percent": change(total, previous), "origin": rubric_nature.ORIGINS[view],
                 "basis": cost_basis if view in ("operating", "purchases") else "valor pago",
                 "points": [{"label": label, "amount_cents": value} for label, value in zip(labels, series(by_day, *period, unit))],
-                "unclassified_cents": current_values.get(UNCLASSIFIED, 0)}
+                "unclassified_cents": current_values.get(UNCLASSIFIED, 0), "parent_rows": parent_rows}
 
     views = {view: summary(view) for view in rubric_nature.VIEWS}
     # Obrigações fiscais: o IVA das vendas e das compras é informativo (não é custo nem pagamento).
@@ -736,6 +757,7 @@ def expenses_block(db, stores, period, compare):
         "unit": unit, "points": operating["points"],
         "views": [{key: value for key, value in view.items() if key != "points"} for view in views.values()],
         "rubrics_without_nature": unconfigured,
+        "has_parents": any(c.parent_id for c in categories.values()),
         # Mudanças recentes de natureza e reclassificações que explicam diferenças face a relatórios anteriores.
         "config_notes": rubric_nature.recent_changes(db),
         "meta": meta("Custos e despesas operacionais por rubrica, pela data do documento (custos sem documento: pela data do movimento bancário).",

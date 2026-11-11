@@ -484,6 +484,8 @@ class CategoriesSpec(TableSpec):
     code_field = None
     fields = [
         TableField("name", "Descrição", required=True, min_length=2, max_length=100),
+        TableField("parent_id", "Rubrica-mãe (opcional)", "category", help="Torna esta rubrica uma sub-rubrica (um só nível). "
+                   "O Dashboard pode agregar as despesas pela rubrica-mãe."),
         TableField("icon", "Ícone", "icon", required=True, options=RUBRIC_ICONS),
         TableField("color", "Cor", "color", required=True, max_length=7),
         TableField(
@@ -494,6 +496,14 @@ class CategoriesSpec(TableSpec):
             maximum=100,
             column=False,
             help="Só para o mapa de IVA indicativo; vazio corresponde a 100%.",
+        ),
+        TableField(
+            "fixed_cost",
+            "Custo fixo",
+            "boolean",
+            column=False,
+            help="Rendas, seguros, vencimentos, comunicações… Só para a análise de gestão (indicador «Custos fixos» "
+            "nos Mapas de gestão); os documentos e movimentos não mudam.",
         ),
         TableField(
             "cash_difference",
@@ -514,6 +524,18 @@ class CategoriesSpec(TableSpec):
             raise HTTPException(422, "Escolha um ícone válido.")
         if not values["color"].startswith("#") or len(values["color"]) != 7:
             raise HTTPException(422, "Escolha uma cor válida.")
+        parent_id = values.get("parent_id") or None
+        if parent_id:
+            parent = ctx.db.get(Category, parent_id)
+            if not parent:
+                raise HTTPException(422, "Rubrica-mãe inexistente.")
+            if row is not None and parent_id == row.id:
+                raise HTTPException(422, "Uma rubrica não pode ser mãe de si própria.")
+            if parent.parent_id:
+                raise HTTPException(422, f"«{parent.name}» já é uma sub-rubrica: escolha uma rubrica principal (um só nível).")
+            if row is not None and ctx.db.scalar(select(Category.id).where(Category.parent_id == row.id).limit(1)):
+                raise HTTPException(422, "Esta rubrica tem sub-rubricas: não pode ser também sub-rubrica.")
+        values["parent_id"] = parent_id
         return values
 
     def unique_checks(self, ctx, values, row=None):
