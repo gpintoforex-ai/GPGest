@@ -809,7 +809,7 @@ export default function App() {
           {page === "Classificação de rubricas" && manager && <Classification stores={boot.stores} />}
           {page === "Rastreabilidade" && manager && <OperationTrace stores={boot.stores} navigate={next => void navigatePage(next)} />}
           {page === "Conferência documental" && <DocumentControl stores={boot.stores} store={store} manager={manager} admin={boot.user.role === "administrador"} integration={boot.integration} navigate={navigatePage} />}
-          {page === "Obrigações e Prazos" && manager && <Obligations stores={boot.stores} store={store} categories={boot.categories} />}
+          {page === "Obrigações e Prazos" && manager && <Obligations stores={boot.stores} store={store} categories={boot.categories} admin={boot.user.role === "administrador"} />}
           {page === "Despesas por rubrica" && manager && <RubricExpenses stores={boot.stores} store={store} categories={boot.categories} admin={boot.user.role === "administrador"} integrated={integratedMode} />}
           {page === "Mapas de gestão" && manager && <ManagementMaps store={store} />}
           {page === "Entrega à contabilidade" && <AccountingDelivery admin={boot.user.role === "administrador"} company={boot.company || {}} stores={boot.stores} store={store} onEmailSettings={() => navigatePage("Email")} onSettings={() => navigatePage(manager ? "Regime de IVA" : "Organização")} />}

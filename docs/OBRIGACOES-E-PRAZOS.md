@@ -14,7 +14,7 @@ página `Obrigações e Prazos` (`frontend/src/Obligations.tsx`), API `backend/a
 | 4. Contratos (pré-aviso de denúncia, fidelização, renovação) | Concluída (migração **0083**) — ver «Contratos» |
 | 5. Viaturas (ficha, IUC e inspeção por categoria e idade) | Concluída (migração **0084**) — ver «Viaturas» |
 | 6. Obrigações fiscais com modelos de regra «a validar» | Concluída (sem migração) — ver «Modelos fiscais» |
-| 7. Alertas internos e por email (adesão do utilizador) | Por fazer: os estados e a confirmação de leitura já existem |
+| 7. Alertas internos e por email (adesão do utilizador) | Concluída (migração **0085**) — ver «Alertas e notificações» |
 | 8. Integração financeira (previsão de liquidez, orçamento) e documental (arquivo) | Por fazer |
 
 ## Regras
@@ -98,6 +98,25 @@ Botão **Modelos fiscais** (`frontend/src/FiscalTemplates.tsx`, API `backend/app
   obrigação fica com origem «regra legal», **por validar**, a regra e a fonte na nota, e alertas a 30, 15, 7 dias e no
   dia. Um modelo já criado não se duplica (`data.template`). Dias não úteis e prorrogações corrigem-se reagendando a
   ocorrência com a origem.
+
+## Alertas e notificações
+
+Botão **Alertas** (`frontend/src/ObligationAlerts.tsx`, API `backend/app/obligation_alerts.py`, tabelas
+`notification_preferences` e `obligation_notifications`).
+
+- **Internos** (só leitura): os prazos vencidos e os dos próximos 7 dias aparecem nos avisos da barra (os que o
+  utilizador ainda não confirmou como lidos; abrem a lista de prazos) e no painel «O que precisa da sua atenção»
+  do dashboard (vencidos: crítico; próximos 7 dias: aviso, com o valor previsto). Administrador e gestor.
+- **Email, com duas autorizações** (ambas desligadas por omissão): o administrador permite os lembretes para a
+  empresa e cada utilizador adere aos seus. Exige o SMTP ativo (Configurações → Email).
+  - Alertas: nos dias configurados em cada prazo (90, 60, 30, 15, 7, no dia) e uma vez depois de vencido.
+  - Destinatário: o responsável do prazo (ou da ocorrência); sem responsável, os administradores e gestores com
+    acesso ao estabelecimento. Só utilizadores da empresa, só quem aderiu.
+  - Um email por utilizador e por execução, com todos os seus alertas; o mesmo alerta nunca segue duas vezes.
+  - Falha antes do envio: repete na execução seguinte. Ligação perdida durante o envio: fica «incerto» e não se
+    repete automaticamente (como no resto do email). Histórico dos envios para o administrador.
+  - Execução a pedido («Enviar agora», administrador) e uma vez por dia pelo agendador, a partir das 8 h.
+- Auditoria: preferência de cada utilizador, autorização da empresa e cada execução.
 
 ## Painel
 

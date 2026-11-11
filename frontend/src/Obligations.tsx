@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, BadgeCheck, Car, CalendarCheck, CalendarClock, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Database, FileText, Landmark, MoreHorizontal, Plus, ShieldCheck, Tag, Umbrella } from "lucide-react";
+import { AlertTriangle, BadgeCheck, BellRing, Car, CalendarCheck, CalendarClock, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Database, FileText, Landmark, MoreHorizontal, Plus, ShieldCheck, Tag, Umbrella } from "lucide-react";
 import { StatusBadge, type BusinessTone } from "./components/BusinessUI";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { ActionMenu, DetailDrawer, ModuleTabs, PageHeader, useWorkspaceTab } from "./components/WorkspaceUI";
@@ -8,6 +8,7 @@ import { euroToCents, formatEuro } from "./utils/format";
 import Contracts from "./Contracts";
 import Vehicles from "./Vehicles";
 import FiscalTemplates from "./FiscalTemplates";
+import ObligationAlerts from "./ObligationAlerts";
 import "./Obligations.css";
 
 /**
@@ -58,7 +59,7 @@ function CategoryIcon({ category }: { category: string }) {
   return <span className="obl-icon ui-tone" data-tone={tone} aria-hidden="true"><Icon size={18} /></span>;
 }
 
-export default function Obligations({ store, stores, categories }: { store: string; stores: Row[]; categories: Row[] }) {
+export default function Obligations({ store, stores, categories, admin = false }: { store: string; stores: Row[]; categories: Row[]; admin?: boolean }) {
   const [tab, setTab] = useWorkspaceTab("obrigacoes", "visao", TABS.map(t => t.id));
   const [month, setMonth] = useState("");
   const [data, setData] = useState<Row | null>(null);
@@ -68,7 +69,7 @@ export default function Obligations({ store, stores, categories }: { store: stri
   const [version, setVersion] = useState(0);
   const [editing, setEditing] = useState<Row | null>(null);
   const [acting, setActing] = useState<{ action: string; item: Row } | null>(null);
-  const [templates, setTemplates] = useState(false);
+  const [templates, setTemplates] = useState(false), [alertsOpen, setAlertsOpen] = useState(false);
   const refresh = () => setVersion(v => v + 1);
 
   useEffect(() => {
@@ -119,7 +120,8 @@ export default function Obligations({ store, stores, categories }: { store: stri
 
   return <div className="obl">
     <PageHeader title="Obrigações, Contratos e Prazos" description="Obrigações fiscais, renovações de contratos, IUC, inspeções, seguros, licenças e outros prazos da empresa."
-      actions={<><ActionButton type="button" onClick={() => setTemplates(true)}><Landmark size={16} aria-hidden="true" />Modelos fiscais</ActionButton>
+      actions={<><ActionButton type="button" onClick={() => setAlertsOpen(true)}><BellRing size={16} aria-hidden="true" />Alertas</ActionButton>
+        <ActionButton type="button" onClick={() => setTemplates(true)}><Landmark size={16} aria-hidden="true" />Modelos fiscais</ActionButton>
         <ActionButton type="button" className="primary" onClick={() => setEditing({})}><Plus size={16} aria-hidden="true" />Novo prazo</ActionButton></>} />
     {error && <Notice tone="error">{error}</Notice>}
     {notice && <Notice tone="success">{notice}</Notice>}
@@ -166,6 +168,7 @@ export default function Obligations({ store, stores, categories }: { store: stri
     {editing && <ObligationDrawer value={editing} data={data} stores={stores} categories={categories} store={store} onClose={() => setEditing(null)}
       onSaved={message => { setEditing(null); setNotice(message); refresh(); }} actions={actions} />}
     {acting && <ActionDialog {...acting} onClose={() => setActing(null)} onConfirm={body => void act(acting.action, acting.item, body)} />}
+    {alertsOpen && <ObligationAlerts admin={admin} onClose={() => setAlertsOpen(false)} />}
     {templates && <FiscalTemplates users={data?.users || []} onClose={() => setTemplates(false)} onCreated={message => { setTemplates(false); setNotice(message); refresh(); }} />}
   </div>;
 }

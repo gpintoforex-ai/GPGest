@@ -2226,3 +2226,28 @@ class Vehicle(Base):
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class NotificationPreference(Base):
+    """Preferência de cada utilizador: receber por email os alertas dos seus prazos (adesão; por omissão não)."""
+    __tablename__ = "notification_preferences"
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    obligations_email: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class ObligationNotification(Base):
+    """Alerta de prazo enviado (ou tentado) a um utilizador. A chave única impede repetir o mesmo alerta:
+    `alert_key` é o número de dias antes («30», «7», «0») ou «vencido». Falhado antes do envio pode repetir-se;
+    incerto (ligação perdida durante o envio) nunca se repete automaticamente."""
+    __tablename__ = "obligation_notifications"
+    __table_args__ = (UniqueConstraint("occurrence_id", "user_id", "alert_key", "channel"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    occurrence_id: Mapped[str] = mapped_column(ForeignKey("obligation_occurrences.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    alert_key: Mapped[str] = mapped_column(String(20))
+    channel: Mapped[str] = mapped_column(String(20), default="email", server_default="email")
+    # enviado, falhou ou incerto.
+    status: Mapped[str] = mapped_column(String(20))
+    error: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

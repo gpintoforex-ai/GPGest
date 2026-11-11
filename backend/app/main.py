@@ -2455,7 +2455,9 @@ register_purchase_process_routes(app, current, authorize, scope)
 
 from .payment_terms import router as payment_terms_router
 app.include_router(payment_terms_router)
-# Antes das obrigações: «/api/obligations/fiscal-templates» não pode ser lido como «/api/obligations/{id}».
+# Antes das obrigações: «/api/obligations/fiscal-templates» e «…/notifications» não podem ser lidos como «/api/obligations/{id}».
+from .obligation_alerts import router as obligation_alerts_router
+app.include_router(obligation_alerts_router)
 from .fiscal_templates import router as fiscal_templates_router
 app.include_router(fiscal_templates_router)
 from .obligations import router as obligations_router

@@ -77,6 +77,11 @@ def start_scheduler():
             except Exception:
                 pass
             try:
+                from .obligation_alerts import scheduled_tick as obligation_alerts_tick
+                obligation_alerts_tick()
+            except Exception:
+                pass
+            try:
                 from .order_cycle import scheduled_tick as order_cycle_tick
                 order_cycle_tick()
             except Exception:

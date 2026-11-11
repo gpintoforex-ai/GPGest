@@ -113,7 +113,15 @@ def alerts(store_id: str = "", user=Depends(current), db: Session = Depends(db_s
             rows = db.scalars(query.order_by(ArchiveDocument.received_at.desc(), ArchiveDocument.id).limit(ITEMS))
             groups.append({"id":"documentos_rever","label":"Documentos do arquivo por rever","count":count,"tone":"warning","page":"Todos os documentos","params":{},"items":[row.document_number or row.original_name or "Documento" for row in rows]})
 
-    for read in (customer_orders, purchases, expiring_lots, pending_documents):
+    def deadlines():
+        # Obrigações e Prazos: vencidos e próximos 7 dias ainda não lidos por este utilizador.
+        from .obligation_alerts import alert_group
+        group = alert_group(db, user, stores)
+        if group:
+            group["items"] = group["items"][:ITEMS]
+            groups.append(group)
+
+    for read in (customer_orders, purchases, expiring_lots, pending_documents, deadlines):
         section(read)
     order = {"danger": 0, "warning": 1}
     groups.sort(key=lambda g: order.get(g["tone"], 2))

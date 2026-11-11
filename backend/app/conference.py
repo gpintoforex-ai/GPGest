@@ -247,7 +247,8 @@ def save_automation(data: SettingsInput, user=Depends(current), db: Session = De
     if not row:
         row = AutomationSettings(id="default", revision=0)
         db.add(row)
-    row.data, row.revision = json.dumps(values), (row.revision or 0) + 1
+    # Junta à configuração existente (outras opções guardadas na mesma linha, como os alertas por email).
+    row.data, row.revision = json.dumps({**json.loads(row.data or "{}"), **values}), (row.revision or 0) + 1
     enabled = values["classification"]["enabled"] or values["budget_links"]["enabled"]
     row.authorized_by = user.id if enabled else None
     record(db, user, "automatizacoes_configuradas", "automation", {"antes": before, "depois": values})

@@ -758,6 +758,16 @@ def operations_block(db, stores, period, costs_allowed):
     return {"status": "ok", "items": items}
 
 
+def deadline_notes(db, user, stores):
+    """Prazos das Obrigações (vencidos e próximos 7 dias) no painel; um erro não impede o resto do dashboard."""
+    try:
+        from .obligation_alerts import attention_notes
+        return attention_notes(db, user, stores)
+    except Exception:
+        db.rollback()
+        return []
+
+
 def attention(sales, treasury, expenses, operations, mode, period_label):
     """Observações com regras verificáveis: facto, valores, impacto, ação e destino."""
     notes = []
@@ -879,5 +889,5 @@ def overview(request: Request, start: date | None = None, end: date | None = Non
         "permissions": {"finance": finance, "costs": costs_allowed, "article_costs": can_view_cost},
         "sales": sales, "treasury": treasury, "expenses": expenses, "margin": margin, "operations": operations,
         "vat": vat, "top_articles": top_articles,
-        "attention": attention(sales, treasury, expenses if costs_allowed else None, operations, mode, label),
+        "attention": attention(sales, treasury, expenses if costs_allowed else None, operations, mode, label) + deadline_notes(db, user, stores),
     }
