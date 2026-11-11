@@ -65,7 +65,7 @@ export default function BankStatements({ accounts, manager }: { accounts: Row[];
       {selected && <BankOverview accounts={accounts} fixedAccount={selected} canWrite={manager} />}
       {latest && <p>Saldo bancário do último extrato: <strong>{money(latest.balance_cents, accounts.find(a => a.id === selected)?.currency)}</strong> · Referência: {day(latest.movement_date)}. Pode não corresponder ao saldo atual.</p>}
       {manager && <div style={{ margin: "16px 0" }}>
-        <label>Extrato bancário (.xlsx, .xls, .csv ou .xml)<input key={selected} type="file" accept=".xlsx,.xls,.csv,.txt,.xml" disabled={busy} onChange={event => { setFile(event.target.files?.[0] || null); setDriveFile(null); setPreview(null); setMapping(null); setColumns([]); setError(""); setMessage(""); }} /></label>
+        <label>Extrato bancário (.xlsx, .xls, .csv, .xml ou PDF do BPI)<input key={selected} type="file" accept=".xlsx,.xls,.csv,.txt,.xml,.pdf" disabled={busy} onChange={event => { setFile(event.target.files?.[0] || null); setDriveFile(null); setPreview(null); setMapping(null); setColumns([]); setError(""); setMessage(""); }} /></label>
         <p><small>BPI Net Empresas e Viva Wallet nos formatos originais; CSV/Excel com mapeamento de colunas; XML CAMT.053 com conta e moeda identificadas. A pré-visualização não importa movimentos.</small></p>
         <ActionButton disabled={!file || busy} onClick={() => upload(false, null)}>{busy ? "A processar…" : "Pré-visualizar extrato"}</ActionButton>
         {selected && <DriveImportFiles search={driveSearch} title="Extratos no Google Drive" actionLabel="Pré-visualizar" disabled={busy}

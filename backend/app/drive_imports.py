@@ -43,12 +43,16 @@ KINDS = {
         ),
     },
     "statement": {
-        "extensions": (".xlsx", ".xls"),
+        "extensions": (".xlsx", ".xls", ".pdf"),
         "mimes": (
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "application/vnd.ms-excel",
+            "application/pdf",
             "application/octet-stream",
         ),
+        # A pasta do Drive também tem faturas em PDF: um PDF só é extrato se o nome o disser
+        # (o BPI exporta «Extrato_Conta_AAAA-MM-DD.pdf»).
+        "pdf_names": ("extrato", "extracto", "statement"),
     },
 }
 MAX_LISTED = 100
@@ -58,7 +62,7 @@ MAX_LISTED = 100
 CACHE_SECONDS = 600
 CACHE = {}
 CACHE_LOCK = threading.Lock()
-STATEMENT_SOURCES = ("bpi_xlsx", "viva_wallet_xls")
+STATEMENT_SOURCES = ("bpi_xlsx", "viva_wallet_xls", "bpi_pdf")
 
 
 def drive_configured(db):
@@ -69,7 +73,12 @@ def drive_configured(db):
 
 
 def matches(kind, name):
-    return (name or "").lower().endswith(KINDS[kind]["extensions"])
+    lower = (name or "").lower()
+    if not lower.endswith(KINDS[kind]["extensions"]):
+        return False
+    if lower.endswith(".pdf"):
+        return any(word in lower for word in KINDS[kind].get("pdf_names", ()))
+    return True
 
 
 def list_files(db, kind, roots=None, subfolders=True):

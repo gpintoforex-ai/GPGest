@@ -230,6 +230,16 @@ def statement_account(db, user, account_id):
     return account
 
 
+def pdf_message(summary):
+    def euros(value):
+        units, rest = divmod(abs(value), 100)
+        return ("-" if value < 0 else "") + f"{units:,}".replace(",", ".") + f",{rest:02d} €"
+    start, end = ("/".join(reversed(day.split("-"))) for day in summary["period"])
+    return (f"Extrato PDF de {start} a {end}: {summary['count']} movimentos lidos do texto do PDF; saldo anterior "
+            f"{euros(summary['opening_cents'])} + movimentos = saldo final {euros(summary['closing_cents'])}, validado linha a linha. "
+            "Confira a pré-visualização antes de confirmar.")
+
+
 def import_statement(db, user, account, data, filename, confirm, mapping=""):
     from .bpi_import import parse_bpi
     from .viva_import import parse_viva
@@ -237,16 +247,23 @@ def import_statement(db, user, account, data, filename, confirm, mapping=""):
     account_id = account.id
     details = {}
     generic = False
+    pdf_summary = None
     if len(mapping) > 20000:
         raise HTTPException(422, "Mapeamento demasiado grande.")
     try:
         name = (filename or "").lower()
-        is_viva = not data.startswith(b"PK")
-        if mapping or name.endswith((".csv", ".txt", ".xml")):
+        # Extrato BPI em PDF: lido pelo texto, só aceite com os saldos validados linha a linha (bpi_pdf_import).
+        is_pdf = data[:5] == b"%PDF-"
+        is_viva = not data.startswith(b"PK") and not is_pdf
+        if not is_pdf and (mapping or name.endswith((".csv", ".txt", ".xml"))):
             generic = True
         if not generic:
             try:
-                source, rows = parse_viva(data) if is_viva else parse_bpi(data)
+                if is_pdf:
+                    from .bpi_pdf_import import parse_bpi_pdf
+                    source, rows, pdf_summary = parse_bpi_pdf(data)
+                else:
+                    source, rows = parse_viva(data) if is_viva else parse_bpi(data)
             except ValueError:
                 if data.startswith(b"PK"):
                     generic = True
@@ -277,7 +294,7 @@ def import_statement(db, user, account, data, filename, confirm, mapping=""):
             source = "mapped:" + account.id
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    format_name = details.get("format") if generic else "Viva Wallet" if is_viva else "BPI Net Empresas"
+    format_name = details.get("format") if generic else "BPI (extrato PDF)" if is_pdf else "Viva Wallet" if is_viva else "BPI Net Empresas"
     existing = db.scalars(
         select(BankTransaction).where(BankTransaction.account_id == account_id)
     ).all()
@@ -315,9 +332,9 @@ def import_statement(db, user, account, data, filename, confirm, mapping=""):
         batch = DocumentImport(
             store_id=account.store_id,
             user_id=user.id,
-            filename=(filename or ("extrato.xls" if is_viva else "extrato.xlsx")).replace("\\", "/").split("/")[-1][:200],
+            filename=(filename or ("extrato.pdf" if is_pdf else "extrato.xls" if is_viva else "extrato.xlsx")).replace("\\", "/").split("/")[-1][:200],
             fingerprint=hashlib.sha256(data).hexdigest(),
-            source="bank_mapped" if generic else "viva_wallet_xls" if is_viva else "bpi_xlsx",
+            source="bank_mapped" if generic else "bpi_pdf" if is_pdf else "viva_wallet_xls" if is_viva else "bpi_xlsx",
             file_ciphertext=cipher().encrypt(data),
         )
         db.add(batch)
@@ -334,9 +351,9 @@ def import_statement(db, user, account, data, filename, confirm, mapping=""):
         record(
             db,
             user,
-            "extrato_mapeado_importado" if generic else "extrato_viva_importado" if is_viva else "extrato_bpi_importado",
+            "extrato_mapeado_importado" if generic else "extrato_bpi_pdf_importado" if is_pdf else "extrato_viva_importado" if is_viva else "extrato_bpi_importado",
             account_id,
-            {"novos": len(new), "duplicados": len(rows) - len(new)},
+            {"novos": len(new), "duplicados": len(rows) - len(new), **({"pdf": pdf_summary} if pdf_summary else {})},
             account.store_id,
         )
         db.commit()
@@ -349,7 +366,8 @@ def import_statement(db, user, account, data, filename, confirm, mapping=""):
         "import_id": batch.id if confirm else None,
         "original_url": f"/api/reconciliation/accounts/{account.id}/imports/{batch.id}/original" if confirm and new else None,
         "format": format_name,
-        "warnings": ["Confirme a conta, moeda, separador decimal e ordem das linhas. Os saldos ausentes permanecem desconhecidos; não são substituídos por zero."] if generic else [
+        "pdf_summary": pdf_summary,
+        "warnings": [pdf_message(pdf_summary)] if pdf_summary else ["Confirme a conta, moeda, separador decimal e ordem das linhas. Os saldos ausentes permanecem desconhecidos; não são substituídos por zero."] if generic else [
             "O extrato Viva Wallet não identifica a conta de origem nem a moeda. "
             "Confirme que pertence à conta selecionada e que os valores estão em euros."
         ] if is_viva else [],

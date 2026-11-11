@@ -6,6 +6,7 @@ import httpx
 from app.models import BankAccount, BankTransaction, Register
 from saft_fixtures import saft
 from sqlalchemy import func, select
+from test_bpi_pdf_import import statement
 from test_saft_sales import saft_case  # noqa: F401
 from test_viva_import import sample
 
@@ -23,6 +24,8 @@ class FakeDrive:
             "notes": ("notas.txt", "application/octet-stream", "root", b"x"),
             "pdf": ("fatura.pdf", "application/pdf", "root", b"%PDF"),
             "viva": ("ExtratoWallet_202601.xls", "application/vnd.ms-excel", "sub", sample()),
+            # Extrato BPI em PDF (dados fictícios); a «fatura.pdf» acima nunca é proposta como extrato.
+            "bpi-pdf": ("Extrato_Conta_2026-01-05.pdf", "application/pdf", "sub", statement()),
             "alheio": ("alheio.xml", "text/xml", "outside", saft()),
         }
 
@@ -126,7 +129,7 @@ def test_bank_statement_preview_and_confirm_from_drive(setup, monkeypatch):
         db.flush()
         account_id = account.id
     files = client.get(f"/api/accounts/{account_id}/drive-statements").json()["files"]
-    assert [(item["name"], item["imported"]) for item in files] == [("ExtratoWallet_202601.xls", False)]
+    assert [(item["name"], item["imported"]) for item in files] == [("Extrato_Conta_2026-01-05.pdf", False), ("ExtratoWallet_202601.xls", False)]
 
     path = f"/api/accounts/{account_id}/import-statement/drive"
     preview = client.post(path + "?confirm=false", json={"drive_id": "viva"})
@@ -136,8 +139,28 @@ def test_bank_statement_preview_and_confirm_from_drive(setup, monkeypatch):
         assert db.scalar(select(func.count()).select_from(BankTransaction)) == 0
     assert client.post(path + "?confirm=true", json={"drive_id": "viva"}).json()["new_count"] == 3
     files = client.get(f"/api/accounts/{account_id}/drive-statements").json()["files"]
-    assert files[0]["imported"] is True
+    assert {item["name"]: item["imported"] for item in files} == {"Extrato_Conta_2026-01-05.pdf": False, "ExtratoWallet_202601.xls": True}
     assert client.post(path, json={"drive_id": "saft-jan"}).status_code == 422
+
+
+def test_bpi_pdf_statement_from_drive(setup, monkeypatch):
+    client, ids, factory = setup
+    connect(monkeypatch)
+    with factory.begin() as db:
+        account = BankAccount(store_id=db.get(Register, ids["registers"][0]).store_id, name="BPI", bank="BPI", iban_last4="0001")
+        db.add(account)
+        db.flush()
+        account_id = account.id
+    path = f"/api/accounts/{account_id}/import-statement/drive"
+    preview = client.post(path + "?confirm=false", json={"drive_id": "bpi-pdf"})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["format"] == "BPI (extrato PDF)" and preview.json()["new_count"] == 5
+    assert client.post(path + "?confirm=true", json={"drive_id": "bpi-pdf"}).json()["new_count"] == 5
+    files = client.get(f"/api/accounts/{account_id}/drive-statements").json()["files"]
+    assert {item["name"]: item["imported"] for item in files}["Extrato_Conta_2026-01-05.pdf"] is True
+    # Uma fatura em PDF não é proposta nem lida como extrato.
+    assert "fatura.pdf" not in {item["name"] for item in files}
+    assert client.post(path + "?confirm=false", json={"drive_id": "pdf"}).status_code == 422
 
 
 def test_pending_notice_counts_new_files_uses_cache_and_updates_after_import(saft_case, monkeypatch):  # noqa: F811
@@ -148,7 +171,7 @@ def test_pending_notice_counts_new_files_uses_cache_and_updates_after_import(saf
     monkeypatch.setattr(drive, "get", lambda url, params: calls.append(url) or original(url, params))
 
     first = client.get("/api/drive/pending-imports").json()
-    assert first == {"configured": True, "pending": {"statement": 1, "saft": 2}}
+    assert first == {"configured": True, "pending": {"statement": 2, "saft": 2}}
     requests = len(calls)
     assert requests
     # Verificações seguintes usam a listagem guardada: nenhum pedido novo à Google.
