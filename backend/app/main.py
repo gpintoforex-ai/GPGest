@@ -2466,6 +2466,8 @@ from .obligations import router as obligations_router
 app.include_router(obligations_router)
 from .budget import router as budget_router
 app.include_router(budget_router)
+from .rubric_nature import router as rubric_nature_router
+app.include_router(rubric_nature_router)
 from .operation_trace import router as operation_trace_router
 app.include_router(operation_trace_router)
 from .classification import router as classification_router

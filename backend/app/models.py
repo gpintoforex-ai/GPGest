@@ -546,6 +546,14 @@ class Category(Base):
     vat_deduction_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Rubrica inativa: mantém o histórico, mas não é proposta em novos registos.
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    # Natureza financeira (vazio = por definir: comportamento anterior) e em que análises entra. Alterar só com
+    # simulação e aprovação (rubric_nature.py); os documentos e movimentos não mudam.
+    nature: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    in_operating_costs: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    in_purchases: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    in_treasury: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    in_fiscal: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    in_payment_budget: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
 
 class LocalPaymentMethod(Base):

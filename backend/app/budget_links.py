@@ -97,8 +97,9 @@ def shares(db, stores, year):
     from .settings import vat_settings
     regime = vat_settings(db)["vat_regime"]
     percents = {c.id: c.vat_deduction_percent for c in db.scalars(select(Category))}
+    from .rubric_nature import filter_shares, flags
     result, credits = {}, []
-    for stamp, identifier, parts in cost_documents(db, stores, date(year, 1, 1), date(year, 12, 31)):
+    for stamp, identifier, parts in filter_shares(cost_documents(db, stores, date(year, 1, 1), date(year, 12, 31)), flags(db), "in_payment_budget"):
         kind, sid = source_key(identifier)
         for category, base, tax in parts:
             cost = base + (tax - deductible(tax, category, percents) if regime == "normal" else tax)

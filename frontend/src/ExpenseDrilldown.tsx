@@ -46,7 +46,7 @@ export default function ExpenseDrilldown({ context, initial, onClose }: { contex
             columns={byDocument ? ["Data", "Documento ou movimento", "Entidade", "Origem", "Valor imputado"] : ["Rubrica", "Valor imputado"]}
             rows={rows.map(row => {
               const trigger = <DrilldownTrigger onOpen={() => open({ label: row.label, expected: row.amount_cents,
-                params: byDocument ? { ...step.params, document_id: row.id } : { category: row.id } })}>{row.label}</DrilldownTrigger>;
+                params: byDocument ? { ...step.params, document_id: row.id } : { ...step.params, category: row.id } })}>{row.label}</DrilldownTrigger>;
               return { id: row.id, cells: byDocument ? [day(row.date), trigger, row.entity, row.source, formatEuro(row.amount_cents)] : [trigger, formatEuro(row.amount_cents)] };
             })} />
           {count > 25 && <div className="drilldown-pagination" aria-label="Paginação do detalhe">

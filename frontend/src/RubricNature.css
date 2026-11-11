@@ -1,0 +1,27 @@
+/* Natureza financeira das rubricas. Só tokens do design system. */
+.rn { display: grid; gap: 14px; }
+.rn-intro { margin: 0; color: var(--color-muted); max-width: 90ch; }
+.rn-card { display: grid; gap: 10px; min-width: 0; padding: 14px 16px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); color: var(--color-text); }
+.rn-card h3 { display: flex; gap: 6px; align-items: center; margin: 0; font-size: 1rem; }
+.rn-card h4 { margin: 4px 0 0; font-size: 0.95rem; }
+.rn-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.rn-grid { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.rn-grid th, .rn-grid td { padding: 7px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--color-border); }
+.rn-grid th { font-size: 12px; font-weight: 700; color: var(--color-muted); }
+.rn-grid td small { display: block; color: var(--color-muted); font-size: 12px; }
+.rn-grid td .status-badge { margin-top: 3px; }
+.rn-grid tr[data-changed] td { background: var(--surface-secondary); }
+.rn-grid .rn-flag { text-align: center; }
+.rn-grid select { min-width: 170px; }
+.rn-diff { font-weight: 700; }
+.rn-hint { margin: 0; color: var(--color-muted); font-size: 12.5px; }
+.rn-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.rn-suggestions, .rn-changes { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.rn-suggestions li { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 10px; }
+.rn-suggestions li > div { display: grid; gap: 2px; min-width: 0; flex: 1 1 260px; }
+.rn-suggestions small { color: var(--color-muted); font-size: 12px; }
+.rn-chip { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--color-text); background: var(--surface-secondary); border: 1px solid var(--color-border); }
+.rn-preserved { display: flex; gap: 6px; align-items: flex-start; margin: 0; color: var(--color-muted); font-size: 12.5px; }
+.rn-apply { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.rn-apply label { display: grid; gap: 4px; flex: 1 1 320px; }
+.rn-apply textarea { width: 100%; }

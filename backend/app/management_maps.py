@@ -185,13 +185,20 @@ def costs_revenues(start: date, end: date, group: str = "month", store_id: str =
     costs = defaultdict(lambda: defaultdict(int))
     # IVA das compras por período (os mesmos documentos dos custos): suportado e dedutível estimado.
     vat_input, vat_deductible = defaultdict(int), defaultdict(int)
+    from .rubric_nature import flag, flags
+    table = flags(db)
+    excluded = defaultdict(int)
     for day, _, shares in cost_documents(db, stores, start, end):
         key = period_key(day, group)
         periods.add(key)
         for category, base, tax in shares:
             # Regime normal: base + IVA não dedutível; restantes regimes: o IVA também é custo.
             cost = base + (tax - deductible(tax, category, percents) if regime == "normal" else tax)
-            costs[category][key] += cost
+            # Custos: rubricas de custos operacionais ou de compras; pagamentos ao Estado e movimentos financeiros ficam de fora.
+            if flag(table, category, "in_operating_costs") or flag(table, category, "in_purchases"):
+                costs[category][key] += cost
+            else:
+                excluded[category] += cost
             vat_input[key] += tax
             vat_deductible[key] += deductible(tax, category, percents) if regime == "normal" else 0
     ordered = sorted(periods)
@@ -214,7 +221,11 @@ def costs_revenues(start: date, end: date, group: str = "month", store_id: str =
         "totals": {"revenue_cents": sum(revenue.values()), "costs_cents": sum(total_costs.values()),
                    "margin_cents": sum(revenue.values()) - sum(total_costs.values())},
         "revenue_source": source, "revenue_missing_documents": missing,
+        "excluded": [{"category_id": c or None, "category_name": categories[c].name if c in categories else "Por classificar", "total_cents": v}
+                     for c, v in sorted(excluded.items(), key=lambda item: -item[1]) if v],
         "notes": [
+            *(["Fora dos custos pela natureza da rubrica (obrigações fiscais ou movimentos financeiros): "
+               + ", ".join(f"{categories[c].name if c in categories else 'Por classificar'}" for c, v in excluded.items() if v) + "."] if any(excluded.values()) else []),
             *([f"Atenção: {missing} documento(s) de venda do ERP sem base tributável não entram nos proveitos. Volte a sincronizar as vendas do período."] if missing else []),
             ("Proveitos: vendas Wintouch líquidas de IVA (anulados excluídos; devoluções subtraem)" if source == "erp"
              else "Proveitos: faturação SAF-T líquida de IVA") + ", pela data do documento. Custos: todos os documentos de compra pela data do documento, incluindo faturas do e-Fatura ainda não lançadas (com a rubrica do fornecedor), e os custos sem documento (impostos, vencimentos, encargos) registados na reconciliação bancária com rubrica, pela data do movimento.",

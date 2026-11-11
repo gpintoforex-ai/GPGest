@@ -229,8 +229,10 @@ def line_view(line, year, categories, centers, regime, month):
 
 def actual_costs(db, stores, year, regime, percents):
     """{rubrica: [12 meses]} do realizado (mesmo critério e documentos dos mapas de gestão)."""
+    from .rubric_nature import filter_shares, flags
     result = defaultdict(lambda: [0] * 12)
-    for stamp, _, shares in cost_documents(db, stores, date(year, 1, 1), date(year, 12, 31)):
+    # Só as rubricas que entram no orçamento de pagamentos (natureza da rubrica).
+    for stamp, _, shares in filter_shares(cost_documents(db, stores, date(year, 1, 1), date(year, 12, 31)), flags(db), "in_payment_budget"):
         month = int(stamp[5:7]) - 1
         for category, base, tax in shares:
             result[category or UNCLASSIFIED][month] += base + (tax - deductible(tax, category, percents) if regime == "normal" else tax)

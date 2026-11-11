@@ -93,6 +93,7 @@ const EmailSettings = lazy(() => import("./EmailSettings"));
 const SaftSales = lazy(() => import("./SaftSales"));
 const Deposits = lazy(() => import("./Deposits"));
 const Liquidity = lazy(() => import("./Liquidity"));
+const RubricNature = lazy(() => import("./RubricNature"));
 const IntegrationSettings = lazy(() => import("./IntegrationSettings"));
 const CashSheet = lazy(() => import("./CashSheet"));
 const LocalCashSheet = lazy(() => import("./LocalCashSheet"));
@@ -930,7 +931,10 @@ export default function App() {
               </div></>},{id:"erp",label:"Configuração ERP",content:<>{manager && <IntegrationSettings boot={boot} reload={reload} />}</>}]} />
             </>
           )}
-          {page === "Rubricas" && <TablePage tableKey="categories" context={tableContext} active={activePage === page} onChanged={() => reload(["bootstrap"])} />}
+          {page === "Rubricas" && (manager ? <TaskWorkspace name="rubricas" label="Áreas das rubricas" items={[
+            { id: "lista", label: "Rubricas", content: <TablePage tableKey="categories" context={tableContext} active={activePage === page} onChanged={() => reload(["bootstrap"])} /> },
+            { id: "natureza", label: "Natureza financeira", content: <RubricNature /> },
+          ]} /> : <TablePage tableKey="categories" context={tableContext} active={activePage === page} onChanged={() => reload(["bootstrap"])} />)}
           {page === "Caixas" && <TablePage tableKey="registers" context={tableContext} active={activePage === page} store={store} onChanged={() => reload(["bootstrap"])} />}
           {page === "Meios de pagamento" && (
             <PaymentMethods

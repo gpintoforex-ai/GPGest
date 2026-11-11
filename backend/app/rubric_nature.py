@@ -1,0 +1,343 @@
+"""Natureza financeira das rubricas e as quatro vistas de saídas: custos operacionais, compras e investimentos,
+obrigações fiscais e saídas de tesouraria.
+
+Cada rubrica diz em que análises entra (custos operacionais, análise de compras, saídas de tesouraria, obrigações
+fiscais, orçamento de pagamentos). Os documentos e movimentos nunca mudam: a natureza só decide em que vista o
+valor aparece. Alterar exige simulação (antes/depois nos últimos 12 meses e registos afetados) e aprovação de um
+administrador com motivo; fica na auditoria. As sugestões (por exemplo, «IVA» como obrigação fiscal) nunca se aplicam
+sozinhas.
+
+A previsão de liquidez, os extratos, a reconciliação bancária e os dados do ERP não dependem desta configuração.
+"""
+
+import hashlib
+import json
+import unicodedata
+from collections import defaultdict
+from datetime import date, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from .access import authorize, current, record, scope
+from .db import db_session
+from .schemas import Strict
+
+router = APIRouter()
+
+NATURES = {
+    "": "Por definir",
+    "operacional": "Custo operacional",
+    "pessoal": "Custo com pessoal",
+    "mercadorias": "Compra de mercadorias",
+    "investimento": "Investimento",
+    "fiscal": "Obrigação fiscal",
+    "financeiro": "Movimento financeiro",
+}
+FLAGS = ("in_operating_costs", "in_purchases", "in_treasury", "in_fiscal", "in_payment_budget")
+FLAG_LABELS = {
+    "in_operating_costs": "Custos e despesas operacionais",
+    "in_purchases": "Análise de compras e investimentos",
+    "in_treasury": "Saídas de tesouraria",
+    "in_fiscal": "Obrigações fiscais",
+    "in_payment_budget": "Orçamento de pagamentos",
+}
+# Rubrica sem configuração (ou parcela sem rubrica): o comportamento anterior.
+DEFAULTS = {"in_operating_costs": True, "in_purchases": False, "in_treasury": True, "in_fiscal": False, "in_payment_budget": True}
+# Proposta de indicadores ao escolher a natureza (o administrador pode ajustar antes de simular).
+PRESETS = {
+    "": DEFAULTS,
+    "operacional": DEFAULTS,
+    "pessoal": DEFAULTS,
+    "mercadorias": {**DEFAULTS, "in_operating_costs": False, "in_purchases": True},
+    "investimento": {**DEFAULTS, "in_operating_costs": False, "in_purchases": True},
+    "fiscal": {**DEFAULTS, "in_operating_costs": False, "in_fiscal": True},
+    "financeiro": {**DEFAULTS, "in_operating_costs": False},
+}
+VIEWS = {
+    "operating": ("Custos e despesas operacionais", "in_operating_costs"),
+    "purchases": ("Compras e investimentos", "in_purchases"),
+    "fiscal": ("Obrigações fiscais", "in_fiscal"),
+    "treasury": ("Saídas de tesouraria", "in_treasury"),
+}
+ORIGINS = {
+    "operating": "Documentos de compra e custos sem documento registados no banco, nas rubricas que entram nos custos operacionais. "
+                 "Regime normal: base tributável + IVA não dedutível estimado; restantes regimes: total com IVA.",
+    "purchases": "Documentos de compra nas rubricas de análise de compras e investimentos (mercadorias, equipamento), com o mesmo "
+                 "critério de valor. O custo das mercadorias vendidas continua a vir das margens.",
+    "fiscal": "Pagamentos ao Estado: registos bancários e documentos nas rubricas de obrigações fiscais, pelo valor pago. "
+              "IVA liquidado, suportado e dedutível estimado: os mesmos documentos do Mapa de IVA.",
+    "treasury": "Pagamentos efetivos pela data do pagamento: saídas de caixa a fornecedores, despesas e saídas, e pagamentos e "
+                "encargos do livro bancário, nas rubricas que entram nas saídas de tesouraria. Exclui transferências internas e estornos.",
+}
+
+
+def fold(text):
+    return "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c)).casefold().strip()
+
+
+def suggestion(category):
+    """Sugestão de natureza para rubricas por definir (só proposta; nunca aplicada sozinha)."""
+    if category.nature:
+        return None
+    name = fold(category.name)
+    words = name.replace("-", " ").replace("/", " ").split()
+    if "iva" in words and not any(w in words for w in ("dedutivel", "suportado")):
+        return {"nature": "fiscal", **PRESETS["fiscal"],
+                "reason": "Pagamentos de IVA ao Estado são uma obrigação fiscal: o IVA liquidado nas vendas já foi recebido do cliente e não é custo."}
+    if "mercador" in name:
+        return {"nature": "mercadorias", **PRESETS["mercadorias"],
+                "reason": "Compras de mercadoria são analisadas como compras; o custo das mercadorias vendidas vem das margens."}
+    return None
+
+
+def flags(db, overrides=None):
+    """{rubrica: {indicador: bool}} com as alterações em simulação sobrepostas."""
+    from .models import Category
+    table = {row.id: {name: getattr(row, name) for name in FLAGS} for row in db.scalars(select(Category))}
+    for key, values in (overrides or {}).items():
+        table[key] = {**table.get(key, DEFAULTS), **{name: values[name] for name in FLAGS if name in values}}
+    return table
+
+
+def flag(table, category, name):
+    return table.get(category or "", DEFAULTS)[name]
+
+
+def treasury_outflows(db, stores, start, end):
+    """[(data, id, rubrica, valor)] dos pagamentos efetivos (os mesmos de billing_conference.payment_list)."""
+    from .billing_conference import bounds, local_day, movement_store
+    from .models import BankAccount, BankBookEntry, Movement, Register
+    first, last = bounds(str(start), str(end))
+    registers = {row.id: row for row in db.scalars(select(Register))}
+    result = []
+    for move in db.scalars(select(Movement).where(
+            Movement.direction == -1, Movement.kind.in_(("fornecedor", "despesa", "saida_caixa")), Movement.reversed_by.is_(None),
+            Movement.reversal_of.is_(None), Movement.transfer_id.is_(None), Movement.occurred_at >= first, Movement.occurred_at < last)):
+        if movement_store(db, move, registers)[0] in stores:
+            result.append((local_day(move.occurred_at), "move:" + move.id, move.category_id or "", move.amount_cents))
+    accounts = [a.id for a in db.scalars(select(BankAccount).where(BankAccount.store_id.in_(stores)))]
+    reversed_ids = set(db.scalars(select(BankBookEntry.original_id).where(BankBookEntry.original_id.is_not(None))))
+    for entry in db.scalars(select(BankBookEntry).where(
+            BankBookEntry.account_id.in_(accounts), BankBookEntry.kind.in_(("payment", "fee")),
+            BankBookEntry.movement_date >= str(start), BankBookEntry.movement_date <= str(end))) if accounts else []:
+        if entry.id not in reversed_ids:
+            result.append((entry.movement_date, "bank:" + entry.id, entry.category_id or "", abs(entry.amount_cents)))
+    return result
+
+
+def collect(db, stores, start, end, treasury=True):
+    """Dados de origem de um período, lidos uma vez e reutilizados pelas várias vistas."""
+    from .management_maps import cost_documents
+    documents = [(day, identifier, category or "", base, tax) for day, identifier, shares in cost_documents(db, stores, start, end)
+                 for category, base, tax in shares]
+    return {"documents": documents, "treasury": treasury_outflows(db, stores, start, end) if treasury else []}
+
+
+def cost_value(category, base, tax, regime, percents):
+    from .management_maps import deductible
+    return base + (tax - deductible(tax, category, percents) if regime == "normal" else tax)
+
+
+def contributions(data, view, regime, percents, table):
+    """(data, id, rubrica, base, IVA, valor) de uma vista. «costs» = custos operacionais ou compras (mapas de
+    custos e proveitos); «budget» = orçamento de pagamentos; «all» = sem filtro."""
+    if view == "treasury":
+        for day, identifier, category, amount in data["treasury"]:
+            if flag(table, category, "in_treasury"):
+                yield day, identifier, category, amount, 0, amount
+        return
+    for day, identifier, category, base, tax in data["documents"]:
+        if view == "fiscal":
+            if flag(table, category, "in_fiscal"):
+                yield day, identifier, category, base, tax, base + tax
+            continue
+        if view == "costs":
+            included = flag(table, category, "in_operating_costs") or flag(table, category, "in_purchases")
+        elif view == "budget":
+            included = flag(table, category, "in_payment_budget")
+        elif view == "all":
+            included = True
+        else:
+            included = flag(table, category, VIEWS[view][1])
+        if included:
+            yield day, identifier, category, base, tax, cost_value(category, base, tax, regime, percents)
+
+
+def filter_shares(documents, table, name):
+    """Filtra [(data, id, [(rubrica, base, IVA)])] (formato de cost_documents) por um indicador."""
+    result = []
+    for day, identifier, shares in documents:
+        kept = [share for share in shares if flag(table, share[0], name)]
+        if kept:
+            result.append((day, identifier, kept))
+    return result
+
+
+def cost_documents(db, stores, start, end, name):
+    """cost_documents restrito às rubricas com o indicador `name` (ex.: orçamento de pagamentos)."""
+    from .management_maps import cost_documents as everything
+    return filter_shares(everything(db, stores, start, end), flags(db), name)
+
+
+# -------------------------------------------------------------------------- configuração
+
+
+class Change(Strict):
+    category_id: str = Field(min_length=1, max_length=36)
+    nature: str = Field(default="", max_length=20)
+    in_operating_costs: bool
+    in_purchases: bool
+    in_treasury: bool
+    in_fiscal: bool
+    in_payment_budget: bool
+
+
+class Simulation(Strict):
+    changes: list[Change] = Field(min_length=1, max_length=200)
+
+
+class Approval(Simulation):
+    fingerprint: str = Field(min_length=64, max_length=64)
+    reason: str = Field(min_length=5, max_length=500)
+
+
+def describe(category):
+    return {"id": category.id, "name": category.name, "active": category.active, "nature": category.nature,
+            "nature_label": NATURES.get(category.nature, category.nature), **{name: getattr(category, name) for name in FLAGS},
+            "suggestion": suggestion(category)}
+
+
+def validated(db, changes):
+    from .models import Category
+    result = {}
+    for change in changes:
+        category = db.get(Category, change.category_id)
+        if not category:
+            raise HTTPException(404, "Rubrica inexistente.")
+        if change.nature not in NATURES:
+            raise HTTPException(422, "Natureza inválida.")
+        if change.category_id in result:
+            raise HTTPException(422, f"A rubrica «{category.name}» aparece mais de uma vez.")
+        values = change.model_dump(exclude={"category_id"})
+        if all(getattr(category, key) == value for key, value in values.items()):
+            continue
+        result[change.category_id] = (category, values)
+    if not result:
+        raise HTTPException(422, "Não há alterações em relação à configuração atual.")
+    return result
+
+
+def fingerprint(changes):
+    """Identifica a simulação: alterações pedidas e configuração atual das rubricas afetadas."""
+    payload = sorted((key, values, {name: getattr(category, name) for name in ("nature", *FLAGS)}) for key, (category, values) in changes.items())
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def window():
+    from .dashboard import today
+    end = today()
+    first = end.replace(day=1)
+    for _ in range(11):
+        first = (first - timedelta(days=1)).replace(day=1)
+    return first, end
+
+
+def view_totals(data, regime, percents, table, budget_data):
+    totals = {key: 0 for key in (*VIEWS, "costs", "budget")}
+    for view in (*VIEWS, "costs"):
+        totals[view] = sum(item[5] for item in contributions(data, view, regime, percents, table))
+    totals["budget"] = sum(item[5] for item in contributions(budget_data, "budget", regime, percents, table))
+    return totals
+
+
+def simulate(db, user, changes):
+    from .dashboard import describe_sources
+    from .models import Category
+    from .settings import vat_settings
+    stores = scope(user, db)
+    start, end = window()
+    regime = vat_settings(db)["vat_regime"]
+    percents = {c.id: c.vat_deduction_percent for c in db.scalars(select(Category))}
+    data = collect(db, stores, start, end)
+    # Orçamento: o realizado é anual (ano corrente).
+    year = end.year
+    budget_data = data if start <= date(year, 1, 1) else collect(db, stores, date(year, 1, 1), end, treasury=False)
+    before_table = flags(db)
+    after_table = flags(db, {key: values for key, (_, values) in changes.items()})
+    before = view_totals(data, regime, percents, before_table, budget_data)
+    after = view_totals(data, regime, percents, after_table, budget_data)
+    labels = {**{key: label for key, (label, _) in VIEWS.items()}, "costs": "Mapa de custos e proveitos (custos)",
+              "budget": f"Orçamento: realizado de {year}"}
+    affected = defaultdict(lambda: {"amount_cents": 0, "label": "", "date": "", "categories": set()})
+    for day, identifier, category, base, tax in data["documents"]:
+        if category in changes:
+            row = affected[identifier]
+            row.update(date=day)
+            row["amount_cents"] += base + tax
+            row["categories"].add(changes[category][0].name)
+    counted = set(affected)
+    for day, identifier, category, amount in data["treasury"]:
+        if category in changes:
+            row = affected[identifier]
+            row.update(date=day)
+            # O mesmo registo bancário pode ser custo sem documento e pagamento: conta uma vez.
+            row["amount_cents"] += 0 if identifier in counted else amount
+            row["categories"].add(changes[category][0].name)
+    rows = sorted(({"id": key, **value, "categories": sorted(value["categories"])} for key, value in affected.items()),
+                  key=lambda row: (row["date"], row["id"]), reverse=True)
+    sample = rows[:30]
+    describe_sources(db, sample)
+    return {
+        "fingerprint": fingerprint(changes), "start": str(start), "end": str(end),
+        "changes": [{"category_id": key, "name": category.name,
+                     "before": {"nature": category.nature, **{name: getattr(category, name) for name in FLAGS}}, "after": values}
+                    for key, (category, values) in changes.items()],
+        "views": [{"key": key, "label": labels[key], "before_cents": before[key], "after_cents": after[key],
+                   "difference_cents": after[key] - before[key]} for key in (*VIEWS, "costs", "budget")],
+        "affected": {"count": len(rows), "rows": sample},
+        "preserved": ["Previsão de liquidez e prazos de pagamento", "Extratos, livro bancário e reconciliação",
+                      "Documentos de compra, movimentos e dados do ERP (nenhum registo é alterado)",
+                      "Mapa de IVA e previsão de IVA (calculados pelos documentos)"],
+    }
+
+
+@router.get("/api/rubric-nature")
+def listing(user=Depends(current), db: Session = Depends(db_session)):
+    from .models import Category
+    authorize(user, db, roles=["administrador", "gestor"])
+    return {"natures": [{"key": key, "label": label, "flags": PRESETS[key]} for key, label in NATURES.items()],
+            "flags": [{"key": key, "label": label} for key, label in FLAG_LABELS.items()],
+            "can_apply": user.role == "administrador",
+            "rubrics": [describe(row) for row in db.scalars(select(Category).order_by(Category.active.desc(), Category.name))]}
+
+
+@router.post("/api/rubric-nature/simulate")
+def simulation(data: Simulation, user=Depends(current), db: Session = Depends(db_session)):
+    authorize(user, db, roles=["administrador", "gestor"])
+    return simulate(db, user, validated(db, data.changes))
+
+
+@router.post("/api/rubric-nature/apply")
+def apply(data: Approval, user=Depends(current), db: Session = Depends(db_session)):
+    from .models import Category
+    authorize(user, db, roles=["administrador"])
+    ids = sorted({change.category_id for change in data.changes})
+    list(db.scalars(select(Category).where(Category.id.in_(ids)).with_for_update()))
+    changes = validated(db, data.changes)
+    if fingerprint(changes) != data.fingerprint:
+        raise HTTPException(409, "A configuração das rubricas mudou desde a simulação. Simule novamente antes de aplicar.")
+    result = simulate(db, user, changes)
+    summary = {view["key"]: [view["before_cents"], view["after_cents"]] for view in result["views"]}
+    for key, (category, values) in changes.items():
+        before = {"nature": category.nature, **{name: getattr(category, name) for name in FLAGS}}
+        for name, value in values.items():
+            setattr(category, name, value)
+        record(db, user, "rubrica_natureza_alterada", key, {"name": category.name, "before": before, "after": values,
+                                                             "reason": data.reason.strip(), "simulation": summary,
+                                                             "period": [result["start"], result["end"]],
+                                                             "affected_records": result["affected"]["count"]})
+    db.commit()
+    return {"applied": len(changes), "views": result["views"]}

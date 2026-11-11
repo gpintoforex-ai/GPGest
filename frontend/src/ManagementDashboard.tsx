@@ -21,7 +21,7 @@ type ChartKey = "sales" | "flows" | "forecast" | "due" | "expenses" | "families"
 /** Cartões da Evolução na versão nova: os gráficos atuais mais Vendas vs compras, IVA e alertas. */
 type CardKey = ChartKey | "versus" | "vat" | "alerts";
 const CARDS: [CardKey, string][] = [["sales", "Faturação"], ["flows", "Recebimentos e pagamentos"], ["forecast", "Saldo previsto (30 dias)"],
-  ["due", "A receber e a pagar por vencimento"], ["expenses", "Despesas por rubrica"], ["vat", "Previsão de IVA"], ["versus", "Evolução de vendas e compras"],
+  ["due", "A receber e a pagar por vencimento"], ["expenses", "Custos, compras e obrigações fiscais"], ["vat", "Previsão de IVA"], ["versus", "Evolução de vendas e custos operacionais"],
   ["families", "Vendas por família"], ["alerts", "Alertas e tarefas"]];
 export type DashboardVersion = "atual" | "nova";
 
@@ -98,6 +98,8 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
   const [loading, setLoading] = useState(true), [error, setError] = useState("");
   const [customizing, setCustomizing] = useState(false), [version, setVersion] = useState(0);
   const [expenseDrill, setExpenseDrill] = useState<{ key: string; steps: DrilldownStep[] } | null>(null);
+  // Vista das saídas: custos operacionais, compras e investimentos, obrigações fiscais ou saídas de tesouraria.
+  const [expenseView, setExpenseView] = useState("operating");
   const [marginArticles, setMarginArticles] = useState(false);
   const [prefs, savePrefs] = usePreferences(scopeKey);
   const valid = !!start && !!end && start <= end;
@@ -125,11 +127,15 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
   const sales = data?.sales || unavailable, treasury = data?.treasury || unavailable, expenses = data?.expenses || unavailable, margin = data?.margin || unavailable;
   const vat = data?.vat || unavailable || (data ? { status: "empty", message: "Atualize o servidor para disponibilizar a previsão de IVA." } : undefined);
   const topArticles = data?.top_articles || unavailable || (data ? { status: "empty", message: "Atualize o servidor para disponibilizar o top de artigos." } : undefined);
-  const explainExpenses = (row?: Row) => {
-    const steps: DrilldownStep[] = [{ label: "Despesas por rubrica", params: {}, expected: expenses?.total_cents }];
-    if (row) steps.push({ label: row.name, params: { category: row.category_id ?? "" }, expected: row.amount_cents });
+  const expenseViews: Row[] = expenses?.views || [];
+  const shownView: Row | undefined = expenseViews.find(v => v.key === expenseView) || (expenses?.rows ? { key: "operating", label: "Custos e despesas operacionais", basis: expenses.vat_basis, ...expenses } : undefined);
+  const explainExpenses = (row?: Row, view: Row | undefined = expenseViews.find(v => v.key === "operating") || shownView) => {
+    const base: Record<string, string> = view && view.key !== "operating" ? { view: view.key } : {};
+    const steps: DrilldownStep[] = [{ label: view?.label || "Custos e despesas operacionais", params: base, expected: view?.total_cents ?? expenses?.total_cents }];
+    if (row) steps.push({ label: row.name, params: { ...base, category: row.category_id ?? "" }, expected: row.amount_cents });
     setExpenseDrill({ key: dataKey, steps });
   };
+  const fiscalVat = shownView?.key === "fiscal" ? shownView.vat : null;
   const expenseDialog = expenseDrill?.key === dataKey && <ExpenseDrilldown context={{ company: companyName, store, start, end }}
     initial={expenseDrill.steps} onClose={() => setExpenseDrill(null)} />;
   const salesPage = data?.mode === "local" ? "Faturação e recebimentos" : "Movimentos reais";
@@ -167,11 +173,27 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
           series={[{ key: "r", label: "A receber", form: "bar" }, { key: "p", label: "A pagar", form: "bar" }]}
           values={[DUE.map(([k]) => treasury.due.receivable[k].amount_cents), DUE.map(([k]) => treasury.due.payable[k].amount_cents)]} />
       </ChartFrame>}</BlockState>,
-    expenses: data?.permissions?.costs && <BlockState block={expenses}>{expenses?.rows && <ChartFrame title={`Despesas por rubrica (${expenses.vat_basis})`}
-        table={{ columns: ["Rubrica", "Período", "Comparação"], rows: expenses.rows.map((r: Row) => [<DrilldownTrigger onOpen={() => explainExpenses(r)}>{r.name}</DrilldownTrigger>, formatEuro(r.amount_cents), formatEuro(r.previous_cents)]) }}
-        footnote={<><DrilldownTrigger onOpen={() => explainExpenses()}>Total {formatEuro(expenses.total_cents)}</DrilldownTrigger> · <Delta value={expenses.change_percent} inverse /> <MetaInfo meta={expenses.meta} /></>}>
-        <BarList ariaLabel="Despesas por rubrica" rows={expenses.rows.map((r: Row) => ({ label: r.name, value: r.amount_cents, onOpen: () => explainExpenses(r), note: r.previous_cents ? `comparação ${formatEuro(r.previous_cents)}` : undefined }))} />
-        <ActionButton type="button" className="dash-link" onClick={() => open("Despesas por rubrica")}>Ver documentos por rubrica</ActionButton>
+    expenses: data?.permissions?.costs && <BlockState block={expenseViews.length ? { status: "ok" } : expenses}>{shownView && <ChartFrame title={`${shownView.label} (${shownView.basis})`}
+        table={{ columns: ["Rubrica", "Período", "Comparação"], rows: shownView.rows.map((r: Row) => [<DrilldownTrigger onOpen={() => explainExpenses(r, shownView)}>{r.name}</DrilldownTrigger>, formatEuro(r.amount_cents), formatEuro(r.previous_cents)]) }}
+        footnote={<><DrilldownTrigger onOpen={() => explainExpenses(undefined, shownView)}>Total {formatEuro(shownView.total_cents)}</DrilldownTrigger> · <Delta value={shownView.change_percent} inverse /> <MetaInfo meta={expenses.meta} /></>}>
+        {expenseViews.length > 0 && <div className="dash-views" role="group" aria-label="Vista das saídas">
+          {expenseViews.map(v => <button key={v.key} type="button" aria-pressed={v.key === shownView.key} onClick={() => setExpenseView(v.key)}>
+            {v.label}<span>{formatEuro(v.total_cents)}</span></button>)}
+        </div>}
+        {shownView.origin && <p className="dash-muted dash-origin"><strong>Origem:</strong> {shownView.origin}</p>}
+        {shownView.rows.length ? <BarList ariaLabel={shownView.label} rows={shownView.rows.map((r: Row) => ({ label: r.name, value: r.amount_cents, onOpen: () => explainExpenses(r, shownView), note: r.previous_cents ? `comparação ${formatEuro(r.previous_cents)}` : undefined }))} />
+          : <p className="dash-muted">Sem valores nesta vista no período.{shownView.key !== "operating" && expenses?.rubrics_without_nature ? " As rubricas por definir entram nos custos operacionais." : ""}</p>}
+        {fiscalVat && <div className="dash-vat-block"><dl className="dash-vat-detail" aria-label="IVA do período">
+          {([["IVA liquidado nas vendas", fiscalVat.output_cents == null ? "Indisponível" : formatEuro(fiscalVat.output_cents)],
+            ["IVA suportado nas compras", formatEuro(fiscalVat.input_cents)], ["IVA dedutível estimado", formatEuro(fiscalVat.deductible_cents)],
+            ["IVA não dedutível (custo)", formatEuro(fiscalVat.non_deductible_cents)], ["Pagamentos ao Estado", formatEuro(fiscalVat.payments_cents)]] as [string, string][])
+            .map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+        </dl><p className="dash-muted">{fiscalVat.note}</p></div>}
+        <div className="dash-view-links">
+          <ActionButton type="button" className="dash-link" onClick={() => open("Despesas por rubrica")}>Ver documentos por rubrica</ActionButton>
+          {!!expenses?.rubrics_without_nature && data?.permissions?.costs && <ActionButton type="button" className="dash-link" onClick={() => navigate("Rubricas", { "area.rubricas": "natureza" })}>
+            Natureza das rubricas ({expenses.rubrics_without_nature} por definir)</ActionButton>}
+        </div>
       </ChartFrame>}</BlockState>,
     families: data?.permissions?.costs && <BlockState block={margin}>{margin?.rows && <ChartFrame title="Vendas por família de artigo (sem IVA)"
         table={{ columns: ["Família", "Vendas", "Artigos", "Custo conhecido", "Margem"], rows: margin.rows.map((r: Row) => [r.name, formatEuro(r.sales_cents), r.articles, r.cost_coverage_percent == null ? "—" : `${r.cost_coverage_percent}%`, r.margin_cents == null ? "Indisponível" : formatEuro(r.margin_cents)]) }}
@@ -195,7 +217,7 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
       {data?.permissions?.finance === false && <Notice>Os indicadores financeiros não estão disponíveis para o seu perfil.</Notice>}
       {data?.permissions?.finance !== false && <Kpi label={`Faturação${sales?.vat_basis ? ` (${sales.vat_basis})` : ""}`} meta={sales?.meta} onOpen={() => open(salesPage)}>
         <BlockState block={sales}><strong>{formatEuro(sales?.total_cents)}</strong><Delta value={sales?.change_percent} /><small>{sales?.documents} documento(s)</small></BlockState></Kpi>}
-      {data?.permissions?.costs && expenses?.status === "ok" && <Kpi label={`Compras e despesas (${expenses.vat_basis})`} meta={expenses.meta} onOpen={() => explainExpenses()}>
+      {data?.permissions?.costs && expenses?.status === "ok" && <Kpi label={`Custos operacionais (${expenses.vat_basis})`} meta={expenses.meta} onOpen={() => explainExpenses()}>
         <strong>{formatEuro(expenses.total_cents)}</strong><small>Explicar valor por rubrica</small></Kpi>}
       {data?.permissions?.costs && <Kpi label="Previsão de IVA" meta={vat?.meta}>
         <BlockState block={vat}><strong>{formatEuro(Math.abs(vat?.balance_cents || 0))}</strong>
@@ -268,12 +290,12 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
   const showAttention = () => updateLocationParam("area.dashboard", "attention");
   const vatBalance = vat?.balance_cents || 0;
   const extra: Record<"versus" | "vat" | "alerts", ReactNode> = {
-    versus: costs && finance && <BlockState block={sales?.status === "ok" ? expenses : sales}>{sales?.points && expenses?.points && expenses.points.length === sales.points.length && <ChartFrame title="Evolução de vendas e compras"
-      legend={<Legend series={[{ key: "v", label: `Vendas (${sales.vat_basis})`, form: "line" }, { key: "c", label: `Compras e despesas (${expenses.vat_basis})`, form: "line" }]} />}
-      table={{ columns: ["Período", "Vendas", "Compras"], rows: sales.points.map((p: Row, i: number) => [p.label, formatEuro(p.current_cents), formatEuro(expenses.points[i].amount_cents)]) }}
-      footnote={`Vendas: faturação pela data do documento; compras: os documentos e custos das despesas por rubrica. Não são recebimentos nem pagamentos.${sales.vat_basis === "com IVA" ? " Atenção: vendas com IVA (bases em falta) e compras sem IVA dedutível." : ""}`}>
-      <ColumnsChart ariaLabel="Vendas e compras por período" labels={sales.points.map((p: Row) => p.label)}
-        series={[{ key: "v", label: "Vendas", form: "line" }, { key: "c", label: "Compras e despesas", form: "line" }]}
+    versus: costs && finance && <BlockState block={sales?.status === "ok" ? expenses : sales}>{sales?.points && expenses?.points && expenses.points.length === sales.points.length && <ChartFrame title="Evolução de vendas e custos operacionais"
+      legend={<Legend series={[{ key: "v", label: `Vendas (${sales.vat_basis})`, form: "line" }, { key: "c", label: `Custos operacionais (${expenses.vat_basis})`, form: "line" }]} />}
+      table={{ columns: ["Período", "Vendas", "Custos operacionais"], rows: sales.points.map((p: Row, i: number) => [p.label, formatEuro(p.current_cents), formatEuro(expenses.points[i].amount_cents)]) }}
+      footnote={`Vendas: faturação pela data do documento; custos: os documentos e custos sem documento das rubricas de custos operacionais. Não são recebimentos nem pagamentos.${sales.vat_basis === "com IVA" ? " Atenção: vendas com IVA (bases em falta) e compras sem IVA dedutível." : ""}`}>
+      <ColumnsChart ariaLabel="Vendas e custos operacionais por período" labels={sales.points.map((p: Row) => p.label)}
+        series={[{ key: "v", label: "Vendas", form: "line" }, { key: "c", label: "Custos operacionais", form: "line" }]}
         values={[sales.points.map((p: Row) => p.current_cents), expenses.points.map((p: Row) => p.amount_cents)]} />
     </ChartFrame>}</BlockState>,
     vat: costs && <article className="dash-card dash-vat" aria-label="Previsão de IVA">
@@ -369,9 +391,9 @@ export default function ManagementDashboard({ store, scopeKey, companyName, mode
           <><Delta value={sales?.change_percent} /><small>{sales?.documents} documento(s)</small></>, () => open(salesPage), sales?.meta)}
         {costs && (expenses?.status === "empty" && expenses?.previous_cents
           // Sem compras no período, mas com compras na comparação: mostra-se o valor comparável em vez de um cartão vazio.
-          ? hero(`Compras e despesas (${expenses.vat_basis})`, "info", Receipt, { status: "ok" }, "Sem compras",
+          ? hero(`Custos operacionais (${expenses.vat_basis})`, "info", Receipt, { status: "ok" }, "Sem custos",
             <small>Neste período, pela data do documento. {data?.comparison?.method}: {formatEuro(expenses.previous_cents)}</small>, () => open("Despesas por rubrica"), expenses.meta)
-          : hero(`Compras e despesas${expenses?.vat_basis ? ` (${expenses.vat_basis})` : ""}`, "info", Receipt, expenses, formatEuro(expenses?.total_cents),
+          : hero(`Custos operacionais${expenses?.vat_basis ? ` (${expenses.vat_basis})` : ""}`, "info", Receipt, expenses, formatEuro(expenses?.total_cents),
             <><Delta value={expenses?.change_percent} inverse /><small>Por rubrica, pela data do documento</small></>, () => explainExpenses(), expenses?.meta))}
         {costs && (margin?.status === "ok" && !margin.cost_restricted
           // Margem bruta apurada (sobre as vendas com custo) e cobertura de custos, com a cor do nível de cobertura.

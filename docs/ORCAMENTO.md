@@ -55,7 +55,8 @@ Separador **Associações** e colunas «Realizado» e «Ainda previsto» na grel
 `frontend/src/BudgetMatching.tsx`).
 
 - **Parcela**: cada documento do realizado (compra, documento do ERP sem compra, custo bancário com rubrica), por
-  rubrica, ao custo dos mapas de gestão. Só parcelas positivas e com rubrica; notas de crédito e parcelas sem
+  rubrica, ao custo dos mapas de gestão, só nas rubricas que entram no orçamento de pagamentos
+  ([natureza das rubricas](NATUREZA-DAS-RUBRICAS.md)). Só parcelas positivas e com rubrica; notas de crédito e parcelas sem
   rubrica contam apenas na comparação por rubrica.
 - **Propostas** (calculadas na leitura, nada é gravado ao consultar), só para despesas previstas ativas da mesma
   rubrica e ocorrências dentro de uma janela de datas (semanal 4 dias, mensal 20, trimestral 45, anual 75…):

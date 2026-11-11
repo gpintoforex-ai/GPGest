@@ -113,7 +113,7 @@ with sync_playwright() as p:
         expect(page.get_by_role("heading", name="Dashboard", level=1)).to_be_visible()
         expect(banner).to_have_count(0)
         hero = page.get_by_role("group", name="Indicadores principais")
-        for text in ("Vendas (sem IVA)", "12.345,00", "+12,4%", "Compras e despesas", "6.000,00", "Tesouraria", "500,00",
+        for text in ("Vendas (sem IVA)", "12.345,00", "+12,4%", "Custos operacionais", "6.000,00", "Tesouraria", "500,00",
                      "Margem bruta apurada (parcial)", "35,5 %", "Margem parcial", "Lucro bruto 3.510,24", "9.888,00", "Cobertura de custos 80,1 %", "sem custo 2.457,00"):
             expect(hero).to_contain_text(text)
         expect(hero.get_by_role("progressbar", name="Cobertura de custos")).to_have_attribute("aria-valuenow", "80.1")
@@ -165,7 +165,7 @@ with sync_playwright() as p:
         expect(page.locator(".dash-kpi").filter(has_text="Previsão de IVA")).to_contain_text("1.030,00")
         tabs.get_by_role("tab", name="Evolução").click()
         grid = page.locator(".dash-cards")
-        for title in ("Faturação por mês", "Recebimentos e pagamentos (com IVA)", "A receber e a pagar por vencimento", "Despesas por rubrica", "Evolução de vendas e compras", "Alertas e tarefas"):
+        for title in ("Faturação por mês", "Recebimentos e pagamentos (com IVA)", "A receber e a pagar por vencimento", "Custos e despesas operacionais", "Evolução de vendas e custos operacionais", "Alertas e tarefas"):
             expect(grid).to_contain_text(title)
         vat = page.get_by_label("Previsão de IVA", exact=True)
         for text in ("Saldo estimado a pagar", "1.030,00", "Periodicidade configurada: trimestral", "2.830,00", "1.800,00", "200,00", "40 de venda · 12 de compra", "Previsão provisória", "não o apuramento da declaração periódica"):
@@ -179,9 +179,9 @@ with sync_playwright() as p:
         assert not page.evaluate("document.documentElement.scrollWidth > innerWidth"), "A página transborda na horizontal."
         # Personalizar: ocultar um cartão da Evolução e repor.
         page.get_by_role("button", name="Personalizar").click()
-        page.get_by_label("Personalizar o painel").get_by_role("checkbox", name="Evolução de vendas e compras", exact=True).uncheck()
+        page.get_by_label("Personalizar o painel").get_by_role("checkbox", name="Evolução de vendas e custos operacionais", exact=True).uncheck()
         expect(page.locator(".dash-card-slot.is-versus")).to_have_count(0)
-        page.get_by_label("Personalizar o painel").get_by_role("checkbox", name="Evolução de vendas e compras", exact=True).check()
+        page.get_by_label("Personalizar o painel").get_by_role("checkbox", name="Evolução de vendas e custos operacionais", exact=True).check()
         expect(page.locator(".dash-card-slot.is-versus")).to_have_count(1)
         page.get_by_role("button", name="Personalizar").click()
         # Alertas: «Ver todos» abre a área completa, com impacto e ação.

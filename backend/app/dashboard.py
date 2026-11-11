@@ -352,6 +352,29 @@ def vat_block(db, user, store_id, period):
     source, updated = sales_source(db)
     if not source:
         return {"status": "empty", "message": "Sem dados de vendas para estimar o IVA liquidado."}
+    output, documents, missing = output_vat(db, stores, start, end, source)
+    percents = {c.id: c.vat_deduction_percent for c in db.scalars(select(Category))}
+    input_tax, deduction, purchases = 0, 0, 0
+    for _, _, shares in purchase_documents(db, stores, start, end):
+        purchases += 1
+        for category, _, tax in shares:
+            input_tax += tax
+            deduction += deductible(tax, category, percents)
+    if missing:
+        return {"status": "empty", "message": f"{missing} documento(s) de venda sem IVA discriminado. Volte a sincronizar as vendas antes de calcular a previsão."}
+    return {
+        "status": "ok" if documents or purchases else "empty", "message": "Sem documentos neste período.",
+        "output_cents": output, "input_cents": input_tax, "deductible_cents": deduction, "balance_cents": output - deduction,
+        "sales_documents": documents, "purchase_documents": purchases, "period": fiscal["vat_period"],
+        "meta": meta("Saldo estimado de IVA dos documentos conhecidos no período selecionado.",
+                     "IVA liquidado nas vendas − IVA dedutível estimado nas compras, segundo a percentagem de dedução de cada rubrica.",
+                     ("SAF-T de vendas" if source == "saft" else "Vendas Wintouch") + " e documentos de compra do Mapa de IVA", updated,
+                     "Inclui compras ainda não lançadas. Não inclui saldos transitados, regularizações ou operações ausentes dos dados. Não projeta vendas futuras nem substitui o apuramento contabilístico."),
+    }
+
+
+def output_vat(db, stores, start, end, source):
+    """(IVA liquidado, documentos, documentos sem IVA discriminado) das vendas do período."""
     output, documents, missing = 0, 0, 0
     if source == "saft":
         from .billing_conference import documents as saft_documents
@@ -371,24 +394,7 @@ def vat_block(db, user, store_id, period):
                 missing += 1
             else:
                 output += int(data["tax_cents"]) * (data.get("direction") or 1)
-    percents = {c.id: c.vat_deduction_percent for c in db.scalars(select(Category))}
-    input_tax, deduction, purchases = 0, 0, 0
-    for _, _, shares in purchase_documents(db, stores, start, end):
-        purchases += 1
-        for category, _, tax in shares:
-            input_tax += tax
-            deduction += deductible(tax, category, percents)
-    if missing:
-        return {"status": "empty", "message": f"{missing} documento(s) de venda sem IVA discriminado. Volte a sincronizar as vendas antes de calcular a previsão."}
-    return {
-        "status": "ok" if documents or purchases else "empty", "message": "Sem documentos neste período.",
-        "output_cents": output, "input_cents": input_tax, "deductible_cents": deduction, "balance_cents": output - deduction,
-        "sales_documents": documents, "purchase_documents": purchases, "period": fiscal["vat_period"],
-        "meta": meta("Saldo estimado de IVA dos documentos conhecidos no período selecionado.",
-                     "IVA liquidado nas vendas − IVA dedutível estimado nas compras, segundo a percentagem de dedução de cada rubrica.",
-                     ("SAF-T de vendas" if source == "saft" else "Vendas Wintouch") + " e documentos de compra do Mapa de IVA", updated,
-                     "Inclui compras ainda não lançadas. Não inclui saldos transitados, regularizações ou operações ausentes dos dados. Não projeta vendas futuras nem substitui o apuramento contabilístico."),
-    }
+    return output, documents, missing
 
 
 def margin_block(db, stores, period, can_view_cost):
@@ -552,26 +558,57 @@ def treasury_block(request, db, user, store_id, period, compare):
 # -------------------------------------------------------------------------- despesas
 
 
-def expense_contributions(db, stores, start, end, regime, percents):
-    from .management_maps import cost_documents, deductible
+def expense_contributions(db, stores, start, end, regime, percents, view="operating"):
+    """Parcelas de uma vista (natureza das rubricas: rubric_nature.VIEWS)."""
+    from . import rubric_nature
+    data = rubric_nature.collect(db, stores, start, end, treasury=view == "treasury")
+    yield from rubric_nature.contributions(data, view, regime, percents, rubric_nature.flags(db))
 
-    for day, identifier, shares in cost_documents(db, stores, start, end):
-        for category, base, tax in shares:
-            amount = base + (tax - deductible(tax, category, percents) if regime == "normal" else tax)
-            yield day, identifier, category, base, tax, amount
+
+def describe_sources(db, rows):
+    """Acrescenta etiqueta, entidade e origem a linhas {id} (compra, ERP, registo bancário ou movimento de caixa)."""
+    from .models import BankBookEntry, ERPDocument, Movement
+    local_ids = [row["id"] for row in rows if ":" not in row["id"]]
+    erp_ids = [row["id"][4:] for row in rows if row["id"].startswith("erp:")]
+    bank_ids = [row["id"][5:] for row in rows if row["id"].startswith("bank:")]
+    move_ids = [row["id"][5:] for row in rows if row["id"].startswith("move:")]
+    local = {item.id: item for item in db.scalars(select(Purchase).where(Purchase.id.in_(local_ids)))} if local_ids else {}
+    erp = {item.id: item for item in db.scalars(select(ERPDocument).where(ERPDocument.id.in_(erp_ids)))} if erp_ids else {}
+    bank = {item.id: item for item in db.scalars(select(BankBookEntry).where(BankBookEntry.id.in_(bank_ids)))} if bank_ids else {}
+    moves = {item.id: item for item in db.scalars(select(Movement).where(Movement.id.in_(move_ids)))} if move_ids else {}
+    for row in rows:
+        identifier = row["id"]
+        if identifier.startswith("bank:"):
+            item = bank.get(identifier[5:])
+            row.update(label=(item.reference if item else "") or "Movimento bancário",
+                       entity=item.description if item else "—", source="Banco", synced_at=None)
+        elif identifier.startswith("move:"):
+            item = moves.get(identifier[5:])
+            row.update(label=((item.document or item.reference) if item else "") or "Movimento de caixa",
+                       entity=(item.entity or item.notes[:120] or "—") if item else "—", source="Caixa", synced_at=None)
+        else:
+            is_erp = identifier.startswith("erp:")
+            item = erp.get(identifier[4:]) if is_erp else local.get(identifier)
+            row.update(label=(item.document or item.document_type) if item else "Documento indisponível",
+                       entity=item.supplier_name if item else "—",
+                       source="ERP" if is_erp else "e-Fatura" if item and item.origin in ("ficheiro", "efatura") else "Compra",
+                       synced_at=item.synced_at if is_erp and item else None)
 
 
 @router.get("/api/dashboard/expenses/drilldown")
 def expense_drilldown(start: date, end: date, store_id: str = "", category: str | None = None,
-                      document_id: str | None = None, offset: int = 0, limit: int = 25,
+                      document_id: str | None = None, offset: int = 0, limit: int = 25, view: str = "operating",
                       user=Depends(current), db: Session = Depends(db_session)):
-    from .models import ArchiveLink, BankBookEntry, Category, ERPDocument
     from .management_maps import line_parts
+    from .models import ArchiveLink, Category
+    from .rubric_nature import VIEWS
     from .settings import vat_settings
 
     authorize(user, db, roles=list(COST_ROLES))
     if start > end or (end - start).days > 400 or offset < 0 or not 1 <= limit <= 100:
         raise HTTPException(422, "Período ou paginação inválidos.")
+    if view not in VIEWS:
+        raise HTTPException(422, "Vista inválida.")
     stores = scope(user, db)
     if store_id:
         authorize(user, db, store_id)
@@ -580,12 +617,12 @@ def expense_drilldown(start: date, end: date, store_id: str = "", category: str 
     categories = {row.id: row for row in db.scalars(select(Category))}
     percents = {key: row.vat_deduction_percent for key, row in categories.items()}
     category_name = lambda key: categories[key].name if key in categories else "Por classificar"
-    parts = list(expense_contributions(db, stores, start, end, regime, percents))
+    parts = list(expense_contributions(db, stores, start, end, regime, percents, view))
     totals = defaultdict(int)
     for _, _, key, _, _, amount in parts:
         totals[key or ""] += amount
     ordered = sorted((key for key in totals if totals[key]), key=lambda key: -totals[key])
-    vat_basis = "sem IVA dedutível" if regime == "normal" else "com IVA"
+    vat_basis = ("sem IVA dedutível" if regime == "normal" else "com IVA") if view in ("operating", "purchases") else "valor pago"
     if category is None and document_id is None:
         return {"vat_basis": vat_basis, "total_cents": sum(totals.values()), "count": len(ordered),
                 "rows": [{"id": key or "", "label": category_name(key), "amount_cents": totals[key]}
@@ -607,25 +644,7 @@ def expense_drilldown(start: date, end: date, store_id: str = "", category: str 
         row["allocations"].append({"label": category_name(key), "base_cents": base, "tax_cents": tax, "amount_cents": amount})
 
     def describe(rows):
-        local_ids = [row["id"] for row in rows if ":" not in row["id"]]
-        erp_ids = [row["id"][4:] for row in rows if row["id"].startswith("erp:")]
-        bank_ids = [row["id"][5:] for row in rows if row["id"].startswith("bank:")]
-        local = {item.id: item for item in db.scalars(select(Purchase).where(Purchase.id.in_(local_ids)))} if local_ids else {}
-        erp = {item.id: item for item in db.scalars(select(ERPDocument).where(ERPDocument.id.in_(erp_ids)))} if erp_ids else {}
-        bank = {item.id: item for item in db.scalars(select(BankBookEntry).where(BankBookEntry.id.in_(bank_ids)))} if bank_ids else {}
-        for row in rows:
-            identifier = row["id"]
-            if identifier.startswith("bank:"):
-                item = bank.get(identifier[5:])
-                row.update(label=(item.reference if item else "") or "Movimento bancário",
-                           entity=item.description if item else "—", source="Banco", synced_at=None)
-            else:
-                is_erp = identifier.startswith("erp:")
-                item = erp.get(identifier[4:]) if is_erp else local.get(identifier)
-                row.update(label=(item.document or item.document_type) if item else "Documento indisponível",
-                           entity=item.supplier_name if item else "—",
-                           source="ERP" if is_erp else "e-Fatura" if item and item.origin in ("ficheiro", "efatura") else "Compra",
-                           synced_at=item.synced_at if is_erp and item else None)
+        describe_sources(db, rows)
 
     if document_id is not None:
         selected = documents.get(document_id)
@@ -659,42 +678,70 @@ def expense_drilldown(start: date, end: date, store_id: str = "", category: str 
 
 
 def expenses_block(db, stores, period, compare):
-    from .management_maps import UNCLASSIFIED
+    """Custos e despesas operacionais (bloco principal) e as quatro vistas por natureza das rubricas."""
+    from . import rubric_nature
+    from .management_maps import UNCLASSIFIED, deductible
     from .models import Category
     from .settings import vat_settings
     regime = vat_settings(db)["vat_regime"]
     categories = {c.id: c for c in db.scalars(select(Category))}
     percents = {c.id: c.vat_deduction_percent for c in categories.values()}
-
-    def totals(first, last, by_day=None):
-        result = defaultdict(int)
-        for day, _, category, _, _, amount in expense_contributions(db, stores, first, last, regime, percents):
-            result[category] += amount
-            if by_day is not None:
-                by_day[str(day)[:10]] += amount
-        return result
-    # Série por período (mesmos documentos e fórmula do total), para a evolução de vendas e compras.
-    current_by_day = defaultdict(int)
-    current_values, previous_values = totals(*period, current_by_day), totals(*compare)
+    table = rubric_nature.flags(db)
+    current_data, previous_data = rubric_nature.collect(db, stores, *period), rubric_nature.collect(db, stores, *compare)
     unit = granularity(*period)
     labels = [bucket_label(first, last, unit) for first, last in buckets(*period, unit)]
-    points = [{"label": label, "amount_cents": value} for label, value in zip(labels, series(current_by_day, *period, unit))]
-    ordered = sorted(current_values, key=lambda key: -current_values[key])
-    rows = [{"category_id": key or None, "name": categories[key].name if key in categories else "Por classificar",
-             "amount_cents": current_values[key], "previous_cents": previous_values.get(key, 0)} for key in ordered if current_values[key]]
-    top, rest = rows[:8], rows[8:]
-    if rest:
-        top.append({"category_id": "outras", "name": f"Outras ({len(rest)})", "amount_cents": sum(r["amount_cents"] for r in rest), "previous_cents": sum(r["previous_cents"] for r in rest)})
-    total, previous = sum(current_values.values()), sum(previous_values.values())
+    cost_basis = "sem IVA dedutível" if regime == "normal" else "com IVA"
+
+    def summary(view):
+        current_values, previous_values, by_day = defaultdict(int), defaultdict(int), defaultdict(int)
+        for day, _, category, _, _, amount in rubric_nature.contributions(current_data, view, regime, percents, table):
+            current_values[category] += amount
+            by_day[str(day)[:10]] += amount
+        for _, _, category, _, _, amount in rubric_nature.contributions(previous_data, view, regime, percents, table):
+            previous_values[category] += amount
+        ordered = sorted(current_values, key=lambda key: -current_values[key])
+        rows = [{"category_id": key or None, "name": categories[key].name if key in categories else "Por classificar",
+                 "amount_cents": current_values[key], "previous_cents": previous_values.get(key, 0)} for key in ordered if current_values[key]]
+        top, rest = rows[:8], rows[8:]
+        if rest:
+            top.append({"category_id": "outras", "name": f"Outras ({len(rest)})", "amount_cents": sum(r["amount_cents"] for r in rest),
+                        "previous_cents": sum(r["previous_cents"] for r in rest)})
+        total, previous = sum(current_values.values()), sum(previous_values.values())
+        return {"key": view, "label": rubric_nature.VIEWS[view][0], "rows": top, "total_cents": total, "previous_cents": previous,
+                "change_percent": change(total, previous), "origin": rubric_nature.ORIGINS[view],
+                "basis": cost_basis if view in ("operating", "purchases") else "valor pago",
+                "points": [{"label": label, "amount_cents": value} for label, value in zip(labels, series(by_day, *period, unit))],
+                "unclassified_cents": current_values.get(UNCLASSIFIED, 0)}
+
+    views = {view: summary(view) for view in rubric_nature.VIEWS}
+    # Obrigações fiscais: o IVA das vendas e das compras é informativo (não é custo nem pagamento).
+    vat = None
+    if regime == "normal":
+        source, _ = sales_source(db)
+        output, _, missing = output_vat(db, stores, *period, source) if source else (0, 0, 0)
+        input_tax = sum(tax for _, identifier, _, _, tax in current_data["documents"] if not identifier.startswith("bank:"))
+        deduction = sum(deductible(tax, category, percents) for _, identifier, category, _, tax in current_data["documents"] if not identifier.startswith("bank:"))
+        vat = {"output_cents": output if source and not missing else None, "input_cents": input_tax, "deductible_cents": deduction,
+               "non_deductible_cents": input_tax - deduction, "payments_cents": views["fiscal"]["total_cents"],
+               "note": "IVA liquidado: recebido dos clientes por conta do Estado (não é receita). IVA dedutível: recuperado na declaração "
+                       "(não é custo). IVA não dedutível: é custo e já está nos custos operacionais. Pagamentos ao Estado: saída de tesouraria, "
+                       "não custo." + (" Há vendas sem IVA discriminado: volte a sincronizar." if missing else "")}
+    views["fiscal"]["vat"] = vat
+    unconfigured = sum(1 for c in categories.values() if c.active and not c.nature)
+    operating = views["operating"]
     return {
-        "status": "ok" if rows else "empty", "message": "" if rows else "Sem documentos de compra neste período.",
-        "rows": top, "total_cents": total, "previous_cents": previous, "change_percent": change(total, previous),
-        "unclassified_cents": current_values.get(UNCLASSIFIED, 0), "vat_basis": "sem IVA dedutível" if regime == "normal" else "com IVA",
-        "unit": unit, "points": points,
-        "meta": meta("Despesas e compras por rubrica, pela data do documento (custos sem documento: pela data do movimento bancário).",
-                     "Regime normal: base tributável + IVA não dedutível estimado; restantes regimes: total com IVA. Rubrica das linhas da compra, do documento ERP ou do fornecedor.",
+        "status": "ok" if operating["rows"] else "empty", "message": "" if operating["rows"] else "Sem custos operacionais neste período.",
+        "rows": operating["rows"], "total_cents": operating["total_cents"], "previous_cents": operating["previous_cents"],
+        "change_percent": operating["change_percent"], "unclassified_cents": operating["unclassified_cents"], "vat_basis": cost_basis,
+        "unit": unit, "points": operating["points"],
+        "views": [{key: value for key, value in view.items() if key != "points"} for view in views.values()],
+        "rubrics_without_nature": unconfigured,
+        "meta": meta("Custos e despesas operacionais por rubrica, pela data do documento (custos sem documento: pela data do movimento bancário).",
+                     "Regime normal: base tributável + IVA não dedutível estimado; restantes regimes: total com IVA. Só as rubricas que entram nos "
+                     "custos operacionais (Configurações → Rubricas → Natureza). Rubrica das linhas da compra, do documento ERP ou do fornecedor.",
                      "Documentos de compra (e-Fatura, Compras, ERP) e registos bancários sem documento com rubrica", None,
-                     "Inclui faturas do e-Fatura ainda não lançadas. Compras de mercadoria contam como compras, não como custo das vendas." + ("" if regime else " Configure o regime de IVA.")),
+                     "Inclui faturas do e-Fatura ainda não lançadas. Pagamentos de IVA ao Estado, compras de mercadoria e investimentos ficam "
+                     "fora quando a natureza da rubrica o indica; ver as outras vistas." + ("" if regime else " Configure o regime de IVA.")),
     }
 
 
