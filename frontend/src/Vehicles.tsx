@@ -5,6 +5,7 @@ import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { ActionMenu, DetailDrawer } from "./components/WorkspaceUI";
 import { api } from "./lib/api";
 import { centsInput, euroToCents, formatEuro } from "./utils/format";
+import { ArchiveDocs } from "./ObligationDocs";
 
 /**
  * Viaturas (Obrigações e Prazos): ficha com IUC, inspeção periódica pela categoria e idade, seguro e revisão.
@@ -170,6 +171,7 @@ function VehicleDrawer({ value, meta, store, stores, categories, onClose, onSave
       </div></fieldset>
       <label className="obl-wide">Observações<textarea rows={2} value={form.notes} maxLength={4000} onChange={e => set({ notes: e.target.value })} /></label>
     </div>
+    {editing && <ArchiveDocs kind="vehicle" id={value.id} title="Documentos da viatura (DUA, apólice, certificados)" />}
     {editing && value.occurrences?.length > 0 && <section className="obl-history" aria-label="Prazos da viatura">
       <h3>Prazos e histórico</h3>
       <div className="table-wrap"><table><thead><tr><th>Data</th><th>Prazo</th><th className="numeric">Previsto</th><th className="numeric">Efetivo</th><th>Estado</th></tr></thead>

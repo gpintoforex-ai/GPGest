@@ -2251,3 +2251,24 @@ class ObligationNotification(Base):
     status: Mapped[str] = mapped_column(String(20))
     error: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ObligationLink(Base):
+    """Associação de uma ocorrência (prazo) a um registo real: compra/fatura, documento ERP, custo bancário ou
+    pagamento. Não conclui o prazo (só a confirmação o faz) e faz sair a estimativa da previsão de liquidez.
+    Anular guarda quem, quando e porquê."""
+    __tablename__ = "obligation_links"
+    __table_args__ = (Index("uq_obligation_link_active", "occurrence_id", "source_kind", "source_id", unique=True,
+                            postgresql_where=text("undone_at IS NULL")),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    occurrence_id: Mapped[str] = mapped_column(ForeignKey("obligation_occurrences.id"), index=True)
+    # purchase, erp, bank (custo bancário) ou payment (pagamento registado).
+    source_kind: Mapped[str] = mapped_column(String(10))
+    source_id: Mapped[str] = mapped_column(String(36))
+    amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reasons: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    undone_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    undo_reason: Mapped[str] = mapped_column(Text, default="", server_default="")

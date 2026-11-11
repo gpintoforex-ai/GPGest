@@ -154,7 +154,7 @@ def obligations_in_scope(db, user, store_id=""):
     return [r for r in rows if not store_id or r.store_id in (None, store_id)]
 
 
-def occurrence_view(o, ob, reference, users, reads):
+def occurrence_view(o, ob, reference, users, reads, marks=None):
     days = (date.fromisoformat(o.due_date) - reference).days
     alerts = json.loads(ob.alert_days)
     return {
@@ -167,7 +167,7 @@ def occurrence_view(o, ob, reference, users, reads):
         "responsible": users.get(o.responsible_id or ob.responsible_id), "responsible_id": o.responsible_id or ob.responsible_id,
         "completed_at": o.completed_at.isoformat() if o.completed_at else None, "completed_by": users.get(o.completed_by),
         "read": o.id in reads, "alert_due": o.status == "pendente" and (days in alerts or days < 0),
-        **managed(ob),
+        **managed(ob), **((marks or {}).get(o.id) or {"documents": None, "links": None}),
     }
 
 
@@ -235,7 +235,9 @@ def overview(store_id: str = "", month: str = "", user=Depends(current), db: Ses
     authorize(user, db, roles=ROLES)
     check_scope(user, db, store_id)
     reference, by_id, occurrences, users, reads = context(db, user, store_id)
-    views = [occurrence_view(o, by_id[o.obligation_id], reference, users, reads) for o in occurrences]
+    from .obligation_documents import marks as document_marks
+    marks = document_marks(db, [o.id for o in occurrences])
+    views = [occurrence_view(o, by_id[o.obligation_id], reference, users, reads, marks) for o in occurrences]
     pending = [v for v in views if v["status"] == "pendente"]
     active = [r for r in by_id.values() if r.status == "ativa"]
     overdue_ids = {v["obligation_id"] for v in pending if v["days"] < 0}
@@ -281,7 +283,9 @@ def occurrences(store_id: str = "", category: str = "", state_filter: str = "", 
     authorize(user, db, roles=ROLES)
     check_scope(user, db, store_id)
     reference, by_id, rows, users, reads = context(db, user, store_id)
-    views = [occurrence_view(o, by_id[o.obligation_id], reference, users, reads) for o in rows]
+    from .obligation_documents import marks as document_marks
+    marks = document_marks(db, [o.id for o in rows])
+    views = [occurrence_view(o, by_id[o.obligation_id], reference, users, reads, marks) for o in rows]
     term = q.strip().lower()
     result = [v for v in views
               if (not category or v["category"] == category) and (not state_filter or v["state"] in state_filter.split(","))
@@ -311,7 +315,9 @@ def detail(identifier: str, user=Depends(current), db: Session = Depends(db_sess
     check_scope(user, db, row.store_id)
     reference, by_id, rows, users, reads = context(db, user, row.store_id or "")
     history = sorted((o for o in rows if o.obligation_id == row.id), key=lambda o: o.rule_date, reverse=True)
-    views = [occurrence_view(o, row, reference, users, reads) for o in history]
+    from .obligation_documents import marks as document_marks
+    marks = document_marks(db, [o.id for o in history])
+    views = [occurrence_view(o, row, reference, users, reads, marks) for o in history]
     return {**obligation_view(row, users, next((v for v in reversed(views) if v["status"] == "pendente"), None)), "occurrences": views}
 
 

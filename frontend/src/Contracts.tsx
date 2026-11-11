@@ -5,6 +5,7 @@ import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
 import { ActionMenu, DetailDrawer } from "./components/WorkspaceUI";
 import { api } from "./lib/api";
 import { centsInput, euroToCents, formatEuro } from "./utils/format";
+import { ArchiveDocs } from "./ObligationDocs";
 
 /**
  * Contratos (Obrigações e Prazos): ficha com fidelização, renovação automática e pré-aviso de denúncia.
@@ -154,6 +155,7 @@ function ContractDrawer({ value, meta, store, stores, categories, onClose, onSav
       </div></fieldset>
       <label className="obl-wide">Descrição e observações<textarea rows={3} value={form.notes} maxLength={4000} onChange={e => set({ notes: e.target.value })} /></label>
     </div>
+    {editing && <ArchiveDocs kind="contract" id={value.id} title="Contrato, adendas e comunicações" />}
     {editing && value.occurrences?.length > 0 && <section className="obl-history" aria-label="Prazos e pagamentos do contrato">
       <h3>Prazos e pagamentos</h3>
       <div className="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th className="numeric">Valor</th><th>Estado</th></tr></thead>

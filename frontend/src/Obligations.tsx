@@ -9,6 +9,7 @@ import Contracts from "./Contracts";
 import Vehicles from "./Vehicles";
 import FiscalTemplates from "./FiscalTemplates";
 import ObligationAlerts from "./ObligationAlerts";
+import { OccurrenceDocuments } from "./ObligationDocs";
 import "./Obligations.css";
 
 /**
@@ -69,7 +70,7 @@ export default function Obligations({ store, stores, categories, admin = false }
   const [version, setVersion] = useState(0);
   const [editing, setEditing] = useState<Row | null>(null);
   const [acting, setActing] = useState<{ action: string; item: Row } | null>(null);
-  const [templates, setTemplates] = useState(false), [alertsOpen, setAlertsOpen] = useState(false);
+  const [templates, setTemplates] = useState(false), [alertsOpen, setAlertsOpen] = useState(false), [docsFor, setDocsFor] = useState<Row | null>(null);
   const refresh = () => setVersion(v => v + 1);
 
   useEffect(() => {
@@ -100,6 +101,7 @@ export default function Obligations({ store, stores, categories, admin = false }
     </>}
     {item.status !== "pendente" && <ActionButton type="button" onClick={() => setActing({ action: "reopen", item })}>Reabrir</ActionButton>}
     {!item.read && <ActionButton type="button" onClick={() => void act("read", item, {})}>Confirmar leitura</ActionButton>}
+    <ActionButton type="button" onClick={() => setDocsFor(item)}>Documentos e associações</ActionButton>
     <ActionButton type="button" onClick={() => void openObligation(item.obligation_id)}>Abrir ficha</ActionButton>
   </ActionMenu>;
   async function act(action: string, item: Row, body: Row) {
@@ -157,7 +159,8 @@ export default function Obligations({ store, stores, categories, admin = false }
             <tbody>{filtered.map(item => <tr key={item.id}>
               <td>{fullDate(item.due_date)}<small>{item.status === "pendente" ? daysText(item.days) : ""}</small></td>
               <td><strong>{item.title}</strong><small>{[item.kind, item.entity_name].filter(Boolean).join(" · ")}</small>
-                {!item.date_validated && <small className="obl-unvalidated">Data a validar</small>}{item.date_origin && <small>Data alterada: {item.date_origin}</small>}</td>
+                {!item.date_validated && <small className="obl-unvalidated">Data a validar</small>}{item.date_origin && <small>Data alterada: {item.date_origin}</small>}
+                {(item.documents > 0 || item.links > 0) && <small>{item.documents ? `${item.documents} documento(s)` : ""}{item.documents && item.links ? " · " : ""}{item.links ? `${item.links} registo(s) real(is)` : ""}</small>}</td>
               <td><CategoryBadge category={item.category} /></td><td>{item.periodicity}</td>
               <td className="numeric">{item.expected_cents == null ? "—" : formatEuro(item.expected_cents)}</td>
               <td className="numeric">{item.actual_cents == null ? "—" : formatEuro(item.actual_cents)}</td>
@@ -168,6 +171,8 @@ export default function Obligations({ store, stores, categories, admin = false }
     {editing && <ObligationDrawer value={editing} data={data} stores={stores} categories={categories} store={store} onClose={() => setEditing(null)}
       onSaved={message => { setEditing(null); setNotice(message); refresh(); }} actions={actions} />}
     {acting && <ActionDialog {...acting} onClose={() => setActing(null)} onConfirm={body => void act(acting.action, acting.item, body)} />}
+    {docsFor && <OccurrenceDocuments item={docsFor} onClose={() => { setDocsFor(null); refresh(); }}
+      onComplete={amount => { const item = docsFor; setDocsFor(null); setActing({ action: "complete", item: { ...item, expected_cents: amount } }); }} />}
     {alertsOpen && <ObligationAlerts admin={admin} onClose={() => setAlertsOpen(false)} />}
     {templates && <FiscalTemplates users={data?.users || []} onClose={() => setTemplates(false)} onCreated={message => { setTemplates(false); setNotice(message); refresh(); }} />}
   </div>;

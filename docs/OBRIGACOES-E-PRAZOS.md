@@ -15,7 +15,7 @@ página `Obrigações e Prazos` (`frontend/src/Obligations.tsx`), API `backend/a
 | 5. Viaturas (ficha, IUC e inspeção por categoria e idade) | Concluída (migração **0084**) — ver «Viaturas» |
 | 6. Obrigações fiscais com modelos de regra «a validar» | Concluída (sem migração) — ver «Modelos fiscais» |
 | 7. Alertas internos e por email (adesão do utilizador) | Concluída (migração **0085**) — ver «Alertas e notificações» |
-| 8. Integração financeira (previsão de liquidez, orçamento) e documental (arquivo) | Por fazer |
+| 8. Integração financeira (previsão de liquidez, orçamento) e documental (arquivo) | Concluída (migração **0086**) — ver «Documentos e registos reais» |
 
 ## Regras
 
@@ -117,6 +117,23 @@ Botão **Alertas** (`frontend/src/ObligationAlerts.tsx`, API `backend/app/obliga
     repete automaticamente (como no resto do email). Histórico dos envios para o administrador.
   - Execução a pedido («Enviar agora», administrador) e uma vez por dia pelo agendador, a partir das 8 h.
 - Auditoria: preferência de cada utilizador, autorização da empresa e cada execução.
+
+## Documentos e registos reais
+
+Menu «…» de cada prazo → **Documentos e associações**; fichas de contrato e de viatura → secção de documentos
+(`frontend/src/ObligationDocs.tsx`, API `backend/app/obligation_documents.py`, tabela `obligation_links`).
+
+- **Documentos do Arquivo** (comprovativos de pagamento, declarações, contratos, adendas, apólices, DUA,
+  certificados de inspeção, licenças): o Arquivo digital passa a aceitar como destino o prazo, a obrigação, o
+  contrato e a viatura (associação manual e pesquisa de destinos no próprio Arquivo). O original fica onde está
+  (Drive, carregamento cifrado) e vê-se na aplicação. A lista de prazos indica quantos documentos tem cada um.
+- **Fatura ou pagamento real**: para cada prazo são propostos registos compatíveis — compras/faturas, documentos do
+  ERP, custos bancários com rubrica e pagamentos registados — da mesma entidade (NIF da entidade ou nome), com o
+  valor e a data (até 45 dias) pontuados. Associar é uma decisão explícita e **não conclui o prazo** (obrigação,
+  despesa reconhecida e pagamento efetuado são coisas distintas); «Concluir com …» abre a conclusão já com o valor do
+  registo. Anular exige motivo e fica no histórico. Auditoria em cada associação.
+- **Previsão de liquidez**: um prazo com registo real associado sai das estimativas («Substituída pelo registo real
+  associado ao prazo»), porque o documento já conta como documento por liquidar ou pagamento.
 
 ## Painel
 

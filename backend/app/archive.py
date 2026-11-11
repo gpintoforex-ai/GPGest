@@ -100,6 +100,11 @@ TARGETS = {
     "document_payment": "Pagamento / recebimento",
     "cash_movement": "Movimento de caixa",
     "bank_deposit": "Depósito",
+    # Obrigações e Prazos: comprovativos, declarações, contratos, apólices e documentos de viaturas.
+    "obligation_occurrence": "Prazo (comprovativo ou declaração)",
+    "obligation": "Obrigação",
+    "contract": "Contrato",
+    "vehicle": "Viatura",
 }
 FIELDS = ("doc_type", "issue_date", "entity_nif", "entity_name", "document_code", "document_number",
           "base_cents", "tax_cents", "total_cents", "currency", "payment_reference")

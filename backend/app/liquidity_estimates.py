@@ -90,6 +90,8 @@ def obligation_events(db, stores, reference, end, documents):
             if o.store_id is None or o.store_id in stores}
     if not rows:
         return events, excluded
+    from .obligation_documents import linked_occurrences
+    linked = linked_occurrences(db)
     for occ in db.scalars(select(ObligationOccurrence).where(
             ObligationOccurrence.obligation_id.in_(rows), ObligationOccurrence.status == "pendente",
             ObligationOccurrence.expected_cents.is_not(None), ObligationOccurrence.due_date <= end.isoformat())):
@@ -101,6 +103,9 @@ def obligation_events(db, stores, reference, end, documents):
                 "amount_cents": occ.expected_cents, "direction": -1, "due_date": occ.due_date, "expected_date": expected.isoformat(), "target": "",
                 "currency": "EUR", "confidence": "provavel", "entity": ob.entity_name, "document": ob.kind, "category_id": ob.category_id,
                 "source_url": "?page=Obriga%C3%A7%C3%B5es%20e%20Prazos", "estimate_note": "Valor previsto do prazo; conclui-se só por confirmação"}
+        if occ.id in linked:
+            excluded.append({**item, "exclusion": "Substituída pelo registo real associado ao prazo"})
+            continue
         match = next((d for d in documents if d["direction"] == -1 and ob.entity_name and tokens(ob.entity_name) & tokens(d.get("entity") or d.get("title"))
                       and d.get("due_date") and abs((date.fromisoformat(d["due_date"]) - date.fromisoformat(occ.due_date)).days) <= 15
                       and abs(d["amount_cents"] - occ.expected_cents) <= max(100, occ.expected_cents // 10)), None)
