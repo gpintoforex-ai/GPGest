@@ -136,3 +136,17 @@ def test_integrated_mode_and_refresh_after_sync(erp):
     delta = by_name(records(client))["Cliente Delta"]["extra"]["last_sale"]
     assert (delta["date"], delta["document"], delta["state"]) == ("2026-11-10", "FR 1/9", "ativo")
     assert records(client)["meta"]["last_sale"]["mode"] == "erp"
+
+
+def test_queries_follow_the_company_schema_like_the_application(erp, shared_schema):
+    """A aplicação escolhe a empresa pelo mapa de esquemas (não pelo search_path): as consultas têm de usar o modelo.
+    Regressão: SQL em texto lia o esquema público e devolvia «Sem vendas» para todos os clientes."""
+    from app.db import SessionLocal, engine
+    schema, _ = shared_schema
+    customer_activity.CACHE.clear()
+    with SessionLocal(bind=engine.execution_options(schema_translate_map={None: schema})) as db:
+        db.info["company"] = {"id": "outra-empresa", "nif": ""}
+        stores = list(db.scalars(select(Store.id)))
+        data = customer_activity.latest(db, stores)
+    assert data["meta"]["mode"] == "erp" and data["meta"]["data_until"] == "2026-10-30"
+    assert data["nif"][ALFA]["document"] == "FT 1/1"

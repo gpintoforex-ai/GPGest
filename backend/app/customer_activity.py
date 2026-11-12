@@ -17,7 +17,8 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field, model_validator
-from sqlalchemy import func, select, text
+from sqlalchemy import Boolean, Integer, cast, false, func, select
+from sqlalchemy.dialects.postgresql import JSONB, distinct_on
 from sqlalchemy.orm import Session
 
 from .access import authorize, current, record, scope
@@ -65,36 +66,41 @@ def latest(db, stores):
     cached = CACHE.get(key)
     if cached and cached[0] == version and clock.monotonic() - cached[1] < CACHE_SECONDS:
         return cached[2]
+    # Consultas pelo modelo (nunca SQL em texto): o mapa de esquemas da empresa só se aplica às tabelas do modelo.
+    record = WintouchSaleRecord
+    data = cast(record.data, JSONB)
+
+    def field(name):
+        return data[name].astext
+
+    def newest(columns, valid, key):
+        """Venda mais recente por chave (DISTINCT ON sobre uma subconsulta, para a ordenação usar as mesmas colunas)."""
+        inner = select(key.label("k"), record.id.label("id"), record.store_id.label("store_id"), record.document_date.label("day"),
+                       field("document").label("document"), field("type").label("typ"), *columns).where(*valid).subquery()
+        return db.execute(select(inner).ext(distinct_on(inner.c.k)).order_by(inner.c.k, inner.c.day.desc(), func.length(inner.c.document).desc(),
+                                                                       inner.c.document.desc()))
+
     by_nif, by_name, bounds = {}, {}, (None, None)
     if stores and mode == "saft" and (source := saft_source(db)):
-        params = {"source": source, "stores": list(stores), "types": list(SALE_TYPES)}
-        valid = """enterprise_id = :source AND kind = 'saft_invoice' AND active AND store_id = ANY(:stores)
-                   AND data::jsonb->>'status' = 'N' AND data::jsonb->>'type' = ANY(:types)"""
-        customers = {code: (nif_of(nif), name) for code, nif, name in db.execute(text(
-            """SELECT data::jsonb->'raw'->>'CustomerID', data::jsonb->'raw'->>'CustomerTaxID', data::jsonb->'raw'->>'CompanyName'
-               FROM wt_sale_records WHERE enterprise_id = :source AND kind = 'saft_customer' AND active"""), params)}
-        rows = db.execute(text(f"""SELECT DISTINCT ON (data::jsonb->>'customer_id') data::jsonb->>'customer_id', id, store_id, document_date,
-                                          data::jsonb->>'document', data::jsonb->>'type'
-                                   FROM wt_sale_records WHERE {valid}
-                                   ORDER BY data::jsonb->>'customer_id', document_date DESC, length(data::jsonb->>'document') DESC,
-                                            data::jsonb->>'document' DESC"""), params)
-        for code, identifier, store, day, document, typ in rows:
-            nif, name = customers.get(code, ("", code))
-            add(by_nif, by_name, nif, name, {"date": day, "id": identifier, "store_id": store, "document": document, "type": typ, "customer_code": code})
-        bounds = db.execute(text(f"SELECT min(document_date), max(document_date) FROM wt_sale_records WHERE {valid}"), params).one()
+        raw = data["raw"]
+        customers = {code: (nif_of(nif), name) for code, nif, name in db.execute(
+            select(raw["CustomerID"].astext, raw["CustomerTaxID"].astext, raw["CompanyName"].astext)
+            .where(record.enterprise_id == source, record.kind == "saft_customer", record.active.is_(True)))}
+        valid = (record.enterprise_id == source, record.kind == "saft_invoice", record.active.is_(True), record.store_id.in_(stores),
+                 field("status") == "N", field("type").in_(SALE_TYPES))
+        for row in newest([], valid, field("customer_id")):
+            nif, name = customers.get(row.k, ("", row.k))
+            add(by_nif, by_name, nif, name, {"date": row.day, "id": row.id, "store_id": row.store_id, "document": row.document, "type": row.typ,
+                                             "customer_code": row.k})
+        bounds = db.execute(select(func.min(record.document_date), func.max(record.document_date)).where(*valid)).one()
     elif stores and mode == "erp":
-        params = {"stores": list(stores)}
-        valid = """kind = 'documento' AND active AND store_id = ANY(:stores) AND data::jsonb->>'document_group' = 'vendas'
-                   AND coalesce((data::jsonb->>'cancelled')::boolean, false) = false AND coalesce((data::jsonb->>'direction')::int, 1) > 0"""
-        rows = db.execute(text(f"""SELECT DISTINCT ON (k) k, id, store_id, document_date, document, typ, nif, name FROM (
-                                     SELECT coalesce(nullif(data::jsonb->>'entity_nif', ''), 'nome:' || lower(data::jsonb->>'entity')) AS k, id, store_id,
-                                            document_date, data::jsonb->>'document' AS document, data::jsonb->>'type' AS typ,
-                                            data::jsonb->>'entity_nif' AS nif, data::jsonb->>'entity' AS name
-                                     FROM wt_sale_records WHERE {valid}) s
-                                   ORDER BY k, document_date DESC, length(document) DESC, document DESC"""), params)
-        for _, identifier, store, day, document, typ, nif, name in rows:
-            add(by_nif, by_name, nif_of(nif), name, {"date": day, "id": identifier, "store_id": store, "document": document, "type": typ, "customer_code": ""})
-        bounds = db.execute(text(f"SELECT min(document_date), max(document_date) FROM wt_sale_records WHERE {valid}"), params).one()
+        valid = (record.kind == "documento", record.active.is_(True), record.store_id.in_(stores), field("document_group") == "vendas",
+                 func.coalesce(field("cancelled").cast(Boolean), false()).is_(false()), func.coalesce(field("direction").cast(Integer), 1) > 0)
+        key = func.coalesce(func.nullif(field("entity_nif"), ""), func.concat("nome:", func.lower(field("entity"))))
+        for row in newest([field("entity_nif").label("nif"), field("entity").label("name")], valid, key):
+            add(by_nif, by_name, nif_of(row.nif), row.name, {"date": row.day, "id": row.id, "store_id": row.store_id, "document": row.document,
+                                                             "type": row.typ, "customer_code": ""})
+        bounds = db.execute(select(func.min(record.document_date), func.max(record.document_date)).where(*valid)).one()
     value = {"nif": by_nif, "name": by_name, "meta": {"mode": mode or "none", "data_from": bounds[0], "data_until": bounds[1]}}
     if len(CACHE) > 32:
         CACHE.clear()
