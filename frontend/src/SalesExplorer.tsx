@@ -248,14 +248,25 @@ export function SalesDocumentPanel({ id, label, date, store = "", company = "Cli
   id: string; label: string; date: string; store?: string; company?: string;
   navigate?: (page: string, params?: Record<string, string>) => void; onClose: () => void;
 }) {
+  return <SalesPanel initial={[{ label, params: { view: "document", id } }]} start={date} end={date} store={store} company={company} navigate={navigate} onClose={onClose} />;
+}
+
+/** Painel de consulta comercial com histórico (voltar e percurso) a partir de qualquer passo inicial. */
+export function SalesPanel({ initial, start, end, store = "", company = "Clientes", navigate, onClose }: {
+  initial: DrilldownStep[]; start: string; end: string; store?: string; company?: string;
+  navigate?: (page: string, params?: Record<string, string>) => void; onClose: () => void;
+}) {
   const leave = (page: string, params: Record<string, string>) => { onClose(); window.setTimeout(() => navigate?.(page, params), 0); };
-  return <DrilldownPanel<Row> label="Consulta comercial" context={{ company, store, start: date, end: date }} endpoint="/sales/detail"
-    initial={[{ label, params: { view: "document", id } }]} onClose={onClose}>
+  // Cada passo usa o seu período: o documento, o dia do documento; cliente e artigo, os 12 meses até ao fim do período
+  // (o painel da ficha de cliente pode abranger vários anos e estas consultas vão até um ano).
+  const recent = { start: new Date(Math.max(Date.parse(start), Date.parse(end) - 364 * 86_400_000)).toISOString().slice(0, 10), end };
+  return <DrilldownPanel<Row> label="Consulta comercial" context={{ company, store, start, end }} endpoint="/sales/detail"
+    initial={initial} onClose={onClose}>
     {(value, { step, open: push }) => <Detail key={JSON.stringify(step.params)} value={value}
-      onDocument={row => push({ label: `${row.type_label || "Documento"} ${row.document}`, params: { view: "document", id: row.id } })}
-      onCustomer={(key, name) => push({ label: name, params: { view: "customer", key } })}
-      onArticle={(code, name) => push({ label: `${code} · ${name}`, params: { view: "article", code } })}
-      onReceipt={(receipt, name) => push({ label: name, params: { view: "receipt", id: receipt } })}
+      onDocument={row => push({ label: `${row.type_label || "Documento"} ${row.document}`, params: { view: "document", id: row.id, ...(row.date ? { start: row.date.slice(0, 10), end: row.date.slice(0, 10) } : recent) } })}
+      onCustomer={(key, name) => push({ label: name, params: { view: "customer", key, ...recent } })}
+      onArticle={(code, name) => push({ label: `${code} · ${name}`, params: { view: "article", code, ...recent } })}
+      onReceipt={(receipt, name) => push({ label: name, params: { view: "receipt", id: receipt, ...recent } })}
       onLeave={leave}
       onFilter={changes => { persist({ ...DEFAULTS, ...changes }, null); leave("Faturação e recebimentos", {}); }} />}
   </DrilldownPanel>;
@@ -298,6 +309,7 @@ function Facts({ items }: { items: [string, ReactNode][] }) {
 
 function Detail(props: DetailProps) {
   const { value } = props;
+  if (value.view === "customer_article") return <CustomerArticleDetail {...props} />;
   if (value.view === "document") return <DocumentDetail {...props} />;
   if (value.view === "customer") return <CustomerDetail {...props} />;
   if (value.view === "article") return <ArticleDetail {...props} />;
@@ -355,10 +367,49 @@ function DocumentDetail({ value: d, onCustomer, onArticle, onReceipt, onLeave }:
       <p className="se-hint">Recebido {euro(d.received_cents)} · em dívida {euro(d.pending_cents)}. Um recibo e um recebimento registado no GPGest para o mesmo documento não se somam.</p>
     </>}
     {tab === "original" && <>
-      {d.originals.length ? <ul className="se-originals">{d.originals.map((id: string, index: number) => <li key={id}>
-        <a href={`/api/archive/documents/${encodeURIComponent(id)}/file`} target="_blank" rel="noreferrer"><FileText size={15} aria-hidden="true" />Abrir original {index + 1}<ExternalLink size={13} aria-hidden="true" /></a>
-      </li>)}</ul> : <Notice tone="info">{d.original_note}</Notice>}
+      {d.originals.length ? <OriginalViewer identifiers={d.originals} name={d.document} /> : <Notice tone="info">{d.original_note}</Notice>}
     </>}
+  </div>;
+}
+
+/** PDF original do Arquivo digital: pré-visualização, ecrã completo e descarga (o servidor valida a permissão). */
+function OriginalViewer({ identifiers, name }: { identifiers: string[]; name: string }) {
+  const [index, setIndex] = useState(0);
+  const url = `/api/archive/documents/${encodeURIComponent(identifiers[index])}/file`;
+  return <div className="se-original">
+    <div className="se-actions">
+      {identifiers.length > 1 && <label>Original<select value={index} onChange={e => setIndex(Number(e.target.value))}>
+        {identifiers.map((id, i) => <option key={id} value={i}>Original {i + 1}</option>)}</select></label>}
+      <a className="se-mini" href={url} target="_blank" rel="noreferrer">Abrir em ecrã completo<ExternalLink size={12} aria-hidden="true" /></a>
+      <a className="se-mini" href={url} download={`${name.replace(/[^\w.-]+/g, "_")}.pdf`}>Descarregar</a>
+    </div>
+    <ul className="se-originals">{identifiers.map((id, i) => <li key={id}><a href={`/api/archive/documents/${encodeURIComponent(id)}/file`} target="_blank" rel="noreferrer">
+      <FileText size={15} aria-hidden="true" />Abrir original {i + 1}<ExternalLink size={13} aria-hidden="true" /></a></li>)}</ul>
+    <iframe className="se-original-frame" src={url} title={`Documento original ${name}`} />
+  </div>;
+}
+
+/** Artigo na ficha de cliente: ficha resumida e histórico das vendas desse artigo a este cliente. */
+function CustomerArticleDetail({ value: a, onDocument, onLeave }: DetailProps) {
+  const s: Row = a.summary || {};
+  return <div className="se-detail">
+    <Facts items={[["Código", a.code || "Sem código"], ["Família", a.family || "—"], ["Marca", a.brand || "—"],
+      ["Tipo", a.service ? "Serviço" : a.no_code ? "Linha sem código de artigo" : "Artigo"],
+      ["Stock atual", a.stock != null ? `${quantity(a.stock)} ${a.unit || ""}`.trim() : "Sem ficha de stock associada"],
+      ["Quantidade faturada", quantity(s.sold)], ["Quantidade devolvida", quantity(s.returned)], ["Preço médio (s/ IVA)", euro(s.average_price_cents)],
+      ["Preços praticados", a.price_range ? (a.price_range[0] === a.price_range[1] ? price(a.price_range[0]) : `${price(a.price_range[0])} a ${price(a.price_range[1])}`) : "—"],
+      ["Faturado sem IVA", euro(s.net_cents)], ["Primeira venda", day(s.first_date)], ["Última venda", day(s.last_date)]]} />
+    {a.article_id && <ActionButton type="button" onClick={() => onLeave("Artigos e validades", { "consulta.tipo": "article", "consulta.id": a.article_id })}><ExternalLink size={15} aria-hidden="true" />Abrir ficha do artigo</ActionButton>}
+    <h3 className="se-subtitle">Histórico de vendas a este cliente</h3>
+    <div className="se-scroll"><table className="se-table" aria-label="Histórico de vendas do artigo ao cliente">
+      <thead><tr><th scope="col">Data</th><th scope="col">Documento</th><th scope="col" className="numeric">Qtd.</th><th scope="col" className="numeric">Preço unit.</th>
+        <th scope="col" className="numeric">Desconto</th><th scope="col" className="numeric">Sem IVA</th><th scope="col" className="numeric">Com IVA</th></tr></thead>
+      <tbody>{a.lines.map((line: Row, index: number) => <tr key={`${line.document_id}-${index}`}><td>{day(line.date)}</td>
+        <td><button type="button" className="se-link" onClick={() => onDocument({ id: line.document_id, document: line.document, type_label: line.type_label, date: line.date })}>{line.document}</button>
+          <small>{line.type_label}</small></td>
+        <td className="numeric">{quantity(line.quantity)}</td><td className="numeric">{price(line.unit_price)}</td><td className="numeric">{line.discount_cents ? euro(line.discount_cents) : "—"}</td>
+        <td className="numeric">{euro(line.net_cents)}</td><td className="numeric">{euro(line.gross_cents)}</td></tr>)}</tbody>
+    </table></div>
   </div>;
 }
 

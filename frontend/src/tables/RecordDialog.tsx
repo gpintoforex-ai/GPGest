@@ -102,7 +102,7 @@ function payload(table: TableInfo, values: Record<string, any>) {
   return result;
 }
 
-export default function RecordDialog({ table, context, mode: startMode, recordId, recordIds = [], onNavigate, onClose, onSaved, initialValues, onCreated }: {
+export default function RecordDialog({ table, context, mode: startMode, recordId, recordIds = [], onNavigate, onClose, onSaved, initialValues, onCreated, onLeave, initialTab }: {
   table: TableInfo;
   context: TableContext;
   mode: Mode;
@@ -110,6 +110,9 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
   // Registos da lista atual, para as setas «anterior / seguinte».
   recordIds?: string[];
   onNavigate?: (id: string) => void;
+  /** Sair da ficha para outra página (ex.: ficha do artigo), guardando o separador para o regresso. */
+  onLeave?: (page: string, params: Record<string, string>, tab: number) => void;
+  initialTab?: number;
   onClose: () => void;
   onSaved: (message: string, warning?: string) => void;
   // Criar a partir de outro ecrã (ex.: fornecedor de uma fatura): valores já conhecidos.
@@ -119,7 +122,9 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
   const dialogRef = useRef<HTMLDialogElement>(null);
   const lastLookup = useRef("");
   const entitySheet = table.key === "customers" || table.key === "suppliers";
-  const [entityTab, setEntityTab] = useState(0);
+  // Separador da ficha guardado ao sair para outra página (repõe-se ao regressar ao mesmo registo).
+  // Separador inicial (ex.: ao regressar da ficha do artigo, o endereço indica o separador onde se estava).
+  const [entityTab, setEntityTab] = useState(initialTab || 0);
   const [mode, setMode] = useState<Mode>(startMode);
   const [details, setDetails] = useState<RecordDetails | null>(null);
   const [values, setValues] = useState<Record<string, any>>(() => ({ ...initial(table, null), ...(initialValues || {}) }));
@@ -273,7 +278,7 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
       <span aria-live="polite">{position + 1} de {recordIds.length}</span>
       <ActionButton type="button" aria-label="Registo seguinte" disabled={position >= recordIds.length - 1} onClick={() => go(1)}><ChevronRight size={20} /></ActionButton>
     </>;
-    const sheet = <EntityRecordSheet key={recordId || "novo"} table={table} details={details} values={values} title={title} active={entityTab} onSelect={setEntityTab}
+    const sheet = <EntityRecordSheet key={recordId || "novo"} table={table} details={details} values={values} title={title} active={entityTab} onSelect={setEntityTab} onLeave={onLeave}
       actions={<>{navigation}{mode === "view" ? table.permissions.edit && details && <ActionButton type="button" onClick={() => setMode("edit")}><Pencil size={16} />Editar</ActionButton> : <ActionButton type="submit" className="record-save" variant="primary" disabled={mode === "edit" && !details}><Save size={16} />{mode === "create" ? `Criar ${singular}` : "Guardar alterações"}</ActionButton>}</>}
       renderFields={fields => mode === "view" ? <dl className="table-details">{fields.map(f => <div key={f.name}><dt>{f.label}</dt><dd>{details ? displayValue(f, details.values[f.name], details.labels[f.name]) : "—"}</dd></div>)}</dl> : <div className="table-form-grid">{fields.map(field => <div key={field.name} style={{ "--span": span(field) } as CSSProperties}>
         {field.type === "boolean" ? input(field) : <Field label={<FieldLabel field={field} suffix={managed.has(field.name) && mode === "edit" ? " (ERP)" : ""} />}>{input(field)}</Field>}

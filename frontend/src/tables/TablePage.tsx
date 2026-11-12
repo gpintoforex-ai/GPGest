@@ -20,7 +20,7 @@ const SalesDocumentPanel = lazy(() => import("../SalesExplorer").then(module => 
 
 type Listing = { rows: TableRow[]; total: number; total_all: number; page: number; pages: number; size: number; meta?: Record<string, any> };
 type Dialog =
-  | { kind: "record"; mode: "create" | "edit" | "view"; id?: string }
+  | { kind: "record"; mode: "create" | "edit" | "view"; id?: string; tab?: number }
   | { kind: "remove"; row: TableRow }
   | { kind: "sync"; direction: Direction; ids: string[] }
   | null;
@@ -63,7 +63,8 @@ export default function TablePage({ tableKey, context, active = true, store = ""
 
   useRecordHandoff(tableKey, [tableKey === "customers" ? "Clientes" : tableKey === "suppliers" ? "Fornecedores" : ""], id => {
     if (!active || !table || !listing || table.key !== tableKey || !["customers","suppliers"].includes(tableKey)) return false;
-    setDialog({kind:"record",mode:"view",id}); return true;
+    const tab = Number(new URLSearchParams(window.location.search).get("consulta.separador")) || undefined;
+    setDialog({kind:"record",mode:"view",id,tab}); return true;
   });
   const load = useCallback(async () => {
     const params = new URLSearchParams({ q: query, status, origin, sync, store, sort: sort.id, direction: sort.direction, page: String(page), size: String(size) });
@@ -107,6 +108,19 @@ export default function TablePage({ tableKey, context, active = true, store = ""
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(""); }
   }
+
+  // Da ficha para outra página (ex.: ficha do artigo): o endereço guarda o registo e o separador, para que voltar
+  // (botão «Retroceder») reabra a mesma ficha; a aplicação só muda de página com os diálogos fechados.
+  const leaveRecord = (id: string) => navigate ? (page: string, params: Record<string, string>, tab: number) => {
+    // Só a entrada atual do histórico (sem avisar a página): a ficha reabre ao voltar, não agora.
+    const url = new URL(window.location.href);
+    url.searchParams.set("consulta.tipo", tableKey);
+    url.searchParams.set("consulta.id", id);
+    url.searchParams.set("consulta.separador", String(tab));
+    window.history.replaceState(window.history.state, "", url);
+    setDialog(null);
+    window.setTimeout(() => navigate(page, params), 0);
+  } : undefined;
 
   if (!table || !listing) return <>{error ? <Notice className="error" role="alert">{error}</Notice> : <Processing label="A carregar" />}</>;
 
@@ -216,7 +230,8 @@ export default function TablePage({ tableKey, context, active = true, store = ""
       </div>
       {!integrated && table.local_only_reason && erp.reason !== "A empresa está em modo local." && <p className="footnote">{table.local_only_reason}</p>}
     </section>
-    {dialog?.kind === "record" && <RecordDialog table={table} context={context} mode={dialog.mode} recordId={dialog.id} recordIds={rows.map(r => r.id)} onNavigate={id => setDialog({ ...dialog, id })} onClose={() => setDialog(null)} onSaved={changed} />}
+    {dialog?.kind === "record" && <RecordDialog table={table} context={context} mode={dialog.mode} recordId={dialog.id} recordIds={rows.map(r => r.id)} onNavigate={id => setDialog({ ...dialog, id })} onClose={() => setDialog(null)} onSaved={changed}
+      onLeave={dialog.id ? leaveRecord(dialog.id) : undefined} initialTab={dialog.tab} />}
     {dialog?.kind === "remove" && <RemoveDialog table={table} row={dialog.row} onClose={() => setDialog(null)} onDone={changed} onDeactivate={row => { setDialog(null); void setActive(row, false); }} />}
     {sale && <Suspense fallback={<Processing label="A abrir o documento" />}><SalesDocumentPanel id={sale.id} label={sale.label} date={sale.date} navigate={navigate} onClose={() => setSale(null)} /></Suspense>}
     {activitySettings && <ActivitySettings onClose={() => setActivitySettings(false)} onSaved={() => { setActivitySettings(false); void load().catch(e => setError(e.message)); }} />}

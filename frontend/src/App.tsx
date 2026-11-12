@@ -228,7 +228,7 @@ export default function App() {
     }
     pageScroll.current.set(page, window.scrollY);
     setPage(next);
-    if (!fromLocation) updateLocationParams({pagina:next, "menu.area":null, "menu.destino":null, "consulta.tipo":null, "consulta.id":null, "consulta.chave":null, ...parameters});
+    if (!fromLocation) updateLocationParams({pagina:next, "menu.area":null, "menu.destino":null, "consulta.tipo":null, "consulta.id":null, "consulta.chave":null, "consulta.separador":null, ...parameters});
     setMobile(false);
     return true;
     } finally { navigationPending.current = false; }

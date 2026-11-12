@@ -26,7 +26,8 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import cast, func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from .access import current
@@ -108,9 +109,10 @@ def mode_of(db):
 # ---------------------------------------------------------------- dados normalizados (com cache curta)
 
 
-def dataset(db, stores, start, end):
+def dataset(db, stores, start, end, customer=None):
     """Documentos normalizados do período, com linhas, recebimentos e clientes. Cache de 30 s por empresa e filtro,
-    invalidada quando muda a sincronização, a importação ou a conferência."""
+    invalidada quando muda a sincronização, a importação ou a conferência. `customer` restringe aos documentos de um
+    cliente (códigos SAF-T ligados à ficha, identificador do ERP ou NIF real; nunca o nome)."""
     mode = mode_of(db)
     company = str(db.info.get("company", {}).get("id") or db.info.get("company", {}).get("nif") or "")
     version = (
@@ -119,11 +121,11 @@ def dataset(db, stores, start, end):
         db.scalar(select(func.count(BillingConferenceLine.id))),
         str(db.scalar(select(func.max(BillingConference.undone_at)))),
     )
-    key = (company, mode, tuple(sorted(stores)), str(start), str(end))
+    key = (company, mode, tuple(sorted(stores)), str(start), str(end), json.dumps(customer, sort_keys=True) if customer else "")
     cached = CACHE.get(key)
     if cached and cached[0] == version and clock.monotonic() - cached[1] < CACHE_SECONDS:
         return cached[2]
-    data = (erp_dataset if mode == "erp" else saft_dataset)(db, stores, str(start), str(end))
+    data = (erp_dataset if mode == "erp" else saft_dataset)(db, stores, str(start), str(end), customer)
     data["mode"] = mode or "none"
     if len(CACHE) > 64:
         CACHE.clear()
@@ -182,7 +184,11 @@ def saft_lines(raw, direction):
     return lines
 
 
-def saft_dataset(db, stores, start, end):
+def jsonb(column, name):
+    return cast(column, JSONB)[name].astext
+
+
+def saft_dataset(db, stores, start, end, customer=None):
     source = saft_source(db)
     customers, products, docs = {}, {}, []
     if not source or not stores:
@@ -201,9 +207,10 @@ def saft_dataset(db, stores, start, end):
             products[code] = {"code": code, "description": str(raw.get("ProductDescription") or ""), "family": str(raw.get("ProductGroup") or ""),
                               "type": str(raw.get("ProductType") or "")}
     entities, days = entities_by_nif(db), due_days(db)
+    only = [jsonb(WintouchSaleRecord.data, "customer_id").in_(customer.get("codes") or ["__sem_codigo__"])] if customer else []
     for row in db.scalars(select(WintouchSaleRecord).where(
             WintouchSaleRecord.enterprise_id == source, WintouchSaleRecord.kind == "saft_invoice", WintouchSaleRecord.active.is_(True),
-            WintouchSaleRecord.store_id.in_(stores), WintouchSaleRecord.document_date >= start, WintouchSaleRecord.document_date <= end)):
+            WintouchSaleRecord.store_id.in_(stores), WintouchSaleRecord.document_date >= start, WintouchSaleRecord.document_date <= end, *only)):
         data = json.loads(row.data)
         raw = data.get("raw") or {}
         status = data.get("status", "")
@@ -333,7 +340,7 @@ def conference_receipts(db, doc_ids):
     return result
 
 
-def erp_dataset(db, stores, start, end):
+def erp_dataset(db, stores, start, end, customer=None):
     docs, receipts = [], []
     if not stores:
         return {"documents": docs, "customers": {}, "products": {}, "receipts": receipts, "notes": []}
@@ -370,9 +377,15 @@ def erp_dataset(db, stores, start, end):
             Reconciliation.undone_at.is_(None), ReconciliationLine.source == "wintouch", ReconciliationLine.source_id.in_([r["id"] for r in receipts]))))
         for item in receipts:
             item["reconciliation"] = "reconciliado" if item["id"] in reconciled else "caixa" if "numer" in fold(item["method"]) else "por_reconciliar"
+    only = []
+    if customer:
+        # Identificador da entidade no ERP (sincronizações recentes) ou NIF real do documento; nunca o nome.
+        matches = [jsonb(WintouchSaleRecord.data, "entity_id") == customer["erp_id"]] if customer.get("erp_id") else []
+        matches += [jsonb(WintouchSaleRecord.data, "entity_nif") == customer["nif"]] if customer.get("nif") else []
+        only = [or_(*matches)] if matches else [WintouchSaleRecord.id.is_(None)]
     for row in db.scalars(select(WintouchSaleRecord).where(
             WintouchSaleRecord.kind == "documento", WintouchSaleRecord.active.is_(True), WintouchSaleRecord.store_id.in_(stores),
-            WintouchSaleRecord.document_date >= start, WintouchSaleRecord.document_date <= end)):
+            WintouchSaleRecord.document_date >= start, WintouchSaleRecord.document_date <= end, *only)):
         data = json.loads(row.data)
         if data.get("document_group") != "vendas":
             continue
@@ -788,8 +801,11 @@ def receipt_detail(data, identifier):
 
 
 @router.get("/api/sales/detail")
-def detail(start: date, end: date, view: str, store_id: str = "", id: str = "", key: str = "", code: str = "",
+def detail(start: date, end: date, view: str, store_id: str = "", id: str = "", key: str = "", code: str = "", record_id: str = "",
            user=Depends(current), db: Session = Depends(db_session)):
+    if view == "customer_article":
+        # Artigo na ficha de cliente (período da ficha, até 10 anos): histórico de vendas desse artigo a este cliente.
+        return {"view": "customer_article", "record_id": record_id, **customer_article(record_id, key, start, end, user, db)}
     stores, first, last = scope_for(db, user, store_id, start, end)
     data = dataset(db, stores, first, last)
     if view == "document":
@@ -804,4 +820,149 @@ def detail(start: date, end: date, view: str, store_id: str = "", id: str = "", 
     if view == "receipt":
         return receipt_detail(data, id)
     fail("Vista inválida.")
+
+
+# ---------------------------------------------------------------- ficha de cliente (separadores Vendas e Documentos)
+
+GENERIC_NIFS = {"", "999999990", "999999999", "000000000", "0"}
+
+
+def nif_of(value):
+    return str(value or "").upper().removeprefix("PT").replace(" ", "").strip()
+
+
+def customer_identity(db, record_id):
+    """Ficha da tabela de Clientes → identificadores das vendas: códigos SAF-T ligados à ficha (o registo do cliente
+    SAF-T guarda a ficha local), identificador da entidade no ERP e NIF real. Nunca o nome."""
+    entity = erp = None
+    if record_id.startswith("local:"):
+        entity = db.get(BusinessEntity, record_id[6:])
+        erp = db.get(WintouchEntity, entity.wintouch_id) if entity and entity.wintouch_id else None
+    elif record_id.startswith("wt:"):
+        erp = db.get(WintouchEntity, record_id[3:])
+        entity = db.scalar(select(BusinessEntity).where(BusinessEntity.wintouch_id == record_id[3:]))
+    if not entity and not erp:
+        fail("Cliente inexistente.", 404)
+    nif = nif_of(entity.tax_number if entity and entity.tax_number else erp.tax_number if erp else "")
+    nif = "" if nif in GENERIC_NIFS else nif
+    codes = set()
+    source = saft_source(db)
+    if source:
+        for row in db.scalars(select(WintouchSaleRecord).where(WintouchSaleRecord.enterprise_id == source, WintouchSaleRecord.kind == "saft_customer",
+                                                               WintouchSaleRecord.active.is_(True))):
+            data = json.loads(row.data)
+            raw = data.get("raw") or {}
+            if entity and data.get("entity_id") == entity.id or nif and nif_of(raw.get("CustomerTaxID")) == nif:
+                codes.add(str(raw.get("CustomerID") or ""))
+    return {"codes": sorted(c for c in codes if c), "erp_id": erp.external_id if erp else None, "nif": nif}
+
+
+def sheet_period(start, end):
+    end = end or today()
+    start = start or end - timedelta(days=364)
+    if start > end or (end - start).days > 3660:
+        fail("Escolha um período válido (até 10 anos).")
+    return start, end
+
+
+def customer_articles(docs, data):
+    """Artigos vendidos ao cliente: quantidades faturadas e devolvidas, valores sem e com IVA, preços e datas."""
+    groups = {}
+    for doc in counted(docs):
+        for line in doc["lines"]:
+            key = line["code"] or "sem-codigo:" + fold(line["description"])
+            product = data["products"].get(line["code"]) or {}
+            row = groups.setdefault(key, {"key": key, "code": line["code"], "description": line["description"] or line["code"] or "Linha sem descrição",
+                                          "family": product.get("family", ""), "service": product.get("type") == "S", "no_code": not line["code"],
+                                          "unit": line.get("unit") or "", "sold": Decimal(0), "returned": Decimal(0), "net_cents": 0, "gross_cents": 0,
+                                          "gross_known": True, "documents": set(), "first_date": doc["date"], "last_date": "", "last_unit_price": None})
+            quantity = number(line["quantity"])
+            if doc["direction"] < 0 or quantity < 0:
+                row["returned"] += abs(quantity)
+            else:
+                row["sold"] += quantity
+            row["net_cents"] += line["net_cents"]
+            if line["gross_cents"] is None:
+                row["gross_known"] = False
+            else:
+                row["gross_cents"] += line["gross_cents"]
+            row["documents"].add(doc["id"])
+            row["first_date"] = min(row["first_date"], doc["date"])
+            if doc["direction"] > 0 and doc["date"] >= row["last_date"]:
+                row["last_date"], row["last_unit_price"] = doc["date"], line["unit_price"]
+    result = []
+    for row in groups.values():
+        net_quantity = row["sold"] - row["returned"]
+        result.append({**row, "sold": str(row["sold"].normalize()), "returned": str(row["returned"].normalize()), "quantity": str(net_quantity.normalize()),
+                       "documents": len(row["documents"]), "gross_cents": row["gross_cents"] if row["gross_known"] else None,
+                       "average_price_cents": cents(Decimal(row["net_cents"]) / net_quantity / 100) if net_quantity else None,
+                       "last_date": row["last_date"] or None})
+    return sorted(result, key=lambda r: -r["net_cents"])
+
+
+@router.get("/api/sales/customer-sheet")
+def customer_sheet(record_id: str, start: date | None = None, end: date | None = None, user=Depends(current), db: Session = Depends(db_session)):
+    """Separadores Vendas e Documentos da ficha de cliente: consulta comercial (não depende da conta corrente)."""
+    from .access import scope
+    start, end = sheet_period(start, end)
+    identity = customer_identity(db, record_id)
+    mode = mode_of(db) or "none"
+    base = {"mode": mode, "start": str(start), "end": str(end), "identity": {"codes": identity["codes"], "nif": bool(identity["nif"]),
+                                                                             "erp_id": bool(identity["erp_id"])}}
+    if mode == "none":
+        return {**base, "available": False, "reason": "Ainda não há vendas na IAZELA (SAF-T de vendas ou vendas sincronizadas do ERP)."}
+    if not identity["codes"] and not identity["nif"] and not identity["erp_id"]:
+        return {**base, "available": False, "reason": "Esta ficha não tem NIF nem está ligada a um cliente do SAF-T ou do ERP: as vendas não "
+                                                      "se associam pelo nome. Indique o NIF ou importe/sincronize as vendas deste cliente."}
+    data = dataset(db, scope(user, db), str(start), str(end), customer=identity)
+    docs = data["documents"]
+    articles = customer_articles(docs, data)
+    totals = summary(docs)
+    sold = [a for a in articles if number(a["sold"]) > 0]
+    top = max(sold, key=lambda a: number(a["sold"]), default=None)
+    rows = []
+    for doc in sorted(docs, key=lambda d: (d["date"], d["document"]), reverse=True):
+        rows.append({**row_view(doc), "origin_label": "ERP" if doc["origin"] == "erp" else "SAF-T",
+                     # Estado de pagamento só com ligação financeira explícita (recibos ligados ao documento, conferência ou saldo do ERP).
+                     "payment_known": doc["status"] == "normal" and doc["direction"] > 0 and bool(doc.get("received_source") or doc["origin"] == "erp" or doc["receipts"])})
+    return {
+        **base, "available": True,
+        "kpis": {**totals, "articles": len(sold), "units": str(sum((number(a["quantity"]) for a in articles), Decimal(0)).normalize()),
+                 "top_article": {"code": top["code"], "description": top["description"], "quantity": top["sold"]} if top else None,
+                 "last_date": max((d["date"] for d in counted(docs) if d["direction"] > 0), default=None)},
+        "articles": articles, "documents": rows,
+        "families": sorted({a["family"] for a in articles if a["family"]}),
+        "notes": ["Vendas e documentos ligados à ficha pelos identificadores do SAF-T/ERP ou pelo NIF; nunca pelo nome.",
+                  "Notas de crédito subtraem; anulados aparecem identificados e ficam fora dos totais.", *data["notes"]],
+    }
+
+
+@router.get("/api/sales/customer-article")
+def customer_article(record_id: str, key: str, start: date | None = None, end: date | None = None, user=Depends(current),
+                     db: Session = Depends(db_session)):
+    """Painel do artigo na ficha de cliente: ficha resumida e histórico de vendas desse artigo a este cliente."""
+    from .access import scope
+    start, end = sheet_period(start, end)
+    identity = customer_identity(db, record_id)
+    data = dataset(db, scope(user, db), str(start), str(end), customer=identity)
+    lines = []
+    for doc in sorted(counted(data["documents"]), key=lambda d: (d["date"], d["document"]), reverse=True):
+        for line in doc["lines"]:
+            if (line["code"] or "sem-codigo:" + fold(line["description"])) == key:
+                lines.append({"document_id": doc["id"], "document": doc["document"], "type_label": doc["type_label"], "date": doc["date"],
+                              "direction": doc["direction"], "quantity": line["quantity"], "unit": line.get("unit"), "unit_price": line["unit_price"],
+                              "discount_cents": line.get("discount_cents"), "net_cents": line["net_cents"], "gross_cents": line["gross_cents"],
+                              "product_id": line.get("product_id")})
+    if not lines:
+        fail("Artigo sem vendas a este cliente no período.", 404)
+    code = key if not key.startswith("sem-codigo:") else ""
+    article, product = article_link(db, data, code, lines[0].get("product_id")) if code else (None, None)
+    details = json.loads(article.data or "{}") if article else {}
+    stock = str(db.scalar(select(func.coalesce(func.sum(StockEntry.quantity), 0)).where(StockEntry.article_id == article.id))) if article else None
+    summary_row = next(r for r in customer_articles(data["documents"], data) if r["key"] == key)
+    prices = sorted({line["unit_price"] for line in lines if line["unit_price"] is not None and line["direction"] > 0}, key=lambda v: number(v))
+    return {"key": key, "code": code, "description": summary_row["description"], "family": details.get("family") or summary_row["family"],
+            "brand": details.get("brand") or "", "article_id": article.id if article else None, "stock": stock, "unit": details.get("unit") or summary_row["unit"],
+            "service": summary_row["service"], "no_code": summary_row["no_code"], "summary": summary_row, "lines": lines,
+            "price_range": [prices[0], prices[-1]] if prices else None}
 

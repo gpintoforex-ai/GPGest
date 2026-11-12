@@ -5,6 +5,7 @@ import { ActionLink, Notice } from "../components/InteractionUI";
 import { RecordGroup, RecordHistory, RecordIndicator } from "../components/RecordSheet";
 import { RecordWorkspace } from "../components/RecordWorkspace";
 import type { FieldSpec, RecordDetails, TableInfo } from "./types";
+import { CustomerDocuments, CustomerSales, periodOf, useCustomerCommerce, type Period } from "./CustomerCommerce";
 
 type Row = Record<string, any>;
 type Remote = { rows: Row[]; error?: string; loading: boolean };
@@ -22,11 +23,22 @@ function Related({ data, render, emptyText }: { data: Remote; render: (row: Row)
 }
 
 /** Only presentation and scoped read APIs. Existing RecordDialog owns fields, validation and writes. */
-export default function EntityRecordSheet({ table, details, values, title, actions, active, onSelect, renderFields, metadata }: {
+export default function EntityRecordSheet({ table, details, values, title, actions, active, onSelect, renderFields, metadata, onLeave }: {
   table: TableInfo; details: RecordDetails | null; values: Row; title: string; actions: ReactNode;
   active: number; onSelect: (index: number) => void; renderFields: (fields: FieldSpec[]) => ReactNode; metadata: ReactNode;
+  /** Abrir outra página (ex.: ficha do artigo) a partir da ficha; a página repõe o cliente e o separador ao regressar. */
+  onLeave?: (page: string, params: Record<string, string>, tab: number) => void;
 }) {
   const supplier = table.key === "suppliers";
+  // Consulta comercial (Vendas e Documentos): vendas SAF-T/ERP ligadas à ficha; independente da conta corrente.
+  const periodKey = `iazela-ficha-periodo:${details?.id || ""}`;
+  const [period, setPeriodState] = useState<Period>(() => {
+    try { const saved = JSON.parse(sessionStorage.getItem(periodKey) || "null"); if (saved?.preset) return saved; } catch { /* sem armazenamento */ }
+    return periodOf("12meses");
+  });
+  const setPeriod = (value: Period) => { setPeriodState(value); try { sessionStorage.setItem(periodKey, JSON.stringify(value)); } catch { /* sem armazenamento */ } };
+  const commerce = useCustomerCommerce(details?.id || null, period, !supplier && !!details);
+  const leave = onLeave ? (page: string, params: Record<string, string>) => onLeave(page, params, active) : undefined;
   const [orders, setOrders] = useState<Remote>(empty);
   const [purchases, setPurchases] = useState<Remote>(empty);
   const [articles, setArticles] = useState<Remote>(empty);
@@ -88,6 +100,8 @@ export default function EntityRecordSheet({ table, details, values, title, actio
     return () => { current = false; };
   }, [details, supplier]);
   const unavailable = <Notice tone="info">Esta consulta ainda requer uma ligação financeira consolidada à entidade, incluindo os documentos do ERP. Não é apresentado um saldo calculado apenas pelo nome.</Notice>;
+  const financial = <Notice tone="info">A conta corrente (saldos, recebimentos e pagamentos) só é apresentada com uma ligação financeira confirmada à entidade; não é calculada pelo nome. As vendas e os documentos estão nos separadores Vendas e Documentos.</Notice>;
+  const sales = commerce.data?.available ? commerce.data.kpis : null;
   const sectionFields = (index: number) => renderFields(table.fields.filter(f => !f.hidden && entitySection(f) === index));
   const pending = orders.loading || orders.error ? "—" : orders.rows.filter(r => supplier ? !["received", "cancelled"].includes(r.status) : !r.closed).length;
   const orderRows = <Related data={orders} emptyText="Sem encomendas associadas nas lojas autorizadas." render={r => <><strong>{r.number || r.document || r.id.slice(0, 8)}</strong><small>{date(r.requested_at || r.document_date)} · {supplier ? ({ draft: "Rascunho", confirmed: "Confirmada", partial: "Receção parcial", received: "Recebida", cancelled: "Cancelada" } as Row)[r.status] || r.status : r.closed ? "Concluída" : r.fully_ready ? "Pronta para levantamento" : r.ready ? "Disponível parcialmente" : "Em curso"}</small></>} />;
@@ -97,7 +111,8 @@ export default function EntityRecordSheet({ table, details, values, title, actio
   const recentPurchases = purchases.rows.filter(r => r.kind === "invoice" && !["draft", "cancelled"].includes(r.status) && r.document_date >= recentStart && r.document_date <= today);
   const supplierHistory = <RecordGroup title="Encomendas e compras registadas" icon={History}>{orders.loading || purchases.loading ? <p>A consultar histórico…</p> : orders.error || purchases.error ? <Notice tone="warning">Não foi possível consultar o histórico completo de encomendas e compras.</Notice> : <RecordHistory rows={[...orders.rows, ...purchases.rows].sort((a, b) => String(b.created_at || b.document_date).localeCompare(String(a.created_at || a.document_date))).map(r => ({ id: r.id, title: `${r.kind === "order" ? "Encomenda" : r.kind === "credit" ? "Nota de crédito" : "Compra"} · ${r.document || r.id.slice(0, 8)}`, detail: `Registada em ${date(r.created_at || r.document_date)}${r.confirmed_at ? ` · Confirmada em ${date(r.confirmed_at)}` : ""}` }))} />}</RecordGroup>;
   return <RecordWorkspace title={title} subtitle={details?.description || "Novo registo"} icon={supplier ? Building2 : User} actions={actions} active={active} onSelect={onSelect} indicators={<>
-    <RecordIndicator label={supplier ? "Mínimo sem portes" : "Faturação"} value={supplier && values.free_shipping !== "" && values.free_shipping != null ? money(Number(values.free_shipping) * 100) : "—"} note={supplier ? "Condições da ficha" : "Consolidação financeira necessária"} icon={Euro} />
+    <RecordIndicator label={supplier ? "Mínimo sem portes" : "Faturação"} value={supplier ? (values.free_shipping !== "" && values.free_shipping != null ? money(Number(values.free_shipping) * 100) : "—") : sales ? money(sales.net_cents) : "—"}
+      note={supplier ? "Condições da ficha" : sales ? `Sem IVA · ${period.preset === "12meses" ? "últimos 12 meses" : "período selecionado"}` : commerce.data ? "Sem vendas associadas" : "A consultar…"} icon={Euro} onOpen={supplier ? undefined : () => onSelect(3)} />
     <RecordIndicator label={supplier ? "Prazo de entrega" : "Saldo"} value={supplier && values.lead_days !== "" && values.lead_days != null ? `${values.lead_days} dias` : "—"} note={supplier ? "Prazo configurado" : "Não apurado"} icon={supplier ? CalendarClock : Euro} />
     <RecordIndicator label="Encomendas pendentes" value={pending} note={orders.loading ? "A consultar…" : orders.error ? "Consulta indisponível" : "Registos nas lojas autorizadas"} tone="warning" icon={ShoppingCart} onOpen={() => onSelect(4)} />
     <RecordIndicator label={supplier ? "Compras recentes" : "Dívida vencida"} value={supplier && !purchases.loading && !purchases.error ? recentPurchases.length : "—"} note={supplier ? "Últimos 30 dias · módulo Compras" : "Não apurada"} icon={supplier ? Truck : CircleAlert} onOpen={() => onSelect(5)} />
@@ -105,11 +120,17 @@ export default function EntityRecordSheet({ table, details, values, title, actio
     { label: "Geral", icon: supplier ? Building2 : User, content: <RecordGroup title="Identificação" icon={User}>{sectionFields(0)}</RecordGroup> },
     { label: "Contactos", icon: Phone, content: <RecordGroup title="Contactos e localização" icon={Phone}>{sectionFields(1)}</RecordGroup> },
     { label: supplier ? "Condições de Compra" : "Condições Comerciais", icon: CreditCard, content: <RecordGroup title={supplier ? "Condições de compra e devoluções" : "Condições comerciais"} icon={CreditCard}>{sectionFields(2)}</RecordGroup> },
-    { label: supplier ? "Artigos" : "Vendas", icon: Package, content: <RecordGroup title={supplier ? "Artigos do fornecedor principal" : "Vendas e faturação"} icon={Package}>{supplier ? <Related data={articles} emptyText="Sem artigos com este fornecedor principal nas lojas autorizadas." render={r => <>{r.code} · {r.name}<small>{r.unit}</small></>} /> : unavailable}</RecordGroup> },
+    { label: supplier ? "Artigos" : "Vendas", icon: Package, content: <RecordGroup title={supplier ? "Artigos do fornecedor principal" : "Vendas e faturação"} icon={Package}>{supplier ? <Related data={articles} emptyText="Sem artigos com este fornecedor principal nas lojas autorizadas." render={r => <>{r.code} · {r.name}<small>{r.unit}</small></>} />
+      : details ? <CustomerSales recordId={details.id} data={commerce.data} error={commerce.error} period={period} onPeriod={setPeriod} onLeave={leave} />
+      : <Notice tone="info">Guarde a ficha para consultar as vendas.</Notice>}</RecordGroup> },
     { label: "Encomendas", icon: ShoppingCart, content: <RecordGroup title="Encomendas associadas" icon={ShoppingCart}>{orderRows}</RecordGroup> },
     ...(supplier ? [{ label: "Compras", icon: Truck, content: <RecordGroup title="Documentos de compra registados" icon={Truck}><Related data={purchases} emptyText="Sem compras associadas neste módulo." render={r => <>{r.document || r.id.slice(0, 8)}<small>{date(r.document_date)} · {r.kind === "credit" ? "Nota de crédito" : "Compra"} · {r.total_cents == null ? "Custo sem permissão de consulta" : money(r.total_cents)}</small></>} /></RecordGroup> }] : []),
-    { label: "Conta Corrente", icon: Euro, content: <RecordGroup title="Conta corrente" icon={Euro}>{unavailable}</RecordGroup> },
-    ...(!supplier ? [{ label: "Documentos", icon: FileText, content: <RecordGroup title="Documentos com o mesmo NIF" icon={FileText}><p className="footnote">Consulta dos primeiros 200 resultados do arquivo, com correspondência exata do NIF e respeitando as permissões de acesso.</p><Related data={documents} emptyText="Sem documentos com este NIF nos resultados consultados." render={r => <><ActionLink href={`/api/archive/documents/${encodeURIComponent(r.id)}/file`} target="_blank" rel="noopener noreferrer">{r.document_number || r.original_name}</ActionLink><small>{date(r.issue_date || r.received_at)} · {r.type_label}</small></>} /></RecordGroup> }] : []),
+    { label: "Conta Corrente", icon: Euro, content: <RecordGroup title="Conta corrente" icon={Euro}>{supplier ? unavailable : financial}</RecordGroup> },
+    ...(!supplier ? [{ label: "Documentos", icon: FileText, content: <>
+      <RecordGroup title="Faturas e outros documentos de venda" icon={FileText}>{details ? <CustomerDocuments recordId={details.id} data={commerce.data} error={commerce.error} period={period} onPeriod={setPeriod} onLeave={leave} />
+        : <Notice tone="info">Guarde a ficha para consultar os documentos.</Notice>}</RecordGroup>
+      <RecordGroup title="Arquivo digital (documentos com o mesmo NIF)" icon={FileText}><details><summary>Ver ficheiros do arquivo com este NIF</summary><p className="footnote">Consulta dos primeiros 200 resultados do arquivo, com correspondência exata do NIF e respeitando as permissões de acesso.</p><Related data={documents} emptyText="Sem documentos com este NIF nos resultados consultados." render={r => <><ActionLink href={`/api/archive/documents/${encodeURIComponent(r.id)}/file`} target="_blank" rel="noopener noreferrer">{r.document_number || r.original_name}</ActionLink><small>{date(r.issue_date || r.received_at)} · {r.type_label}</small></>} /></details></RecordGroup>
+    </> }] : []),
     { label: "Histórico", icon: History, content: <><RecordGroup title="Integração e utilização" icon={Info}>{metadata}</RecordGroup>{supplier ? supplierHistory : <RecordGroup title="Histórico das encomendas associadas" icon={History}>{history.loading || history.error ? <Related data={history} emptyText="" render={() => null} /> : <RecordHistory rows={historyRows.map(r => ({ id: r.id, title: `${date(r.at)} · ${r.action}`, detail: r.user }))} />}</RecordGroup>}</> },
   ]} />;
 }
