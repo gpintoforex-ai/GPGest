@@ -10,6 +10,8 @@ import { Field } from "./components/Form";
 import { ActionButton, Notice, confirmAction } from "./components/InteractionUI";
 import { StatusBadge } from "./components/BusinessUI";
 import { formatEuro as money } from "./utils/format";
+import { ModuleTabs, useWorkspaceTab } from "./components/WorkspaceUI";
+import SalesExplorer from "./SalesExplorer";
 import "./BillingConference.css";
 
 type Row = Record<string, any>;
@@ -28,8 +30,11 @@ const origins: Record<string, string> = { fecho_local: "Fecho de caixa", manual:
 const euros = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
 const cents = (value: string) => Math.round(Number(value.replace(",", ".")) * 100);
 
-/** Faturação (SAF-T), recebimentos registados e conferência entre ambos, sempre separados. */
-export default function BillingConference({ stores, store, manager }: { stores: Row[]; store: string; manager: boolean }) {
+/** Análise comercial (clientes, documentos, artigos, recebimentos) e, no modo local, a conferência entre a faturação
+ * (SAF-T) e os recebimentos registados, sempre separados. */
+export default function BillingConference({ stores, store, manager, mode = "local", navigate }: {
+  stores: Row[]; store: string; manager: boolean; mode?: string; navigate?: (page: string, params?: Record<string, string>) => void;
+}) {
   const today = lisbonToday();
   const [handoff] = useState(() => takePeriod("Faturação e recebimentos"));
   const [target, setTarget] = useState(store), [start, setStart] = useState(handoff?.start || today.slice(0, 8) + "01"), [end, setEnd] = useState(handoff?.end || currentMonthRange().to);
@@ -37,13 +42,17 @@ export default function BillingConference({ stores, store, manager }: { stores: 
   const [busy, setBusy] = useState(false), [version, setVersion] = useState(0), [tab, setTab] = useState<Tab>("documentos");
   const [docs, setDocs] = useState<Record<string, string>>({}), [recs, setRecs] = useState<Record<string, string>>({}), [notes, setNotes] = useState("");
   const [missing, setMissing] = useState<Row | null>(null), [duplicates, setDuplicates] = useState<Row | null>(null);
+  const local = mode === "local";
+  const [area, setArea] = useWorkspaceTab("faturacao", "analise", ["analise", "conferencia"]);
+  const conferenceOpen = local && area === "conferencia";
   useEffect(() => { setTarget(store); }, [store]);
   useEffect(() => {
+    if (!conferenceOpen) return;
     let active = true; setError("");
     const query = new URLSearchParams({ start, end, store_id: target });
     api(`/conference?${query}`, undefined, { timeoutMs: 120000 }).then(result => { if (active) setData(result); }).catch(e => { if (active) setError((e as Error).message); });
     return () => { active = false; };
-  }, [target, start, end, version]);
+  }, [target, start, end, version, conferenceOpen]);
   useEffect(() => {
     if (tab === "falta" && manager) api(`/conference/missing-receipts?${new URLSearchParams({ start, end, store_id: target })}`).then(setMissing).catch(e => setError(e.message));
     if (tab === "duplicados" && manager) api(`/conference/duplicates?${new URLSearchParams({ store_id: target })}`).then(setDuplicates).catch(e => setError(e.message));
@@ -103,7 +112,7 @@ export default function BillingConference({ stores, store, manager }: { stores: 
   const indicators = data?.indicators;
   const tabs: [Tab, string][] = [["documentos", "Documentos"], ["recebimentos", "Recebimentos"], ["diario", "Totais diários"], ["sugestoes", `Sugestões (${data?.suggestions.length || 0})`], ...(manager ? [["falta", "Recebimentos em falta"], ["duplicados", "Possíveis duplicados"]] as [Tab, string][] : []), ["historico", "Histórico"]];
   return <div className="billing-conference">
-    <div className="page-intro"><div><h1>Faturação e recebimentos</h1><p>A faturação (SAF-T) e os recebimentos registados são medidas distintas. A conferência associa-os sem criar movimentos.</p></div></div>
+    <div className="page-intro"><div><h1>Faturação e recebimentos</h1><p>Quem comprou, o que comprou, em que documento, por quanto, quanto pagou e quanto falta receber. {local ? "A faturação (SAF-T) e os recebimentos registados são medidas distintas; a conferência associa-os sem criar movimentos." : "Vendas, recebimentos e saldos em aberto sincronizados do ERP, só para consulta."}</p></div></div>
     {error && <Notice tone="error">{error}</Notice>}{notice && <Notice tone="success" onDismiss={() => setNotice("")}>{notice}</Notice>}
     <section className="panel"><div className="form-grid filter-bar">
       <Field label="Estabelecimento"><select value={target} onChange={e => setTarget(e.target.value)}><option value="">Todos os autorizados</option>{stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
@@ -111,6 +120,8 @@ export default function BillingConference({ stores, store, manager }: { stores: 
       <Field label="Desde"><input type="date" value={start} max={end} onChange={e => setStart(e.target.value)} /></Field>
       <Field label="Até"><input type="date" value={end} min={start} max={today} onChange={e => setEnd(e.target.value)} /></Field>
     </div><ActionButton disabled={busy} onClick={() => setVersion(v => v + 1)}><RefreshCw size={16} />Atualizar</ActionButton></section>
+    {local && <ModuleTabs label="Áreas de faturação e recebimentos" value={area} tabs={[{ id: "analise", label: "Análise comercial" }, { id: "conferencia", label: "Conferência" }]} onChange={setArea} />}
+    {!conferenceOpen ? <SalesExplorer store={target} start={start} end={end} navigate={navigate} /> : <>
     {!data && !error && <p role="status">A carregar faturação e recebimentos…</p>}
     {indicators && <BillingIndicators indicators={indicators} />}
     <OperationsOverview source={data} title="Conferência de vendas" scope={`${start} a ${end} · estabelecimento selecionado · faturação e recebimentos são medidas distintas`} loaded={!!data} error={!data && !!error} metrics={[
@@ -160,6 +171,7 @@ export default function BillingConference({ stores, store, manager }: { stores: 
       </tbody></table>{!data.conferences.length && <p>Sem conferências registadas.</p>}</div>}
       <ul className="footnote">{data.rules.map((rule: string) => <li key={rule}>{rule}</li>)}</ul>
     </section>}
+    </>}
   </div>;
 }
 

@@ -484,6 +484,8 @@ class CategoriesSpec(TableSpec):
     code_field = None
     fields = [
         TableField("name", "Descrição", required=True, min_length=2, max_length=100),
+        TableField("parent_id", "Rubrica-mãe (opcional)", "category", help="Torna esta rubrica uma sub-rubrica (um só nível). "
+                   "O Dashboard pode agregar as despesas pela rubrica-mãe."),
         TableField("icon", "Ícone", "icon", required=True, options=RUBRIC_ICONS),
         TableField("color", "Cor", "color", required=True, max_length=7),
         TableField(
@@ -494,6 +496,14 @@ class CategoriesSpec(TableSpec):
             maximum=100,
             column=False,
             help="Só para o mapa de IVA indicativo; vazio corresponde a 100%.",
+        ),
+        TableField(
+            "fixed_cost",
+            "Custo fixo",
+            "boolean",
+            column=False,
+            help="Rendas, seguros, vencimentos, comunicações… Só para a análise de gestão (indicador «Custos fixos» "
+            "nos Mapas de gestão); os documentos e movimentos não mudam.",
         ),
         TableField(
             "cash_difference",
@@ -514,6 +524,18 @@ class CategoriesSpec(TableSpec):
             raise HTTPException(422, "Escolha um ícone válido.")
         if not values["color"].startswith("#") or len(values["color"]) != 7:
             raise HTTPException(422, "Escolha uma cor válida.")
+        parent_id = values.get("parent_id") or None
+        if parent_id:
+            parent = ctx.db.get(Category, parent_id)
+            if not parent:
+                raise HTTPException(422, "Rubrica-mãe inexistente.")
+            if row is not None and parent_id == row.id:
+                raise HTTPException(422, "Uma rubrica não pode ser mãe de si própria.")
+            if parent.parent_id:
+                raise HTTPException(422, f"«{parent.name}» já é uma sub-rubrica: escolha uma rubrica principal (um só nível).")
+            if row is not None and ctx.db.scalar(select(Category.id).where(Category.parent_id == row.id).limit(1)):
+                raise HTTPException(422, "Esta rubrica tem sub-rubricas: não pode ser também sub-rubrica.")
+        values["parent_id"] = parent_id
         return values
 
     def unique_checks(self, ctx, values, row=None):
@@ -1271,6 +1293,30 @@ class EntitiesSpec(TableSpec):
         if role == "supplier":
             self.fields = [*EntitiesSpec.fields, *SUPPLY_FIELDS]
         self.erp = EntitiesBinding(self, role)
+        if role == "customer":
+            # Última venda (documento de venda válido mais recente) e atividade comercial: calculadas, só leitura.
+            self.extra_columns = [("last_sale", "Última venda")]
+
+    def extras(self, ctx, rows):
+        if self.role != "customer":
+            return {}
+        from .customer_activity import for_entities
+        activity, meta, days = for_entities(ctx, rows)
+        ctx.db.info["customer_activity_meta"] = {**meta, "days": days}
+        return {identifier: {"last_sale": value, "_labels": {
+            # Ordenação pela data (ISO); a pesquisa encontra também a data em dd/mm/aaaa e o estado.
+            "last_sale": value.get("date") or "",
+            "last_sale_text": f"{'/'.join(reversed(value['date'].split('-')))} {value['label']}" if value.get("date") else f"Sem vendas {value['label']}",
+        }} for identifier, value in activity.items()}
+
+    def filter_rows(self, ctx, rows, params):
+        if self.role != "customer":
+            return rows
+        from .customer_activity import filter_rows
+        return filter_rows(rows, params)
+
+    def list_meta(self, ctx):
+        return {"last_sale": ctx.db.info.get("customer_activity_meta")} if self.role == "customer" else {}
 
     def describe(self, ctx):
         from .cash_local import method_catalog

@@ -165,7 +165,6 @@ const BASE_NAVIGATION: NavigationGroup[] = [
         id: "comercial:Faturação e recebimentos",
         label: "Faturação e recebimentos",
         page: "Faturação e recebimentos",
-        localOnly: true,
       },
       {
         id: "comercial:Importar SAF-T de vendas",

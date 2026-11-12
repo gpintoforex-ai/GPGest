@@ -2474,6 +2474,12 @@ from .rubric_requests import router as rubric_requests_router
 app.include_router(rubric_requests_router)
 from .withholdings import router as withholdings_router
 app.include_router(withholdings_router)
+from .rubric_movements import router as rubric_movements_router
+app.include_router(rubric_movements_router)
+from .sales_explorer import router as sales_explorer_router
+app.include_router(sales_explorer_router)
+from .customer_activity import router as customer_activity_router
+app.include_router(customer_activity_router)
 from .operation_trace import router as operation_trace_router
 app.include_router(operation_trace_router)
 from .classification import router as classification_router

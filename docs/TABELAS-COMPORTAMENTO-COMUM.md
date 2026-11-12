@@ -236,6 +236,35 @@ recusa entidades sem exatamente uma morada principal.
 - Tarefas demoradas (carregar, consultar o VIES, comparar ou sincronizar com o ERP, remover) mostram um
   texto com três pontos animados.
 
+### Última venda dos clientes
+
+A tabela de **Clientes** tem a coluna **Última venda**: a data (DD/MM/AAAA) do documento de venda válido mais recente
+do cliente, em todo o histórico disponível (não o período do Dashboard), com um indicador de atividade com texto e
+dica: **Ativo** (verde, até 30 dias), **A acompanhar** (azul, até 90), **Em risco** (âmbar, até 180), **Inativo**
+(vermelho, acima) e **Sem histórico** (cinzento). Os limites alteram-se em **Limites de atividade** (só
+administrador; auditoria `atividade_clientes_limites`).
+
+- **Conta:** faturas, faturas simplificadas, faturas-recibo e vendas a dinheiro com estado normal, pela data do
+  documento. **Não conta:** anulados, notas de crédito (não substituem a última venda), notas de débito, orçamentos,
+  encomendas, guias, recibos, nem a data de pagamento, de importação ou de sincronização. Com vários documentos no
+  mesmo dia, conta o de número mais alto.
+- **Origem:** a mesma da [análise comercial](FATURACAO-RECEBIMENTOS.md) — SAF-T de vendas no modo local, vendas
+  sincronizadas do ERP no integrado; o cliente liga-se pelo NIF (sem NIF, pelo nome), nos estabelecimentos a que o
+  utilizador tem acesso. Uma consulta agregada por origem, com cache que se renova quando há nova sincronização ou
+  importação (sem uma consulta por cliente).
+- **Ordenar, pesquisar e filtrar:** ordenação pela data (a mais antiga primeiro mostra quem precisa de
+  acompanhamento); a pesquisa encontra a data e o estado; filtros rápidos (vendas nos últimos 30 dias, sem vendas há
+  mais de 90/180/365 dias — incluem quem nunca comprou —, nunca compraram) e intervalo «Última venda desde/até».
+- **Cobertura dos dados:** por cima da tabela indica-se o intervalo de vendas disponível; se as vendas não forem
+  recentes, avisa que a atividade pode estar desatualizada, e um cliente sem vendas num histórico curto não é
+  apresentado como inativo (dica «o histórico pode estar incompleto»).
+- **Documento:** clicar na data abre o documento dessa venda na consulta documental de Faturação e recebimentos
+  (artigos, quantidades, preços, descontos, IVA, total, estado de pagamento, original e ficha dos artigos).
+
+API: `GET /api/tables/customers/records?activity=recent30|over90|over180|over365|never&sale_from&sale_to&sort=last_sale`
+e `GET/PUT /api/customers/activity-settings`. Testes: `backend/tests/test_customer_activity.py` e
+`scripts/test-customer-last-sale-ui.py`.
+
 ### Eliminar entidades
 
 - **Remover de ambos:** elimina na Wintouch e retira da IAZELA. Exige que não haja movimentos na

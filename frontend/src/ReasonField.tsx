@@ -2,6 +2,8 @@
  * Motivo de uma alteração auditada: texto livre com motivos pré-definidos para escolher.
  * O servidor exige um motivo legível (pelo menos duas palavras reais).
  */
+import "./ReasonField.css";
+
 export default function ReasonField({ label, value, onChange, options, placeholder }: {
   label: string; value: string; onChange: (value: string) => void; options: string[]; placeholder?: string;
 }) {

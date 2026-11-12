@@ -29,8 +29,10 @@ export function DocumentPreview({ identifiers }: { identifiers: string[] }) {
     <li key={id}><a href={`/api/archive/documents/${encodeURIComponent(id)}/file`} target="_blank" rel="noreferrer">Abrir original {index + 1}</a></li>)}</ul></details>;
 }
 
-export function DrilldownPanel<T>({ context, endpoint, initial, onClose, children }: {
-  context: DrilldownContext; endpoint: string; initial: DrilldownStep[]; onClose: () => void;
+export function DrilldownPanel<T>({ context, endpoint, initial, onClose, children, label = "Detalhe do indicador", onSteps }: {
+  context: DrilldownContext; endpoint: string; initial: DrilldownStep[]; onClose: () => void; label?: string;
+  /** Percurso atual (para o repor ao regressar de outra página). */
+  onSteps?: (steps: DrilldownStep[]) => void;
   children: (value: T, controls: { step: DrilldownStep; open: (step: DrilldownStep) => void; paginate: (offset: number) => void }) => ReactNode;
 }) {
   const [steps, setSteps] = useState(initial);
@@ -38,6 +40,7 @@ export function DrilldownPanel<T>({ context, endpoint, initial, onClose, childre
   const [retry, setRetry] = useState(0);
   const [response, setResponse] = useState<{ key: string; value?: T; error?: string }>();
   const step = steps[steps.length - 1];
+  useEffect(() => { onSteps?.(steps); }, [steps]);
   const params = new URLSearchParams({ start: context.start, end: context.end, store_id: context.store, ...step.params,
     offset: String(step.offset ?? 0) });
   const url = `${endpoint}?${params}`;
@@ -50,7 +53,7 @@ export function DrilldownPanel<T>({ context, endpoint, initial, onClose, childre
   }, [key, url]);
   const current = response?.key === key ? response : undefined;
   const date = (value: string) => value.split("-").reverse().join("/");
-  return <AppDialog className={`drilldown-dialog drilldown-${mode}`} aria-label="Detalhe do indicador" guardChanges={false} onRequestClose={onClose}>
+  return <AppDialog className={`drilldown-dialog drilldown-${mode}`} aria-label={label} guardChanges={false} onRequestClose={onClose}>
     <header className="drilldown-header"><h2>{step.label}</h2><p>{context.company} · {context.store ? "Estabelecimento selecionado" : "Estabelecimentos autorizados"} · {date(context.start)} a {date(context.end)}</p></header>
     <div className="drilldown-toolbar">
       {steps.length > 1 && <ActionButton type="button" onClick={() => setSteps(current => current.slice(0, -1))}><ArrowLeft size={16} />Voltar</ActionButton>}

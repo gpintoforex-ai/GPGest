@@ -94,7 +94,9 @@ export default function ReconciliationDashboard({ data, accounts, categories = [
   onResolve: (bank: Row, rule?: Row) => void;
 }) {
   const [periodSummary, setPeriodSummary] = useState<Row | null>(null);
-  const [filter, setFilter] = useState("todos"), [direction, setDirection] = useState("todos"), [search, setSearch] = useState("");
+  // Pesquisa inicial vinda de outra página (ex.: «Associar a documento» nos movimentos da rubrica).
+  const [filter, setFilter] = useState("todos"), [direction, setDirection] = useState("todos"),
+    [search, setSearch] = useState(() => { try { return new URLSearchParams(window.location.search).get("pesquisa") || ""; } catch { return ""; } });
   const [minimum, setMinimum] = useState(""), [maximum, setMaximum] = useState(""), [equalOnly, setEqualOnly] = useState(false);
   const searched = amountOf(search), low = amountOf(minimum), high = amountOf(maximum);
   const [limit, setLimit] = useState(50), [expanded, setExpanded] = useState("");

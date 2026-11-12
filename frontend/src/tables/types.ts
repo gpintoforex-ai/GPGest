@@ -74,6 +74,8 @@ export type TableRow = {
   sync_label: string;
   last_sync_at: string | null;
   last_error: string;
+  /** Dados calculados por linha (ex.: última venda dos clientes). */
+  extra?: Record<string, any>;
 };
 
 export type RecordDetails = TableRow & {

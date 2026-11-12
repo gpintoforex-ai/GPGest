@@ -1,6 +1,6 @@
 import OperationsOverview from "../components/OperationsOverview";
 import { useRecordHandoff } from "../components/useRecordHandoff";
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { CircleMinus, Eye, Pencil, RefreshCw, RotateCcw, Settings, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import { ActionButton, Notice, confirmAction } from "../components/InteractionUI";
@@ -11,10 +11,14 @@ import Processing from "./Processing";
 import RecordDialog from "./RecordDialog";
 import RemoveDialog from "./RemoveDialog";
 import SyncDialog from "./SyncDialog";
+import { ActivitySettings, LastSaleCell, LastSaleFilters, LastSaleNotice } from "./LastSale";
 import { DIRECTION_LABELS, displayValue, formatDateTime, gendered, type Direction, type TableContext, type TableInfo, type TableRow } from "./types";
 import "./TablePage.css";
 
-type Listing = { rows: TableRow[]; total: number; total_all: number; page: number; pages: number; size: number };
+// Só carregado ao abrir o documento da última venda (as restantes tabelas não precisam da análise comercial).
+const SalesDocumentPanel = lazy(() => import("../SalesExplorer").then(module => ({ default: module.SalesDocumentPanel })));
+
+type Listing = { rows: TableRow[]; total: number; total_all: number; page: number; pages: number; size: number; meta?: Record<string, any> };
 type Dialog =
   | { kind: "record"; mode: "create" | "edit" | "view"; id?: string }
   | { kind: "remove"; row: TableRow }
@@ -27,13 +31,14 @@ const SYNC_FILTERS: [string, string][] = [["all", "Todos"], ["apenas_local", "Ap
  * Página comum a todas as tabelas: mesmas ações, posições, mensagens e confirmações.
  * A configuração (campos, permissões, capacidades do ERP) vem de /api/tables/{key}.
  */
-export default function TablePage({ tableKey, context, active = true, store = "", onChanged, onCommercialTerms }: {
+export default function TablePage({ tableKey, context, active = true, store = "", onChanged, onCommercialTerms, navigate }: {
   tableKey: string;
   context: TableContext;
   active?: boolean;
   store?: string;
   onChanged?: () => Promise<void> | void;
   onCommercialTerms?: () => void;
+  navigate?: (page: string, params?: Record<string, string>) => void;
 }) {
   const [table, setTable] = useState<TableInfo | null>(null);
   const [listing, setListing] = useState<Listing | null>(null);
@@ -50,6 +55,11 @@ export default function TablePage({ tableKey, context, active = true, store = ""
   const [notice, setNotice] = useState("");
   const [warning, setWarning] = useState("");
   const [busy, setBusy] = useState("");
+  // Clientes: atividade comercial (última venda), intervalo de datas, documento aberto e limites.
+  const customers = tableKey === "customers";
+  const [activity, setActivity] = useState({ activity: "", from: "", to: "" });
+  const [sale, setSale] = useState<{ id: string; label: string; date: string } | null>(null);
+  const [activitySettings, setActivitySettings] = useState(false);
 
   useRecordHandoff(tableKey, [tableKey === "customers" ? "Clientes" : tableKey === "suppliers" ? "Fornecedores" : ""], id => {
     if (!active || !table || !listing || table.key !== tableKey || !["customers","suppliers"].includes(tableKey)) return false;
@@ -58,13 +68,18 @@ export default function TablePage({ tableKey, context, active = true, store = ""
   const load = useCallback(async () => {
     const params = new URLSearchParams({ q: query, status, origin, sync, store, sort: sort.id, direction: sort.direction, page: String(page), size: String(size) });
     for (const [name, value] of Object.entries(fieldFilters)) if (value) params.set("f_" + name, value);
+    if (customers) {
+      if (activity.activity) params.set("activity", activity.activity);
+      if (activity.from) params.set("sale_from", activity.from);
+      if (activity.to) params.set("sale_to", activity.to);
+    }
     const [info, data] = await Promise.all([api(`/tables/${tableKey}`), api(`/tables/${tableKey}/records?${params}`)]);
     if (!Array.isArray(info?.fields) || !info?.erp || !Array.isArray(data?.rows)) {
       throw new Error("O servidor devolveu a tabela num formato inesperado. Atualize a página; se persistir, contacte o suporte.");
     }
     setTable(info);
     setListing(data);
-  }, [tableKey, query, status, fieldFilters, origin, sync, store, sort, page, size]);
+  }, [tableKey, query, status, fieldFilters, origin, sync, store, sort, page, size, activity]);
 
   useEffect(() => { if (active) load().then(() => setError("")).catch(e => setError(e.message)); }, [active, load]);
   useEffect(() => { setPage(1); setDialog(null); }, [tableKey]);
@@ -149,6 +164,11 @@ export default function TablePage({ tableKey, context, active = true, store = ""
         {integrated && <label>Sincronização<select aria-label="Sincronização" value={sync} onChange={e => { setSync(e.target.value); setPage(1); }}>{SYNC_FILTERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>}
         <label>Por página<select aria-label="Registos por página" value={size} onChange={e => { setSize(Number(e.target.value)); setPage(1); }}><option>10</option><option>25</option><option>50</option><option>100</option></select></label>
       </FilterBar>
+      {customers && <>
+        <LastSaleNotice meta={listing.meta?.last_sale} />
+        <LastSaleFilters activity={activity.activity} from={activity.from} to={activity.to} onSettings={() => setActivitySettings(true)}
+          onChange={values => { setActivity(current => ({ ...current, ...values })); setPage(1); }} />
+      </>}
       <div className="table-wrap">
         <table className="responsive-data-table table-page" aria-label={table.title}>
           <thead><tr>
@@ -168,7 +188,8 @@ export default function TablePage({ tableKey, context, active = true, store = ""
             {table.code_field && <td>{row.code || "—"}</td>}
             <td><span className="table-description">{row.values.icon && row.values.color ? <RubricBadge name={row.description} icon={row.values.icon} color={row.values.color} /> : <span>{row.description || "—"}</span>}{!row.active && <ActiveBadge active={false} />}</span></td>
             {fieldColumns.map(f => <td key={f.name}>{displayValue(f, row.values[f.name], row.labels[f.name])}</td>)}
-            {table.extra_columns.map(c => <td key={c.name}>{row.labels[c.name] || "—"}</td>)}
+            {table.extra_columns.map(c => <td key={c.name}>{c.name === "last_sale" && row.extra ? <LastSaleCell sale={row.extra.last_sale} name={row.description}
+              onOpen={value => setSale({ id: value.id, label: `${value.type} ${value.document}`, date: value.date })} /> : row.labels[c.name] || "—"}</td>)}
             {integrated && <>
               <td><OriginBadge origin={row.origin} /></td>
               <td>{row.erp_code || "—"}</td>
@@ -197,6 +218,8 @@ export default function TablePage({ tableKey, context, active = true, store = ""
     </section>
     {dialog?.kind === "record" && <RecordDialog table={table} context={context} mode={dialog.mode} recordId={dialog.id} recordIds={rows.map(r => r.id)} onNavigate={id => setDialog({ ...dialog, id })} onClose={() => setDialog(null)} onSaved={changed} />}
     {dialog?.kind === "remove" && <RemoveDialog table={table} row={dialog.row} onClose={() => setDialog(null)} onDone={changed} onDeactivate={row => { setDialog(null); void setActive(row, false); }} />}
+    {sale && <Suspense fallback={<Processing label="A abrir o documento" />}><SalesDocumentPanel id={sale.id} label={sale.label} date={sale.date} navigate={navigate} onClose={() => setSale(null)} /></Suspense>}
+    {activitySettings && <ActivitySettings onClose={() => setActivitySettings(false)} onSaved={() => { setActivitySettings(false); void load().catch(e => setError(e.message)); }} />}
     {dialog?.kind === "sync" && <SyncDialog table={table} context={context} direction={dialog.direction} ids={dialog.ids} onClose={() => setDialog(null)} onDone={() => { void load().catch(() => undefined); void onChanged?.(); }} />}
   </>;
 }

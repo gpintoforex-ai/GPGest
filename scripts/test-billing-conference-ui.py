@@ -70,7 +70,8 @@ with sync_playwright() as playwright:
     page = browser.new_page(viewport={"width": 1440, "height": 1000}, locale="pt-PT")
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.route("**/api/**", mock_api)
-    page.goto("http://127.0.0.1:5174/entrar?pagina=Fatura%C3%A7%C3%A3o+e+recebimentos")
+    # A conferência é a segunda área da página (a primeira é a análise comercial).
+    page.goto("http://127.0.0.1:5174/entrar?pagina=Fatura%C3%A7%C3%A3o+e+recebimentos&area.faturacao=conferencia")
     # Painel: medidas lado a lado, nunca somadas.
     panel = page.get_by_label("Indicadores de faturação e tesouraria")
     expect(panel.get_by_text("Total faturado com IVA", exact=True)).to_be_visible()

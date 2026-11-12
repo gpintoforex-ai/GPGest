@@ -12,6 +12,56 @@ Em **Contabilidade → Mapas de gestão** (gestores e administradores) há dois 
 - **Natureza da rubrica:** só entram as rubricas de custos operacionais ou de compras e investimentos ([natureza das rubricas](NATUREZA-DAS-RUBRICAS.md)). Rubricas de obrigações fiscais (por exemplo, pagamentos de IVA ao Estado) ou movimentos financeiros fora destas análises ficam de fora e são listadas numa nota. O IVA suportado e dedutível continua a contar todos os documentos.
 - Agrupamento por mês ou trimestre, com total de custos e margem (proveitos − custos). Não inclui amortizações, acréscimos e diferimentos, nem custos pagos sem registo com rubrica (por exemplo, vencimentos pagos sem passar pela reconciliação).
 
+### Proveitos, custos e margens por rubrica (apresentação)
+
+O separador **Proveitos, custos e margens** mostra os mesmos valores com uma apresentação de gestão. A modernização não
+mudou nenhum cálculo: os totais por rubrica, os custos, os proveitos e a margem são os de antes (verificado em
+`backend/tests/test_management_costs.py`).
+
+- **Indicadores:** proveitos, custos, margem de gestão estimada (com a margem % sobre os proveitos, quando positivos),
+  compras de mercadorias (rubricas de compras sem natureza «Investimento») e custos fixos (rubricas marcadas como
+  **Custo fixo** em Tabelas → Rubricas). Cada cartão tem a fórmula (ícone ⓘ) e a variação face ao mesmo período do ano
+  anterior, quando há dados comparáveis. Clicar num cartão abre os movimentos que compõem o valor; os proveitos abrem
+  as vendas do período. A margem é indicativa: não é o resultado contabilístico nem uma margem de tesouraria.
+- **Tabela mensal:** todos os meses (ou trimestres) do período, mesmo sem movimentos. Proveitos; grupos **Compras de
+  mercadorias e investimentos** e **Despesas operacionais** com subtotal (recolher/expandir); total de custos; margem
+  e margem %. A primeira coluna, o cabeçalho e o total ficam fixos durante o deslocamento. Os subtotais não voltam a
+  somar no total.
+- **Fora dos custos (informativo):** pagamentos ao Estado pelo valor pago (a mesma vista «Obrigações fiscais» do
+  Dashboard), as rubricas de obrigações fiscais e de movimentos financeiros, IVA liquidado nas vendas, IVA suportado,
+  dedutível estimado e não dedutível. Nada disto soma aos custos nem à margem.
+- **Filtros:** pesquisa por rubrica, ano e intervalo de meses (ou as datas do topo), tipo de rubrica (compras,
+  despesas operacionais, fixos, variáveis, por classificar), rubricas sem movimentos, comparação com o ano anterior e
+  com o orçamento, e **Limpar filtros**. A empresa e o estabelecimento são os do topo da aplicação. Com um filtro
+  ativo, a tabela mostra o total das rubricas filtradas e o cartão de custos indica o total geral.
+- **Movimentos de cada valor:** clicar num valor (rubrica e mês, ou o total anual) abre os
+  [movimentos da rubrica](MOVIMENTOS-DA-RUBRICA.md): data, documento, entidade, origem, base, IVA, valor, rubrica,
+  estado de reconciliação ou pagamento, consulta do documento e dos originais, correção da rubrica (individual ou em
+  lote, com pré-visualização e motivo), observações, histórico e associação a documentos. A correção só muda a
+  classificação de gestão; os totais, o orçamento e os gráficos recalculam. A auditoria regista a origem
+  `mapas_de_gestao`.
+- **Orçamento:** com um orçamento do ano (último aprovado; senão o rascunho), cada rubrica orçamentada mostra o valor
+  orçamentado e o desvio por mês e no total. No total de custos, o desvio só considera as rubricas orçamentadas.
+- **Alertas (sinais para rever, nunca erros):** valor acima da média dos restantes períodos, subida face ao período
+  anterior, aumento face ao mesmo período do ano anterior, possíveis duplicados (a mesma entidade e o mesmo valor em
+  poucos dias) e despesas sem rubrica. Os limites (percentagens, valor mínimo da diferença e janela dos duplicados)
+  configuram-se em **Limites dos alertas** (só o administrador altera; fica na auditoria como
+  `limites_alertas_mapas`). Clicar num alerta abre os movimentos que o justificam.
+- **Gráficos** (botão **Tabela | Gráficos**): proveitos e custos por período, margem de gestão estimada (com o ano
+  anterior), custos atuais e do ano anterior, despesas por rubrica e peso de cada rubrica. Colunas e barras abrem os
+  movimentos; cada gráfico tem a vista em tabela.
+- **Exportação:** **Exportar Excel** (CSV com «;», a tabela filtrada com subtotais, totais, margem e a parte
+  informativa), **PDF / Imprimir** (só o relatório, com cabeçalhos e totais) e **Exportar movimentos** no painel de
+  cada rubrica. Os valores exportados são os apresentados.
+- **Segurança Social e impostos:** um encargo pago ao banco com uma rubrica de custo conta uma vez, pela data do
+  movimento; se a rubrica tiver a natureza «Obrigação fiscal», fica nos pagamentos ao Estado e fora dos custos. A
+  aplicação não separa encargos da entidade patronal e retenções dos trabalhadores dentro do mesmo pagamento.
+
+API: `GET /api/management/costs-revenues?start&end&group&store_id&compare=true` (acrescenta `subtotals`, `kpis`,
+`outside`, `state_payments`, `sales_vat`, `previous`, `budget`, `alerts`, `empty_rubrics`, mantendo os campos
+anteriores), `GET/PUT /api/management/alert-settings`. Migração 0092 (`categories.fixed_cost`, `map_alert_settings`).
+Testes: `backend/tests/test_management_costs.py`, `scripts/test-management-costs-ui.py`.
+
 ## Mapa de IVA
 
 - Segue a periodicidade do **regime de IVA** configurado (mensal ou trimestral). Na isenção do artigo 53.º não há mapa.

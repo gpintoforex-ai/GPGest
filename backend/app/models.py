@@ -559,6 +559,23 @@ class Category(Base):
     in_treasury: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     in_fiscal: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     in_payment_budget: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    # Rubrica-mãe opcional (um só nível): a sub-rubrica mostra-se «Mãe › Sub» e o gráfico pode agregar pela mãe.
+    parent_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # Custo fixo (rendas, seguros, vencimentos, comunicações): só para a análise de gestão (mapas e indicadores).
+    fixed_cost: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class RecordAnnotation(Base):
+    """Classificação de gestão de um registo de despesa (documento, registo bancário ou movimento de caixa):
+    centro de custo e observações. Não altera valores, documentos nem dados do ERP."""
+    __tablename__ = "record_annotations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    record_id: Mapped[str] = mapped_column(String(80), unique=True)  # id da compra, erp:<id>, bank:<id>, move:<id>
+    cost_center_id: Mapped[str | None] = mapped_column(ForeignKey("cost_centers.id"), nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
 class RubricReclassification(Base):
@@ -756,6 +773,21 @@ class LiquiditySettings(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default="default")
     reserves: Mapped[str] = mapped_column(Text, default='{"EUR":0}')
     stale_days: Mapped[int] = mapped_column(Integer, default=7)
+
+
+class MapAlertSettings(Base):
+    """Limites dos alertas do mapa de custos e proveitos (uma linha «default» por empresa). Os alertas são sinais
+    para rever os movimentos, nunca erros."""
+    __tablename__ = "map_alert_settings"
+    id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
+    above_average_percent: Mapped[int] = mapped_column(Integer, default=50, server_default="50")
+    month_change_percent: Mapped[int] = mapped_column(Integer, default=50, server_default="50")
+    increase_percent: Mapped[int] = mapped_column(Integer, default=25, server_default="25")
+    minimum_cents: Mapped[int] = mapped_column(Integer, default=10000, server_default="10000")
+    duplicate_days: Mapped[int] = mapped_column(Integer, default=5, server_default="5")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class LiquidityManual(Base):
