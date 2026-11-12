@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
-from app.models import BusinessEntity, DocumentPayment, ProcurementDocument, ProcurementLink, Purchase, StockEntry, PlannedMovement
+from app.models import Audit, BusinessEntity, DocumentPayment, ProcurementDocument, ProcurementLink, Purchase, StockEntry, PlannedMovement
 from conftest import supplier_fields
 from test_inventory import stock_case, product, view, move, login
 
@@ -389,6 +389,17 @@ def test_confirmed_receipt_is_edited_in_place_and_regenerates_stock(case):
     sale = c.post('/api/stock/movements', json={'article_id': aid, 'warehouse_id': stock[3][0], 'kind': 'sale', 'quantity': '2',
                                                 'reason': 'Venda de teste', 'request_key': str(uuid4())})
     assert sale.status_code == 200, sale.text
+    # Gravar sem alterar artigo, quantidade, preço, lote ou armazém: a entrada mantém-se (sem ajuste nem entrada nova),
+    # mesmo com a venda posterior. Antes, cada gravação acrescentava um par «ajuste −N / receção +N» aos movimentos.
+    same = edit(edited, '10')
+    assert same.status_code == 200, same.text
+    assert D(view(stock, aid)['quantity']) == 8
+    with stock[2]() as db:
+        kinds = sorted(e.kind for e in db.scalars(select(StockEntry).where(StockEntry.article_id == aid)))
+        assert kinds == ['purchase', 'sale']
+        audit = db.scalars(select(Audit).where(Audit.action == 'compra_circuito_rececao_editada').order_by(Audit.created_at.desc())).first()
+        assert json.loads(audit.detail)['entradas_mantidas'] == 1 and json.loads(audit.detail)['entradas_estornadas'] == 0
+    edited = same.json()
     second = edit(edited, '9', price='11')
     assert second.status_code == 200, second.text
     assert D(view(stock, aid)['quantity']) == 7
