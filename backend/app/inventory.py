@@ -315,6 +315,11 @@ class ArticleInput(Strict):
     reference: str = Field(default="", max_length=100)
     barcodes: list[str] = Field(default_factory=list, max_length=20)
     description: str = Field(default="", max_length=4000)
+    # Conteúdo para o site (loja online): resumo, pontos-chave e SEO. Enviados pelo catálogo da loja online.
+    web_summary: str = Field(default="", max_length=300)
+    web_highlights: list[str] = Field(default_factory=list, max_length=8)
+    seo_title: str = Field(default="", max_length=70)
+    seo_description: str = Field(default="", max_length=170)
     internal_notes: str = Field(default="", max_length=4000)
     additional_photos: list[str] = Field(default_factory=list, max_length=10)
     attachments: list[ArticleAttachment] = Field(default_factory=list, max_length=20)
@@ -364,6 +369,14 @@ class ArticleInput(Strict):
                 raise ValueError("O endereço da imagem é demasiado longo.")
             ArticleAttachment.https_url(url)
         return value
+
+    @field_validator("web_highlights")
+    @classmethod
+    def highlight_list(cls, value):
+        result = [v.strip() for v in value if v.strip()]
+        if any(len(v) > 160 for v in result):
+            raise ValueError("Cada ponto-chave tem no máximo 160 caracteres.")
+        return result
 
     @field_validator("barcodes")
     @classmethod
@@ -525,6 +538,9 @@ def save_article(
     row = existing or StockArticle(code=data.code, name=data.name)
     row.code, row.name, row.active, row.data = data.code, data.name, data.active, dump(payload)
     row.revision = (row.revision or 0) + 1
+    if existing and not preview:
+        from .article_content import settle_on_save
+        settle_on_save(db, user, existing.id, payload)
     if not preview:
         db.add(row)
         if flush:

@@ -1518,6 +1518,23 @@ class StockArticle(Base):
     revision: Mapped[int] = mapped_column(default=0)
 
 
+class ArticleContentProposal(Base):
+    """Proposta de descritivo para o site gerada por IA (uma por artigo; a mais recente substitui a anterior).
+    Nunca é publicada sozinha: só passa para a ficha (e para a loja online) depois de revista e aprovada."""
+    __tablename__ = "article_content_proposals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    article_id: Mapped[str] = mapped_column(ForeignKey("stock_articles.id", ondelete="CASCADE"), unique=True)
+    status: Mapped[str] = mapped_column(String(20), default="pendente")  # pendente, aprovada, aplicada, descartada
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    model: Mapped[str] = mapped_column(String(80), default="")
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    decided_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class PurchaseArticleAlias(Base):
     """Correspondência aprendida ao receber uma fatura: referência/EAN/descrição do fornecedor → artigo."""
 

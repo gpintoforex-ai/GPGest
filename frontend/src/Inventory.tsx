@@ -1,3 +1,4 @@
+import { WebContentQueue } from "./ArticleWebContent";
 import { MetricCard } from "./components/BusinessUI";
 import { formatQuantity, setQuantityDecimals } from "./lib/quantity";
 import OperationsOverview from "./components/OperationsOverview";
@@ -148,7 +149,7 @@ export default function Inventory({
   admin: boolean;
 }) {
   const [catalog, setCatalog] = useState<Row | null>(null),
-    [tab, setTab] = useWorkspaceTab("stock", "Painel", ["Painel", "Artigos", "Movimentos", "Lotes e validades", "Inventários", "Importações", "Parâmetros"]),
+    [tab, setTab] = useWorkspaceTab("stock", "Painel", ["Painel", "Artigos", "Movimentos", "Lotes e validades", "Inventários", "Importações", "Site", "Parâmetros"]),
     [error, setError] = useState(""),
     [success, setSuccess] = useState("");
   const [filters, setFilters] = useState<Row>({
@@ -399,7 +400,7 @@ export default function Inventory({
           Wintouch, use «Associar por código» em Importações.
         </Notice>
       )}
-      <ModuleTabs label="Artigos e stock" value={tab} tabs={([{"id": "Painel", "label": "Painel"}, {"id": "Artigos", "label": "Artigos"}, {"id": "Movimentos", "label": "Movimentos"}, {"id": "Lotes e validades", "label": "Lotes e validades"}, {"id": "Inventários", "label": "Inventários"}, {"id": "Importações", "label": "Importações"}, {"id": "Parâmetros", "label": "Parâmetros"}]).filter(item => admin || item.id !== "Parâmetros")} onChange={value => { setTab(value);  }} />
+      <ModuleTabs label="Artigos e stock" value={tab} tabs={([{"id": "Painel", "label": "Painel"}, {"id": "Artigos", "label": "Artigos"}, {"id": "Movimentos", "label": "Movimentos"}, {"id": "Lotes e validades", "label": "Lotes e validades"}, {"id": "Inventários", "label": "Inventários"}, {"id": "Importações", "label": "Importações"}, {"id": "Site", "label": "Descritivos do site"}, {"id": "Parâmetros", "label": "Parâmetros"}]).filter(item => (admin || item.id !== "Parâmetros") && (item.id !== "Site" || rights.adjust_stock))} onChange={value => { setTab(value);  }} />
       {!warehouses.length && (
         <Notice tone="warning">
           Crie um armazém para começar a registar stock.
@@ -987,6 +988,7 @@ export default function Inventory({
           setConfig={setConfig}
         />
       )}
+      {tab === "Site" && rights.adjust_stock && <WebContentQueue />}
       {tab === "Parâmetros" && config && (
         <section className="panel">
           <h2>

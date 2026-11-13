@@ -188,6 +188,11 @@ def catalog(
                 "active": active,
                 "supported": supported,
                 "description": data.get("description", ""),
+                # Conteúdo para o site revisto na ficha (resumo, pontos-chave e SEO).
+                "summary": data.get("web_summary", ""),
+                "highlights": data.get("web_highlights", []),
+                "seo_title": data.get("seo_title", ""),
+                "seo_description": data.get("seo_description", ""),
                 "family": data.get("family", ""),
                 "category": data.get("category", ""),
                 "brand": data.get("brand", ""),

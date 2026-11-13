@@ -15,6 +15,7 @@ Digitalizar fotografias e PDFs para anexos e dossiês: [guia de digitalização]
 Digitalização rápida por PIN a partir do ecrã de entrada, em dispositivos emparelhados: [digitalização rápida](docs/DIGITALIZACAO-RAPIDA.md).
 Arquivo central de todos os documentos, com caixa de entrada, extração, relações, pendências e assistente: [arquivo digital](docs/ARQUIVO-DIGITAL.md).
 Conferir e-Fatura, anexos e ERP: [assistente e-Fatura](docs/ASSISTENTE-EFATURA.md).
+Descritivo dos artigos para o site (descrição, resumo, pontos-chave e SEO) proposto por IA e revisto antes de publicar: [descritivos do site](docs/DESCRITIVOS-SITE-IA.md).
 Proveitos, custos e margens por rubrica (indicadores, tabela mensal, comparação, orçamento, alertas e gráficos) e mapa de IVA indicativos: [mapas de gestão](docs/MAPAS-DE-GESTAO.md). Separar custos operacionais, compras, obrigações fiscais e saídas de tesouraria: [natureza das rubricas](docs/NATUREZA-DAS-RUBRICAS.md). Pesquisar e corrigir os movimentos de cada rubrica: [movimentos da rubrica](docs/MOVIMENTOS-DA-RUBRICA.md).
 Obrigações fiscais, contratos, viaturas, inspeções e outros prazos: [obrigações e prazos](docs/OBRIGACOES-E-PRAZOS.md).
 Planear despesas, comparar previsto com realizado e acompanhar desvios: [orçamento e previsão de despesas](docs/ORCAMENTO.md).

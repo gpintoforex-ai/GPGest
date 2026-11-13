@@ -1,3 +1,4 @@
+import { WebContentAssistant } from "./ArticleWebContent";
 import { formatQuantity } from "./lib/quantity";
 import { ContextSuggestion } from "./components/OverviewUI";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
@@ -16,7 +17,7 @@ const sections = ["Geral", "Preços e rentabilidade", "Stock", "Compras e fornec
 const sectionOrder = [0, 1, 2, 3, 8, 9, 7, 4, 6, 5];
 const sectionLabels = ["Geral", "Preços", "Stocks", "Fornecedores", "Validades e lotes", "Integração ERP", "Histórico", "Documentos", "Vendas", "Compras"];
 const sectionIcons = [Home, Coins, Warehouse, Truck, Leaf, Link2, History, FileText, ShoppingBag, ShoppingCart];
-const fieldSection: Record<string, number> = { sale_net: 1, sale_gross: 1, vat_rate: 1, minimum: 2, reorder: 2, maximum: 2, location: 0, service: 0, lots: 4, expiry: 4, supplier_id: 3, supplier_reference: 0, description: 7, internal_notes: 0, additional_photos: 7, attachments: 7 };
+const fieldSection: Record<string, number> = { web_summary: 7, web_highlights: 7, seo_title: 7, seo_description: 7, sale_net: 1, sale_gross: 1, vat_rate: 1, minimum: 2, reorder: 2, maximum: 2, location: 0, service: 0, lots: 4, expiry: 4, supplier_id: 3, supplier_reference: 0, description: 7, internal_notes: 0, additional_photos: 7, attachments: 7 };
 const money = (v: any) => v === null || v === undefined ? "Sem informação" : new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(Number(v));
 const quantity = (v: any) => formatQuantity(v);
 const date = (v: any) => v ? new Intl.DateTimeFormat("pt-PT", { dateStyle: "short", timeZone: "Europe/Lisbon" }).format(new Date(v)) : "Sem informação";
@@ -94,6 +95,7 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
     setBusy(true); setError(""); setErrors({});
     try {
       await onSave({ ...value, code: value.code.trim(), name: value.name.trim(), precision: Number(value.precision), barcodes: value.barcodes.map((v: string) => v.trim()).filter(Boolean),
+        web_highlights: (value.web_highlights || []).map((v: string) => v.trim()).filter(Boolean),
         ...(needsOpeningLot && openingLot.number.trim() ? { opening_lot: { number: openingLot.number.trim(), expiry: openingLot.expiry || null } } : {}) });
       markDialogSaved(form.current);
     } catch (e) {
@@ -297,6 +299,16 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
         </>}
         {index === 7 && <>
           <h3>Descrição do artigo</h3><Field label="Descrição"><textarea readOnly={readOnly} name="description" value={value.description} maxLength={4000} onChange={e => change("description", e.target.value)} /></Field>
+          <h3>Conteúdo para o site</h3>
+          <WebContentAssistant articleId={initial.id} readOnly={readOnly} onUse={fields => {
+            change("description", fields.description); change("web_summary", fields.web_summary); change("web_highlights", fields.web_highlights);
+            change("seo_title", fields.seo_title); change("seo_description", fields.seo_description);
+          }} />
+          <Field label={`Resumo (${String(value.web_summary || "").length}/300)`}><textarea readOnly={readOnly} name="web_summary" rows={2} value={value.web_summary} maxLength={300} onChange={e => change("web_summary", e.target.value)} /></Field>
+          <Field label="Pontos-chave (um por linha, até 8)"><textarea readOnly={readOnly} name="web_highlights" rows={4} value={(value.web_highlights || []).join("\n")} onChange={e => change("web_highlights", e.target.value.split("\n").slice(0, 8))} /></Field>
+          <Field label={`Título SEO (${String(value.seo_title || "").length}/60)`}><input readOnly={readOnly} name="seo_title" value={value.seo_title} maxLength={70} onChange={e => change("seo_title", e.target.value)} /></Field>
+          <Field label={`Meta-descrição SEO (${String(value.seo_description || "").length}/155)`}><textarea readOnly={readOnly} name="seo_description" rows={2} value={value.seo_description} maxLength={170} onChange={e => change("seo_description", e.target.value)} /></Field>
+          <p className="footnote">A loja online recebe a descrição, o resumo, os pontos-chave e o SEO pelo catálogo. Reveja sempre as alegações de saúde antes de gravar.</p>
           <p className="footnote">As observações internas são editáveis em Geral e mantêm-se separadas da descrição do artigo.</p>
           {!readOnly && imageSearch}
           <Field label="Imagens adicionais — endereço HTTPS por linha"><textarea readOnly={readOnly} name="additional_photos" value={imageText} onChange={e => { setImageText(e.target.value); change("additional_photos", e.target.value.split("\n").map(v => v.trim()).filter(Boolean)); }} /></Field>
