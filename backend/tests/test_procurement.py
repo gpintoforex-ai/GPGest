@@ -406,6 +406,15 @@ def test_confirmed_receipt_is_edited_in_place_and_regenerates_stock(case):
     with stock[2]() as db:
         kinds = sorted(e.kind for e in db.scalars(select(StockEntry).where(StockEntry.article_id == aid)))
         assert kinds == ['adjustment', 'purchase', 'purchase', 'sale']
+    # Livro de stock: a entrada substituída e o ajuste que a anula ficam escondidos por omissão (efeito zero), com
+    # a contagem para os mostrar; nada é apagado.
+    ledger = c.get('/api/procurement-ledger', params={'article_id': aid}).json()
+    assert sorted(r['kind'] for r in ledger['rows']) == ['purchase', 'sale'] and ledger['hidden_corrections'] == 2
+    assert D(next(r for r in ledger['rows'] if r['kind'] == 'purchase')['quantity']) == 9
+    full = c.get('/api/procurement-ledger', params={'article_id': aid, 'corrections': 'true'}).json()
+    assert sorted(r['kind'] for r in full['rows']) == ['adjustment', 'purchase', 'purchase', 'sale'] and full['hidden_corrections'] == 0
+    documents = c.get('/api/procurement-ledger', params={'article_id': aid, 'view': 'documents'}).json()
+    assert documents['hidden_corrections'] == 2
     # Revisão desatualizada e receção já faturada não se editam.
     assert edit(edited, '8').status_code == 409
     current = second.json()

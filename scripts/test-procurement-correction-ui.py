@@ -132,7 +132,7 @@ with sync_playwright() as p:
     line.get_by_label("Quantidade", exact=True).fill("8")
     page.screenshot(path=str(OUT / "edit-invoice.png"))
     edit.get_by_role("button", name="Guardar alterações (1)").click()
-    expect(page.get_by_text("Receção atualizada: 1 linhas; os movimentos de stock foram gerados de novo.")).to_be_visible()
+    expect(page.get_by_text("Receção atualizada: 1 linhas; o stock só muda nas linhas alteradas.")).to_be_visible()
     kind, url, body = calls[-1]
     assert kind == "fatura" and url.endswith("revision=1") and body["lines"][0]["quantity"] == "8" and body["lines"][0]["bonus"] == "1"
     assert body["document_type_id"] == "t-fc" and body["due_date"] == "2026-11-19"
@@ -154,7 +154,7 @@ with sync_playwright() as p:
     # Receção antiga sem tipo de documento: passa a ser obrigatório escolher.
     manual.get_by_label("Tipo de documento", exact=True).select_option("t-fc")
     manual.get_by_role("button", name="Guardar alterações").click()
-    expect(page.get_by_text("Receção atualizada: os movimentos de stock foram gerados de novo.")).to_be_visible()
+    expect(page.get_by_text("Receção atualizada: o stock só muda nas linhas alteradas.")).to_be_visible()
     kind, _, body = calls[-1]
     assert kind == "manual" and body["revision"] == 1 and body["document"] == "REC-4" and body["document_type_id"] == "t-fc"
     assert not errors, errors

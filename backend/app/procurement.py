@@ -11,9 +11,9 @@ from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Response
 from pydantic import Field, model_validator
-from sqlalchemy import and_, case, cast, func, or_, select
+from sqlalchemy import and_, case, cast, func, not_, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from .db import db_session
 from .table_rules import ensure_usable
@@ -893,7 +893,7 @@ def register_routes(app, current, authorize, scope, audit):
     @app.get('/api/procurement-ledger')
     def ledger(store_id:str='',start:date|None=None,end:date|None=None,article_id:str='',kind:str='',page:int=1,
                view:Literal['lines','documents']='lines',group:str='',date_basis:Literal['both','document','record']='both',
-               warehouse_id:str='',origin:str='',q:str='',user=Depends(current),db:Session=Depends(db_session)):
+               warehouse_id:str='',origin:str='',q:str='',corrections:bool=False,user=Depends(current),db:Session=Depends(db_session)):
         """Livro de stock por linha ou agrupado pelo documento que movimentou o stock, com indicadores.
 
         Por omissão o período apanha a data do movimento (data do documento) ou a data de registo: uma
@@ -927,10 +927,21 @@ def register_routes(app, current, authorize, scope, audit):
         if origin:conditions.append(func.coalesce(payload['origin'].astext,'manual')==origin)
         if q.strip():
             conditions.append(func.lower(payload['document'].astext).contains(q.strip().lower(), autoescape=True))
+        # Correções de edições de receções: a entrada substituída e o ajuste que a anula (efeito zero no stock).
+        # Escondem-se por omissão (nada é apagado); `corrections=true` mostra-as.
+        reversals=aliased(StockEntry)
+        reversal_data=cast(reversals.data,JSONB)
+        replaced=select(reversal_data['reversal_of'].astext).where(reversal_data['reversal_of'].astext.is_not(None),
+                                                                     reversal_data['procurement_id'].astext.is_not(None))
+        pair=or_(and_(payload['reversal_of'].astext.is_not(None),payload['procurement_id'].astext.is_not(None)),StockEntry.id.in_(replaced))
+        hidden=0
+        if not corrections:
+            hidden=db.scalar(select(func.count()).select_from(StockEntry).join(StockWarehouse).where(*conditions,pair)) or 0
+            conditions.append(not_(pair))
         visible=stock.permissions(user,stock.settings(db))['view_cost']
         summary=ledger_summary(db,key,conditions,visible)
         if view=='documents' and not group:
-            return {**ledger_documents(db,key,conditions,page,visible),'summary':summary}
+            return {**ledger_documents(db,key,conditions,page,visible),'summary':summary,'hidden_corrections':hidden}
         query=select(StockEntry,key).join(StockWarehouse).where(*conditions)
         entries=list(db.execute(query.order_by(StockEntry.created_at.desc(),StockEntry.id.desc()).offset((page-1)*50).limit(51)))
         rows,labels=[],{}
@@ -944,7 +955,7 @@ def register_routes(app, current, authorize, scope, audit):
                 'photo':json.loads(article.data or '{}').get('photo') or '',
                 'warehouse_name':wh.name,'lot_number':lot.number if lot else '', 'expiry':lot.expiry if lot else '',
                 'user_name':db.get(User,entry.user_id).name,'value':str(entry.quantity*entry.unit_cost) if visible and entry.unit_cost is not None else None})
-        return {'rows':rows,'more':len(entries)>50,'summary':summary}
+        return {'rows':rows,'more':len(entries)>50,'summary':summary,'hidden_corrections':hidden}
 
     @app.post('/api/procurement')
     def create(data: Draft, user=Depends(current), db: Session=Depends(db_session)):

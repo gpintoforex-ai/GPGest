@@ -195,7 +195,7 @@ export default function Procurement({ section, store, stores, categories, naviga
       const result = await api(`/procurement/${editConfirmed.id}/confirmed`, { ...body, revision: editConfirmed.revision }, { method: "PUT" });
       setDraft(null); setEditConfirmed(null); setSelected(result);
       if (result.price_review_pending && catalog.permissions?.view_cost) setPriceReview(result.id);
-      await load(); setNotice("Receção atualizada: os movimentos de stock foram gerados de novo.");
+      await load(); setNotice("Receção atualizada: o stock só muda nas linhas alteradas.");
       return;
     }
     const result = await api("/procurement" + (editId ? "/" + editId : ""), body, editId ? { method: "PUT" } : undefined);

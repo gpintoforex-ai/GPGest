@@ -95,3 +95,4 @@
 /* Stock acumulado por baixo da quantidade: «Stock 6,00 → 5,00». */
 .stock-ledger-balance { display: block; white-space: nowrap; color: var(--color-muted); }
 .stock-ledger-balance b { display: inline !important; color: var(--color-text); }
+.stock-ledger-corrections { display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; font-size: 13px; color: var(--color-text); }
