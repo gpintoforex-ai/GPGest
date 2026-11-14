@@ -398,14 +398,14 @@ def receive(data: WebOrderInput, identity=Depends(connector), db: Session = Depe
             db.scalars(select(CustomerOrderLine).where(CustomerOrderLine.order_id == row.id))
         )
         for line in lines:
-            if line.delivered or db.scalar(
+            if line.delivered or line.invoiced or db.scalar(
                 select(CustomerSupplyLink.id).where(
                     CustomerSupplyLink.line_id == line.id,
                     CustomerSupplyLink.quantity > CustomerSupplyLink.released,
                 )
             ):
                 fail(
-                    "Existem entregas ou compras atribuídas. Rever cancelamento/devolução no GPGest.",
+                    "Existem entregas, faturas ou compras atribuídas. Rever cancelamento/devolução no GPGest.",
                     409,
                 )
         for line in lines:

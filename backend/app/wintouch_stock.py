@@ -14,6 +14,11 @@ da Wintouch já recebida na aplicação (associação ERP ou mesma identidade NI
 para o stock; as outras ficam por rever, sem entrada automática, para o mesmo stock não entrar duas vezes.
 Pela mesma razão, uma devolução a fornecedor da Wintouch sem a compra original integrada fica por rever
 (regista-se em «Devolver mercadoria» na aplicação).
+
+A saída de stock de uma venda vem só da fatura (fatura-recibo, fatura, FS); guias, pedidos e contas de mesa
+não movimentam. Quando o cliente da fatura é a ficha de cliente de um pedido com reserva do mesmo artigo e
+armazém, a fatura consome essa reserva (pedido mais antigo primeiro) e conta como faturada na linha do
+pedido, na mesma transação da saída. A entrega do pedido é só logística.
 """
 
 import hashlib
@@ -27,6 +32,10 @@ from sqlalchemy import func, select
 
 from .inventory import MovementInput, document_key, lock, post, require, settings, stock_from_erp
 from .models import (
+    BusinessEntity,
+    CustomerOrder,
+    CustomerOrderLine,
+    CustomerOrderReservation,
     DocumentERPLink,
     ERPDocument,
     ErpLink,
@@ -36,6 +45,7 @@ from .models import (
     StockEntry,
     StockLot,
     StockWarehouse,
+    WintouchEntity,
     WintouchProduct,
     WintouchSaleRecord,
 )
@@ -43,12 +53,21 @@ from .models import (
 PREFIX = "wt-stock:"
 ZERO = Decimal(0)
 # Classes de documento Wintouch (validadas na instalação) e a operação local correspondente.
-SALES = {3, 5, 7, 19, 27, 39, 40}  # faturas, guias a cliente, pedidos, amostras, contas de mesa, FS
-CUSTOMER_RETURNS = {4, 6, 8, 28}  # devoluções, notas de crédito, devoluções de guia e de amostra
+# A saída de stock de uma venda vem só da fatura confirmada (fatura-recibo, fatura, FS). Guias, pedidos e
+# contas de mesa não movimentam: a mercadoria sai quando for faturada.
+SALES = {3, 5, 40}
+CUSTOMER_RETURNS = {4, 6}  # devoluções e notas de crédito de faturas
+SAMPLES = {27}  # amostras: saída física sem venda (acerto)
+SAMPLE_RETURNS = {28}  # devoluções de amostra (acerto de entrada)
+NOT_STOCK = {7, 8, 19, 39}  # guias a cliente e suas devoluções, pedidos, contas de mesa
 PURCHASES = {32, 34, 36}  # faturas de compra e guias de entrada
 SUPPLIER_RETURNS = {33, 35, 37}  # devoluções e notas de crédito de fornecedor
+FINAL_CONSUMER = "999999990"
 LABELS = {
     "sale": "Venda Wintouch",
+    "sample": "Amostra Wintouch",
+    "sample_return": "Devolução de amostra Wintouch",
+    "legacy": "Documento Wintouch",
     "customer_return": "Devolução de cliente Wintouch",
     "purchase": "Compra Wintouch",
     "supplier_return": "Devolução a fornecedor Wintouch",
@@ -57,7 +76,8 @@ LABELS = {
     "transfer": "Transferência Wintouch",
 }
 # Ordem no mesmo dia: entradas antes das saídas que delas dependem; devoluções no fim.
-ORDER = {"purchase": 0, "entry": 0, "transfer": 1, "sale": 2, "exit": 2, "customer_return": 3, "supplier_return": 3}
+ORDER = {"purchase": 0, "entry": 0, "sample_return": 0, "transfer": 1, "sale": 2, "exit": 2, "sample": 2, "legacy": 2,
+         "customer_return": 3, "supplier_return": 3}
 
 
 def received_purchases(db, enterprise):
@@ -78,8 +98,14 @@ def received_purchases(db, enterprise):
 
 
 def operation(document_class, stock_mode):
+    if document_class in NOT_STOCK:
+        return None
     if document_class in SALES:
         return "sale"
+    if document_class in SAMPLES:
+        return "sample"
+    if document_class in SAMPLE_RETURNS:
+        return "sample_return"
     if document_class in CUSTOMER_RETURNS:
         return "customer_return"
     if document_class in PURCHASES:
@@ -137,10 +163,10 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
         )
     }
     received = received_purchases(db, enterprise)
-    posted = defaultdict(list)  # request_key → movimentos
+    posted = defaultdict(list)  # linha Wintouch (request_key sem a parte «~n») → movimentos
     by_record = defaultdict(list)  # documento importado → movimentos gerados a partir dele
     for entry in db.scalars(select(StockEntry).where(StockEntry.request_key.like(PREFIX + "%"))):
-        posted[entry.request_key].append(entry)
+        posted[entry.request_key.split("~")[0]].append(entry)
         by_record[json.loads(entry.data).get("source_record")].append(entry)
     records = []
     for record in db.scalars(select(WintouchSaleRecord).where(
@@ -152,13 +178,17 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
     )):
         detail = json.loads(record.data)
         kind = operation(detail.get("document_class"), detail.get("stock_mode"))
+        if not kind and record.id in by_record:
+            # Documento que movimentou o stock antes da regra atual (ex.: guia): só o estorno se for anulado.
+            kind = "legacy"
         if kind:
             records.append((record, detail, kind))
     records.sort(key=lambda item: (item[0].document_date, ORDER[item[2]], item[1].get("occurred_at") or "", item[0].external_id))
     result = {"applied": 0, "entries": 0, "exits": 0, "transfers": 0, "returns": 0, "reversed": 0, "pending": [], "conflicts": [],
               "already_received": []}
     counters = {"sale": "applied", "purchase": "entries", "entry": "entries", "exit": "exits", "transfer": "transfers",
-                "customer_return": "returns", "supplier_return": "returns"}
+                "customer_return": "returns", "supplier_return": "returns", "sample": "exits", "sample_return": "entries",
+                "legacy": "reversed"}
 
     def pending(document, line, reason):
         product = articles.get(line.get("product_id")) if line else None
@@ -191,29 +221,40 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
         return (f"Sem stock suficiente no armazém «{here}», o das saídas Wintouch; há {', '.join(others)}. "
                 "Transfira o stock para esse armazém ou escolha o armazém das saídas na sincronização.")
 
-    def attempt(record, document, line, document_class, data, counter):
+    def attempt(record, document, line, document_class, data, counter, effects=None, tags=None):
         # Cada linha numa subtransação: uma linha recusada (ex.: stock insuficiente) não anula as outras.
         # `data` pode ser uma lista (ex.: devolução repartida pelos lotes do movimento original).
+        # `effects` corre na mesma subtransação (ex.: consumo da reserva do pedido do cliente) e `tags`
+        # indica, por movimento, a linha do pedido de cliente faturada.
+        items = data if isinstance(data, list) else [data]
         try:
             with db.begin_nested():
+                if effects:
+                    effects()
                 movements = []
-                for item in data if isinstance(data, list) else [data]:
-                    movements += post(db, user, item, authorize, source="Wintouch")
-                for movement in movements:
-                    detail = json.loads(movement.data)
-                    detail.update(source_record=record.id, source_line=line.get("id"), line_fingerprint=fingerprint(line, document_class))
-                    movement.data = json.dumps(detail, ensure_ascii=False, default=str)
+                for index, item in enumerate(items):
+                    tag = tags[index] if tags else None
+                    for movement in post(db, user, item, authorize, source="Wintouch"):
+                        detail = json.loads(movement.data)
+                        detail.update(source_record=record.id, source_line=line.get("id"), line_fingerprint=fingerprint(line, document_class))
+                        if tag:
+                            detail["customer_order_line"] = tag
+                        movement.data = json.dumps(detail, ensure_ascii=False, default=str)
+                        movements.append(movement)
                 db.flush()
         except HTTPException as exc:
             reason = exc.detail if isinstance(exc.detail, str) else "Movimento recusado pelas regras de stock."
-            first = (data if isinstance(data, list) else [data])[0]
             if reason.startswith("Stock disponível insuficiente"):
-                reason = insufficient(first, reason)
+                reason = insufficient(items[0], reason)
+            elif reason.startswith("Existem unidades reservadas"):
+                reason = ("Unidades reservadas para pedidos de clientes: a fatura não corresponde a um pedido com reserva "
+                          "deste artigo neste armazém para o mesmo cliente. Confirme que o cliente do pedido é a ficha "
+                          "ligada à entidade Wintouch da fatura, ou liberte a reserva.")
             pending(document, line, reason)
             return
         result[counter] += 1
         for movement in movements:
-            posted[movement.request_key].append(movement)
+            posted[movement.request_key.split("~")[0]].append(movement)
             by_record[record.id].append(movement)
 
     def returns_of(originals, return_kind, amount, base, key):
@@ -231,6 +272,104 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
                 break
         return parts, left
 
+    customers = {}  # entidade Wintouch → fichas de cliente locais ligadas a ela
+
+    def customers_of(entity):
+        if entity not in customers:
+            rows = db.execute(
+                select(BusinessEntity.id, BusinessEntity.tax_number, WintouchEntity.tax_number)
+                .join(WintouchEntity, WintouchEntity.id == BusinessEntity.wintouch_id)
+                .where(WintouchEntity.enterprise_id == enterprise, WintouchEntity.external_id == entity)
+            ) if entity else []
+            # Consumidor final não identifica um cliente: nunca liga a fatura a um pedido.
+            customers[entity] = [
+                identifier for identifier, local_nif, erp_nif in rows
+                if FINAL_CONSUMER not in ((local_nif or "").removeprefix("PT").strip(), (erp_nif or "").removeprefix("PT").strip())
+            ]
+        return customers[entity]
+
+    def order_holds(entity, article_id, warehouse_id, lot_id):
+        """Reservas de pedidos do cliente da fatura para o artigo e armazém, do pedido mais antigo para o mais recente."""
+        ids = customers_of(entity)
+        if not ids:
+            return []
+        query = (
+            select(CustomerOrderReservation, CustomerOrderLine)
+            .join(CustomerOrderLine, CustomerOrderLine.id == CustomerOrderReservation.line_id)
+            .join(CustomerOrder, CustomerOrder.id == CustomerOrderLine.order_id)
+            .where(
+                CustomerOrder.customer_id.in_(ids),
+                CustomerOrder.store_id == store_id,
+                CustomerOrderLine.article_id == article_id,
+                CustomerOrderReservation.warehouse_id == warehouse_id,
+                CustomerOrderReservation.quantity > 0,
+            )
+            .order_by(CustomerOrder.created_at, CustomerOrder.id, CustomerOrderLine.id, CustomerOrderReservation.id)
+        )
+        if lot_id:
+            query = query.where(CustomerOrderReservation.lot_id == lot_id)
+        return list(db.execute(query))
+
+    def invoiced_sale(detail, product, target, lot, base, amount, sale_net, key):
+        """Saída da fatura: primeiro das reservas de pedidos do mesmo cliente (consumidas na mesma
+        subtransação; a linha do pedido conta como faturada), o resto do stock livre."""
+        plan, left, room = [], amount, {}
+        for hold, order_line in order_holds(detail.get("entity_id"), product.id, target.id, lot.get("lot_id")):
+            if left <= 0:
+                break
+            if order_line.id not in room:
+                room[order_line.id] = order_line.quantity - order_line.cancelled - order_line.invoiced
+            take = min(left, hold.quantity, room[order_line.id])
+            if take <= 0:
+                continue
+            plan.append((hold, order_line, take))
+            room[order_line.id] -= take
+            left -= take
+        items, tags, allocated = [], [], ZERO
+        for hold, order_line, take in plan:
+            share = (sale_net * take / amount).quantize(Decimal("0.000001"))
+            allocated += share
+            items.append(MovementInput(
+                **base, warehouse_id=hold.warehouse_id, lot_id=hold.lot_id, kind="sale", quantity=take,
+                net_sales=share, request_key=key if not items else f"{key}~{len(items)}",
+                override_reason="Lote reservado para o pedido do cliente" if hold.lot_id else "",
+            ))
+            tags.append(order_line.id)
+        if left > 0:
+            items.append(MovementInput(
+                **base, **lot, warehouse_id=target.id, kind="sale", quantity=left,
+                net_sales=max(sale_net - allocated, ZERO), request_key=key if not items else f"{key}~{len(items)}",
+            ))
+            tags.append(None)
+        elif items:
+            # O arredondamento da repartição da venda líquida fica na última parte.
+            last = items[-1]
+            items[-1] = last.model_copy(update={"net_sales": last.net_sales + sale_net - allocated})
+
+        def consume():
+            for hold, order_line, take in plan:
+                hold.quantity -= take
+                order_line.invoiced += take
+            db.flush()
+
+        return items, consume if plan else None, tags
+
+    def unbill(entry, quantity, order_line_id):
+        """Fatura anulada: a linha do pedido deixa de contar essas unidades como faturadas e volta a
+        reservá-las (armazém e lote do movimento), no limite do que o pedido ainda tem em aberto."""
+        order_line = db.get(CustomerOrderLine, order_line_id)
+        if not order_line:
+            return
+        undo = min(quantity, order_line.invoiced)
+        order_line.invoiced -= undo
+        held = db.scalar(select(func.coalesce(func.sum(CustomerOrderReservation.quantity), 0)).where(
+            CustomerOrderReservation.line_id == order_line.id))
+        keep = min(undo, max(ZERO, order_line.quantity - order_line.cancelled - order_line.invoiced - held))
+        if keep > 0:
+            db.add(CustomerOrderReservation(line_id=order_line.id, warehouse_id=entry.warehouse_id,
+                                            lot_id=entry.lot_id, quantity=keep))
+        db.flush()
+
     for index, (record, detail, kind) in enumerate(records):
         if progress:
             progress("A aplicar os documentos ao stock", index + 1, len(records))
@@ -247,9 +386,14 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
                 line = {"id": json.loads(entry.data).get("source_line")}
                 common = {"article_id": entry.article_id, "warehouse_id": entry.warehouse_id, "occurred_on": entry.occurred_on,
                           "document": document, "reason": "Estorno: documento anulado na Wintouch", "request_key": void}
+                effects = None
                 if entry.kind == "sale":
                     left = abs(entry.quantity) - returned(entry, "customer_return")
                     data = MovementInput(**common, kind="customer_return", quantity=left, original_id=entry.id) if left > 0 else None
+                    order_line = json.loads(entry.data).get("customer_order_line")
+                    if order_line and data:
+                        def effects(entry=entry, left=left, order_line=order_line):
+                            unbill(entry, left, order_line)
                 elif entry.kind == "purchase":
                     left = abs(entry.quantity) - returned(entry, "supplier_return")
                     data = MovementInput(**common, kind="supplier_return", quantity=left, original_id=entry.id,
@@ -262,7 +406,9 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
                     conflict(document, "Documento anulado na Wintouch depois de integrado no stock: reveja e registe o acerto manualmente.")
                     continue
                 if data:
-                    attempt(record, document, line, document_class, data, "reversed")
+                    attempt(record, document, line, document_class, data, "reversed", effects=effects)
+            continue
+        if kind == "legacy":
             continue
         if kind == "purchase" and not own:
             if detail.get("source_document_id") in received:
@@ -293,7 +439,7 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
                 amount = Decimal(line["quantity"])
                 if meta.get("service") or amount <= 0:
                     continue
-                inbound = kind in ("purchase", "entry", "customer_return")
+                inbound = kind in ("purchase", "entry", "customer_return", "sample_return")
                 # Lotes: o da Wintouch quando o artigo controla lotes cá; sem lote, as saídas seguem o FEFO.
                 # Num artigo sem lotes cá, o lote da Wintouch é ignorado (só contam as quantidades).
                 lot = {}
@@ -344,18 +490,23 @@ def apply_sales_stock(db, user, authorize, enterprise, store_id, start, end, war
                     continue
                 values = base | lot | {"warehouse_id": target.id, "quantity": amount, "request_key": key}
                 if kind == "sale":
+                    if line.get("source_line") and line_key(enterprise, line["source_line"]) in posted:
+                        # Fatura de uma guia integrada no stock antes da regra «só a fatura dá saída»: já saiu.
+                        continue
                     if any(
                         document_key(json.loads(e.data).get("document", "")) == document_key(document) and not e.request_key.startswith(PREFIX)
                         for e in db.scalars(select(StockEntry).where(StockEntry.article_id == product.id, StockEntry.kind == "sale"))
                     ):
                         pending(document, line, "Já existe uma venda manual deste documento e artigo: não foi criada uma duplicação.")
                         continue
-                    data = MovementInput(**values, kind="sale", net_sales=max(net, ZERO))
-                elif kind == "purchase":
+                    data, effects, tags = invoiced_sale(detail, product, target, lot, base, amount, max(net, ZERO), key)
+                    attempt(record, document, line, document_class, data, counters[kind], effects=effects, tags=tags)
+                    continue
+                if kind == "purchase":
                     data = MovementInput(**values, kind="purchase", unit_cost=unit_cost)
-                elif kind == "entry":
+                elif kind in ("entry", "sample_return"):
                     data = MovementInput(**values, kind="adjustment", unit_cost=unit_cost)
-                elif kind == "exit":
+                elif kind in ("exit", "sample"):
                     data = MovementInput(**values, kind="adjustment", adjustment_out=True)
                 attempt(record, document, line, document_class, data, counters[kind])
             except ValidationError:

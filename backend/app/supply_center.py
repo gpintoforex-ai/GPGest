@@ -144,7 +144,7 @@ def supply_center(store_id: str, user=Depends(current), db: Session = Depends(db
                 ZERO,
                 q["requested"]
                 - q["cancelled"]
-                - q["delivered"]
+                - q["invoiced"]
                 - q["reserved"]
                 - q["to_order"]
                 - q["simulated"],

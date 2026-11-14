@@ -1696,7 +1696,10 @@ class CustomerOrder(Base):
 
 class CustomerOrderLine(Base):
     __tablename__ = "customer_order_lines"
-    __table_args__ = (CheckConstraint("quantity > 0 AND cancelled >= 0 AND delivered >= 0 AND cancelled + delivered <= quantity"),)
+    __table_args__ = (
+        CheckConstraint("quantity > 0 AND cancelled >= 0 AND delivered >= 0 AND cancelled + delivered <= quantity"),
+        CheckConstraint("invoiced >= 0 AND cancelled + invoiced <= quantity", name="ck_customer_order_lines_invoiced"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     order_id: Mapped[str] = mapped_column(ForeignKey("customer_orders.id"), index=True)
     article_id: Mapped[str | None] = mapped_column(ForeignKey("stock_articles.id"), nullable=True)
@@ -1704,6 +1707,9 @@ class CustomerOrderLine(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6))
     cancelled: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)
     delivered: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)
+    # Quantidade faturada na Wintouch: a saída de stock vem da fatura, que consome a reserva.
+    # A entrega é só logística; entregue e ainda não faturado continua reservado.
+    invoiced: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0, server_default="0")
     data: Mapped[str] = mapped_column(Text, default="{}")
 
 
