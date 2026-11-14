@@ -2025,6 +2025,79 @@ class WebshopOrder(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class WebshopPublication(Base):
+    """Artigo escolhido para a loja online de uma ligação: o IAZELA é a origem do catálogo publicado.
+
+    A loja recebe as publicações cujo conteúdo (`hash`) ainda não confirmou e devolve o resultado; uma falha
+    fica com o erro e nova tentativa agendada (`retry_at`). Um artigo, um SKU e um produto WooCommerce só
+    podem estar numa publicação por ligação."""
+
+    __tablename__ = "webshop_publications"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "article_id"),
+        UniqueConstraint("connection_id", "sku"),
+        Index(
+            "uq_webshop_publications_woo",
+            "connection_id",
+            "woo_product_id",
+            unique=True,
+            postgresql_where=text("woo_product_id IS NOT NULL"),
+        ),
+        CheckConstraint("state IN ('published', 'withdrawn')", name="ck_webshop_publications_state"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("webshop_connections.id"), index=True)
+    article_id: Mapped[str] = mapped_column(ForeignKey("stock_articles.id"), index=True)
+    sku: Mapped[str] = mapped_column(String(100))
+    state: Mapped[str] = mapped_column(String(20), default="published")
+    # Preço sem IVA deste canal; vazio = preço de venda base do artigo.
+    price_net: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    woo_product_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    woo_status: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    synced_hash: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    # Resultado da loja: requisitos de suplemento alimentar em falta e campos preservados (editados na loja).
+    shop_data: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class WebshopPublicationEvent(Base):
+    """Histórico de publicação: decisões do operador e resultados de sincronização (nunca apagado)."""
+
+    __tablename__ = "webshop_publication_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    publication_id: Mapped[str] = mapped_column(ForeignKey("webshop_publications.id"), index=True)
+    action: Mapped[str] = mapped_column(String(30))
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class WebshopRemoteProduct(Base):
+    """Produto existente no WooCommerce, comunicado pela loja: base das sugestões de correspondência
+    por SKU/EAN. Não cria nem associa nada sozinho."""
+
+    __tablename__ = "webshop_remote_products"
+    __table_args__ = (UniqueConstraint("connection_id", "woo_product_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("webshop_connections.id"), index=True)
+    woo_product_id: Mapped[int] = mapped_column(BigInteger)
+    sku: Mapped[str] = mapped_column(String(100), default="")
+    gtin: Mapped[str] = mapped_column(String(50), default="")
+    name: Mapped[str] = mapped_column(String(300), default="")
+    status: Mapped[str] = mapped_column(String(20), default="")
+    # `stock_articles.id` gravado no produto pelo conector desta ligação, se existir.
+    article_id: Mapped[str] = mapped_column(String(36), default="")
+    cycle: Mapped[str] = mapped_column(String(36), default="")
+    reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class Obligation(Base):
     """Obrigação ou prazo (fiscal, contrato, viatura, inspeção, seguro, licença ou outro): a regra.
 

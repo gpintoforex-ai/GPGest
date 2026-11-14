@@ -248,6 +248,6 @@ Disponível em **Compras e Stock → Encomendas de clientes**, com pedidos, rese
 
 A evolução do [ciclo integrado de encomendas](docs/CICLO-ENCOMENDAS.md) acrescenta recomendações de reposição, originais/OCR/cloud, conferência tripla, propostas e escritas Wintouch confirmadas, e automatizações autorizadas por loja. Requer a migração 0058; consulte os limites do stock ERP e dos documentos suportados antes de ativar escritas.
 
-Loja online Raizpura: [configuração e sincronização de famílias, artigos, stock e encomendas](docs/INTEGRACAO-RAIZPURA.md).
+Loja online Raizpura: [configuração e sincronização de famílias, artigos, stock e encomendas](docs/INTEGRACAO-RAIZPURA.md). Escolher os artigos publicados, SKU, preço do canal e correspondências com a loja: [publicação online](docs/PUBLICACAO-ONLINE.md) (requer a migração 0095).
 
 Assistente IAZELA (perguntas sobre validades, reposição, vendas, clientes, IVA e documentos, com a Claude API; só consulta): [ativação, ferramentas e privacidade](docs/ASSISTENTE-IAZELA.md).

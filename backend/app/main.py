@@ -2545,3 +2545,5 @@ app.include_router(bank_rules_router)
 
 from .webshop import router as webshop_router
 app.include_router(webshop_router)
+from .webshop_catalog import router as webshop_catalog_router
+app.include_router(webshop_catalog_router)
