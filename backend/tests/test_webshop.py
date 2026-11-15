@@ -168,6 +168,11 @@ def test_delivery_and_erp_authority(stock_case, monkeypatch):
     data = payload(article)
     result = c.post(BASE + "/orders", json=data, headers=headers)
     assert result.status_code == 200, result.text
+    # Só se entrega depois do pagamento autenticado do prestador.
+    paid = c.post(BASE + f"/orders/{data['external_id']}/payments", headers=headers,
+                  json={"event_key": "evt-" + str(uuid4()), "provider": "ifthenpay", "status": "paid",
+                        "amount_cents": data["total_cents"], "verification": "provider_callback"})
+    assert paid.status_code == 200 and paid.json()["reservation_state"] == "confirmed", paid.text
     with factory() as db:
         line = db.scalar(
             select(CustomerOrderLine).where(CustomerOrderLine.order_id == result.json()["order_id"])

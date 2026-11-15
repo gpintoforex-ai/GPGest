@@ -87,6 +87,12 @@ def start_scheduler():
             except Exception:
                 pass
             try:
+                # Reservas das encomendas online cujo prazo de pagamento terminou.
+                from .webshop_payments import scheduled_tick as webshop_tick
+                webshop_tick()
+            except Exception:
+                pass
+            try:
                 from .invoice_workflow import scheduled_tick
                 scheduled_tick()
             except Exception:

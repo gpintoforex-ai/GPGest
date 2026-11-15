@@ -795,12 +795,17 @@ def test_customer_migration_is_additive_and_repeatable(case, monkeypatch):
     cycle_migration = importlib.import_module("migrations.versions.0058_order_cycle")
     # A loja online (0074) depende das encomendas de clientes: desce primeiro e sobe no fim.
     webshop_migration = importlib.import_module("migrations.versions.0074_webshop")
+    # Publicação (0095) e pagamentos (0096) dependem da loja online: descem antes e sobem depois.
+    dependents = [importlib.import_module("migrations.versions." + name)
+                  for name in ("0096_webshop_payments", "0095_webshop_publications")]
     helper = importlib.import_module("migrations.versions.0006_cash_sheet")
     with case[0][2].kw["bind"].begin() as connection:
         schema = connection.scalar(text("SELECT current_schema()"))
         monkeypatch.setattr(helper, "schemas", lambda _: [schema])
         before = connection.scalar(text("SELECT count(*) FROM users"))
         with Operations.context(MigrationContext.configure(connection)):
+            for dependent in dependents:
+                dependent.downgrade()
             webshop_migration.downgrade()
             cycle_migration.downgrade()
             migration.downgrade()
@@ -808,6 +813,8 @@ def test_customer_migration_is_additive_and_repeatable(case, monkeypatch):
             migration.upgrade()
             cycle_migration.upgrade()
             webshop_migration.upgrade()
+            for dependent in reversed(dependents):
+                dependent.upgrade()
         assert all(
             model.__tablename__ in inspect(connection).get_table_names(schema=schema)
             for model in migration.TABLES

@@ -60,6 +60,7 @@ type Row = Record<string, any>;
 import TenantIntegrations from "./TenantIntegrations";
 import WebshopSettings from "./WebshopSettings";
 import WebshopPublications from "./WebshopPublications";
+import OnlineOrders from "./OnlineOrders";
 
 
 
@@ -929,7 +930,7 @@ export default function App() {
                   </p>
                   <p>A aplicação não pede credenciais de homebanking.</p>
                 </section>
-              </div></>},{id:"erp",label:"Configuração ERP",content:<>{manager && <IntegrationSettings boot={boot} reload={reload} />}</>},...(manager ? [{id:"publicacao",label:"Publicação online",content:<WebshopPublications />}] : [])]} />
+              </div></>},{id:"erp",label:"Configuração ERP",content:<>{manager && <IntegrationSettings boot={boot} reload={reload} />}</>},...(manager ? [{id:"publicacao",label:"Publicação online",content:<WebshopPublications />},{id:"encomendas-online",label:"Encomendas online",content:<OnlineOrders />}] : [])]} />
             </>
           )}
           {page === "Rubricas" && (manager ? <TaskWorkspace name="rubricas" label="Áreas das rubricas" items={[

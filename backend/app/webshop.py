@@ -233,6 +233,8 @@ class WebOrderInput(Strict):
     phone: str = Field(default="", max_length=60)
     shipping_address: str = Field(default="", max_length=2000)
     lines: list[WebLine] = Field(min_length=1, max_length=100)
+    # Identificador do método de pagamento WooCommerce: define o prazo da reserva temporária.
+    payment_method: str = Field(default="", max_length=80)
 
 
 def fingerprint(data):
@@ -253,18 +255,26 @@ def order_state(db, mapping):
         if any(line.delivered for line in lines)
         else "registered"
     )
+    from .webshop_payments import state_view
+
     return {
         "external_id": mapping.external_id,
         "order_id": row.id,
         "number": orders.order_number(row),
         "sequence": mapping.sequence,
         "state": state,
+        **state_view(mapping),
     }
 
 
 @router.get("/orders/{external_id}")
 def status(external_id: str, identity=Depends(connector), db: Session = Depends(db_session)):
+    from .webshop_payments import expire_due
+
     conn, _ = identity
+    stock.lock(db)
+    expire_due(db, conn.id)
+    db.commit()
     row = db.scalar(
         select(WebshopOrder).where(
             WebshopOrder.connection_id == conn.id, WebshopOrder.external_id == external_id
@@ -277,19 +287,24 @@ def status(external_id: str, identity=Depends(connector), db: Session = Depends(
 
 @router.post("/orders")
 def receive(data: WebOrderInput, identity=Depends(connector), db: Session = Depends(db_session)):
+    from . import webshop_payments as payments
+
     conn, user = identity
     stock.lock(db)
     db.expire_all()
     if not conn.active:
         fail("Ligação revogada.", 401)
+    payments.expire_due(db, conn.id)
     mapping = db.scalar(
         select(WebshopOrder).where(
             WebshopOrder.connection_id == conn.id, WebshopOrder.external_id == data.external_id
         )
     )
     raw = data.model_dump(mode="json")
+    if not raw["payment_method"]:
+        raw.pop("payment_method")  # Encomendas sem método: mesma impressão digital das versões anteriores.
     digest = fingerprint(raw)
-    content = fingerprint({k: v for k, v in raw.items() if k not in {"sequence", "status"}})
+    content = fingerprint({k: v for k, v in raw.items() if k not in {"sequence", "status", "payment_method"}})
     if mapping:
         if data.sequence < mapping.sequence:
             return order_state(db, mapping)
@@ -299,13 +314,21 @@ def receive(data: WebOrderInput, identity=Depends(connector), db: Session = Depe
             return order_state(db, mapping)
         if mapping.content_digest != content:
             fail("A encomenda já integrada foi alterada. Rever manualmente sem duplicar.", 409)
+        reopened_by_payment = mapping.payment_state == "paid" and mapping.reservation_state == "confirmed"
         if mapping.status in {"cancelled", "failed", "refunded"} and data.status not in {
             "cancelled",
             "failed",
             "refunded",
-        }:
+        } and not reopened_by_payment:
             fail("Não é possível reabrir automaticamente esta encomenda.", 409)
         row = db.get(CustomerOrder, mapping.order_id)
+        if data.payment_method and data.payment_method != mapping.payment_method:
+            # Mudança de meio de pagamento (página de pagamento da encomenda): novo prazo a partir de agora.
+            mapping.payment_method, mapping.payment_kind = data.payment_method, payments.kind_of(data.payment_method)
+            if mapping.reservation_state == "temporary":
+                mapping.reservation_expires_at = payments.expiry_for(conn, mapping.payment_kind)
+            payments.log(db, mapping, "payment_method_changed", method=data.payment_method,
+                         expires_at=mapping.reservation_expires_at)
     else:
         cancelled = data.status in {"cancelled", "failed", "refunded"}
         if not cancelled and stock.stock_from_erp(db):
@@ -383,6 +406,7 @@ def receive(data: WebOrderInput, identity=Depends(connector), db: Session = Depe
                     D(item.quantity),
                     as_of=now().astimezone(ZoneInfo("Europe/Lisbon")).date(),
                 )
+        kind, received_at = payments.kind_of(data.payment_method), now()
         mapping = WebshopOrder(
             connection_id=conn.id,
             external_id=data.external_id,
@@ -391,8 +415,18 @@ def receive(data: WebOrderInput, identity=Depends(connector), db: Session = Depe
             digest=digest,
             content_digest=content,
             status=data.status,
+            created_at=received_at,
+            total_cents=data.total_cents,
+            payment_method=data.payment_method,
+            payment_kind=kind,
+            payment_state="pending",
+            reservation_state="released" if cancelled else "temporary",
+            reservation_expires_at=None if cancelled else payments.expiry_for(conn, kind, received_at),
         )
         db.add(mapping)
+        db.flush()
+        payments.log(db, mapping, "received", status=data.status, method=data.payment_method,
+                     expires_at=mapping.reservation_expires_at, total_cents=data.total_cents)
     if data.status in {"cancelled", "failed", "refunded"}:
         lines = list(
             db.scalars(select(CustomerOrderLine).where(CustomerOrderLine.order_id == row.id))
@@ -414,6 +448,14 @@ def receive(data: WebOrderInput, identity=Depends(connector), db: Session = Depe
             ):
                 hold.quantity = D(0)
             line.cancelled = line.quantity
+        if mapping.status not in {"cancelled", "failed", "refunded"} or mapping.reservation_state != "released":
+            if mapping.reservation_state in ("temporary", "confirmed", "legacy", "review"):
+                mapping.reservation_state, mapping.reservation_expires_at = "released", None
+            if mapping.payment_state == "paid":
+                mapping.review = "Encomenda paga cancelada na loja: confirme o reembolso ao cliente."
+            payments.log(db, mapping, "cancelled", status=data.status)
+    elif mapping.status != data.status:
+        payments.log(db, mapping, "status", before=mapping.status, after=data.status)
     mapping.sequence, mapping.digest, mapping.status = data.sequence, digest, data.status
     mapping.updated_at = now()
     details = json.loads(row.data)

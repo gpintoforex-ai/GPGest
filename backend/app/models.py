@@ -2009,9 +2009,18 @@ class WebshopConnection(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Prazos de pagamento por meio (minutos) e outras opções das encomendas online.
+    order_settings: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
 
 
 class WebshopOrder(Base):
+    """Encomenda online e os seus três estados independentes: o da loja (`status`, WooCommerce), o do
+    pagamento (`payment_state`, só por evento autenticado do prestador) e o da reserva (`reservation_state`).
+
+    Reserva temporária expira em `reservation_expires_at` (prazo do meio de pagamento); o pagamento confirmado
+    torna-a definitiva. `review` assinala o que precisa de decisão humana (pagamento após expiração sem stock,
+    montante divergente, pagamento duplicado, encomenda paga cancelada)."""
+
     __tablename__ = "webshop_orders"
     __table_args__ = (UniqueConstraint("connection_id", "external_id"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -2023,6 +2032,54 @@ class WebshopOrder(Base):
     content_digest: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(20))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=now)
+    total_cents: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    payment_method: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    payment_kind: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    # pending, paid, failed, refunded, legacy (encomendas anteriores ao registo de pagamentos)
+    payment_state: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    paid_cents: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # temporary, confirmed, expired, released, review, legacy (reservas anteriores sem prazo)
+    reservation_state: Mapped[str] = mapped_column(String(20), default="temporary", server_default="temporary")
+    reservation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    review: Mapped[str] = mapped_column(String(500), default="", server_default="")
+
+
+class WebshopPaymentEvent(Base):
+    """Evento de pagamento autenticado pelo prestador e comunicado pela loja. A chave do evento garante que a
+    repetição do mesmo callback não tem segundo efeito."""
+
+    __tablename__ = "webshop_payment_events"
+    __table_args__ = (UniqueConstraint("connection_id", "event_key"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("webshop_connections.id"), index=True)
+    webshop_order_id: Mapped[str] = mapped_column(ForeignKey("webshop_orders.id"), index=True)
+    event_key: Mapped[str] = mapped_column(String(100))
+    digest: Mapped[str] = mapped_column(String(64))
+    provider: Mapped[str] = mapped_column(String(40))
+    method: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(20))
+    transaction_id: Mapped[str] = mapped_column(String(200), default="")
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    currency: Mapped[str] = mapped_column(String(3), default="EUR")
+    verification: Mapped[str] = mapped_column(String(40))
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    effect: Mapped[str] = mapped_column(String(40), default="")
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class WebshopOrderEvent(Base):
+    """Histórico da encomenda online (receção, reservas, pagamentos, expiração, cancelamento, revisões)."""
+
+    __tablename__ = "webshop_order_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    webshop_order_id: Mapped[str] = mapped_column(ForeignKey("webshop_orders.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40))
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class WebshopPublication(Base):

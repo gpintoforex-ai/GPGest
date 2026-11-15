@@ -1270,6 +1270,11 @@ def line_action(
         # consumo da reserva vêm da fatura Wintouch confirmada (wintouch_stock.apply_sales_stock).
         if data.quantity > q["available"]:
             fail("Só pode entregar produtos reservados ativos e com validade adequada, ou já faturados.", 409)
+        from .models import WebshopOrder
+
+        online = db.scalar(select(WebshopOrder).where(WebshopOrder.order_id == row.id))
+        if online and online.payment_state not in ("paid", "legacy"):
+            fail("Encomenda online sem pagamento confirmado pelo prestador: não pode ser entregue.", 409)
         if len(data.reason.strip()) < 3:
             fail("Indique a referência/observação da entrega.")
         line.delivered += data.quantity

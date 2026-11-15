@@ -266,12 +266,15 @@ def test_procurement_migration_recreates_tables_and_purchase_link(case,monkeypat
     cycle_migration=importlib.import_module('migrations.versions.0058_order_cycle')
     # Webshop orders reference customer orders, so they must be removed first too.
     webshop_migration=importlib.import_module('migrations.versions.0074_webshop')
+    # Publication (0095) and payment (0096) tables depend on the webshop tables.
+    dependents=[importlib.import_module('migrations.versions.'+name) for name in ('0096_webshop_payments','0095_webshop_publications')]
     helper=importlib.import_module('migrations.versions.0006_cash_sheet')
     with stock[2].kw['bind'].begin() as conn:
         schema=conn.scalar(text('SELECT current_schema()'))
         monkeypatch.setattr(helper,'schemas',lambda _:[schema])
         before=conn.scalar(text('SELECT count(*) FROM users'))
         with Operations.context(MigrationContext.configure(conn)):
+            for dependent in dependents:dependent.downgrade()
             webshop_migration.downgrade()
             cycle_migration.downgrade()
             customer_migration.downgrade()
@@ -279,6 +282,7 @@ def test_procurement_migration_recreates_tables_and_purchase_link(case,monkeypat
             customer_migration.upgrade()
             cycle_migration.upgrade()
             webshop_migration.upgrade()
+            for dependent in reversed(dependents):dependent.upgrade()
         assert {'procurement_documents','procurement_links'} <= set(inspect(conn).get_table_names(schema=schema))
         assert 'purchase_id' in {c['name'] for c in inspect(conn).get_columns('planned_movements',schema=schema)}
         assert conn.scalar(text('SELECT count(*) FROM users'))==before

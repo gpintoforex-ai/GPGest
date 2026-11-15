@@ -2547,3 +2547,5 @@ from .webshop import router as webshop_router
 app.include_router(webshop_router)
 from .webshop_catalog import router as webshop_catalog_router
 app.include_router(webshop_catalog_router)
+from .webshop_payments import router as webshop_payments_router
+app.include_router(webshop_payments_router)
