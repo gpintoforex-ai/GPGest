@@ -1,6 +1,7 @@
 import { TaskWorkspace } from "./components/WorkspaceUI";
 import { ActionLink } from "./components/InteractionUI";
 import Brand from "./components/Brand";
+import AppVersion from "./components/AppVersion";
 import ThemeSettings from "./ThemeSettings";
 import LegalAdmin from "./LegalAdmin";
 import PlatformCatalogReset from "./PlatformCatalogReset";
@@ -116,6 +117,7 @@ export default function Platform() {
         <section className="login-form">
           <span className="eyebrow">ACESSO RESERVADO</span>
           <h2>Entrar na plataforma</h2>
+          <AppVersion />
           <p>As credenciais de uma loja não dão acesso a esta área.</p>
           <PrivacyNotice />
           <Form
@@ -595,7 +597,7 @@ export default function Platform() {
           />
         </section></>},{id:"legal",label:"Informação legal e privacidade",content:<><LegalAdmin /></>}]} />
         <footer>
-          Administração da plataforma · {admin.email}
+          Administração da plataforma · {admin.email} · <AppVersion />
           <span>Sessão reservada de 2 horas</span>
         </footer>
       </main>

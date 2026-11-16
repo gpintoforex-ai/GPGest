@@ -7,6 +7,7 @@ import DocumentScanner, { ScanSettings } from "./DocumentScanner";
 import { DataTable } from "./components/DataTable";
 import { LoadingState, ModuleTabs, TaskWorkspace, useLocationSearch, updateLocationParam, updateLocationParams } from "./components/WorkspaceUI";
 import Brand from "./components/Brand";
+import AppVersion from "./components/AppVersion";
 
 
 import { PrivacyNotice } from "./Legal";
@@ -385,6 +386,7 @@ export default function App() {
         <div className="login-form">
           <span className="eyebrow">BEM-VINDO</span>
           <h2>Entrar na IAZELA</h2>
+          <AppVersion />
           <p>Utilize as credenciais da sua empresa.</p>
           <Form
             submitLabel="Entrar"
@@ -1050,7 +1052,7 @@ export default function App() {
             </>)(cachedPage)}</Suspense>
           </div>)}
           <footer>
-            IAZELA · Gestão empresarial <span>Dados da empresa selecionada</span>
+            IAZELA · Gestão empresarial · <AppVersion /> <span>Dados da empresa selecionada</span>
           </footer>
         </main>
       </div>

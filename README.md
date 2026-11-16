@@ -1,6 +1,8 @@
 # IAZELA
 
 Aplicação de gestão empresarial. [Identidade visual IAZELA e validação](docs/IDENTIDADE-IAZELA.md).
+
+A versão da IAZELA aparece nos ecrãs de entrada e nos rodapés da aplicação e da administração. É lida de `frontend/package.json` durante a compilação; para uma nova versão, atualizar o campo `version` e gerar/publicar novamente o frontend.
 O nome técnico do projeto, os caminhos e os identificadores de integração existentes são mantidos.
 
 Preparar uma empresa: [assistente de configuração inicial](docs/CONFIGURACAO-INICIAL.md), disponível no painel e em Configurações → Parâmetros.
