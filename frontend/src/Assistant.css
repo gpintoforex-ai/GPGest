@@ -29,6 +29,18 @@
 .assistant-form { display: flex; gap: 8px; align-items: flex-end; }
 .assistant-form textarea { flex: 1 1 auto; min-width: 0; resize: none; min-height: 44px; max-height: 140px; }
 .assistant-form .ui-action { flex: 0 0 auto; width: 44px; min-height: 44px; padding: 0; display: inline-grid; place-items: center; }
+/* Cartão de confirmação de uma ação proposta (nada é gravado sem «Confirmar»). */
+.assistant-action { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); display: grid; gap: 4px; }
+.assistant-action.is-done { border-color: var(--color-success, var(--color-border)); }
+.assistant-action.is-cancelled { opacity: .75; }
+.assistant-dialog .assistant-action p { margin: 0; color: var(--color-text); }
+.assistant-action-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.assistant-action-title svg { color: var(--color-accent-ink); }
+.assistant-action-code { font-size: .8rem; color: var(--color-muted); }
+.assistant-action-prices { font-size: 1.05rem; }
+.assistant-action-prices small, .assistant-action-note { font-size: .78rem; color: var(--color-muted); }
+.assistant-action-buttons { display: flex; gap: 8px; margin-top: 6px; }
+.assistant-action-buttons .ui-action { display: inline-flex; align-items: center; gap: 6px; }
 @media (max-width: 600px) {
   .ui-dialog.assistant-dialog { width: calc(100vw - 16px); height: calc(100dvh - 16px); margin: 8px; }
   .assistant-turn { max-width: 100%; }

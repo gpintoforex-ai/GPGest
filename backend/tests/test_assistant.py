@@ -74,7 +74,7 @@ def test_answer_uses_the_model_with_fallback_and_records_the_question(assistant)
     assert result["reply"] == "Resposta de teste." and result["usage"]["input_tokens"] == 100
     params = FakeClient.calls[0]
     assert params["model"] == "claude-opus-5-5" and params["fallbacks"] == "default"
-    assert params["output_config"] == {"effort": "medium"} and len(params["tools"]) == 8
+    assert params["output_config"] == {"effort": "medium"} and len(params["tools"]) == 10
     assert "português de Portugal" in params["system"][0]["text"] and "Hoje é" in params["system"][1]["text"]
     from app.models import Audit
     from sqlalchemy import select
@@ -170,3 +170,97 @@ def test_account_without_credits_gets_a_clear_message(assistant, monkeypatch):
     monkeypatch.setattr(FakeClient, "tool_runner", refuse)
     response = assistant[0].post("/api/assistente/mensagens", json={"messages": [{"role": "user", "content": "Olá"}]})
     assert response.status_code == 402 and "não tem créditos" in response.json()["detail"]
+
+
+def confirm(case, action):
+    """O que o cartão faz ao carregar em «Confirmar»: o pedido da ficha do artigo, com a sessão do utilizador."""
+    return case[0].post("/api" + action["request"]["path"], json=action["request"]["body"])
+
+
+def test_price_change_is_only_proposed_and_saved_after_confirmation(assistant):
+    from app.models import StockArticle
+
+    article = product(assistant, name="Óleo de coco biológico 500 ml", sale_net="5")  # 6,15 € com IVA a 23%
+    result = ask(assistant, [("procurar_artigos", {"texto": "coco 500"}),
+                             ("propor_alteracao_preco", {"artigo_id": article, "preco_com_iva": "8,90 €"})],
+                 "Põe o óleo de coco 500 ml a 8,90 €")
+    found = FakeClient.results["procurar_artigos"]["artigos"]
+    assert [a["id"] for a in found] == [article] and found[0]["preco_com_iva_eur"] == "6.15"
+    assert "Ainda não foi gravada" in FakeClient.results["propor_alteracao_preco"]["estado"]
+    [action] = result["actions"]
+    assert action["type"] == "price" and action["origin"] == "local"
+    assert action["before_gross"] == "6.15" and action["after_gross"] == "8.90"
+    assert action["request"] == {"path": f"/stock/articles/{article}/price",
+                                 "body": {"revision": 1, "sale_net": "7.235772"}}
+    # A proposta não grava nada.
+    with assistant[2]() as db:
+        assert json.loads(db.get(StockArticle, article).data)["sale_net"] == "5"
+    # Confirmado: o mesmo pedido da ficha grava o preço (com controlo de revisão e auditoria).
+    saved = confirm(assistant, action)
+    assert saved.status_code == 200, saved.text
+    with assistant[2]() as db:
+        assert json.loads(db.get(StockArticle, article).data)["sale_net"] == "7.235772"
+    # Confirmar outra vez a mesma proposta (artigo já alterado) é recusado.
+    assert confirm(assistant, action).status_code == 409
+    from app.models import Audit
+    from sqlalchemy import select
+    with assistant[2]() as db:
+        detail = json.loads(db.scalars(select(Audit).where(Audit.action == "assistente_pergunta")).first().detail)
+        assert detail["acoes_propostas"] == [{"tipo": "price", "artigo": found[0]["codigo"], "de": "6.15", "para": "8.90"}]
+
+
+def test_invalid_price_proposals_return_the_reason_to_the_model(assistant):
+    article = product(assistant, name="Chá verde 100 g", sale_net="5")
+    result = ask(assistant, [("propor_alteracao_preco", {"artigo_id": article, "preco_com_iva": "abc"})])
+    assert "inválido" in FakeClient.results["propor_alteracao_preco"]["erro"] and result["actions"] == []
+    ask(assistant, [("propor_alteracao_preco", {"artigo_id": article, "preco_com_iva": "6,15"})])
+    assert "já tem o preço" in FakeClient.results["propor_alteracao_preco"]["erro"]
+    ask(assistant, [("propor_alteracao_preco", {"artigo_id": article, "preco_com_iva": "0"})])
+    assert "maior do que zero" in FakeClient.results["propor_alteracao_preco"]["erro"]
+    ask(assistant, [("propor_alteracao_preco", {"artigo_id": "nao-existe", "preco_com_iva": "2"})])
+    assert "procurar_artigos" in FakeClient.results["propor_alteracao_preco"]["erro"]
+    ask(assistant, [("procurar_artigos", {"texto": "x"})])
+    assert "2 caracteres" in FakeClient.results["procurar_artigos"]["erro"]
+
+
+def test_price_proposal_respects_the_change_price_permission(assistant, monkeypatch):
+    from app import inventory
+
+    article = product(assistant, name="Mel de rosmaninho", sale_net="5")
+    monkeypatch.setattr(inventory, "permissions", lambda user, config: {"change_price": False})
+    result = ask(assistant, [("propor_alteracao_preco", {"artigo_id": article, "preco_com_iva": "9"})])
+    assert "não permite" in FakeClient.results["propor_alteracao_preco"]["erro"] and result["actions"] == []
+
+
+def test_erp_price_proposal_uses_the_sheet_request_with_the_previous_price(assistant, monkeypatch):
+    from decimal import Decimal as D
+
+    from test_article_price import wintouch
+    from test_inventory import erp_product
+
+    c, factory = assistant[0], assistant[2]
+    erp_id = erp_product(assistant, "ERP-AGENTE", vat_rate=D(23), sale_price_vat=D("6.15"))
+    article = c.post("/api/stock/erp-products", json={"erp_id": erp_id}).json()["id"]
+    # Sem escrita de preços na Wintouch: o motivo segue para o modelo e não há cartão.
+    result = ask(assistant, [("propor_alteracao_preco", {"artigo_id": article, "preco_com_iva": "7,38"})])
+    assert FakeClient.results["propor_alteracao_preco"]["erro"] and result["actions"] == []
+    with factory() as db:
+        external = db.get(WintouchProduct, erp_id).external_id
+    remote, sent = {"Row": 1, "PriceWithoutVAT": "5", "PriceWithVAT": "6.15"}, []
+    wintouch(monkeypatch, external, remote, {"value": "apply"}, sent)
+    [action] = ask(assistant, [("propor_alteracao_preco", {"artigo_id": article, "preco_com_iva": "7,38"})])["actions"]
+    assert action["origin"] == "erp" and action["before_gross"] == "6.15" and action["after_gross"] == "7.38"
+    assert action["request"]["body"] == {"gross": "7.38", "expected_gross": "6.1500"}
+    assert sent == []  # nada foi enviado à Wintouch antes da confirmação
+    confirmed = confirm(assistant, action)
+    assert confirmed.status_code == 200 and confirmed.json()["state"] == "confirmed"
+    with factory() as db:
+        assert db.get(WintouchProduct, erp_id).sale_price_vat == D("7.38")
+
+
+@pytest.mark.parametrize("text,expected", [("8,90", "8.90"), ("8.9 €", "8.90"), ("1 234,50", "1234.50"), ("1.234,50", "1234.50")])
+def test_prices_written_by_the_model_are_read_without_floats(text, expected):
+    from decimal import Decimal
+
+    from app.assistant import parse_euros
+    assert parse_euros(text) == Decimal(expected)
