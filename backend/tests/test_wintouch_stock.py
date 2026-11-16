@@ -447,3 +447,91 @@ def test_stock_ledger_shows_wintouch_sales_and_proposes_the_next_period(endpoint
     # Quem não é administrador vê o estado, sem poder sincronizar.
     client.post("/api/auth/login", json={"email": "operator@test.pt", "password": "PasswordTest123!"})
     assert client.get("/api/integrations/wintouch/sales/stock-status").json()["can_sync"] is False
+
+
+def customer_order(factory, store, warehouse, article, quantity="3", tax_number="500100200", entity="wt-cliente"):
+    """Pedido de cliente com reserva física; o cliente é a ficha ligada à entidade Wintouch `entity`."""
+    from app.models import (
+        CustomerOrder,
+        CustomerOrderLine,
+        CustomerOrderReservation,
+        WintouchEntity,
+    )
+
+    with factory.begin() as db:
+        user = db.scalar(select(User).where(User.email == "admin@test.pt"))
+        imported = WintouchEntity(enterprise_id="tenant", external_id=entity, code=entity, name="Cliente teste",
+                                  tax_number=tax_number, is_customer=True)
+        db.add(imported)
+        db.flush()
+        customer = BusinessEntity(name="Cliente teste", tax_number=tax_number, is_customer=True, wintouch_id=imported.id)
+        db.add(customer)
+        db.flush()
+        order = CustomerOrder(store_id=store, customer_id=customer.id, user_id=user.id, data="{}")
+        db.add(order)
+        db.flush()
+        order_line = CustomerOrderLine(order_id=order.id, article_id=article, quantity=D(quantity), data="{}")
+        db.add(order_line)
+        db.flush()
+        db.add(CustomerOrderReservation(line_id=order_line.id, warehouse_id=warehouse, quantity=D(quantity)))
+        return order_line.id
+
+
+def order_state(factory, line_id):
+    from app.models import CustomerOrderLine, CustomerOrderReservation
+
+    with factory() as db:
+        order_line = db.get(CustomerOrderLine, line_id)
+        held = sum((r.quantity for r in db.scalars(select(CustomerOrderReservation).where(
+            CustomerOrderReservation.line_id == line_id))), D(0))
+        return order_line.invoiced, held
+
+
+def test_invoice_consumes_the_customer_order_reservation_once_and_annulment_restores_it(case):
+    """A fatura do cliente do pedido dá a saída a partir da reserva e conta como faturada; repetir não duplica;
+    anulada, o stock volta e a reserva é reposta."""
+    client, factory, store, warehouse, articles, data, calls = case
+    line_id = customer_order(factory, store, warehouse, articles["prod-a"])
+    data["product_documents"][0]["EntityID"] = "wt-cliente"
+    stock = run(case)
+    assert stock["applied"] == 1, stock
+    assert order_state(factory, line_id) == (D(2), D(1))
+    sale = next(r for r in entries(factory, articles["prod-a"]) if r.kind == "sale")
+    assert sale.quantity == D(-2) and sale.net_sales == D(10) and json.loads(sale.data)["customer_order_line"] == line_id
+    assert run(case)["applied"] == 0 and order_state(factory, line_id) == (D(2), D(1))
+    assert sum(r.quantity for r in entries(factory, articles["prod-a"])) == D(8)
+    data["product_documents"][0]["DeletedDate"] = "2026-10-03T09:00:00"
+    data["product_documents"][0]["Version"] = "v2"
+    assert run(case)["reversed"] == 1
+    assert order_state(factory, line_id) == (D(0), D(3))
+    assert sum(r.quantity for r in entries(factory, articles["prod-a"])) == D(10)
+
+
+def test_invoice_of_another_customer_does_not_take_reserved_units(case):
+    """Sem pedido do mesmo cliente (ou consumidor final), a fatura não consome reservas alheias: fica por rever."""
+    client, factory, store, warehouse, articles, data, calls = case
+    line_id = customer_order(factory, store, warehouse, articles["prod-a"], quantity="9", tax_number="999999990")
+    data["product_documents"][0]["EntityID"] = "wt-cliente"
+    stock = run(case)
+    assert stock["applied"] == 0 and any("Unidades reservadas para pedidos de clientes" in p["reason"] for p in stock["pending"])
+    assert order_state(factory, line_id) == (D(0), D(9))
+    assert not [r for r in entries(factory, articles["prod-a"]) if r.kind == "sale"]
+
+
+def test_guides_do_not_move_stock_and_samples_leave_as_adjustment(case):
+    """Só a fatura dá saída de venda: a guia não movimenta e a fatura da guia sai uma vez. Amostra é acerto."""
+    client, factory, store, warehouse, articles, data, calls = case
+    stock_types(data)
+    data["document_types"] += [
+        {"ID": "gt", "Code": "GT", "Class": 7, "IsStockEnabled": True, "StockMode": -1},
+        {"ID": "am", "Code": "AM", "Class": 27, "IsStockEnabled": True, "StockMode": -1},
+    ]
+    stock_document(data, "gt-1", "gt", 1, [line("dim-g", "prod-a", quantity="4")], date="2026-10-01T07:00:00")
+    stock_document(data, "am-1", "am", 1, [line("dim-m", "prod-a", quantity="1", gross="0")])
+    data["product_documents/sale/withsources"][0]["ProductDocumentDetails"] = [line("dim-a", "prod-a", source="dim-g")]
+    stock = run(case)
+    assert stock["applied"] == 1 and stock["exits"] == 1, stock
+    rows = entries(factory, articles["prod-a"])
+    assert [r.quantity for r in rows if r.kind == "sale"] == [D(-2)]
+    assert [r.quantity for r in rows if r.kind == "adjustment"] == [D(-1)]
+    assert json.loads(next(r for r in rows if r.kind == "adjustment").data)["document"] == "AM 2026 1"

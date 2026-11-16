@@ -57,7 +57,7 @@ const syncInfo = (r: Row) => r.origin === "Wintouch"
   ? { state: "sincronizado" as const, label: "Importado da Wintouch", text: "Movimento criado pela sincronização de vendas Wintouch; repetir a sincronização não o duplica." }
   : { state: "apenas_local" as const, label: "Registado na aplicação", text: r.origin === "procurement" ? "As compras entram no stock só pela receção na aplicação; não são enviadas ao ERP." : "Movimento local da aplicação; não é enviado ao ERP." };
 
-const emptyFilters = () => ({ start: currentMonthRange().from, end: currentMonthRange().to, article_id: "", kind: "", page: 1, view: "documents", group: "", groupLabel: "", date_basis: "both", warehouse_id: "", origin: "", q: "" });
+const emptyFilters = () => ({ start: currentMonthRange().from, end: currentMonthRange().to, article_id: "", kind: "", page: 1, view: "documents", group: "", groupLabel: "", date_basis: "both", warehouse_id: "", origin: "", q: "", corrections: "" });
 
 /**
  * Movimentos de stock: indicadores, filtros, grelha por documento ou por linha, detalhe lateral e a
@@ -168,6 +168,10 @@ export default function StockMovements({ store, stores, articles, warehouses, do
 
     <div className="panel stock-ledger-panel">
       <div className="stock-ledger-toolbar">
+        {/* Correções de edições de receções (entrada substituída + ajuste que a anula, efeito zero): escondidas por omissão. */}
+        {(ready && ledger.hidden_corrections > 0 || filters.corrections) && <label className="stock-ledger-corrections" title="Cada edição de uma receção com movimentos posteriores substitui a entrada por um ajuste inverso e uma entrada nova; o efeito no stock é zero. Nada é apagado.">
+          <input type="checkbox" checked={!!filters.corrections} onChange={e => update({ corrections: e.target.checked ? "true" : "" })} />
+          Mostrar correções de edições{!filters.corrections && ready ? ` (${ledger.hidden_corrections} linha(s) escondida(s))` : ""}</label>}
         <div className="module-tabs" role="group" aria-label="Apresentação dos movimentos">{([["documents", "Por documento"], ["lines", "Por linha"]] as const).map(([value, label]) => <ActionButton key={value} type="button" aria-pressed={filters.view === value && !filters.group} className={filters.view === value && !filters.group ? "active" : ""} onClick={() => update({ view: value, group: "", groupLabel: "" })}>{label}</ActionButton>)}</div>
       </div>
       {filters.group ? <Notice tone="info">Linhas do documento <strong>{filters.groupLabel}</strong> (todas as datas). <ActionButton onClick={() => update({ view: "documents", group: "", groupLabel: "" })}>Voltar aos documentos</ActionButton></Notice> : <>

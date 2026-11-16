@@ -1,7 +1,10 @@
+import { WebContentAssistant } from "./ArticleWebContent";
+import ArticlePhotos from "./ArticlePhotos";
+import { ArticleWebshop } from "./ArticleWebshop";
 import { formatQuantity } from "./lib/quantity";
 import { ContextSuggestion } from "./components/OverviewUI";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Barcode, Camera, ChevronLeft, ChevronRight, Coins, Copy, FileText, History, Home, Info, Leaf, Link2, Package, RefreshCw, ShoppingBag, ShoppingCart, StickyNote, Tag, TrendingUp, TriangleAlert, Truck, Warehouse } from "lucide-react";
+import { Barcode, ChevronLeft, ChevronRight, Coins, Copy, FileText, History, Home, Info, Leaf, Link2, Package, Pencil, Plus, RefreshCw, ShoppingBag, ShoppingCart, StickyNote, Tag, TrendingUp, TriangleAlert, Truck, Warehouse } from "lucide-react";
 import { Field } from "./components/Form";
 import { ActionButton, ActionLink, ApiError, ManagedForm, Notice, fieldErrorSummary, markDialogSaved, reportFormError, useDialogWorking } from "./components/InteractionUI";
 import { api } from "./lib/api";
@@ -16,13 +19,19 @@ const sections = ["Geral", "Preços e rentabilidade", "Stock", "Compras e fornec
 const sectionOrder = [0, 1, 2, 3, 8, 9, 7, 4, 6, 5];
 const sectionLabels = ["Geral", "Preços", "Stocks", "Fornecedores", "Validades e lotes", "Integração ERP", "Histórico", "Documentos", "Vendas", "Compras"];
 const sectionIcons = [Home, Coins, Warehouse, Truck, Leaf, Link2, History, FileText, ShoppingBag, ShoppingCart];
-const fieldSection: Record<string, number> = { sale_net: 1, sale_gross: 1, vat_rate: 1, minimum: 2, reorder: 2, maximum: 2, location: 0, service: 0, lots: 4, expiry: 4, supplier_id: 3, supplier_reference: 0, description: 7, internal_notes: 0, additional_photos: 7, attachments: 7 };
+const fieldSection: Record<string, number> = { web_summary: 7, web_highlights: 7, seo_keyword: 7, seo_title: 7, seo_description: 7, sale_net: 1, sale_gross: 1, erp_gross: 1, vat_rate: 1, minimum: 2, reorder: 2, maximum: 2, location: 0, service: 0, lots: 4, expiry: 4, supplier_id: 3, supplier_reference: 0, description: 7, internal_notes: 0, additional_photos: 7, attachments: 7 };
 const money = (v: any) => v === null || v === undefined ? "Sem informação" : new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(Number(v));
 const quantity = (v: any) => formatQuantity(v);
 const date = (v: any) => v ? new Intl.DateTimeFormat("pt-PT", { dateStyle: "short", timeZone: "Europe/Lisbon" }).format(new Date(v)) : "Sem informação";
+type ClassificationKey = "family" | "category" | "brand";
+const classificationTypes = {
+  family: { table: "article_families", singular: "família" },
+  category: { table: "article_subfamilies", singular: "subfamília" },
+  brand: { table: "article_brands", singular: "marca" },
+};
 
 export default function ArticleForm({ initial, catalog, readOnly = false, onSave, onNavigate, onSync, canSync, onDuplicate, onBarcodeSearch, recordNavigation, initialSection = 0 }: {
-  initial: Row; catalog: Row; readOnly?: boolean; onSave: (value: Row) => Promise<void>;
+  initial: Row; catalog: Row; readOnly?: boolean; onSave: (value: Row, note?: string) => Promise<void>;
   onNavigate: (tab: string, id: string) => void; onSync: () => void; canSync: boolean;
   onDuplicate?: () => Promise<void>; onBarcodeSearch?: (code: string) => Promise<void>;
   initialSection?: number;
@@ -38,17 +47,39 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
   const [error, setError] = useState(""), [busy, setBusy] = useState(false);
   const [details, setDetails] = useState<Row | null>(null), [detailError, setDetailError] = useState("");
   const [attempt, setAttempt] = useState(0);
-  const [failedPhoto, setFailedPhoto] = useState("");
+  // PVP de um artigo da Wintouch: editável na ficha e enviado à Wintouch ao gravar (só com escrita autorizada).
+  const [erpPrice, setErpPrice] = useState<Row | null>(null), [erpGross, setErpGross] = useState("");
+  const [classifications, setClassifications] = useState<Row>(catalog.classifications || {});
+  const [classificationEditor, setClassificationEditor] = useState<{ key: ClassificationKey; record?: Row; name: string; familyId: string } | null>(null);
+  const [classificationBusy, setClassificationBusy] = useState(false);
+  const [classificationError, setClassificationError] = useState("");
+  const [classificationNotice, setClassificationNotice] = useState("");
+  const classificationSaving = useRef(false);
+  useEffect(() => { setClassifications(catalog.classifications || {}); }, [catalog.classifications]);
   const form = useRef<HTMLFormElement>(null), saving = useRef(false);
   const id = useId();
-  useDialogWorking(busy || !!recordNavigation?.busy);
+  useDialogWorking(busy || classificationBusy || !!recordNavigation?.busy);
   const erp = initial.origin === "ERP", rights = catalog.permissions || {};
   // Artigos da Wintouch: margens sobre o preço sem IVA da linha de preço 1 do ERP.
   const current = details?.current || initial;
   const insights = details?.insights;
-  const prices = articlePrices(erp ? current.erp_price_net : value.sale_net, erp ? current.erp_vat_rate : value.vat_rate, rights.view_cost ? current.average_cost : null);
+  const erpEditable = erp && !readOnly && !!erpPrice?.available;
+  const erpOriginal = erpPrice?.gross == null ? "" : Number(erpPrice.gross).toFixed(2);
+  const erpChanged = erpEditable && erpGross !== "" && Number(erpGross).toFixed(2) !== erpOriginal;
+  const erpNet = erpChanged && current.erp_vat_rate != null ? Number(erpGross) / (1 + Number(current.erp_vat_rate) / 100) : null;
+  const prices = articlePrices(erp ? erpNet ?? current.erp_price_net : value.sale_net, erp ? current.erp_vat_rate : value.vat_rate, rights.view_cost ? current.average_cost : null);
+  useEffect(() => {
+    setErpPrice(null); setErpGross("");
+    if (!erp || !initial.id || readOnly || !rights.change_price) return;
+    let active = true;
+    api(`/stock/articles/${initial.id}/erp-price`).then(result => {
+      if (!active) return;
+      setErpPrice(result); setErpGross(result.gross == null ? "" : Number(result.gross).toFixed(2));
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [erp, initial.id, readOnly, rights.change_price]);
   const change = (key: string, next: any) => {
-    setValue(old => ({ ...old, [key]: next }));
+    setValue(old => ({ ...old, [key]: next, ...(key === "family" && next !== old.family ? { category: "" } : {}) }));
     setErrors(old => { const nextErrors = { ...old }; delete nextErrors[key]; return nextErrors; });
   };
   useEffect(() => {
@@ -81,7 +112,7 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
   };
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (readOnly || saving.current || recordNavigation?.busy) return;
+    if (readOnly || saving.current || recordNavigation?.busy || classificationEditor || classificationSaving.current) return;
     const invalid = validateArticle(value, catalog.articles, initial.id);
     if (Object.keys(invalid).length) {
       revealErrors(invalid);
@@ -90,11 +121,30 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
       setError(message);
       return;
     }
+    if (erpChanged && !(Number(erpGross) > 0 && Number(erpGross) <= 1e7)) {
+      revealErrors({ erp_gross: "Indique um PVP maior que zero." });
+      setError("Reveja: PVP com IVA.");
+      return;
+    }
     saving.current = true;
     setBusy(true); setError(""); setErrors({});
     try {
+      let note = "";
+      if (erpChanged) {
+        // Primeiro a Wintouch: só com o preço confirmado por leitura se grava a ficha.
+        const sent = await api(`/stock/articles/${initial.id}/erp-price`, { gross: Number(erpGross).toFixed(2), expected_gross: erpPrice?.gross ?? null });
+        setErpPrice(sent);
+        if (sent.state !== "confirmed") {
+          const message = sent.state === "failed" ? `A Wintouch recusou o preço: ${sent.error}` : `${sent.error} Pode gravar de novo com segurança.`;
+          revealErrors({ erp_gross: message }); setError(message);
+          return;
+        }
+        const own = (sent.channels || []).filter((ch: Row) => ch.own_price);
+        note = `PVP de ${money(sent.gross)} gravado na Wintouch.${(sent.channels || []).length > own.length ? " A loja online recebe-o na próxima sincronização." : ""}${own.length ? ` Na loja ${own.map((ch: Row) => ch.connection).join(", ")} mantém-se o preço próprio do canal.` : ""}`;
+      }
       await onSave({ ...value, code: value.code.trim(), name: value.name.trim(), precision: Number(value.precision), barcodes: value.barcodes.map((v: string) => v.trim()).filter(Boolean),
-        ...(needsOpeningLot && openingLot.number.trim() ? { opening_lot: { number: openingLot.number.trim(), expiry: openingLot.expiry || null } } : {}) });
+        web_highlights: (value.web_highlights || []).map((v: string) => v.trim()).filter(Boolean),
+        ...(needsOpeningLot && openingLot.number.trim() ? { opening_lot: { number: openingLot.number.trim(), expiry: openingLot.expiry || null } } : {}) }, note || undefined);
       markDialogSaved(form.current);
     } catch (e) {
       if (e instanceof ApiError) {
@@ -129,45 +179,117 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
   const suppliers: Row[] = catalog.suppliers || [];
   const supplier = suppliers.find(s => s.id === value.supplier_id);
   const list = (key: string) => `${id}-${key}`;
+  const finishClassificationEditor = (key: ClassificationKey) => {
+    setClassificationEditor(null); setClassificationError("");
+    requestAnimationFrame(() => form.current?.querySelector<HTMLSelectElement>(`select[name="${key}"]`)?.focus());
+  };
+  async function saveClassification() {
+    const editor = classificationEditor;
+    if (!editor || classificationSaving.current || readOnly) return;
+    const name = editor.name.trim();
+    if (!name || name.length > 100) { setClassificationError("Indique uma designação entre 1 e 100 caracteres."); return; }
+    const parent = classifications.family?.find((r: Row) => r.id === editor.familyId);
+    if (editor.key === "category" && !parent) { setClassificationError("Selecione uma família."); return; }
+    classificationSaving.current = true; setClassificationBusy(true); setClassificationError("");
+    try {
+      const result = await api(`/tables/${classificationTypes[editor.key].table}/records${editor.record ? `/${editor.record.id}` : ""}`, {
+        values: { name, ...(editor.key === "category" ? { family_id: editor.familyId } : {}) },
+      });
+      const updated = { ...(editor.record || { active: true }), id: result.id, name,
+        ...(editor.key === "category" ? { family_id: editor.familyId } : {}) };
+      setClassifications(old => ({ ...old, [editor.key]: [...(old[editor.key] || []).filter((r: Row) => r.id !== updated.id), updated]
+        .sort((a: Row, b: Row) => a.name.localeCompare(b.name, "pt-PT")) }));
+      setValue(old => {
+        const next = { ...old };
+        const sameSelection = !editor.record || (old[editor.key] === editor.record.name &&
+          (editor.key !== "category" || classifications.family?.find((r: Row) => r.name === old.family)?.id === editor.record.family_id));
+        if (sameSelection) {
+          next[editor.key] = name;
+          if (editor.key === "family" && !editor.record) next.category = "";
+          if (editor.key === "category") next.family = parent.name;
+        }
+        const revision = result.article_revisions?.find((r: Row) => r.id === initial.id);
+        if (revision && next.revision === revision.before) next.revision = revision.after;
+        return next;
+      });
+      setClassificationNotice(`${classificationTypes[editor.key].singular === "marca" ? "Marca" : editor.key === "family" ? "Família" : "Subfamília"} guardada. Continue a preencher a ficha e guarde o artigo.`);
+      finishClassificationEditor(editor.key);
+    } catch (e) { setClassificationError((e as Error).message); }
+    finally { classificationSaving.current = false; setClassificationBusy(false); }
+  }
+  const classification = (key: ClassificationKey, label: string) => {
+    const parent = classifications.family?.find((r: Row) => r.name === value.family);
+    const options: Row[] = (classifications[key] || []).filter((r: Row) =>
+      (r.active || r.name === value[key]) && (key !== "category" || r.family_id === parent?.id));
+    const current = value[key] || "";
+    const selected = options.find(r => r.name === current);
+    const startEditor = (record?: Row) => {
+      setClassificationError(""); setClassificationNotice("");
+      setClassificationEditor({ key, record, name: record?.name || "", familyId: record?.family_id || parent?.id || "" });
+    };
+    return <div className="field article-classification-field"><div className="article-classification-label"><label htmlFor={`${id}-${key}-select`}>{label}</label>
+      {!readOnly && catalog.can_manage_classifications && <span className="article-classification-actions">
+        <ActionButton type="button" variant="quiet" aria-label={`Nova ${classificationTypes[key].singular}`} title={key === "category" && !parent?.active ? "Escolha primeiro uma família ativa" : `Nova ${classificationTypes[key].singular}`} disabled={!!classificationEditor || (key === "category" && !parent?.active)} onClick={() => startEditor()}><Plus size={14} /></ActionButton>
+        {selected && <ActionButton type="button" variant="quiet" aria-label={`Editar ${classificationTypes[key].singular}`} title={`Editar ${classificationTypes[key].singular}`} disabled={!!classificationEditor} onClick={() => startEditor(selected)}><Pencil size={14} /></ActionButton>}
+      </span>}</div><select id={`${id}-${key}-select`} name={key} value={current} disabled={readOnly || !!classificationEditor || (key === "category" && !value.family && !current)}
+      aria-invalid={!!errors[key] || undefined} onChange={e => change(key, e.target.value)}>
+      <option value="">{key === "category" && !value.family ? "Escolha primeiro a família" : "Por indicar"}</option>
+      {current && !options.some(r => r.name === current) && <option value={current}>{current} (atual)</option>}
+      {options.map(r => <option key={r.id} value={r.name}>{r.name}{r.active ? "" : " (inativa)"}</option>)}
+    </select>{errors[key] && <small className="ui-field-error">{errors[key]}</small>}</div>;
+  };
   const unitQuantity = (v: any) => v === null || v === undefined ? "Sem dados" : `${quantity(v)} ${value.unit}`;
   const syncState = !erp ? "apenas_local" : details?.sync_state === "falhou" ? "erro" : ["pendente", "em_curso"].includes(details?.sync_state) ? "pendente" : initial.synced_at ? "sincronizado" : null;
   const periodValue = (key: string) => !initial.id ? "Por criar" : detailError ? "Indisponível" : !details ? "A carregar…" : unitQuantity(insights?.[key]);
   return <ManagedForm ref={form} onSubmit={submit} noValidate className={`article-form${readOnly ? " is-readonly" : ""}`} aria-busy={busy || undefined}
-    onKeyDown={e => { if (!readOnly && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); form.current?.requestSubmit(); } }}>
+    onKeyDown={e => { if (!readOnly && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); if (classificationEditor) void saveClassification(); else form.current?.requestSubmit(); } }}>
     <RecordHeader title="Ficha de artigo" icon={Package} subtitle={readOnly ? "Consulta" : initial.id ? "Editar artigo" : "Novo artigo"} actions={<>
       {recordNavigation && <div className="article-record-navigation" role="group" aria-label="Percorrer artigos">
-        <ActionButton type="button" variant="quiet" aria-label="Artigo anterior" title="Artigo anterior" disabled={busy || recordNavigation.busy || recordNavigation.position == null || recordNavigation.position <= 0} onClick={() => void recordNavigation.onMove(-1, tab)}><ChevronLeft size={19} /></ActionButton>
+        <ActionButton type="button" variant="quiet" aria-label="Artigo anterior" title="Artigo anterior" disabled={busy || !!classificationEditor || recordNavigation.busy || recordNavigation.position == null || recordNavigation.position <= 0} onClick={() => void recordNavigation.onMove(-1, tab)}><ChevronLeft size={19} /></ActionButton>
         {recordNavigation.position != null && recordNavigation.total != null && <span aria-live="polite">{recordNavigation.position + 1} / {recordNavigation.total}</span>}
-        <ActionButton type="button" variant="quiet" aria-label="Artigo seguinte" title="Artigo seguinte" disabled={busy || recordNavigation.busy || recordNavigation.position == null || recordNavigation.total == null || recordNavigation.position + 1 >= recordNavigation.total} onClick={() => void recordNavigation.onMove(1, tab)}><ChevronRight size={19} /></ActionButton>
+        <ActionButton type="button" variant="quiet" aria-label="Artigo seguinte" title="Artigo seguinte" disabled={busy || !!classificationEditor || recordNavigation.busy || recordNavigation.position == null || recordNavigation.total == null || recordNavigation.position + 1 >= recordNavigation.total} onClick={() => void recordNavigation.onMove(1, tab)}><ChevronRight size={19} /></ActionButton>
       </div>}
-      {!readOnly && <ActionButton type="submit" variant="primary" className="primary" disabled={busy}>{busy ? "A guardar…" : "Guardar"}</ActionButton>}
-      {onDuplicate && rights.adjust_stock && initial.id && <ActionButton type="button" disabled={busy} onClick={() => void onDuplicate()}><Copy size={16} />Duplicar</ActionButton>}
+      {!readOnly && <ActionButton type="submit" variant="primary" className="primary" disabled={busy || !!classificationEditor}>{busy ? "A guardar…" : "Guardar"}</ActionButton>}
+      {onDuplicate && rights.adjust_stock && initial.id && <ActionButton type="button" disabled={busy || !!classificationEditor} onClick={() => void onDuplicate()}><Copy size={16} />Duplicar</ActionButton>}
       {initial.id && <ActionButton type="button" variant="quiet" disabled={busy} aria-label="Atualizar informação do artigo" onClick={() => setAttempt(v => v + 1)}><RefreshCw size={17} /></ActionButton>}
         <details className="article-help"><summary aria-label="Informação da ficha do artigo"><Info size={19} aria-hidden="true" /></summary>
           <div className="article-help-box" role="note"><strong>Sobre esta ficha</strong>
             <p>Os campos com * são obrigatórios. Pode guardar o artigo com os dados de Geral. Utilize a navegação lateral para consultar preços, stocks e histórico.</p>
             <p>{erp ? "Artigo da Wintouch: código, nome, estado e preço vêm do ERP e só se alteram na origem. Os restantes dados e o stock são geridos aqui." : "Artigo local: os dados são guardados nesta aplicação."}</p>
-            <p>A fotografia principal acompanha todos os separadores. Defina o endereço HTTPS em Geral; as imagens adicionais e fichas técnicas ficam em Descrição e anexos.</p>
+            <p>A fotografia principal acompanha todos os separadores: carregue-a (câmara ou ficheiro) ou indique um endereço HTTPS. A fotografia do rótulo serve só para a IA propor o descritivo. As imagens adicionais e fichas técnicas ficam em Descrição e anexos.</p>
             <p>Peso, volume, prazo genérico de validade, etiquetas comerciais e tabelas adicionais de preços não estão registados nesta ficha. A rotatividade exige um histórico de stock médio que ainda não existe.</p>
           </div>
         </details>
     </>} />
     <div className="article-sheet-layout"><aside className="article-sheet-sidebar">
       <RecordNavigation prefix={id} label="Ficha do artigo" active={tab} onSelect={setTab} items={sectionOrder.map(index => ({ id: index, label: sectionLabels[index], accessibleLabel: sections[index], icon: sectionIcons[index], invalid: Object.keys(errors).some(key => (fieldSection[key] ?? 0) === index) }))} />
-    </aside><fieldset className="ui-form-fields article-sheet-main" disabled={busy || !!recordNavigation?.busy}>
+    </aside><fieldset className="ui-form-fields article-sheet-main" disabled={busy || classificationBusy || !!recordNavigation?.busy}>
       {recordNavigation?.error && <Notice tone="error">{recordNavigation.error}</Notice>}
       <section className="article-identity record-sheet-group" aria-label="Identificação do artigo">
-        <div className="article-photo-card">
-          <div className="article-image">{value.photo && failedPhoto !== value.photo ? <img src={value.photo} alt={value.name ? `Fotografia de ${value.name}` : "Fotografia do produto"} referrerPolicy="no-referrer" onError={() => setFailedPhoto(value.photo)} onLoad={() => setFailedPhoto("")} /> : <><Package size={38} aria-hidden="true" /><span>{value.photo ? "Fotografia indisponível" : "Fotografia do produto"}</span></>}</div>
-          {!readOnly && <details className="article-photo-editor"><summary aria-label={value.photo ? "Alterar fotografia" : "Definir fotografia"}><Camera size={16} aria-hidden="true" /></summary><div className="article-photo-popover">{text("photo", "URL da fotografia (HTTPS)")}<small>Imagem alojada por HTTPS.</small>{imageSearch}{value.photo && <ActionButton type="button" confirmation={{ title: "Retirar fotografia da ficha?", message: "A associação será retirada ao guardar. O ficheiro no alojamento de origem é preservado.", confirmLabel: "Retirar fotografia", tone: "warning" }} onClick={() => change("photo", "")}>Retirar fotografia da ficha</ActionButton>}</div></details>}
-        </div>
+        <ArticlePhotos articleId={initial.id} name={value.name} readOnly={readOnly} urlPhoto={value.photo} uploadedPhoto={initial.image_photo}
+          urlEditor={<>{text("photo", "URL da fotografia (HTTPS)")}<small>Imagem alojada por HTTPS.</small>{imageSearch}{value.photo && <ActionButton type="button" confirmation={{ title: "Retirar o endereço da fotografia?", message: "A associação será retirada ao guardar. O ficheiro no alojamento de origem é preservado.", confirmLabel: "Retirar endereço", tone: "warning" }} onClick={() => change("photo", "")}>Retirar endereço da fotografia</ActionButton>}</>} />
         <div className="article-identity-fields"><div className="article-identity-top">
           {text("code", "Código interno", true, erp)}{text("name", "Designação", true, erp)}
           <label className="article-active-switch">Ativo<input type="checkbox" role="switch" name="active" checked={!!value.active} disabled={readOnly || erp} onChange={e => change("active", e.target.checked)} /><span aria-hidden="true" /></label>
         </div><div className="article-identity-bottom">
-          {text("family", "Família", false, false, list("family"))}{text("category", "Subfamília / categoria", false, false, list("category"))}{text("brand", "Marca", false, false, list("brand"))}{text("unit", "Unidade", true, false, list("unit"))}
+          {classification("family", "Família")}{classification("category", "Subfamília / categoria")}{classification("brand", "Marca")}{text("unit", "Unidade", true, false, list("unit"))}
           <Field label="Tipo de artigo"><select name="service" disabled={readOnly} value={String(!!value.service)} onChange={e => setValue({ ...value, service: e.target.value === "true", ...(e.target.value === "true" ? { lots: false, expiry: false } : {}) })}><option value="false">Produto de stock</option><option value="true">Serviço (sem stock)</option></select></Field>
         </div><div className="article-identity-meta">{syncState ? <SyncBadge state={syncState} label={syncState === "pendente" ? "Catálogo a sincronizar" : syncState === "erro" ? "Erro no catálogo ERP" : undefined} /> : <StatusBadge tone="info">ERP · estado por consultar</StatusBadge>}<StatusBadge tone={value.active ? "success" : "neutral"}>{value.active ? "Ativo" : "Inativo"}</StatusBadge>{initial.id && <small>{value.code} · {erp ? "Wintouch" : "Local"}{details?.generated_at ? ` · Atualizado ${date(details.generated_at)}` : ""}</small>}</div></div>
+        {classificationEditor && <section className="article-classification-editor" aria-label={`${classificationEditor.record ? "Editar" : "Nova"} ${classificationTypes[classificationEditor.key].singular}`}
+          onKeyDown={e => { if (e.key === "Enter" && (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement)) { e.preventDefault(); e.stopPropagation(); void saveClassification(); } }}>
+          <h3>{classificationEditor.record ? "Editar" : "Nova"} {classificationTypes[classificationEditor.key].singular}</h3>
+          <p>{classificationEditor.record ? "A alteração fica guardada na tabela e atualiza os artigos que usam esta classificação." : "O novo registo fica disponível na tabela e selecionado nesta ficha."}</p>
+          <div className="article-classification-editor-fields">
+            {classificationEditor.key === "category" && <Field label="Família da subfamília"><select name="classification_family" value={classificationEditor.familyId} onChange={e => setClassificationEditor({ ...classificationEditor, familyId: e.target.value })}>
+              <option value="">Escolha…</option>{(classifications.family || []).filter((r: Row) => r.active || r.id === classificationEditor.record?.family_id).map((r: Row) => <option key={r.id} value={r.id}>{r.name}{r.active ? "" : " (inativa)"}</option>)}
+            </select></Field>}
+            <Field label="Designação da classificação"><input name="classification_name" autoFocus maxLength={100} value={classificationEditor.name} onChange={e => setClassificationEditor({ ...classificationEditor, name: e.target.value })} /></Field>
+          </div>
+          {classificationError && <Notice tone="error" role="alert">{classificationError}</Notice>}
+          <div className="article-classification-editor-actions"><ActionButton type="button" disabled={classificationBusy} onClick={() => finishClassificationEditor(classificationEditor.key)}>Cancelar edição da classificação</ActionButton>
+            <ActionButton type="button" variant="primary" disabled={classificationBusy} onClick={() => void saveClassification()}>{classificationBusy ? "A guardar…" : "Guardar classificação"}</ActionButton></div>
+        </section>}
+        {classificationNotice && <div className="article-classification-notice" role="status">{classificationNotice}</div>}
       </section>
       <div className="article-indicators" aria-label="Resumo do artigo">
         <RecordIndicator label="Stock atual" value={value.service ? "Não aplicável" : initial.id ? unitQuantity(current.quantity) : "Por criar"} icon={Package} tone={current.quantity == null || value.service ? "neutral" : Number(current.quantity) < Number(value.minimum) ? "warning" : "success"} onOpen={() => setTab(2)} />
@@ -183,8 +305,8 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
       {sections.map((label, index) => <section key={label} role="tabpanel" data-section={index} id={`${id}-panel-${index}`} aria-labelledby={`${id}-tab-${index}`} hidden={tab !== index} className="article-panel">
         {index === 0 && <>
           <div className="article-overview-grid">
-            <RecordGroup title="Preços (IVA incluído)" icon={Coins} className="article-price-overview" action={<ActionButton type="button" variant="quiet" onClick={() => setTab(1)}>Ver preços</ActionButton>}>
-              <dl className="article-price-list"><div className="is-pvp"><dt>{erp && current.erp_price_basis !== "Com IVA" ? "PVP com IVA não indicado" : "PVP"}</dt><dd>{money(erp ? current.erp_price_basis === "Com IVA" ? current.erp_price : null : prices.gross)}</dd></div>
+            <RecordGroup title="Preços (IVA incluído)" icon={Coins} className="article-price-overview" action={<ActionButton type="button" variant="quiet" onClick={() => { setTab(1); if (erpEditable || (!erp && rights.change_price && !readOnly)) requestAnimationFrame(() => form.current?.querySelector<HTMLInputElement>(`input[name="${erp ? "erp_gross" : "sale_gross"}"]`)?.focus()); }}>{erpEditable || (!erp && rights.change_price && !readOnly) ? "Alterar preço" : "Ver preços"}</ActionButton>}>
+              <dl className="article-price-list"><div className="is-pvp"><dt>{erp && current.erp_price_basis !== "Com IVA" ? "PVP com IVA não indicado" : "PVP"}</dt><dd>{money(erp ? erpChanged ? Number(erpGross) : current.erp_price_basis === "Com IVA" ? current.erp_price : null : prices.gross)}</dd></div>
                 <div><dt>Preço sem IVA</dt><dd>{money(prices.net)}</dd></div><div><dt>IVA</dt><dd>{(erp ? current.erp_vat_rate : value.vat_rate) == null ? "Sem dados" : `${quantity(erp ? current.erp_vat_rate : value.vat_rate)} %`}</dd></div>
                 {rights.view_cost && <><div><dt>Custo médio</dt><dd>{money(prices.cost)}</dd></div><div className={prices.margin != null && prices.margin < 0 ? "is-loss" : "is-margin"}><dt>Margem</dt><dd>{prices.marginPct == null ? "Não calculável" : `${quantity(prices.marginPct)} %`}</dd></div></>}
               </dl>{erp && <small className="article-source">Preço no ERP · {current.erp_price_basis || "Sem preço no ERP"}</small>}
@@ -201,13 +323,24 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
           </div>
           <div className="article-bottom-grid"><RecordGroup title="Observações" icon={StickyNote}><Field label="Observações internas"><textarea readOnly={readOnly} name="internal_notes" value={value.internal_notes} maxLength={4000} onChange={e => change("internal_notes", e.target.value)} placeholder="Informações úteis para a equipa…" /></Field></RecordGroup>
             <RecordGroup title="Estado e origem" icon={Tag}><div className="article-labels"><StatusBadge tone={value.active ? "success" : "neutral"}>{value.active ? "Ativo" : "Inativo"}</StatusBadge><StatusBadge tone="accent">{value.service ? "Serviço" : "Produto de stock"}</StatusBadge><StatusBadge tone="info">{erp ? "Wintouch" : "Artigo local"}</StatusBadge>{value.lots && <StatusBadge tone="neutral">Controlo de lotes</StatusBadge>}</div><p className="footnote">Classificações da ficha atual. Etiquetas comerciais personalizadas ainda não disponíveis.</p></RecordGroup></div>
+          <ArticleWebshop articleId={initial.id} readOnly={readOnly} />
           <details><summary>Mais detalhes</summary><div className="form-grid">{text("reference", "Referência")}{numeric("precision", "Casas decimais (0 a 6)", false, 6, "1")}</div><p className="footnote">Código manual; não existe numeração automática configurada. O catálogo atual gere artigos de stock. A unidade e o controlo de lotes ficam protegidos depois de existirem movimentos.</p></details>
-          {["family", "category", "brand", "unit"].map(key => <datalist key={key} id={list(key)}>{[...new Set<string>((catalog.facets?.[key] || catalog.articles.map((a: Row) => a[key]).filter(Boolean)))].map(v => <option key={v} value={v} />)}</datalist>)}
+          <p className="footnote">Use + para criar e o lápis para editar famílias, subfamílias e marcas nesta ficha. A classificação acompanha os artigos publicados na próxima sincronização com o site.</p>
+          {["unit"].map(key => <datalist key={key} id={list(key)}>{[...new Set<string>((catalog.facets?.[key] || catalog.articles.map((a: Row) => a[key]).filter(Boolean)))].map(v => <option key={v} value={v} />)}</datalist>)}
         </>}
         {index === 1 && <>
           <h3>Preço de venda e margem bruta</h3>
           <p>A margem utiliza o preço sem IVA e o custo médio ponderado dos movimentos. Os valores da venda são editáveis quando o seu perfil o permite; os custos e as margens são calculados.</p>
           {!erp && <div className="form-grid">{numeric("sale_net", "Venda sem IVA (€)", !rights.change_price, 1e9)}{gross("Venda com IVA (€)")}{numeric("vat_rate", "Taxa de IVA (%)", !rights.change_price, 100)}</div>}
+          {erp && erpPrice && <section className="article-subsection article-erp-price" aria-labelledby={`${id}-erp-price`}>
+            <h4 id={`${id}-erp-price`}>PVP na Wintouch (linha de preço 1)</h4>
+            <div className="form-grid"><Field label="PVP com IVA (€)"><input name="erp_gross" type="number" inputMode="decimal" min="0.01" step="0.01" value={erpGross} readOnly={!erpEditable}
+              aria-invalid={!!errors.erp_gross || undefined} onChange={e => { setErpGross(e.target.value); setErrors(old => { const next = { ...old }; delete next.erp_gross; return next; }); }} /></Field>
+              {readonly("Preço sem IVA", erpChanged && erpNet != null ? `${money(erpNet)} (novo)` : money(current.erp_price_net))}</div>
+            {errors.erp_gross && <small className="ui-field-error">{errors.erp_gross}</small>}
+            {erpEditable ? <p className="footnote">Ao gravar a ficha, o PVP é enviado à Wintouch e confirmado por leitura; só depois a ficha é gravada.{(erpPrice.channels || []).some((ch: Row) => !ch.own_price) ? " A loja online recebe o novo preço na sincronização seguinte." : ""}{(erpPrice.channels || []).filter((ch: Row) => ch.own_price).map((ch: Row) => ` Na loja ${ch.connection} o artigo tem preço próprio do canal, que não muda.`).join("")}</p>
+              : <Notice tone="info">{erpPrice.reason || "O PVP deste artigo só se altera na Wintouch."}</Notice>}
+          </section>}
           {/* Nos artigos locais o preço já está nos campos acima: aqui só o que é calculado. */}
           <div className="article-facts">{erp && <>{readonly("Preço no ERP com IVA", money(current.erp_price_basis === "Com IVA" ? current.erp_price : null))}{readonly("Preço no ERP sem IVA", money(current.erp_price_net))}{readonly("IVA", current.erp_vat_rate == null ? "Não indicado pelo ERP" : `${quantity(current.erp_vat_rate)} %`)}</>}
             {rights.view_cost && <>{readonly("Custo médio ponderado", money(current.average_cost))}{readonly("Último custo de compra", money(current.last_cost))}{readonly("Margem bruta por unidade", money(prices.margin))}{readonly("Margem sobre a venda sem IVA", prices.marginPct === null ? "Não calculável" : `${quantity(prices.marginPct)} %`)}{readonly("Markup sobre o custo", prices.cost && prices.cost > 0 && prices.net !== null ? `${quantity((prices.net - prices.cost) / prices.cost * 100)} %` : "Não calculável")}</>}
@@ -232,7 +365,7 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
           <section className="article-subsection" aria-labelledby={`${id}-market`}>
             <h4 id={`${id}-market`}>Preços de mercado (KuantoKusta e outras lojas)</h4>
             {initial.id
-              ? <MarketPrices articleId={initial.id} vatRate={Number(value.vat_rate) || 0} cost={rights.view_cost && !erp ? prices.cost : null} readOnly={readOnly} />
+              ? <MarketPrices articleId={initial.id} ownPrice={erp && !erpChanged && current.erp_price_basis === "Com IVA" ? Number(current.erp_price) : prices.gross} vatRate={Number(erp ? current.erp_vat_rate : value.vat_rate) || 0} cost={rights.view_cost && !erp ? prices.cost : null} readOnly={readOnly} />
               : <p>Guarde o artigo para registar e comparar preços de mercado.</p>}
           </section>
           <p className="footnote">A ficha usa o preço local ou a linha de preço 1 do ERP. Não existem tabelas adicionais de preços configuradas nesta ficha.</p>
@@ -297,6 +430,17 @@ export default function ArticleForm({ initial, catalog, readOnly = false, onSave
         </>}
         {index === 7 && <>
           <h3>Descrição do artigo</h3><Field label="Descrição"><textarea readOnly={readOnly} name="description" value={value.description} maxLength={4000} onChange={e => change("description", e.target.value)} /></Field>
+          <h3>Conteúdo para o site</h3>
+          <WebContentAssistant articleId={initial.id} readOnly={readOnly} onUse={fields => {
+            change("description", fields.description); change("web_summary", fields.web_summary); change("web_highlights", fields.web_highlights);
+            change("seo_keyword", fields.seo_keyword || ""); change("seo_title", fields.seo_title); change("seo_description", fields.seo_description);
+          }} />
+          <Field label={`Resumo (${String(value.web_summary || "").length}/300)`}><textarea readOnly={readOnly} name="web_summary" rows={2} value={value.web_summary} maxLength={300} onChange={e => change("web_summary", e.target.value)} /></Field>
+          <Field label="Pontos-chave (um por linha, até 8)"><textarea readOnly={readOnly} name="web_highlights" rows={4} value={(value.web_highlights || []).join("\n")} onChange={e => change("web_highlights", e.target.value.split("\n").slice(0, 8))} /></Field>
+          <Field label="Palavra-chave principal (SEO)"><input readOnly={readOnly} name="seo_keyword" value={value.seo_keyword || ""} maxLength={60} placeholder="ex.: própolis spray sem álcool" onChange={e => change("seo_keyword", e.target.value)} /></Field>
+          <Field label={`Título SEO (${String(value.seo_title || "").length}/60)`}><input readOnly={readOnly} name="seo_title" value={value.seo_title} maxLength={70} onChange={e => change("seo_title", e.target.value)} /></Field>
+          <Field label={`Meta-descrição SEO (${String(value.seo_description || "").length}/155)`}><textarea readOnly={readOnly} name="seo_description" rows={2} value={value.seo_description} maxLength={170} onChange={e => change("seo_description", e.target.value)} /></Field>
+          <p className="footnote">A loja online recebe a descrição, o resumo, os pontos-chave e o SEO pelo catálogo (a palavra-chave, o título e a meta-descrição vão para o Rank Math). Na descrição, uma linha a começar por «## » é um subtítulo no site. Reveja sempre as alegações de saúde antes de gravar.</p>
           <p className="footnote">As observações internas são editáveis em Geral e mantêm-se separadas da descrição do artigo.</p>
           {!readOnly && imageSearch}
           <Field label="Imagens adicionais — endereço HTTPS por linha"><textarea readOnly={readOnly} name="additional_photos" value={imageText} onChange={e => { setImageText(e.target.value); change("additional_photos", e.target.value.split("\n").map(v => v.trim()).filter(Boolean)); }} /></Field>

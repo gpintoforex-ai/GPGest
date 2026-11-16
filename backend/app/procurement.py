@@ -11,9 +11,9 @@ from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Response
 from pydantic import Field, model_validator
-from sqlalchemy import and_, case, cast, func, or_, select
+from sqlalchemy import and_, case, cast, func, not_, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from .db import db_session
 from .table_rules import ensure_usable
@@ -357,7 +357,40 @@ def expiry_review(db, payload):
         fail('Indique a validade dos artigos com lote antes de lançar: ' + ', '.join(missing) + '.')
     return alerts
 
-def confirm_document(db, user, row, options, authorize, audit):
+def reusable_entry(db, pool, row, payload, line, quantity, unit_cost, document_price):
+    """Entrada de stock da versão anterior igual à que se ia criar (artigo, armazém, quantidade, custo, preço do
+    documento, data, documento, fornecedor e lote). Regravar uma receção sem mudar estes dados não gera um ajuste e
+    uma entrada nova por linha: a entrada existente mantém-se."""
+    for entry_id in list(pool):
+        entry = db.get(StockEntry, entry_id)
+        if entry is None or entry.kind != 'purchase':
+            continue
+        warehouse = db.get(StockWarehouse, entry.warehouse_id)
+        if not warehouse or not warehouse.active:
+            continue  # Armazém desativado: a gravação segue o circuito normal (e é recusada, como antes).
+        detail = json.loads(entry.data or '{}')
+        if (entry.article_id, entry.warehouse_id, entry.occurred_on) != (line['article_id'], line['warehouse_id'], payload['document_date']):
+            continue
+        if D(entry.quantity) != D(quantity) or (D(entry.unit_cost) if entry.unit_cost is not None else None) != unit_cost:
+            continue
+        if detail.get('document') != (payload['document'] or row.id) or detail.get('supplier_id') != row.supplier_id:
+            continue
+        if detail.get('document_price') != (str(document_price) if document_price is not None else None):
+            continue
+        lot = db.get(StockLot, entry.lot_id) if entry.lot_id else None
+        if line.get('lot_id'):
+            same_lot = entry.lot_id == line['lot_id']
+        elif (line.get('lot_number') or '').strip():
+            same_lot = bool(lot) and lot.number == line['lot_number'].strip() and (lot.expiry or None) == (line.get('expiry') or None)
+        else:
+            same_lot = entry.lot_id is None
+        if same_lot:
+            pool.remove(entry_id)
+            return entry
+    return None
+
+
+def confirm_document(db, user, row, options, authorize, audit, reuse=None):
     if row.confirmed_at:
         return row
     if row.status != 'draft' or row.revision != options.revision:
@@ -443,6 +476,13 @@ def confirm_document(db, user, row, options, authorize, audit):
                 entry_price=entry_price*factor
                 document_price=document_price*factor if document_price is not None else None
             outgoing = row.kind == 'return' or credit_note  # Nota de crédito: saída de stock.
+            unit_cost = entry_price.quantize(D('0.00000001')) if not outgoing else None
+            kept = reusable_entry(db, reuse, row, payload, line, q, unit_cost, document_price.quantize(D('0.00000001'))
+                                  if document_price is not None else None) if reuse is not None and row.kind == 'receipt' and not outgoing else None
+            if kept is not None:
+                line['stock_entry_ids'] = [kept.id]
+                received_articles.add(line['article_id'])
+                continue
             entries = stock.post(db, user, stock.MovementInput(
                 article_id=line['article_id'], warehouse_id=line['warehouse_id'], kind='supplier_return' if outgoing else 'purchase',
                 quantity=q, unit_cost=entry_price.quantize(D('0.00000001')) if not outgoing else None,
@@ -549,8 +589,8 @@ def undo_entries(db, user, row, payload, authorize, keep=frozenset(), always_rev
     for index, line in enumerate(payload['lines']):
         for number, entry_id in enumerate(line.get('stock_entry_ids', [])):
             entry = db.get(StockEntry, entry_id)
-            if entry is None:
-                continue
+            if entry is None or entry_id in keep:
+                continue  # Entrada reaproveitada pela nova versão (linha sem alterações): mantém-se.
             later = db.scalar(select(StockEntry.id).where(
                 StockEntry.article_id == entry.article_id, StockEntry.id != entry.id,
                 StockEntry.id.not_in(keep or ['-']), StockEntry.created_at >= entry.created_at).limit(1))
@@ -603,8 +643,10 @@ def replace_confirmed(db, user, row, data, authorize, audit, extra=None):
     row.status, row.confirmed_at = 'draft', None
     row.revision += 1
     db.flush()
+    # Linhas sem alterações de stock reaproveitam a entrada anterior (sem ajuste nem entrada nova).
+    previous = [entry_id for line in old['lines'] for entry_id in line.get('stock_entry_ids', [])]
     confirm_document(db, user, row, Confirm(revision=row.revision, allow_overdelivery=data.allow_overdelivery,
-        acknowledge_differences=data.acknowledge_differences), authorize, audit)
+        acknowledge_differences=data.acknowledge_differences), authorize, audit, reuse=list(previous))
     # Sem tipo de documento na edição, a compra anterior não tem substituta: decide os anexos dela.
     financials.settle_attachments(db, user, row)
     # Só depois de gerar as entradas novas se retiram as antigas: o stock nunca fica negativo pelo caminho.
@@ -612,6 +654,7 @@ def replace_confirmed(db, user, row, data, authorize, audit, extra=None):
     removed, reversed_ = undo_entries(db, user, row, old, authorize, keep=fresh)
     audit(db, user, 'compra_circuito_rececao_editada', row.id,
         {'edicao': raw['edition'], 'entradas_apagadas': removed, 'entradas_estornadas': reversed_,
+         'entradas_mantidas': len(fresh & set(previous)),
          'linhas_anteriores': [{'artigo': line.get('article_id'), 'quantidade': line['quantity'], 'preco': line['price']} for line in old['lines']]},
         row.store_id)
     return row
@@ -850,7 +893,7 @@ def register_routes(app, current, authorize, scope, audit):
     @app.get('/api/procurement-ledger')
     def ledger(store_id:str='',start:date|None=None,end:date|None=None,article_id:str='',kind:str='',page:int=1,
                view:Literal['lines','documents']='lines',group:str='',date_basis:Literal['both','document','record']='both',
-               warehouse_id:str='',origin:str='',q:str='',user=Depends(current),db:Session=Depends(db_session)):
+               warehouse_id:str='',origin:str='',q:str='',corrections:bool=False,user=Depends(current),db:Session=Depends(db_session)):
         """Livro de stock por linha ou agrupado pelo documento que movimentou o stock, com indicadores.
 
         Por omissão o período apanha a data do movimento (data do documento) ou a data de registo: uma
@@ -884,10 +927,21 @@ def register_routes(app, current, authorize, scope, audit):
         if origin:conditions.append(func.coalesce(payload['origin'].astext,'manual')==origin)
         if q.strip():
             conditions.append(func.lower(payload['document'].astext).contains(q.strip().lower(), autoescape=True))
+        # Correções de edições de receções: a entrada substituída e o ajuste que a anula (efeito zero no stock).
+        # Escondem-se por omissão (nada é apagado); `corrections=true` mostra-as.
+        reversals=aliased(StockEntry)
+        reversal_data=cast(reversals.data,JSONB)
+        replaced=select(reversal_data['reversal_of'].astext).where(reversal_data['reversal_of'].astext.is_not(None),
+                                                                     reversal_data['procurement_id'].astext.is_not(None))
+        pair=or_(and_(payload['reversal_of'].astext.is_not(None),payload['procurement_id'].astext.is_not(None)),StockEntry.id.in_(replaced))
+        hidden=0
+        if not corrections:
+            hidden=db.scalar(select(func.count()).select_from(StockEntry).join(StockWarehouse).where(*conditions,pair)) or 0
+            conditions.append(not_(pair))
         visible=stock.permissions(user,stock.settings(db))['view_cost']
         summary=ledger_summary(db,key,conditions,visible)
         if view=='documents' and not group:
-            return {**ledger_documents(db,key,conditions,page,visible),'summary':summary}
+            return {**ledger_documents(db,key,conditions,page,visible),'summary':summary,'hidden_corrections':hidden}
         query=select(StockEntry,key).join(StockWarehouse).where(*conditions)
         entries=list(db.execute(query.order_by(StockEntry.created_at.desc(),StockEntry.id.desc()).offset((page-1)*50).limit(51)))
         rows,labels=[],{}
@@ -901,7 +955,7 @@ def register_routes(app, current, authorize, scope, audit):
                 'photo':json.loads(article.data or '{}').get('photo') or '',
                 'warehouse_name':wh.name,'lot_number':lot.number if lot else '', 'expiry':lot.expiry if lot else '',
                 'user_name':db.get(User,entry.user_id).name,'value':str(entry.quantity*entry.unit_cost) if visible and entry.unit_cost is not None else None})
-        return {'rows':rows,'more':len(entries)>50,'summary':summary}
+        return {'rows':rows,'more':len(entries)>50,'summary':summary,'hidden_corrections':hidden}
 
     @app.post('/api/procurement')
     def create(data: Draft, user=Depends(current), db: Session=Depends(db_session)):

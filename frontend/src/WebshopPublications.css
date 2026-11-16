@@ -1,0 +1,34 @@
+/* Publicação online: tabela compacta (artigo legível, estado com erros e ações numa linha). */
+.webshop-publications .wp-col-article { min-width: 240px; width: 30%; }
+.webshop-publications .wp-col-price { width: 130px; white-space: nowrap; }
+.webshop-publications .wp-col-margin { width: 110px; white-space: nowrap; }
+.webshop-publications .wp-col-state { min-width: 260px; }
+.webshop-publications .wp-col-actions { width: 1%; white-space: nowrap; }
+.webshop-publications td small { display: block; margin-top: 2px; color: var(--color-muted); }
+.webshop-publications .wp-name { display: block; font-weight: 600; line-height: 1.3; }
+.wp-state { display: grid; gap: 4px; }
+.wp-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.wp-error {
+  margin: 2px 0 0;
+  padding: 6px 8px;
+  border-left: 3px solid var(--color-danger);
+  border-radius: 6px;
+  background: var(--color-danger-bg);
+  color: var(--color-text, inherit);
+  font-size: 12.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.wp-error.tone-warning { border-left-color: var(--color-warning); background: var(--color-warning-bg); }
+.wp-error .wp-fix { display: inline-flex; margin-top: 6px; }
+.wp-preserved { display: grid; gap: 2px; justify-items: start; }
+.wp-more > summary { cursor: pointer; font-size: 12.5px; color: var(--color-warning); font-weight: 600; }
+.wp-more ul { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--color-muted); }
+.wp-actions { display: flex; align-items: center; gap: 2px; }
+.wp-actions .wp-danger { color: var(--color-danger); }
+/* Abaixo de 600 px a tabela passa a cartões (DataTable.css): sem larguras fixas nem texto numa só linha. */
+@media (max-width: 600px) {
+  .webshop-publications .wp-col-article, .webshop-publications .wp-col-price, .webshop-publications .wp-col-margin,
+  .webshop-publications .wp-col-state, .webshop-publications .wp-col-actions { min-width: 0; width: auto; white-space: normal; }
+  .webshop-publications td.numeric > div { text-align: left; }
+}

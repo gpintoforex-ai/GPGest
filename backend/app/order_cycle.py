@@ -628,7 +628,7 @@ def stock_context(db, user, store_id):
             q = orders.quantities(db, line)
             demand[line.article_id] = demand.get(line.article_id, ZERO) + max(
                 ZERO,
-                q["requested"] - q["cancelled"] - q["delivered"] - q["reserved"] - q["simulated"],
+                q["requested"] - q["cancelled"] - q["invoiced"] - q["reserved"] - q["simulated"],
             )
     return free, incoming, demand, expiring, prices, entries
 

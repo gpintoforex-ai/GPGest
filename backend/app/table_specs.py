@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from . import entities as entity_routes
+from .article_taxonomy import TaxonomySpec
 from .banks import bank_accounts, rename_bank
 from .inventory import permissions as stock_permissions
 from .inventory import require as stock_require
@@ -1629,6 +1630,9 @@ for spec in (
     RegistersSpec(),
     PaymentTermsSpec(),
     DocumentTypesSpec(),
+    TaxonomySpec("article_families", "Famílias de artigos", "família", "family"),
+    TaxonomySpec("article_subfamilies", "Subfamílias de artigos", "subfamília", "category"),
+    TaxonomySpec("article_brands", "Marcas", "marca", "brand"),
 ):
     register(spec)
 

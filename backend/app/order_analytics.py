@@ -43,7 +43,8 @@ def timestamp(value):
 
 
 def state_of(view):
-    if view["closed"]:
+    # Prazos de entrega: conta a entrega ao cliente, mesmo que a fatura (saída de stock) ainda falte.
+    if view["closed"] or all(line["state"] in ("delivered", "cancelled", "to_invoice") for line in view["lines"]):
         cancelled = sum(D(line["quantities"]["cancelled"]) for line in view["lines"])
         delivered = sum(D(line["quantities"]["delivered"]) for line in view["lines"])
         return "cancelled" if not delivered else "closed_with_cancel" if cancelled else "delivered"

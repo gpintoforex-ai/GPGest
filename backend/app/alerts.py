@@ -135,7 +135,24 @@ def alerts(store_id: str = "", user=Depends(current), db: Session = Depends(db_s
                 [f"{describe(db, r, users, names)['title']} · {users.get(r.requested_by, '')}" for r in rows],
                 "warning", "Rubricas", {"area.rubricas": "natureza"})
 
-    for read in (customer_orders, purchases, expiring_lots, pending_documents, deadlines, rubric_requests):
+    def online_orders():
+        # Encomendas online que pedem decisão: pagamento após expiração sem stock, montante divergente,
+        # pagamento duplicado ou encomenda paga cancelada. Decisão de administradores e gestores.
+        if user.role not in MANAGERS:
+            return
+        from .models import WebshopConnection, WebshopOrder
+
+        rows = db.execute(select(WebshopOrder, WebshopConnection.name)
+                          .join(WebshopConnection, WebshopConnection.id == WebshopOrder.connection_id)
+                          .where(WebshopConnection.store_id.in_(stores),
+                                 (WebshopOrder.review != "") | (WebshopOrder.reservation_state == "review"))
+                          .order_by(WebshopOrder.updated_at.desc())).all()
+        add("encomendas_online_rever", "Encomendas online por rever (pagamento ou reserva)",
+            [f"{m.external_id.rsplit(':', 1)[-1]} · {name} · {m.review or 'reserva por rever'}" for m, name in rows],
+            "danger", "Integrações", {"area.integracoes": "encomendas-online"})
+
+    for read in (customer_orders, purchases, expiring_lots, pending_documents, deadlines, rubric_requests,
+                 online_orders):
         section(read)
     order = {"danger": 0, "warning": 1}
     groups.sort(key=lambda g: order.get(g["tone"], 2))

@@ -72,9 +72,12 @@ STATES = {
     "received": "Recebida",
     "notified": "Cliente notificado",
     "ready": "Pronta para entrega",
+    "to_invoice": "Entregue, por faturar",
     "delivered": "Entregue",
     "cancelled": "Cancelada",
 }
+# Linhas sem entrega por fazer (podem ainda aguardar a fatura, que dá a saída de stock).
+HANDED = ("delivered", "cancelled", "to_invoice")
 
 
 def fail(message, code=422):
@@ -513,14 +516,27 @@ def contact_status(db, order_id):
     for line in lines if lines is not None else db.scalars(select(Line).where(Line.order_id == order_id)):
         held = sum((r.quantity for r in usable_reservations(db, line)), ZERO)
         if held:
-            ready.append(covered.get(line.id, ZERO) >= held + line.delivered)
+            ready.append(covered.get(line.id, ZERO) >= held + line.invoiced)
     return bool(ready) and all(ready)
+
+
+def awaiting_invoice(line):
+    """Unidades entregues ainda sem fatura: continuam reservadas até a fatura dar a saída de stock."""
+    return max(ZERO, line.delivered - line.invoiced)
+
+
+def handed(line):
+    """Quantidade já fora do pedido em aberto: entregue ou faturada (a fatura pode preceder a entrega)."""
+    return max(line.delivered, line.invoiced)
 
 
 def quantities(db, line):
     links = active_supplies(db, line.id)
     held = sum((r.quantity for r in reserved(db, line.id)), ZERO)
-    available = sum((r.quantity for r in usable_reservations(db, line)), ZERO)
+    # Por entregar: reservado (sem as unidades entregues por faturar) mais o faturado ainda por entregar.
+    available = max(
+        ZERO, sum((r.quantity for r in usable_reservations(db, line)), ZERO) + line.invoiced - line.delivered
+    )
     pending = sum(
         (
             max(ZERO, line_item.quantity - line_item.released - line_item.received)
@@ -557,13 +573,15 @@ def quantities(db, line):
         "requested": line.quantity,
         "available": available,
         "reserved": held,
-        "to_order": max(ZERO, line.quantity - line.cancelled - line.delivered - held - pending),
+        "to_order": max(ZERO, line.quantity - line.cancelled - line.invoiced - held - pending),
         "simulated": simulated,
         "ordered": prepared,
         "sent": sent,
         "confirmed": confirmed,
         "received": received,
         "delivered": line.delivered,
+        "invoiced": line.invoiced,
+        "to_invoice": awaiting_invoice(line),
         "cancelled": line.cancelled,
     }
 
@@ -574,7 +592,7 @@ def line_view(db, line, notified=False):
     if line.cancelled == line.quantity:
         state = "cancelled"
     elif line.delivered + line.cancelled >= line.quantity:
-        state = "delivered"
+        state = "delivered" if line.invoiced + line.cancelled >= line.quantity else "to_invoice"
     elif notified and q["reserved"] > 0:
         state = "notified"
     elif q["received"] >= line.quantity - line.cancelled:
@@ -651,15 +669,15 @@ def order_view(db, row):
         "notified": notified,
         "lines": lines,
         "ready": any(D(line_item["quantities"]["available"]) > 0 for line_item in lines),
-        "fully_ready": any(line_item["state"] not in ("delivered", "cancelled") for line_item in lines) and all(
-            line_item["state"] in ("delivered", "cancelled") or D(line_item["quantities"]["available"]) >=
+        "fully_ready": any(line_item["state"] not in HANDED for line_item in lines) and all(
+            line_item["state"] in HANDED or D(line_item["quantities"]["available"]) >=
             D(line_item["quantities"]["requested"]) - D(line_item["quantities"]["delivered"]) - D(line_item["quantities"]["cancelled"])
             for line_item in lines),
         "closed": all(line_item["state"] in ("delivered", "cancelled") for line_item in lines),
         "late": bool(
             data.get("due_date")
             and data["due_date"] < date.today().isoformat()
-            and any(line_item["state"] not in ("delivered", "cancelled") for line_item in lines)
+            and any(line_item["state"] not in HANDED for line_item in lines)
         ),
     }
 
@@ -1042,7 +1060,7 @@ def edit_order(
             fail("Produto do pedido não encontrado.", 404)
         seen.add(item.id)
         before = json.loads(line.data)
-        if line.delivered + line.cancelled >= line.quantity:
+        if handed(line) + line.cancelled >= line.quantity:
             if (
                 item.article_id != line.article_id
                 or item.quantity != line.quantity
@@ -1082,10 +1100,10 @@ def edit_order(
         line.quantity = item.quantity
         line.data = dump({**before, **values})
     for line in existing.values():
-        if line.id in seen or line.delivered + line.cancelled >= line.quantity:
+        if line.id in seen or handed(line) + line.cancelled >= line.quantity:
             continue
         free = quantities(db, line)["to_order"]
-        if free < line.quantity - line.cancelled - line.delivered:
+        if free < line.quantity - line.cancelled - handed(line):
             fail(
                 f"«{json.loads(line.data).get('description')}» tem reservas ou compras em curso. "
                 "Use «Cancelar quantidade» no detalhe do pedido.",
@@ -1166,7 +1184,7 @@ def associate(
     if prior:
         return order_view(db, row)
     revision(row, data)
-    if reserved(db, line.id) or active_supplies(db, line.id) or line.delivered:
+    if reserved(db, line.id) or active_supplies(db, line.id) or line.delivered or line.invoiced:
         fail("Associe o artigo antes de reservar ou incluir numa simulação.", 409)
     article = stock.article(db, data.article_id)
     precision = json.loads(article.data).get("precision", 0)
@@ -1212,19 +1230,22 @@ def line_action(
     elif action == "cancel":
         if len(data.reason.strip()) < 3:
             fail("Indique o motivo do cancelamento.")
-        if data.quantity > line.quantity - line.cancelled - line.delivered:
-            fail("Não pode cancelar produtos já entregues.", 409)
+        if data.quantity > line.quantity - line.cancelled - handed(line):
+            fail("Não pode cancelar produtos já entregues ou faturados.", 409)
         remaining = data.quantity
         # Cancel unassigned demand first, then unreceived supply, then physical reservations.
+        # Units delivered but not yet invoiced stay reserved: the invoice is what takes them out of stock.
         remaining -= min(remaining, q["to_order"])
         for link, _, _ in active_supplies(db, line.id):
             released = min(remaining, max(ZERO, link.quantity - link.released - link.received))
             link.released += released
             remaining -= released
+        releasable = max(ZERO, q["reserved"] - awaiting_invoice(line))
         for hold in reserved(db, line.id):
-            released = min(remaining, hold.quantity)
+            released = min(remaining, hold.quantity, releasable)
             hold.quantity -= released
             remaining -= released
+            releasable -= released
         if remaining:
             fail("A distribuição mudou. Atualize o pedido.", 409)
         line.cancelled += data.quantity
@@ -1233,47 +1254,29 @@ def line_action(
             fail("Justifique a libertação da reserva.")
         if data.quantity > q["reserved"]:
             fail("A quantidade excede as reservas existentes.", 409)
+        if data.quantity > q["reserved"] - awaiting_invoice(line):
+            fail(
+                "Parte da reserva corresponde a produtos entregues e ainda não faturados: mantém-se até a "
+                "fatura Wintouch dar a saída de stock.",
+                409,
+            )
         remaining = data.quantity
         for hold in reserved(db, line.id):
             amount = min(hold.quantity, remaining)
             hold.quantity -= amount
             remaining -= amount
     elif action == "deliver":
-        if buying.policy(db).get("authority", {}).get("stock") == "erp":
-            fail("O stock é controlado pelo ERP. O conector não suporta esta saída.", 409)
+        # Entrega é só logística: não movimenta stock nem consome a reserva. A saída de stock e o
+        # consumo da reserva vêm da fatura Wintouch confirmada (wintouch_stock.apply_sales_stock).
         if data.quantity > q["available"]:
-            fail("Só pode entregar produtos reservados ativos e com validade adequada.", 409)
+            fail("Só pode entregar produtos reservados ativos e com validade adequada, ou já faturados.", 409)
+        from .models import WebshopOrder
+
+        online = db.scalar(select(WebshopOrder).where(WebshopOrder.order_id == row.id))
+        if online and online.payment_state not in ("paid", "legacy"):
+            fail("Encomenda online sem pagamento confirmado pelo prestador: não pode ser entregue.", 409)
         if len(data.reason.strip()) < 3:
             fail("Indique a referência/observação da entrega.")
-        remaining = data.quantity
-        for hold in usable_reservations(db, line):
-            amount = min(hold.quantity, remaining)
-            if not amount:
-                continue
-            hold.quantity -= amount
-            db.flush()
-            price = json.loads(line.data).get("sale_price_cents")
-            stock.post(
-                db,
-                user,
-                stock.MovementInput(
-                    article_id=line.article_id,
-                    warehouse_id=hold.warehouse_id,
-                    lot_id=hold.lot_id,
-                    kind="sale",
-                    quantity=amount,
-                    net_sales=amount * D(price or 0) / 100,
-                    reason=data.reason,
-                    document=order_number(row),
-                    request_key=data.request_key + ":" + hold.id,
-                ),
-                authorize,
-                source="customer_order",
-                bypass=True,
-            )
-            remaining -= amount
-            if not remaining:
-                break
         line.delivered += data.quantity
     else:
         if len(data.reason.strip()) < 3:
@@ -1995,7 +1998,7 @@ def prepare_contact(
         fail("Ainda não há produtos reservados para levantamento.", 409)
     availability = {
         line.id: str(
-            sum((r.quantity for r in usable_reservations(db, line)), ZERO) + line.delivered
+            sum((r.quantity for r in usable_reservations(db, line)), ZERO) + line.invoiced
         )
         for line in db.scalars(select(Line).where(Line.order_id == row.id))
         if usable_reservations(db, line)
@@ -2136,7 +2139,7 @@ def send_contact(
         line = db.get(Line, line_id)
         if not line or sum(
             (r.quantity for r in usable_reservations(db, line)), ZERO
-        ) + line.delivered < D(quantity):
+        ) + line.invoiced < D(quantity):
             fail(
                 "A disponibilidade mudou desde a pré-visualização. Reveja o pedido antes de contactar.",
                 409,

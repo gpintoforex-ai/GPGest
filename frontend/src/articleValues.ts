@@ -2,6 +2,7 @@ export type ArticleRow = Record<string, any>;
 export type ArticleBrowse = { params: Record<string, string>; position: number; total: number; size: number };
 export const newArticle: ArticleRow = {
   code: "", name: "", reference: "", barcodes: [], description: "", photo: "",
+  web_summary: "", web_highlights: [], seo_keyword: "", seo_title: "", seo_description: "",
   internal_notes: "", additional_photos: [], attachments: [],
   family: "", category: "", brand: "", supplier_id: null, supplier_reference: "",
   unit: "un", precision: 0, vat_rate: "23", sale_net: "0", minimum: "0",

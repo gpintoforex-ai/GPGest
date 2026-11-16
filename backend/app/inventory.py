@@ -32,6 +32,7 @@ from .models import (
     StockWarehouse,
     Store,
     User,
+    WebshopPublication,
     WintouchProduct,
     WintouchSyncRun,
     now,
@@ -315,6 +316,13 @@ class ArticleInput(Strict):
     reference: str = Field(default="", max_length=100)
     barcodes: list[str] = Field(default_factory=list, max_length=20)
     description: str = Field(default="", max_length=4000)
+    # Conteúdo para o site (loja online): resumo, pontos-chave e SEO. Enviados pelo catálogo da loja online.
+    web_summary: str = Field(default="", max_length=300)
+    web_highlights: list[str] = Field(default_factory=list, max_length=8)
+    # Palavra-chave principal (SEO): enviada ao plugin de SEO da loja (Rank Math).
+    seo_keyword: str = Field(default="", max_length=60)
+    seo_title: str = Field(default="", max_length=70)
+    seo_description: str = Field(default="", max_length=170)
     internal_notes: str = Field(default="", max_length=4000)
     additional_photos: list[str] = Field(default_factory=list, max_length=10)
     attachments: list[ArticleAttachment] = Field(default_factory=list, max_length=20)
@@ -364,6 +372,14 @@ class ArticleInput(Strict):
                 raise ValueError("O endereço da imagem é demasiado longo.")
             ArticleAttachment.https_url(url)
         return value
+
+    @field_validator("web_highlights")
+    @classmethod
+    def highlight_list(cls, value):
+        result = [v.strip() for v in value if v.strip()]
+        if any(len(v) > 160 for v in result):
+            raise ValueError("Cada ponto-chave tem no máximo 160 caracteres.")
+        return result
 
     @field_validator("barcodes")
     @classmethod
@@ -522,9 +538,15 @@ def save_article(
             field_fail(
                 "barcodes", f"Código de barras já utilizado pelo artigo «{other.name}».", 409
             )
+    from .article_taxonomy import adopt
+
+    adopt(db, payload, json.loads(existing.data) if existing else None, write=not preview)
     row = existing or StockArticle(code=data.code, name=data.name)
     row.code, row.name, row.active, row.data = data.code, data.name, data.active, dump(payload)
     row.revision = (row.revision or 0) + 1
+    if existing and not preview:
+        from .article_content import settle_on_save
+        settle_on_save(db, user, existing.id, payload)
     if not preview:
         db.add(row)
         if flush:
@@ -848,8 +870,12 @@ def article_view(
     # The cost pool is company-wide, while quantities and sales respect store access.
     cost, last = average(history)
     erp = erp or (db.get(WintouchProduct, row.erp_id) if row.erp_id else None)
+    from .article_images import photo_url
+
     return {
         **data,
+        # Fotografia carregada na ficha (prevalece sobre o endereço HTTPS em `photo`).
+        "image_photo": photo_url(db, row.id),
         "id": row.id,
         "code": erp.code if erp else row.code,
         "name": erp.name if erp else row.name,
@@ -978,6 +1004,8 @@ def register_routes(app, current, authorize, scope, audit):
         origin: Literal["", "Local", "ERP"] = "",
         stock: Literal["", "positive", "zero", "low", "over", "unknown"] = "",
         expiry: Literal["", "near", "expired", "valid", "missing"] = "",
+        # Loja online: marcado (publicado), retirado (na lista, fora de venda) ou fora da lista.
+        web: Literal["", "published", "withdrawn", "none"] = "",
         sort: str = "name",
         direction: Literal["asc", "desc"] = "asc",
     ):
@@ -1015,6 +1043,14 @@ def register_routes(app, current, authorize, scope, audit):
                 query = query.where(payload[key].astext == value)
         if origin:
             query = query.where(expressions["origin"] == origin)
+        if web:
+            listed = select(WebshopPublication.article_id)
+            published = listed.where(WebshopPublication.state == "published")
+            query = query.where(
+                StockArticle.id.in_(published) if web == "published"
+                else StockArticle.id.in_(listed) & StockArticle.id.not_in(published) if web == "withdrawn"
+                else StockArticle.id.not_in(listed)
+            )
         if active:
             query = query.where(expressions["active"] == (active == "true"))
         if q.strip():
@@ -1173,6 +1209,17 @@ def register_routes(app, current, authorize, scope, audit):
             current_page = min(page or 1, max(1, (total + size - 1) // size))
             if page is not None:
                 rows = rows[(current_page - 1) * size : current_page * size]
+        from .article_taxonomy import catalog as taxonomy_catalog
+        from .webshop_catalog import article_states, managed_connections
+
+        if page is not None or record_id:
+            # Estado na loja online só para a página mostrada (calcula o conteúdo de cada publicação).
+            states = article_states(db, [r["id"] for r in rows])
+            for value in rows:
+                value["web"] = states.get(value["id"], [])
+        classifications = taxonomy_catalog(db)
+        for key, values in classifications.items():
+            facets[key] = sorted(set(facets[key]) | {v["name"] for v in values if v["active"]})
         return fast_json({
             "articles": rows,
             "total": total,
@@ -1181,6 +1228,9 @@ def register_routes(app, current, authorize, scope, audit):
             "pages": max(1, (total + size - 1) // size),
             "size": size,
             "facets": facets,
+            "classifications": classifications,
+            "can_manage_classifications": user.role in ("administrador", "gestor"),
+            "webshop_connections": [{"id": c.id, "name": c.name} for c in managed_connections(db, user)],
             "preference_scope": f"{db.info.get('company', {}).get('id', 'local')}.{user.id}",
             "warehouses": [
                 {"id": w.id, "store_id": w.store_id, "name": w.name, "active": w.active}

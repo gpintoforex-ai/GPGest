@@ -236,6 +236,37 @@ recusa entidades sem exatamente uma morada principal.
 - Tarefas demoradas (carregar, consultar o VIES, comparar ou sincronizar com o ERP, remover) mostram um
   texto com três pontos animados.
 
+### Ficha de cliente: Vendas e Documentos (consulta comercial)
+
+Os separadores **Vendas** e **Documentos** da ficha de cliente mostram as vendas do SAF-T (modo local) ou do ERP
+(modo integrado) ligadas à ficha, sem depender da conta corrente. Os restantes separadores mantêm-se.
+
+- **Ligação ao cliente:** pelos identificadores, nunca pelo nome — no SAF-T, os códigos de cliente ligados à ficha
+  (cada cliente importado guarda a ficha local) ou com o mesmo NIF real; no ERP, o identificador da entidade (gravado
+  nas vendas a partir da próxima sincronização) ou o NIF real. NIF genéricos (999999990…) não ligam. Uma ficha sem
+  NIF e sem ligação mostra o motivo e não herda vendas de homónimos.
+- **Vendas — artigos comprados:** código, descrição, família, quantidade (faturada e devolvida), preço médio, valor
+  sem e com IVA, primeira e última venda e número de documentos; indicadores (artigos distintos, unidades, valor,
+  artigo mais comprado, última compra); pesquisa, família, período (12 meses, este ano, ano anterior, todo o
+  histórico até 10 anos, personalizado) e ordenação por coluna. Linhas sem código e serviços aparecem identificadas.
+  Clicar num artigo abre o painel com a ficha resumida, os preços praticados e o histórico de vendas a este cliente,
+  com ligação aos documentos e à ficha completa do artigo.
+- **Documentos:** data, tipo, número, série, valores, estado do documento, estado de pagamento (só com ligação
+  financeira: recibos ligados ao documento, conferência ou saldo do ERP; caso contrário «Sem ligação financeira»),
+  origem e **Abrir**. Notas de crédito subtraem; anulados aparecem identificados e ficam fora dos totais. Pesquisa
+  por número, tipo, data e valor. O documento abre na consulta documental de Faturação e recebimentos (resumo, artigos,
+  recebimentos e original); o original do Arquivo digital é pré-visualizado, abre em ecrã completo e pode ser
+  descarregado (com a permissão do arquivo). Os ficheiros do arquivo com o mesmo NIF continuam disponíveis abaixo.
+- **Conta corrente:** saldos, recebimentos e pagamentos continuam a exigir uma ligação financeira confirmada; nunca
+  são calculados pelo nome. O indicador **Faturação** do topo passa a mostrar o valor sem IVA do período.
+- **Regressar sem perder o cliente:** ao abrir a ficha do artigo a partir da ficha de cliente, o endereço guarda o
+  cliente e o separador; fechando a ficha do artigo e voltando atrás, a ficha de cliente reabre no mesmo separador e
+  com o mesmo período.
+
+API (só leitura): `GET /api/sales/customer-sheet?record_id&start&end` e
+`GET /api/sales/detail?view=customer_article&record_id&key`. Testes: `backend/tests/test_customer_sheet.py` e
+`scripts/test-customer-sheet-ui.py`.
+
 ### Última venda dos clientes
 
 A tabela de **Clientes** tem a coluna **Última venda**: a data (DD/MM/AAAA) do documento de venda válido mais recente

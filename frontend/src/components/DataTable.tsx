@@ -56,6 +56,8 @@ export type TableColumn<T> = {
   exportValue?: (row: T) => unknown;
   /** Alinha à direita valores e quantidades. */
   numeric?: boolean;
+  /** Classe do cabeçalho e das células (larguras próprias do módulo). */
+  className?: string;
 };
 
 /**
@@ -187,7 +189,7 @@ export function DataTable<T>({
               {columns.map((item) => (
                 <th
                   key={item.id}
-                  className={item.numeric ? "numeric" : undefined}
+                  className={[item.numeric && "numeric", item.className].filter(Boolean).join(" ") || undefined}
                   aria-sort={
                     sort?.id === item.id
                       ? sort.ascending
@@ -226,7 +228,7 @@ export function DataTable<T>({
             {filtered.slice((current - 1) * size, current * size).map((row) => (
               <tr key={rowKey(row)} className={rowClassName?.(row)}>
                 {columns.map((item) => (
-                  <td key={item.id} data-label={item.label} className={item.numeric ? "numeric" : undefined}>
+                  <td key={item.id} data-label={item.label} className={[item.numeric && "numeric", item.className].filter(Boolean).join(" ") || undefined}>
                     <div>{item.render(row)}</div>
                   </td>
                 ))}

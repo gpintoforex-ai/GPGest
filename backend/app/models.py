@@ -32,6 +32,29 @@ class Base(DeclarativeBase):
     pass
 
 
+class ArticleFamily(Base):
+    __tablename__ = "article_families"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ArticleBrand(Base):
+    __tablename__ = "article_brands"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ArticleSubfamily(Base):
+    __tablename__ = "article_subfamilies"
+    __table_args__ = (UniqueConstraint("family_id", "name"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    family_id: Mapped[str] = mapped_column(ForeignKey("article_families.id"))
+    name: Mapped[str] = mapped_column(String(100))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -1518,6 +1541,51 @@ class StockArticle(Base):
     revision: Mapped[int] = mapped_column(default=0)
 
 
+class ArticleContentProposal(Base):
+    """Proposta de descritivo para o site gerada por IA (uma por artigo; a mais recente substitui a anterior).
+    Nunca é publicada sozinha: só passa para a ficha (e para a loja online) depois de revista e aprovada."""
+    __tablename__ = "article_content_proposals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    article_id: Mapped[str] = mapped_column(ForeignKey("stock_articles.id", ondelete="CASCADE"), unique=True)
+    status: Mapped[str] = mapped_column(String(20), default="pendente")  # pendente, aprovada, aplicada, descartada
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    model: Mapped[str] = mapped_column(String(80), default="")
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    decided_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ArticleImage(Base):
+    """Imagem carregada na ficha do artigo, guardada na base (sem alojamento externo).
+
+    `photo`: fotografia principal (aparece na aplicação e vai para a loja online por um endereço público com o
+    hash do conteúdo). `label`: fotografia do rótulo; por omissão interna (só a IA a lê). Com `public` (confirmado
+    na ficha: legível e em português) vai para a loja como rótulo da informação alimentar e, com `gallery`, também
+    como última imagem da galeria. Substituir a imagem volta a pedir a confirmação.
+    O ficheiro é normalizado ao carregar (orientação, dimensão máxima, JPEG sem metadados)."""
+    __tablename__ = "article_images"
+    __table_args__ = (
+        UniqueConstraint("article_id", "role", name="article_image_role_unique"),
+        CheckConstraint("role IN ('photo', 'label')", name="article_image_role"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    article_id: Mapped[str] = mapped_column(ForeignKey("stock_articles.id", ondelete="CASCADE"))
+    role: Mapped[str] = mapped_column(String(10))
+    mime: Mapped[str] = mapped_column(String(50))
+    sha256: Mapped[str] = mapped_column(String(64))
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    size: Mapped[int] = mapped_column(Integer)
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    public: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    gallery: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class PurchaseArticleAlias(Base):
     """Correspondência aprendida ao receber uma fatura: referência/EAN/descrição do fornecedor → artigo."""
 
@@ -1679,7 +1747,10 @@ class CustomerOrder(Base):
 
 class CustomerOrderLine(Base):
     __tablename__ = "customer_order_lines"
-    __table_args__ = (CheckConstraint("quantity > 0 AND cancelled >= 0 AND delivered >= 0 AND cancelled + delivered <= quantity"),)
+    __table_args__ = (
+        CheckConstraint("quantity > 0 AND cancelled >= 0 AND delivered >= 0 AND cancelled + delivered <= quantity"),
+        CheckConstraint("invoiced >= 0 AND cancelled + invoiced <= quantity", name="ck_customer_order_lines_invoiced"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     order_id: Mapped[str] = mapped_column(ForeignKey("customer_orders.id"), index=True)
     article_id: Mapped[str | None] = mapped_column(ForeignKey("stock_articles.id"), nullable=True)
@@ -1687,6 +1758,9 @@ class CustomerOrderLine(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6))
     cancelled: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)
     delivered: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0)
+    # Quantidade faturada na Wintouch: a saída de stock vem da fatura, que consome a reserva.
+    # A entrega é só logística; entregue e ainda não faturado continua reservado.
+    invoiced: Mapped[Decimal] = mapped_column(Numeric(24, 6), default=0, server_default="0")
     data: Mapped[str] = mapped_column(Text, default="{}")
 
 
@@ -1986,9 +2060,18 @@ class WebshopConnection(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Prazos de pagamento por meio (minutos) e outras opções das encomendas online.
+    order_settings: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
 
 
 class WebshopOrder(Base):
+    """Encomenda online e os seus três estados independentes: o da loja (`status`, WooCommerce), o do
+    pagamento (`payment_state`, só por evento autenticado do prestador) e o da reserva (`reservation_state`).
+
+    Reserva temporária expira em `reservation_expires_at` (prazo do meio de pagamento); o pagamento confirmado
+    torna-a definitiva. `review` assinala o que precisa de decisão humana (pagamento após expiração sem stock,
+    montante divergente, pagamento duplicado, encomenda paga cancelada)."""
+
     __tablename__ = "webshop_orders"
     __table_args__ = (UniqueConstraint("connection_id", "external_id"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -2000,6 +2083,127 @@ class WebshopOrder(Base):
     content_digest: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(20))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=now)
+    total_cents: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    payment_method: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    payment_kind: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    # pending, paid, failed, refunded, legacy (encomendas anteriores ao registo de pagamentos)
+    payment_state: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    paid_cents: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # temporary, confirmed, expired, released, review, legacy (reservas anteriores sem prazo)
+    reservation_state: Mapped[str] = mapped_column(String(20), default="temporary", server_default="temporary")
+    reservation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    review: Mapped[str] = mapped_column(String(500), default="", server_default="")
+
+
+class WebshopPaymentEvent(Base):
+    """Evento de pagamento autenticado pelo prestador e comunicado pela loja. A chave do evento garante que a
+    repetição do mesmo callback não tem segundo efeito."""
+
+    __tablename__ = "webshop_payment_events"
+    __table_args__ = (UniqueConstraint("connection_id", "event_key"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("webshop_connections.id"), index=True)
+    webshop_order_id: Mapped[str] = mapped_column(ForeignKey("webshop_orders.id"), index=True)
+    event_key: Mapped[str] = mapped_column(String(100))
+    digest: Mapped[str] = mapped_column(String(64))
+    provider: Mapped[str] = mapped_column(String(40))
+    method: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(20))
+    transaction_id: Mapped[str] = mapped_column(String(200), default="")
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    currency: Mapped[str] = mapped_column(String(3), default="EUR")
+    verification: Mapped[str] = mapped_column(String(40))
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    effect: Mapped[str] = mapped_column(String(40), default="")
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class WebshopOrderEvent(Base):
+    """Histórico da encomenda online (receção, reservas, pagamentos, expiração, cancelamento, revisões)."""
+
+    __tablename__ = "webshop_order_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    webshop_order_id: Mapped[str] = mapped_column(ForeignKey("webshop_orders.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40))
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class WebshopPublication(Base):
+    """Artigo escolhido para a loja online de uma ligação: o IAZELA é a origem do catálogo publicado.
+
+    A loja recebe as publicações cujo conteúdo (`hash`) ainda não confirmou e devolve o resultado; uma falha
+    fica com o erro e nova tentativa agendada (`retry_at`). Um artigo, um SKU e um produto WooCommerce só
+    podem estar numa publicação por ligação."""
+
+    __tablename__ = "webshop_publications"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "article_id"),
+        UniqueConstraint("connection_id", "sku"),
+        Index(
+            "uq_webshop_publications_woo",
+            "connection_id",
+            "woo_product_id",
+            unique=True,
+            postgresql_where=text("woo_product_id IS NOT NULL"),
+        ),
+        CheckConstraint("state IN ('published', 'withdrawn')", name="ck_webshop_publications_state"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("webshop_connections.id"), index=True)
+    article_id: Mapped[str] = mapped_column(ForeignKey("stock_articles.id"), index=True)
+    sku: Mapped[str] = mapped_column(String(100))
+    state: Mapped[str] = mapped_column(String(20), default="published")
+    # Preço sem IVA deste canal; vazio = preço de venda base do artigo.
+    price_net: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    woo_product_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    woo_status: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    synced_hash: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    # Resultado da loja: requisitos de suplemento alimentar em falta e campos preservados (editados na loja).
+    shop_data: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class WebshopPublicationEvent(Base):
+    """Histórico de publicação: decisões do operador e resultados de sincronização (nunca apagado)."""
+
+    __tablename__ = "webshop_publication_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    publication_id: Mapped[str] = mapped_column(ForeignKey("webshop_publications.id"), index=True)
+    action: Mapped[str] = mapped_column(String(30))
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class WebshopRemoteProduct(Base):
+    """Produto existente no WooCommerce, comunicado pela loja: base das sugestões de correspondência
+    por SKU/EAN. Não cria nem associa nada sozinho."""
+
+    __tablename__ = "webshop_remote_products"
+    __table_args__ = (UniqueConstraint("connection_id", "woo_product_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("webshop_connections.id"), index=True)
+    woo_product_id: Mapped[int] = mapped_column(BigInteger)
+    sku: Mapped[str] = mapped_column(String(100), default="")
+    gtin: Mapped[str] = mapped_column(String(50), default="")
+    name: Mapped[str] = mapped_column(String(300), default="")
+    status: Mapped[str] = mapped_column(String(20), default="")
+    # `stock_articles.id` gravado no produto pelo conector desta ligação, se existir.
+    article_id: Mapped[str] = mapped_column(String(36), default="")
+    cycle: Mapped[str] = mapped_column(String(36), default="")
+    reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class Obligation(Base):

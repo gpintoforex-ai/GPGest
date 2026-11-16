@@ -446,3 +446,5 @@
     flex-basis: 100%;
   }
 }
+.article-web-state { display: inline-flex; flex-direction: column; gap: 2px; margin-right: 6px; }
+.article-selection-shop { display: contents; }

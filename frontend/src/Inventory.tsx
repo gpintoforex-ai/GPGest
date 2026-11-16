@@ -1,3 +1,4 @@
+import { WebContentQueue } from "./ArticleWebContent";
 import { MetricCard } from "./components/BusinessUI";
 import { formatQuantity, setQuantityDecimals } from "./lib/quantity";
 import OperationsOverview from "./components/OperationsOverview";
@@ -143,12 +144,14 @@ function Num({
 export default function Inventory({
   stores,
   admin,
+  active = true,
 }: {
   stores: Row[];
   admin: boolean;
+  active?: boolean;
 }) {
   const [catalog, setCatalog] = useState<Row | null>(null),
-    [tab, setTab] = useWorkspaceTab("stock", "Painel", ["Painel", "Artigos", "Movimentos", "Lotes e validades", "Inventários", "Importações", "Parâmetros"]),
+    [tab, setTab] = useWorkspaceTab("stock", "Painel", ["Painel", "Artigos", "Movimentos", "Lotes e validades", "Inventários", "Importações", "Site", "Parâmetros"]),
     [error, setError] = useState(""),
     [success, setSuccess] = useState("");
   const [filters, setFilters] = useState<Row>({
@@ -208,22 +211,23 @@ export default function Inventory({
   ).toString();
   const [revision, setRevision] = useState(0);
   useEffect(() => {
-    let active = true;
+    if (!active) return;
+    let pending = true;
     api("/stock/catalog" + (tab === "Artigos" ? "?metadata_only=true" : ""))
       .then((data) => {
-        if (active) {
+        if (pending) {
           setQuantityDecimals(data.settings?.quantity_decimals);
           setCatalog(data);
           setConfig(data.settings);
         }
       })
       .catch((e) => {
-        if (active) setError(e.message);
+        if (pending) setError(e.message);
       });
     return () => {
-      active = false;
+      pending = false;
     };
-  }, [tab === "Artigos"]);
+  }, [tab === "Artigos", active]);
   useEffect(() => {
     if (!catalog) return;
     let active = true;
@@ -399,7 +403,7 @@ export default function Inventory({
           Wintouch, use «Associar por código» em Importações.
         </Notice>
       )}
-      <ModuleTabs label="Artigos e stock" value={tab} tabs={([{"id": "Painel", "label": "Painel"}, {"id": "Artigos", "label": "Artigos"}, {"id": "Movimentos", "label": "Movimentos"}, {"id": "Lotes e validades", "label": "Lotes e validades"}, {"id": "Inventários", "label": "Inventários"}, {"id": "Importações", "label": "Importações"}, {"id": "Parâmetros", "label": "Parâmetros"}]).filter(item => admin || item.id !== "Parâmetros")} onChange={value => { setTab(value);  }} />
+      <ModuleTabs label="Artigos e stock" value={tab} tabs={([{"id": "Painel", "label": "Painel"}, {"id": "Artigos", "label": "Artigos"}, {"id": "Movimentos", "label": "Movimentos"}, {"id": "Lotes e validades", "label": "Lotes e validades"}, {"id": "Inventários", "label": "Inventários"}, {"id": "Importações", "label": "Importações"}, {"id": "Site", "label": "Descritivos do site"}, {"id": "Parâmetros", "label": "Parâmetros"}]).filter(item => (admin || item.id !== "Parâmetros") && (item.id !== "Site" || rights.adjust_stock))} onChange={value => { setTab(value);  }} />
       {!warehouses.length && (
         <Notice tone="warning">
           Crie um armazém para começar a registar stock.
@@ -987,6 +991,7 @@ export default function Inventory({
           setConfig={setConfig}
         />
       )}
+      {tab === "Site" && rights.adjust_stock && <WebContentQueue />}
       {tab === "Parâmetros" && config && (
         <section className="panel">
           <h2>
@@ -1230,13 +1235,13 @@ export default function Inventory({
                 setFilters(current => ({ ...current, article_id: id }));
                 setPage(1); setTab(section); setDialog(null);
               }}
-              onSave={async (values) => {
+              onSave={async (values, note) => {
                 await api(
                   `/stock/articles${dialog.article.id ? `/${dialog.article.id}` : ""}`,
                   values,
                   dialog.article.id ? { method: "PUT" } : undefined,
                 );
-                await saved("Artigo guardado.");
+                await saved(note ? `Artigo guardado. ${note}` : "Artigo guardado.");
               }}
             />
           )}

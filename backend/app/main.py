@@ -2480,6 +2480,12 @@ from .sales_explorer import router as sales_explorer_router
 app.include_router(sales_explorer_router)
 from .customer_activity import router as customer_activity_router
 app.include_router(customer_activity_router)
+from .article_content import router as article_content_router
+app.include_router(article_content_router)
+from .article_images import router as article_images_router
+app.include_router(article_images_router)
+from .article_price import router as article_price_router
+app.include_router(article_price_router)
 from .operation_trace import router as operation_trace_router
 app.include_router(operation_trace_router)
 from .classification import router as classification_router
@@ -2543,3 +2549,7 @@ app.include_router(bank_rules_router)
 
 from .webshop import router as webshop_router
 app.include_router(webshop_router)
+from .webshop_catalog import router as webshop_catalog_router
+app.include_router(webshop_catalog_router)
+from .webshop_payments import router as webshop_payments_router
+app.include_router(webshop_payments_router)

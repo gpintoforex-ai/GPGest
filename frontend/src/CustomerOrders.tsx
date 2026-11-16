@@ -125,6 +125,7 @@ const stateTone = (state: string) =>
     simulated: "info",
     waiting: "warning",
     registered: "warning",
+    to_invoice: "warning",
     cancelled: "neutral",
   }) as const)[state] || "neutral";
 const blankLine = () => ({
@@ -1119,7 +1120,7 @@ export default function CustomerOrders({
   /** Mesma janela do novo pedido. Produtos já em curso mantêm o artigo e o mínimo comprometido. */
   function editOrder(row: Row) {
     const open_lines = row.lines.filter(
-      (l: Row) => !["delivered", "cancelled"].includes(l.state),
+      (l: Row) => !["delivered", "cancelled", "to_invoice"].includes(l.state),
     );
     open("order", {
       id: row.id,
@@ -2551,6 +2552,8 @@ export default function CustomerOrders({
                   ["confirmed", "Confirmada"],
                   ["received", "Recebida"],
                   ["delivered", "Entregue"],
+                  ["to_invoice", "Entregue por faturar"],
+                  ["invoiced", "Faturada"],
                   ["cancelled", "Cancelada"],
                 ].map(([key, label]) => {
                   const value = Number(l.quantities[key] || 0);
@@ -2562,7 +2565,9 @@ export default function CustomerOrders({
                         ? "warning"
                         : key === "available"
                           ? "success"
-                          : key === "cancelled"
+                          : key === "to_invoice"
+                            ? "warning"
+                            : key === "cancelled"
                             ? "muted"
                             : "";
                   return (
@@ -2622,7 +2627,7 @@ export default function CustomerOrders({
                       Reservar stock
                     </ActionButton>
                   )}
-                  {Number(l.quantities.reserved) > 0 && (
+                  {Number(l.quantities.reserved) - Number(l.quantities.to_invoice || 0) > 0 && (
                     <ActionButton
                       onClick={() =>
                         open("quantity", {
@@ -2630,7 +2635,9 @@ export default function CustomerOrders({
                           order_id: active.id,
                           revision: active.revision,
                           action: "release",
-                          quantity: l.quantities.reserved,
+                          quantity: String(
+                            Number(l.quantities.reserved) - Number(l.quantities.to_invoice || 0),
+                          ),
                           reason: "",
                         })
                       }
@@ -2656,7 +2663,7 @@ export default function CustomerOrders({
                     </ActionButton>
                   )}
                   {Number(l.quantities.requested) >
-                    Number(l.quantities.delivered) +
+                    Math.max(Number(l.quantities.delivered), Number(l.quantities.invoiced || 0)) +
                       Number(l.quantities.cancelled) && (
                     <ActionButton
                       className="danger"
@@ -2668,7 +2675,7 @@ export default function CustomerOrders({
                           action: "cancel",
                           quantity: String(
                             Number(l.quantities.requested) -
-                              Number(l.quantities.delivered) -
+                              Math.max(Number(l.quantities.delivered), Number(l.quantities.invoiced || 0)) -
                               Number(l.quantities.cancelled),
                           ),
                           reason: "",
@@ -3467,7 +3474,7 @@ export default function CustomerOrders({
                     }
                   >
                     {draft.action === "deliver"
-                      ? "A entrega física local dá baixa de stock. Não emite fatura nem cria recebimentos financeiros."
+                      ? "A entrega é só um registo logístico: não dá baixa de stock nem emite fatura. O stock sai quando a fatura Wintouch do cliente for importada; até lá, a reserva mantém-se."
                       : draft.action === "cancel"
                         ? "A quantidade cancelada deixa de estar pendente e liberta reservas e atribuições a compras. Os produtos já entregues e o histórico mantêm-se."
                         : "Os produtos já entregues e o histórico mantêm-se."}

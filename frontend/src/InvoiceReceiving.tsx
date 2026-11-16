@@ -414,7 +414,7 @@ export default function InvoiceReceiving({ articles, stores, categories, canChan
       };
       if (editReceipt) {
         const saved: Row = await api(`/purchase-receiving/receipts/${editReceipt}?revision=${result!.receipt.revision}`, body, { method: "PUT" });
-        onDone(`Receção atualizada: ${saved.lines} linhas; os movimentos de stock foram gerados de novo.`, saved.price_review_pending ? saved.receipt_id : undefined);
+        onDone(`Receção atualizada: ${saved.lines} linhas; o stock só muda nas linhas alteradas.`, saved.price_review_pending ? saved.receipt_id : undefined);
         return;
       }
       const done: Row = await api(`/purchase-receiving/${reading!.id}/confirm`, body);

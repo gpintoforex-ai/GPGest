@@ -48,8 +48,10 @@ importou. O sentido vem do tipo de documento (`StockMode`: entra, sai ou transfe
 
 | Documentos Wintouch (classe) | Movimento na IAZELA |
 |---|---|
-| Faturas, faturas-recibo, FS, guias a cliente, pedidos, amostras, contas de mesa (3, 5, 7, 19, 27, 39, 40) | Venda (saída, com a venda líquida) |
-| Notas de crédito e devoluções de cliente (4, 6, 8, 28) | Devolução de cliente, ao custo da venda original |
+| Faturas-recibo, faturas e FS (3, 5, 40) | Venda (saída, com a venda líquida); consome a reserva de um pedido do mesmo cliente |
+| Guias a cliente e suas devoluções, pedidos, contas de mesa (7, 8, 19, 39) | **Nenhum**: a saída de venda vem só da fatura |
+| Amostras (27) / devoluções de amostra (28) | Acerto de saída / acerto de entrada («Amostra Wintouch») |
+| Notas de crédito e devoluções de cliente (4, 6) | Devolução de cliente, ao custo da venda original |
 | Faturas de compra e guias de entrada (32, 34, 36) | **Nenhum**: as compras entram no stock só pela receção na aplicação (ver abaixo) |
 | Devoluções e notas de crédito de fornecedor (33, 35, 37) | Devolução a fornecedor, só quando a compra original foi integrada; senão, por rever |
 | Entradas de stock (10) e outros tipos que entram | Acerto de entrada, com o custo da linha |

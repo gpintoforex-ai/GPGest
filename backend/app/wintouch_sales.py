@@ -313,6 +313,8 @@ def sales_snapshot(reader, start, end, lines_from=None, known=None, progress=Non
             "category_name": "Vendas" if types.get(row.get("DocumentTypeID"), {}).get("Class") not in (32, 33, 34, 35) else None,
             "entity": string(entity, 300, True),
             "entity_nif": str(row.get("VATNumber") or (row.get("CEntity") or {}).get("VATNumber") or "").removeprefix("PT").strip()[:30],
+            # Identificador da entidade no ERP: liga as vendas à ficha do cliente sem depender do nome.
+            "entity_id": string((row.get("CEntity") or {}).get("ID") or row.get("EntityID"), 150) or "",
             "occurred_at": row["Date"],
             "currency": "EUR",
             "direction": direction,

@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
-from app.models import BusinessEntity, DocumentPayment, ProcurementDocument, ProcurementLink, Purchase, StockEntry, PlannedMovement
+from app.models import Audit, BusinessEntity, DocumentPayment, ProcurementDocument, ProcurementLink, Purchase, StockEntry, PlannedMovement
 from conftest import supplier_fields
 from test_inventory import stock_case, product, view, move, login
 
@@ -266,12 +266,15 @@ def test_procurement_migration_recreates_tables_and_purchase_link(case,monkeypat
     cycle_migration=importlib.import_module('migrations.versions.0058_order_cycle')
     # Webshop orders reference customer orders, so they must be removed first too.
     webshop_migration=importlib.import_module('migrations.versions.0074_webshop')
+    # Publication (0095) and payment (0096) tables depend on the webshop tables.
+    dependents=[importlib.import_module('migrations.versions.'+name) for name in ('0096_webshop_payments','0095_webshop_publications')]
     helper=importlib.import_module('migrations.versions.0006_cash_sheet')
     with stock[2].kw['bind'].begin() as conn:
         schema=conn.scalar(text('SELECT current_schema()'))
         monkeypatch.setattr(helper,'schemas',lambda _:[schema])
         before=conn.scalar(text('SELECT count(*) FROM users'))
         with Operations.context(MigrationContext.configure(conn)):
+            for dependent in dependents:dependent.downgrade()
             webshop_migration.downgrade()
             cycle_migration.downgrade()
             customer_migration.downgrade()
@@ -279,6 +282,7 @@ def test_procurement_migration_recreates_tables_and_purchase_link(case,monkeypat
             customer_migration.upgrade()
             cycle_migration.upgrade()
             webshop_migration.upgrade()
+            for dependent in reversed(dependents):dependent.upgrade()
         assert {'procurement_documents','procurement_links'} <= set(inspect(conn).get_table_names(schema=schema))
         assert 'purchase_id' in {c['name'] for c in inspect(conn).get_columns('planned_movements',schema=schema)}
         assert conn.scalar(text('SELECT count(*) FROM users'))==before
@@ -389,12 +393,32 @@ def test_confirmed_receipt_is_edited_in_place_and_regenerates_stock(case):
     sale = c.post('/api/stock/movements', json={'article_id': aid, 'warehouse_id': stock[3][0], 'kind': 'sale', 'quantity': '2',
                                                 'reason': 'Venda de teste', 'request_key': str(uuid4())})
     assert sale.status_code == 200, sale.text
+    # Gravar sem alterar artigo, quantidade, preço, lote ou armazém: a entrada mantém-se (sem ajuste nem entrada nova),
+    # mesmo com a venda posterior. Antes, cada gravação acrescentava um par «ajuste −N / receção +N» aos movimentos.
+    same = edit(edited, '10')
+    assert same.status_code == 200, same.text
+    assert D(view(stock, aid)['quantity']) == 8
+    with stock[2]() as db:
+        kinds = sorted(e.kind for e in db.scalars(select(StockEntry).where(StockEntry.article_id == aid)))
+        assert kinds == ['purchase', 'sale']
+        audit = db.scalars(select(Audit).where(Audit.action == 'compra_circuito_rececao_editada').order_by(Audit.created_at.desc())).first()
+        assert json.loads(audit.detail)['entradas_mantidas'] == 1 and json.loads(audit.detail)['entradas_estornadas'] == 0
+    edited = same.json()
     second = edit(edited, '9', price='11')
     assert second.status_code == 200, second.text
     assert D(view(stock, aid)['quantity']) == 7
     with stock[2]() as db:
         kinds = sorted(e.kind for e in db.scalars(select(StockEntry).where(StockEntry.article_id == aid)))
         assert kinds == ['adjustment', 'purchase', 'purchase', 'sale']
+    # Livro de stock: a entrada substituída e o ajuste que a anula ficam escondidos por omissão (efeito zero), com
+    # a contagem para os mostrar; nada é apagado.
+    ledger = c.get('/api/procurement-ledger', params={'article_id': aid}).json()
+    assert sorted(r['kind'] for r in ledger['rows']) == ['purchase', 'sale'] and ledger['hidden_corrections'] == 2
+    assert D(next(r for r in ledger['rows'] if r['kind'] == 'purchase')['quantity']) == 9
+    full = c.get('/api/procurement-ledger', params={'article_id': aid, 'corrections': 'true'}).json()
+    assert sorted(r['kind'] for r in full['rows']) == ['adjustment', 'purchase', 'purchase', 'sale'] and full['hidden_corrections'] == 0
+    documents = c.get('/api/procurement-ledger', params={'article_id': aid, 'view': 'documents'}).json()
+    assert documents['hidden_corrections'] == 2
     # Revisão desatualizada e receção já faturada não se editam.
     assert edit(edited, '8').status_code == 409
     current = second.json()

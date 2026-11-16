@@ -252,14 +252,19 @@ def test_partial_receipt_confirmation_never_creates_stock_and_delivery_once(case
     url = f"/lines/{row['lines'][0]['id']}/deliver"
     first = post(case[0][0], url, delivered)
     post(case[0][0], url, delivered)
-    assert (
-        D(first["lines"][0]["quantities"]["delivered"]) == 2
-        and D(view(case[0], aid)["quantity"]) == 0
-    )
+    # A entrega é só logística: o stock e a reserva mantêm-se até a fatura Wintouch dar a saída.
+    q = first["lines"][0]["quantities"]
+    assert D(q["delivered"]) == 2 and D(q["reserved"]) == 2 and D(q["to_invoice"]) == 2
+    assert D(q["available"]) == 0 and D(view(case[0], aid)["quantity"]) == 2
+    # Unidades entregues por faturar não se libertam nem se cancelam.
+    post(case[0][0], url.replace("/deliver", "/release"),
+         {"revision": first["revision"], "request_key": str(uuid4()), "quantity": "1", "reason": "Teste"}, 409)
     sim, _ = receive(case, sim, 3)
     final = order(case, row["id"])
     final = action(case, final, "deliver", 3, reason="Levantamento final")
-    assert final["closed"] and final["lines"][0]["state"] == "delivered"
+    assert not final["closed"] and final["lines"][0]["state"] == "to_invoice"
+    assert D(final["lines"][0]["quantities"]["reserved"]) == 5 and D(view(case[0], aid)["quantity"]) == 5
+    assert not final["late"] and not final["fully_ready"]
 
 
 def test_existing_receipt_allocation_does_not_duplicate_stock(case):
@@ -790,12 +795,17 @@ def test_customer_migration_is_additive_and_repeatable(case, monkeypatch):
     cycle_migration = importlib.import_module("migrations.versions.0058_order_cycle")
     # A loja online (0074) depende das encomendas de clientes: desce primeiro e sobe no fim.
     webshop_migration = importlib.import_module("migrations.versions.0074_webshop")
+    # Publicação (0095) e pagamentos (0096) dependem da loja online: descem antes e sobem depois.
+    dependents = [importlib.import_module("migrations.versions." + name)
+                  for name in ("0096_webshop_payments", "0095_webshop_publications")]
     helper = importlib.import_module("migrations.versions.0006_cash_sheet")
     with case[0][2].kw["bind"].begin() as connection:
         schema = connection.scalar(text("SELECT current_schema()"))
         monkeypatch.setattr(helper, "schemas", lambda _: [schema])
         before = connection.scalar(text("SELECT count(*) FROM users"))
         with Operations.context(MigrationContext.configure(connection)):
+            for dependent in dependents:
+                dependent.downgrade()
             webshop_migration.downgrade()
             cycle_migration.downgrade()
             migration.downgrade()
@@ -803,6 +813,8 @@ def test_customer_migration_is_additive_and_repeatable(case, monkeypatch):
             migration.upgrade()
             cycle_migration.upgrade()
             webshop_migration.upgrade()
+            for dependent in reversed(dependents):
+                dependent.upgrade()
         assert all(
             model.__tablename__ in inspect(connection).get_table_names(schema=schema)
             for model in migration.TABLES
