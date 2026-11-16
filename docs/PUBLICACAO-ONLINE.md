@@ -3,7 +3,7 @@
 O IAZELA é o sistema central do catálogo publicado na loja online. Em **Integrações → Publicação online**
 (administrador ou gestor da loja da ligação) escolhe os artigos que vão para a Raizpura, o SKU e o preço do
 canal. A loja recebe só o que mudou e devolve o resultado de cada artigo. Requer a migração **0095** e o
-plugin **Raizpura Commerce 1.3** ou posterior.
+plugin **Raizpura Commerce 1.3** ou posterior; as fotografias e o rótulo da IAZELA, as categorias por família, o SEO no Rank Math e «Usar o texto da IAZELA» exigem o plugin **1.4** e as migrações 0097 a 0099.
 
 ## O que se gere
 
