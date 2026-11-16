@@ -74,7 +74,7 @@ def test_answer_uses_the_model_with_fallback_and_records_the_question(assistant)
     assert result["reply"] == "Resposta de teste." and result["usage"]["input_tokens"] == 100
     params = FakeClient.calls[0]
     assert params["model"] == "claude-opus-5-5" and params["fallbacks"] == "default"
-    assert params["output_config"] == {"effort": "medium"} and len(params["tools"]) == 10
+    assert params["output_config"] == {"effort": "medium"} and len(params["tools"]) == 11
     assert "português de Portugal" in params["system"][0]["text"] and "Hoje é" in params["system"][1]["text"]
     from app.models import Audit
     from sqlalchemy import select
@@ -264,3 +264,33 @@ def test_prices_written_by_the_model_are_read_without_floats(text, expected):
 
     from app.assistant import parse_euros
     assert parse_euros(text) == Decimal(expected)
+
+
+def test_charts_show_only_data_already_consulted(assistant):
+    chart = {"titulo": "Faturação por mês, 2026", "tipo": "colunas", "unidade": "euros", "categorias": ["out", "nov"],
+             "series": [{"nome": "2026", "valores": ["1234.56", 99.9]}, {"nome": "2025", "valores": [None, "10,5"]}],
+             "nota": "Vendas Wintouch, com IVA"}
+    # Sem consultar dados primeiro, o gráfico é recusado.
+    alone = ask(assistant, [("mostrar_grafico", chart)])
+    assert "Consulte primeiro" in FakeClient.results["mostrar_grafico"]["erro"] and alone["charts"] == []
+    result = ask(assistant, [("artigos_a_terminar_validade", {"dias": 60}), ("mostrar_grafico", chart)])
+    [shown] = result["charts"]
+    # Euros em cêntimos inteiros (sem float); categorias e séries pela ordem dada.
+    assert shown == {"title": "Faturação por mês, 2026", "kind": "colunas", "unit": "euros", "categories": ["out", "nov"],
+                     "series": [{"name": "2026", "values": [123456, 9990]}, {"name": "2025", "values": [None, 1050]}],
+                     "note": "Vendas Wintouch, com IVA"}
+    assert "mostrar_grafico" in [t["name"] for t in result["tools"]]
+
+
+@pytest.mark.parametrize("change,message", [
+    ({"categorias": ["a"]}, "um valor por categoria"),
+    ({"tipo": "barras"}, "uma série"),
+    ({"series": [{"nome": "x", "valores": ["abc", 1]}]}, "inválido"),
+    ({"series": [{"nome": "x", "valores": [None, None]}]}, "não tem valores"),
+    ({"titulo": " "}, "título"),
+])
+def test_invalid_charts_return_the_reason_to_the_model(assistant, change, message):
+    chart = {"titulo": "Teste", "tipo": "colunas", "unidade": "quantidade", "categorias": ["a", "b"],
+             "series": [{"nome": "s1", "valores": [1, 2]}, {"nome": "s2", "valores": [3, 4]}], **change}
+    result = ask(assistant, [("artigos_a_terminar_validade", {"dias": 60}), ("mostrar_grafico", chart)])
+    assert message in FakeClient.results["mostrar_grafico"]["erro"] and result["charts"] == []

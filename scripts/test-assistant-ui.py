@@ -1,4 +1,5 @@
-"""Assistente IAZELA: painel no cabeçalho, sugestões, envio, resposta formatada, fontes e estado sem chave.
+"""Assistente IAZELA: painel no cabeçalho, sugestões, envio, resposta formatada, fontes, estado sem chave,
+cartão de confirmação de preço (nada é gravado sem «Confirmar») e gráficos na resposta.
 
 Só APIs intercetadas (reaproveita a preparação do teste visual); nada sai para a Anthropic.
 Requer o Vite em 127.0.0.1:5174.
@@ -17,7 +18,13 @@ OUT = ROOT / ".local" / "assistant-ui"
 OUT.mkdir(parents=True, exist_ok=True)
 REPLY = ("Nos próximos 60 dias terminam a validade **2 lotes**:\n- **Chá verde** (lote L1): 4 un., 20/11/2026\n"
          "- Mel biológico (lote M7): 2 un., 30/12/2026\n\nFonte: lotes em stock nos armazéns autorizados.")
-sent, available = [], [True]
+sent, available, saved = [], [True], []
+ACTION = {"type": "price", "article_id": "a1", "code": "OC500", "name": "Óleo de coco biológico 500 ml", "origin": "local",
+          "vat_rate": "23", "before_gross": "6.15", "after_gross": "8.90", "channels": [],
+          "request": {"path": "/stock/articles/a1/price", "body": {"revision": 3, "sale_net": "7.235772"}}}
+CHART = {"title": "Faturação por mês, 2026 vs 2025", "kind": "colunas", "unit": "euros", "categories": ["set", "out", "nov"],
+         "series": [{"name": "2026", "values": [1234500, 1520000, 980000]}, {"name": "2025", "values": [1100000, 1310000, None]}],
+         "note": "Vendas SAF-T, com IVA"}
 
 
 def intercept(route):
@@ -25,8 +32,18 @@ def intercept(route):
     if path == "/assistente/estado":
         return route.fulfill(json={"available": available[0], "model": "claude-opus-5-5",
                                    "message": "" if available[0] else "O assistente não está configurado: indique ANTHROPIC_API_KEY no ficheiro .env do servidor e reinicie a API."})
+    if path == "/stock/articles/a1/price":
+        saved.append(route.request.post_data_json)
+        return route.fulfill(json={"saved": True})
     if path == "/assistente/mensagens":
         sent.append(route.request.post_data_json)
+        question = sent[-1]["messages"][-1]["content"]
+        if "óleo de coco" in question:
+            return route.fulfill(json={"reply": "Proposta pronta: confirme no cartão.", "tools": [{"name": "procurar_artigos"}, {"name": "propor_alteracao_preco"}],
+                                       "actions": [ACTION], "charts": [], "usage": {}, "model": "claude-opus-5-5"})
+        if "gráfico" in question:
+            return route.fulfill(json={"reply": "Em outubro faturou **mais 16 %** do que em 2025.", "tools": [{"name": "comparativo_vendas"}, {"name": "mostrar_grafico"}],
+                                       "actions": [], "charts": [CHART], "usage": {}, "model": "claude-opus-5-5"})
         return route.fulfill(json={"reply": REPLY, "tools": [{"name": "artigos_a_terminar_validade", "input": {"dias": 60}}],
                                    "usage": {"input_tokens": 1, "output_tokens": 1}, "model": "claude-opus-5-5"})
     return ns["intercept"](route)
@@ -47,7 +64,7 @@ with sync_playwright() as p:
         dialog = page.get_by_role("dialog", name="Assistente IAZELA")
         expect(dialog.get_by_text("enviados à Anthropic", exact=False)).to_be_visible()
         suggestions = dialog.get_by_role("group", name="Perguntas sugeridas")
-        expect(suggestions.get_by_role("button")).to_have_count(8)
+        expect(suggestions.get_by_role("button")).to_have_count(10)
         # Sugestão com «…»: vai para a caixa de texto, para completar (não é enviada).
         suggestions.get_by_role("button", name="Que produtos o cliente … já comprou?").click()
         box = dialog.get_by_label("Pergunta ao assistente", exact=True)
@@ -70,6 +87,41 @@ with sync_playwright() as p:
         dialog.screenshot(path=str(OUT / f"conversation-{width}-{theme}.png"))
         dialog.get_by_role("button", name="Nova conversa").click()
         expect(suggestions).to_be_visible()
+        # Proposta de preço: cartão com o antes/depois; nada é gravado até «Confirmar».
+        saved.clear()
+        box.fill("Põe o óleo de coco 500 ml a 8,90 €")
+        box.press("Enter")
+        card = dialog.get_by_role("group", name="Alterar preço de Óleo de coco biológico 500 ml")
+        expect(card).to_contain_text("6,15 €")
+        expect(card).to_contain_text("8,90 €")
+        assert not saved
+        dialog.screenshot(path=str(OUT / f"price-card-{width}-{theme}.png"))
+        card.get_by_role("button", name="Confirmar").click()
+        expect(card).to_contain_text("Preço gravado")
+        assert saved == [{"revision": 3, "sale_net": "7.235772"}]
+        # O estado da proposta segue no histórico da pergunta seguinte.
+        box.fill("Mostra num gráfico a faturação por mês")
+        box.press("Enter")
+        expect(dialog.locator(".assistant-chart")).to_have_count(1)
+        assert "Confirmado pelo utilizador e gravado" in sent[-1]["messages"][1]["content"]
+        chart = dialog.locator(".assistant-chart")
+        expect(chart).to_contain_text("Faturação por mês, 2026 vs 2025")
+        expect(chart.locator("svg[role=img]")).to_have_count(1)
+        chart.scroll_into_view_if_needed()
+        dialog.screenshot(path=str(OUT / f"chart-{width}-{theme}.png"))
+        chart.get_by_role("button", name="Ver tabela").click()
+        expect(chart.locator("tbody tr")).to_have_count(3)
+        expect(chart.locator("tbody tr").first).to_contain_text("12.345,00 €")
+        # Cancelar não grava nada.
+        dialog.get_by_role("button", name="Nova conversa").click()
+        saved.clear()
+        box.fill("Põe o óleo de coco 500 ml a 8,90 €")
+        box.press("Enter")
+        card = dialog.get_by_role("group", name="Alterar preço de Óleo de coco biológico 500 ml")
+        card.get_by_role("button", name="Cancelar").click()
+        expect(card).to_contain_text("nada foi alterado")
+        assert not saved
+        dialog.get_by_role("button", name="Nova conversa").click()
         page.keyboard.press("Escape")
         expect(dialog).to_have_count(0)
         # Sem chave da API: o painel explica como configurar e não deixa enviar.
@@ -82,4 +134,4 @@ with sync_playwright() as p:
         assert not errors, errors
         page.close()
     browser.close()
-print("PASS: assistente (painel, sugestões, envio, resposta formatada, fontes e estado sem chave)")
+print("PASS: assistente (painel, sugestões, envio, resposta formatada, fontes, estado sem chave, confirmação de preço e gráficos)")

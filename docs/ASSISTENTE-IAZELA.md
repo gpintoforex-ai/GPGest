@@ -25,6 +25,7 @@ O modelo é `claude-opus-5-5`, com esforço médio. Se o modelo recusar um pedid
 | Documentos em falta na contabilidade | `documentos_em_falta_contabilidade` | Conferência documental: não localizados, solicitados ao fornecedor ou sem anexo nem papel; e por entregar |
 | Encontrar um artigo e o preço atual | `procurar_artigos` | Artigos ativos por nome (todas as palavras), código ou código de barras; preço com IVA da Wintouch ou da ficha local |
 | Alterar o preço de venda | `propor_alteracao_preco` | Só proposta: ver [Ações com confirmação](#ações-com-confirmação) |
+| Mostrar um gráfico | `mostrar_grafico` | Só desenha dados já devolvidos pelas outras ferramentas: ver [Gráficos](#gráficos) |
 
 As ferramentas usam as permissões e as lojas do utilizador. As que têm ecrã próprio chamam esse endpoint GET no próprio processo, com a sessão do utilizador, para os números serem iguais aos do ecrã. As de vendas por cliente e por artigo leem os documentos de venda das lojas autorizadas, com os critérios do Dashboard. A loja escolhida no topo da app limita as consultas.
 
@@ -41,6 +42,16 @@ Exemplo: «Põe o óleo de coco 500 ml a 8,90 €» ou «Aumenta 5 % o chá verd
 5. A auditoria regista a proposta (`assistente_pergunta`, campo `acoes_propostas`) e a gravação (`wintouch_price_write` ou `stock_article_price`).
 
 O estado de cada proposta (confirmada, cancelada, falhada ou por confirmar) segue no histórico da conversa, para o assistente saber o que foi gravado. Cada resposta propõe no máximo 20 alterações, cada uma confirmada à parte.
+
+## Gráficos
+
+Exemplo: «Mostra num gráfico a faturação dos últimos 12 meses comparada com o ano anterior».
+
+- O assistente consulta primeiro os dados (por exemplo `comparativo_vendas`) e depois chama `mostrar_grafico`. Sem uma consulta antes, na mesma pergunta, o gráfico é recusado.
+- Tipos: **colunas** (comparar meses ou categorias), **linha** (evolução) e **barras** (ranking horizontal). Colunas e linha têm até 2 séries (por exemplo, este ano e o anterior); barras têm uma. No máximo 36 categorias e 4 gráficos por resposta.
+- Unidades: euros (convertidos no servidor para cêntimos inteiros, com `Decimal`), quantidade ou percentagem.
+- O painel usa os componentes do dashboard (`DashboardCharts.tsx`): legenda, valores ao passar o rato, tocar ou navegar com o teclado, e **Ver tabela** com todos os valores.
+- As instruções do modelo dizem que os valores vêm só dos resultados das ferramentas (somas e agrupamentos indicados na resposta). Para os números exatos, abra **Ver tabela** ou o ecrã de origem.
 
 ## Privacidade, segurança e custos
 
@@ -59,4 +70,5 @@ O estado de cada proposta (confirmada, cancelada, falhada ou por confirmar) segu
 ## Verificação
 
 - `backend/tests/test_assistant.py`: o cliente da Claude API é substituído por um falso que executa as ferramentas sobre dados de teste. Cobre lotes, vendas, clientes, IVA, documentos, erros e auditoria, e as propostas de preço (local e Wintouch simulada): nada é gravado antes de confirmar, a confirmação usa o pedido da ficha, uma proposta desatualizada é recusada e a permissão de alterar preços é respeitada. Nenhum pedido sai para a Anthropic.
-- `scripts/test-assistant-ui.py`: painel, sugestões, envio, resposta formatada, fontes consultadas e estado sem chave, com APIs simuladas.
+- `backend/tests/test_assistant.py` também cobre os gráficos: recusa sem consulta prévia, euros em cêntimos inteiros e validação (séries, categorias, valores).
+- `scripts/test-assistant-ui.py`: painel, sugestões, envio, resposta formatada, fontes consultadas, estado sem chave, cartão de preço (confirmar grava, cancelar não grava, o estado segue no histórico) e gráfico com tabela, com APIs simuladas.

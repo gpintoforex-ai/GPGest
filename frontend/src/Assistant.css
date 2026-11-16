@@ -29,6 +29,15 @@
 .assistant-form { display: flex; gap: 8px; align-items: flex-end; }
 .assistant-form textarea { flex: 1 1 auto; min-width: 0; resize: none; min-height: 44px; max-height: 140px; }
 .assistant-form .ui-action { flex: 0 0 auto; width: 44px; min-height: 44px; padding: 0; display: inline-grid; place-items: center; }
+/* Gráficos na resposta: a bolha alarga para o gráfico ficar legível. */
+.assistant-turn.is-assistant:has(.assistant-chart) { max-width: 100%; width: 100%; }
+.assistant-chart { --series-1: #2a78d6; --series-2: #eb6834; margin-top: 8px; background: var(--color-surface); border-radius: 10px; padding: 4px 8px; }
+.assistant-chart .dash-chart { margin: 0; }
+.assistant-chart .dash-chart figcaption { flex-wrap: wrap; gap: 6px; }
+.assistant-chart .dash-table-toggle { white-space: nowrap; }
+:root[data-theme="dark"] .assistant-chart { --series-1: #3987e5; --series-2: #d95926; }
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .assistant-chart { --series-1: #3987e5; --series-2: #d95926; } }
+
 /* Cartão de confirmação de uma ação proposta (nada é gravado sem «Confirmar»). */
 .assistant-action { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); display: grid; gap: 4px; }
 .assistant-action.is-done { border-color: var(--color-success, var(--color-border)); }
@@ -44,4 +53,5 @@
 @media (max-width: 600px) {
   .ui-dialog.assistant-dialog { width: calc(100vw - 16px); height: calc(100dvh - 16px); margin: 8px; }
   .assistant-turn { max-width: 100%; }
+  .assistant-chart { padding: 2px; }
 }

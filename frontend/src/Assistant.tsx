@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, Send, Sparkles, Tag, X } from "lucide-react";
 import { ActionButton, AppDialog, Notice } from "./components/InteractionUI";
+import { BarList, ChartFrame, ColumnsChart, Legend } from "./DashboardCharts";
 import { api } from "./lib/api";
+import { formatEuro } from "./utils/format";
 import "./Assistant.css";
 
 /** Ação proposta pelo assistente: o servidor valida-a e devolve o pedido que a ficha do artigo faria. */
@@ -18,7 +20,16 @@ type Action = {
   request: { path: string; body: unknown };
 };
 type ActionState = { status: "pending" | "busy" | "done" | "cancelled" | "failed"; message?: string };
-type Turn = { role: "user" | "assistant"; content: string; tools?: { name: string }[]; actions?: Action[]; states?: ActionState[] };
+/** Gráfico pedido pelo assistente com dados já consultados: euros em cêntimos inteiros, restantes em texto decimal. */
+type Chart = {
+  title: string;
+  kind: "colunas" | "linha" | "barras";
+  unit: "euros" | "quantidade" | "percentagem";
+  categories: string[];
+  series: { name: string; values: (number | string | null)[] }[];
+  note: string;
+};
+type Turn = { role: "user" | "assistant"; content: string; tools?: { name: string }[]; actions?: Action[]; states?: ActionState[]; charts?: Chart[] };
 
 /** Perguntas sugeridas: as consultas que o assistente sabe fazer. */
 const SUGGESTIONS = [
@@ -30,6 +41,7 @@ const SUGGESTIONS = [
   "Que clientes já não compram há mais de 90 dias?",
   "Qual é a previsão do IVA a pagar neste período?",
   "Que documentos estão em falta para a contabilidade?",
+  "Mostra num gráfico a faturação dos últimos 12 meses comparada com o ano anterior.",
   "Altera o preço do artigo … para … € (com IVA).",
 ];
 
@@ -44,7 +56,25 @@ const TOOL_LABELS: Record<string, string> = {
   documentos_em_falta_contabilidade: "Conferência documental",
   procurar_artigos: "Artigos",
   propor_alteracao_preco: "Proposta de preço",
+  mostrar_grafico: "Gráfico",
 };
+
+function ChartView({ chart }: { chart: Chart }) {
+  const decimal = new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 2 });
+  const format = chart.unit === "euros" ? formatEuro
+    : chart.unit === "percentagem" ? (v: number) => `${decimal.format(v)} %` : (v: number) => decimal.format(v);
+  const values = chart.series.map(s => s.values.map(v => v === null ? null : Number(v)));
+  const cell = (v: number | null) => v === null ? "—" : format(v);
+  const table = { columns: ["", ...chart.series.map(s => s.name)], rows: chart.categories.map((c, i) => [c, ...values.map(v => cell(v[i]))]) };
+  const series = chart.series.map((s, i) => ({ key: String(i), label: s.name, form: (chart.kind === "linha" ? "line" : "bar") as "bar" | "line" }));
+  return <div className="assistant-chart">
+    <ChartFrame title={chart.title} legend={chart.series.length > 1 ? <Legend series={series} /> : undefined} table={table} footnote={chart.note || undefined}>
+      {chart.kind === "barras"
+        ? <BarList ariaLabel={chart.title} format={format} rows={chart.categories.map((c, i) => ({ label: c, value: values[0][i] ?? 0 }))} />
+        : <ColumnsChart ariaLabel={chart.title} labels={chart.categories} series={series} values={values} formatValue={chart.unit === "euros" ? undefined : format} />}
+    </ChartFrame>
+  </div>;
+}
 
 const euros = (value: string | null) => value === null ? "sem preço"
   : new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(Number(value));
@@ -165,7 +195,7 @@ export default function Assistant({ store }: { store: string }) {
         store_id: store || "",
       }, { timeoutMs: 180_000 });
       const actions: Action[] = result.actions || [];
-      setTurns([...history, { role: "assistant", content: result.reply, tools: result.tools, actions, states: actions.map(() => ({ status: "pending" })) }]);
+      setTurns([...history, { role: "assistant", content: result.reply, tools: result.tools, actions, states: actions.map(() => ({ status: "pending" })), charts: result.charts || [] }]);
     } catch (e) {
       setError((e as Error).message);
       setTurns(turns);
@@ -192,6 +222,7 @@ export default function Assistant({ store }: { store: string }) {
         </div>}
         {turns.map((turn, i) => <div key={i} className={`assistant-turn is-${turn.role}`}>
           {turn.role === "user" ? <p>{turn.content}</p> : <Reply text={turn.content} />}
+          {turn.charts?.map((chart, j) => <ChartView key={`g${j}`} chart={chart} />)}
           {turn.actions?.map((action, j) => <ActionCard key={j} action={action} state={turn.states?.[j] || { status: "pending" }}
             onChange={next => setTurns(all => all.map((t, k) => k !== i ? t : { ...t, states: (t.states || []).map((s, m) => m === j ? next : s) }))} />)}
           {!!turn.tools?.length && <small className="assistant-sources">Consultou: {[...new Set(turn.tools.map(t => TOOL_LABELS[t.name] || t.name))].join(" · ")}</small>}
