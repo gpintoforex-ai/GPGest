@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { History, RefreshCw, Search, Upload, XCircle } from "lucide-react";
+import { History, Pencil, RefreshCw, Search, Upload, XCircle } from "lucide-react";
 import { api } from "./lib/api";
 import { ActionButton, ManagedForm, Notice, confirmAction } from "./components/InteractionUI";
 import { MetricCard, StatusBadge, type BusinessTone } from "./components/BusinessUI";
 import { DataTable } from "./components/DataTable";
+import "./WebshopPublications.css";
 
 type Connection = { id: string; name: string; active: boolean };
 type Publication = {
@@ -33,8 +34,10 @@ type Publication = {
   retry_at: string | null;
   attempts: number;
   error: string;
+  product_missing: boolean;
   food_missing: string[];
   preserved: string[];
+  override_pending: boolean;
   revision: number;
 };
 type Listing = { cost_visible: boolean; counts: Record<string, number>; items: Publication[] };
@@ -55,6 +58,21 @@ const euro = (value: string | null) =>
   value === null ? "—" : new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(Number(value));
 const when = (value: string | null) =>
   value ? new Date(value).toLocaleString("pt-PT", { timeZone: "Europe/Lisbon", dateStyle: "short", timeStyle: "short" }) : "—";
+const percent = (value: string | null) =>
+  value === null ? "—" : `${new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 2 }).format(Number(value))} %`;
+/** Endereços longos nos erros: domínio e nome do ficheiro (o texto completo fica na dica). */
+const shortUrls = (text: string) =>
+  text.replace(/https?:\/\/\S+?(?=[.,;]?(\s|$))/g, (url) => {
+    try {
+      const parsed = new URL(url);
+      const file = parsed.pathname.split("/").filter(Boolean).pop();
+      return file ? `${parsed.hostname}/…/${file}` : parsed.hostname;
+    } catch {
+      return url;
+    }
+  });
+const PRESERVED: Record<string, string> = { description: "descrição", short_description: "resumo", images: "imagens", price: "preço",
+  seo_keyword: "palavra-chave SEO", seo_title: "título SEO", seo_description: "meta-descrição SEO", label: "rótulo" };
 const STATUS_TONE: Record<Publication["status"], BusinessTone> = {
   synced: "success",
   pending: "info",
@@ -71,6 +89,8 @@ const ACTIONS: Record<string, string> = {
   imported: "Importado da loja",
   synced: "Sincronizado pela loja",
   sync_error: "Erro na loja",
+  recreated: "Produto novo pedido (o anterior foi apagado na loja)",
+  override: "Texto da IAZELA pedido (substitui o preservado na loja)",
 };
 const SUGGESTION_TONE: Record<Suggestion["status"], BusinessTone> = {
   suggested: "suggestion",
@@ -163,7 +183,25 @@ export default function WebshopPublications() {
     }, `«${candidate.name}» marcado para publicação. A loja recebe-o na próxima sincronização.`);
   }
 
-  async function act(row: Publication, action: "publish" | "withdraw" | "resync") {
+  async function act(row: Publication, action: "publish" | "withdraw" | "resync" | "recreate" | "override") {
+    if (action === "override") {
+      const proceed = await confirmAction({
+        title: "Usar o texto da IAZELA na loja?",
+        message: `Na próxima sincronização, a loja substitui o que tinha preservado em «${row.name}» (${row.preserved.map((key) => PRESERVED[key] || key).join(", ")}) pelo conteúdo atual da IAZELA. As alterações feitas na loja a esses campos perdem-se.`,
+        confirmLabel: "Usar o texto da IAZELA",
+        tone: "warning",
+      });
+      if (!proceed) return;
+    }
+    if (action === "recreate") {
+      const proceed = await confirmAction({
+        title: "Criar um produto novo na loja?",
+        message: `O produto #${row.woo_product_id} foi apagado na loja. Na próxima sincronização, a loja cria um produto novo em rascunho para «${row.name}». A informação alimentar e as edições do produto apagado não são recuperadas: reveja-o na loja antes de o pôr à venda.`,
+        confirmLabel: "Criar produto novo",
+        tone: "warning",
+      });
+      if (!proceed) return;
+    }
     if (action === "withdraw") {
       const proceed = await confirmAction({
         title: "Retirar da loja?",
@@ -173,7 +211,9 @@ export default function WebshopPublications() {
       });
       if (!proceed) return;
     }
-    const labels = { publish: "Publicação pedida.", withdraw: "Retirada pedida.", resync: "Nova sincronização pedida." };
+    const labels = { publish: "Publicação pedida.", withdraw: "Retirada pedida.", resync: "Nova sincronização pedida.",
+      recreate: "Produto novo pedido: a loja cria-o em rascunho na próxima sincronização.",
+      override: "Pedido enviado: a loja usa o texto da IAZELA na próxima sincronização." };
     await run(() => api(`/webshop/publications/${row.id}/${action}`, { revision: row.revision }), labels[action]);
   }
 
@@ -336,27 +376,19 @@ export default function WebshopPublications() {
           {
             id: "article",
             label: "Artigo",
+            className: "wp-col-article",
             sortValue: (r) => r.name,
             exportValue: (r) => r.name,
             render: (r) => (
               <>
-                {r.name}
+                <strong className="wp-name">{r.name}</strong>
                 <small>
-                  IAZELA {r.code}
-                  {r.erp_code ? ` · Wintouch ${r.erp_code}` : ""}
-                  {r.woo_product_id ? ` · WooCommerce #${r.woo_product_id}` : " · ainda sem produto na loja"}
+                  SKU {r.sku}
+                  {r.erp_code && r.erp_code !== r.sku ? ` · Wintouch ${r.erp_code}` : ""}
+                  {r.code !== r.sku && r.code !== r.erp_code ? ` · IAZELA ${r.code}` : ""}
+                  {` · ${r.gtin || r.barcodes[0] || "sem EAN"}`}
                 </small>
-              </>
-            ),
-          },
-          {
-            id: "sku",
-            label: "SKU / EAN",
-            exportValue: (r) => `${r.sku} ${r.gtin}`,
-            render: (r) => (
-              <>
-                {r.sku}
-                <small>{r.gtin || r.barcodes[0] || "Sem EAN"}</small>
+                <small>{r.woo_product_id ? `Produto na loja #${r.woo_product_id}` : "Ainda sem produto na loja"}</small>
               </>
             ),
           },
@@ -364,14 +396,14 @@ export default function WebshopPublications() {
             id: "price",
             label: "Preço",
             numeric: true,
+            className: "wp-col-price",
             sortValue: (r) => Number(r.price_net ?? 0),
             exportValue: (r) => r.price_net,
             render: (r) => (
               <>
-                {euro(r.price_gross)}
-                <small>
-                  {euro(r.price_net)} s/ IVA · IVA {r.vat_rate ?? "—"}%{r.channel_price_net ? " · preço do canal" : ""}
-                </small>
+                <strong>{euro(r.price_gross)}</strong>
+                <small>{euro(r.price_net)} s/ IVA · IVA {percent(r.vat_rate)}</small>
+                {r.channel_price_net && <small>Preço do canal</small>}
               </>
             ),
           },
@@ -379,84 +411,94 @@ export default function WebshopPublications() {
             id: "margin",
             label: "Margem",
             numeric: true,
+            className: "wp-col-margin",
             sortValue: (r) => Number(r.margin_percent ?? -999),
             exportValue: (r) => r.margin_percent,
             render: (r) =>
               !data?.cost_visible ? (
-                <small>Sem acesso a custos</small>
+                <small>Sem acesso</small>
               ) : r.margin_percent === null ? (
-                <small>Custo desconhecido</small>
+                <><span aria-hidden="true">—</span><small>Custo desconhecido</small></>
               ) : (
                 <>
-                  {r.margin_percent}%<small>custo médio {euro(r.average_cost)}</small>
+                  <strong>{percent(r.margin_percent)}</strong>
+                  <small>custo {euro(r.average_cost)}</small>
                 </>
               ),
           },
           {
             id: "state",
-            label: "Estado de publicação",
+            label: "Estado",
+            className: "wp-col-state",
             sortValue: (r) => r.status,
-            exportValue: (r) => `${r.state === "published" ? "Publicado" : "Retirado"} · ${r.status_label}`,
+            exportValue: (r) => [r.sku, r.gtin, r.state === "published" ? "Publicado" : "Retirado", r.status_label, r.synced_at, ...r.blockers, r.error]
+              .filter(Boolean).join(" · "),
             render: (r) => (
-              <>
-                <StatusBadge tone={r.state === "published" ? "success" : "neutral"}>
-                  {r.state === "published" ? "Publicado" : "Retirado"}
-                </StatusBadge>{" "}
-                <StatusBadge tone={STATUS_TONE[r.status]}>{r.status_label}</StatusBadge>
-                {r.state === "published" && r.woo_status && r.woo_status !== "publish" && (
-                  <small>Na loja: {r.woo_status === "draft" ? "rascunho" : r.woo_status}</small>
+              <div className="wp-state">
+                <div className="wp-badges">
+                  <StatusBadge compact tone={r.state === "published" ? "success" : "neutral"}>
+                    {r.state === "published" ? "Publicado" : "Retirado"}
+                  </StatusBadge>
+                  <StatusBadge compact tone={STATUS_TONE[r.status]}>{r.status_label}</StatusBadge>
+                  {r.state === "published" && r.woo_status && r.woo_status !== "publish" && (
+                    <StatusBadge compact tone="warning">Na loja: {r.woo_status === "draft" ? "rascunho" : r.woo_status}</StatusBadge>
+                  )}
+                </div>
+                <small>{r.synced_at ? `Sincronizado a ${when(r.synced_at)}` : "Ainda sem confirmação da loja"}</small>
+                {(r.blockers.length > 0 || r.error) && (
+                  <p className={`wp-error tone-${r.status === "blocked" ? "warning" : "danger"}`} title={[...r.blockers, r.error].join(" ")}>
+                    {shortUrls([...r.blockers, r.error].filter(Boolean).join(" "))}
+                    {r.retry_at && <small>Nova tentativa a {when(r.retry_at)} · {r.attempts}.ª falha</small>}
+                    {r.product_missing && (
+                      <ActionButton variant="primary" className="wp-fix" disabled={busy} onClick={() => act(r, "recreate")}>
+                        Criar produto novo na loja
+                      </ActionButton>
+                    )}
+                  </p>
                 )}
-                {r.food_missing.length > 0 && <small>Informação alimentar em falta: {r.food_missing.join("; ")}</small>}
-                {r.preserved.length > 0 && <small>Conteúdo editado na loja preservado: {r.preserved.join(", ")}</small>}
-              </>
+                {r.food_missing.length > 0 && (
+                  <details className="wp-more">
+                    <summary>Informação alimentar em falta ({r.food_missing.length})</summary>
+                    <ul>{r.food_missing.map((item) => <li key={item}>{item}</li>)}</ul>
+                  </details>
+                )}
+                {r.preserved.length > 0 && (
+                  <div className="wp-preserved">
+                    <small>Editado na loja e preservado: {r.preserved.map((key) => PRESERVED[key] || key).join(", ")}</small>
+                    {r.override_pending ? <small>Texto da IAZELA pedido: aplicado na próxima sincronização.</small> : (
+                      <ActionButton variant="quiet" disabled={busy} onClick={() => act(r, "override")}>Usar o texto da IAZELA</ActionButton>
+                    )}
+                  </div>
+                )}
+              </div>
             ),
-          },
-          {
-            id: "synced",
-            label: "Última sincronização",
-            sortValue: (r) => r.synced_at ?? "",
-            exportValue: (r) => r.synced_at,
-            render: (r) => when(r.synced_at),
-          },
-          {
-            id: "errors",
-            label: "Erros",
-            exportValue: (r) => [...r.blockers, r.error].filter(Boolean).join(" "),
-            render: (r) =>
-              r.blockers.length || r.error ? (
-                <>
-                  {r.blockers.join(" ")} {r.error}
-                  {r.retry_at && <small>Nova tentativa: {when(r.retry_at)} ({r.attempts}.ª falha)</small>}
-                </>
-              ) : (
-                "—"
-              ),
           },
           {
             id: "actions",
             label: "Ações",
+            className: "wp-col-actions",
             render: (r) => (
-              <div className="actions">
+              <div className="wp-actions" role="group" aria-label={`Ações de ${r.name}`}>
                 {r.state === "published" ? (
-                  <>
-                    <ActionButton disabled={busy} onClick={() => act(r, "resync")}>
-                      <RefreshCw size={16} aria-hidden="true" /> Atualizar
-                    </ActionButton>
-                    <ActionButton className="danger" disabled={busy} onClick={() => act(r, "withdraw")}>
-                      <XCircle size={16} aria-hidden="true" /> Retirar da loja
-                    </ActionButton>
-                  </>
+                  <ActionButton variant="quiet" disabled={busy} aria-label="Atualizar" title="Atualizar: enviar de novo o conteúdo atual" onClick={() => act(r, "resync")}>
+                    <RefreshCw size={16} aria-hidden="true" />
+                  </ActionButton>
                 ) : (
-                  <ActionButton className="primary" disabled={busy} onClick={() => act(r, "publish")}>
+                  <ActionButton variant="primary" disabled={busy} onClick={() => act(r, "publish")}>
                     <Upload size={16} aria-hidden="true" /> Publicar
                   </ActionButton>
                 )}
-                <ActionButton disabled={busy} onClick={() => setEditing({ row: r, sku: r.sku, price: r.channel_price_net ?? "" })}>
-                  SKU e preço
+                <ActionButton variant="quiet" disabled={busy} aria-label="SKU e preço" title="SKU e preço do canal" onClick={() => setEditing({ row: r, sku: r.sku, price: r.channel_price_net ?? "" })}>
+                  <Pencil size={16} aria-hidden="true" />
                 </ActionButton>
-                <ActionButton onClick={() => showHistory(r)}>
-                  <History size={16} aria-hidden="true" /> Histórico
+                <ActionButton variant="quiet" aria-label="Histórico" title="Histórico da publicação" onClick={() => showHistory(r)}>
+                  <History size={16} aria-hidden="true" />
                 </ActionButton>
+                {r.state === "published" && (
+                  <ActionButton variant="quiet" className="wp-danger" disabled={busy} aria-label="Retirar da loja" title="Retirar da loja" onClick={() => act(r, "withdraw")}>
+                    <XCircle size={16} aria-hidden="true" />
+                  </ActionButton>
+                )}
               </div>
             ),
           },

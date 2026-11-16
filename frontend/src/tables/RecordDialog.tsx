@@ -222,7 +222,7 @@ export default function RecordDialog({ table, context, mode: startMode, recordId
         return <input inputMode="decimal" pattern="\d+([.,]\d{1,2})?" {...common} value={String(value ?? "").replace(".", ",")} onChange={e => set(field.name, e.target.value.replace(",", "."))} />;
       case "select":
       case "icon":
-        return <select {...common} value={value ?? ""} onChange={e => set(field.name, e.target.value)}>{!field.required && <option value="">Por indicar</option>}{field.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>;
+        return <select {...common} value={value ?? ""} onChange={e => set(field.name, e.target.value)}><option value="">{field.required ? "Escolha…" : "Por indicar"}</option>{field.options.filter(o => o.active !== false || o.value === value).map(o => <option key={o.value} value={o.value}>{o.label}{o.active === false ? " (inativa)" : ""}</option>)}</select>;
       case "store":
         return <select {...common} value={value ?? ""} onChange={e => set(field.name, e.target.value)}><option value="">Escolha…</option>{context.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>;
       case "payment_term":

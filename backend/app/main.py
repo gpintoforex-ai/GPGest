@@ -2482,6 +2482,10 @@ from .customer_activity import router as customer_activity_router
 app.include_router(customer_activity_router)
 from .article_content import router as article_content_router
 app.include_router(article_content_router)
+from .article_images import router as article_images_router
+app.include_router(article_images_router)
+from .article_price import router as article_price_router
+app.include_router(article_price_router)
 from .operation_trace import router as operation_trace_router
 app.include_router(operation_trace_router)
 from .classification import router as classification_router

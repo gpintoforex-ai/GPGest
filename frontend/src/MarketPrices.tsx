@@ -1,5 +1,5 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
-import { ExternalLink } from "lucide-react";
+import { Download, ExternalLink, RefreshCw } from "lucide-react";
 import { Field } from "./components/Form";
 import { ActionButton, Notice, confirmAction } from "./components/InteractionUI";
 import { api } from "./lib/api";
@@ -24,12 +24,14 @@ const normalize = (value: Row): Row => ({
  * consulta: o botão abre a pesquisa no site e o utilizador regista o preço que vê. Compara com o
  * preço de venda com IVA e, com permissão de custos, mostra a margem que teria a esse preço.
  */
-export default function MarketPrices({ articleId, vatRate, cost, readOnly }: {
+export default function MarketPrices({ articleId, vatRate, cost, readOnly, ownPrice }: {
   articleId: string;
   vatRate: number;
   // Custo médio por unidade (null sem permissão ou sem informação).
   cost: number | null;
   readOnly: boolean;
+  // PVP com IVA apresentado na ficha, incluindo alterações ainda por guardar.
+  ownPrice?: number | null;
 }) {
   const [data, setData] = useState<Row | null>(null);
   const [error, setError] = useState(""), [formError, setFormError] = useState("");
@@ -62,13 +64,35 @@ export default function MarketPrices({ articleId, vatRate, cost, readOnly }: {
     try { setData(normalize(await api(`/stock/articles/${articleId}/market-prices/${row.id}`, {}, { method: "DELETE" }))); }
     catch (e) { setFormError((e as Error).message); } finally { setBusy(false); }
   }
+  // Leitura automática do preço na página da loja (dados de produto publicados pela loja).
+  const [refresh, setRefresh] = useState<Row[] | null>(null);
+  async function refreshAll() {
+    if (busy) return;
+    setBusy(true); setFormError(""); setRefresh(null);
+    try {
+      const result = await api(`/stock/articles/${articleId}/market-prices/refresh`, {}, { timeoutMs: 180_000 });
+      setData(normalize(result)); setRefresh(result.refresh || []);
+    } catch (e) { setFormError((e as Error).message); } finally { setBusy(false); }
+  }
+  async function readLink() {
+    if (busy || !value.url.trim()) return;
+    setBusy(true); setFormError("");
+    try {
+      const found = await api(`/stock/articles/${articleId}/market-prices/read`, { url: value.url.trim() }, { timeoutMs: 60_000 });
+      setValue(old => ({ ...old, price: found.price, store_name: old.store_name.trim() || found.store_name, source: "outro", observed_on: today() }));
+    } catch (e) { setFormError((e as Error).message); } finally { setBusy(false); }
+  }
+  const outcome = (r: Row) => r.state === "updated" ? `${euro(r.previous_cents)} → ${euro(r.price_cents)}`
+    : r.state === "confirmed" ? `mantém ${euro(r.price_cents)} (confirmado hoje)` : r.state === "unchanged" ? `mantém ${euro(r.price_cents)}` : r.error;
   // O registo está dentro do formulário do artigo: Enter regista o preço em vez de guardar a ficha.
   const enter = (e: KeyboardEvent) => { if (e.key === "Enter") { e.preventDefault(); add(); } };
   const change = (key: string, next: string) => setValue(old => ({ ...old, [key]: next }));
 
   if (error) return <Notice tone="error">{error}<ActionButton type="button" onClick={() => setAttempt(v => v + 1)}>Voltar a tentar</ActionButton></Notice>;
   if (!data) return <p role="status">A carregar preços de mercado…</p>;
-  const s = data.summary, own: number | null = s.own_cents;
+  const s = data.summary, own: number | null = ownPrice === undefined ? s.own_cents
+    : ownPrice !== null && Number.isFinite(ownPrice) && ownPrice > 0 ? Math.round((ownPrice + Number.EPSILON) * 100) : null;
+  const cheaperStores = own === null ? null : data.prices.filter((row: Row) => row.current && row.price_cents < own).length;
   const difference = (cents: number) => {
     if (own === null) return "Não calculável";
     const delta = cents - own;
@@ -83,19 +107,25 @@ export default function MarketPrices({ articleId, vatRate, cost, readOnly }: {
   const fact = (label: string, v: string) => <div className="article-fact"><span>{label}</span><strong>{v}</strong></div>;
   const editable = data.can_edit && !readOnly;
   return <div className="market-prices" data-ignore-dirty>
-    <p>Quanto custa este artigo noutras lojas. O KuantoKusta não disponibiliza os preços para consulta automática: pesquise no site e registe aqui o preço com IVA de cada loja. A comparação usa o preço mais recente de cada loja.</p>
+    <p>Quanto custa este artigo noutras lojas. Com a ligação da página do produto na própria loja, o preço é lido automaticamente («Ler preço da ligação» e «Atualizar preços das lojas»). O KuantoKusta não permite leitura automática: pesquise no site e registe o preço com IVA, ou guarde a ligação da loja. A comparação usa o preço mais recente de cada loja.</p>
     <div className="stock-actions">
       <a className="ui-action" href={data.search_url} target="_blank" rel="noopener noreferrer"><ExternalLink size={16} aria-hidden="true" />Pesquisar no KuantoKusta</a>
+      {editable && data.prices.some((row: Row) => row.current && row.url) && <ActionButton type="button" disabled={busy} onClick={() => void refreshAll()}>
+        <RefreshCw size={16} aria-hidden="true" />{busy ? "A ler as páginas das lojas…" : "Atualizar preços das lojas"}</ActionButton>}
     </div>
+    {refresh && <div className="market-refresh" role="status">
+      <strong>{refresh.filter(r => r.state === "updated").length ? `${refresh.filter(r => r.state === "updated").length} preço(s) alterado(s).` : "Sem alterações de preço."}</strong>
+      <ul>{refresh.map(r => <li key={r.store_name} className={`is-${r.state}`}><b>{r.store_name}</b>: {outcome(r)}</li>)}</ul>
+    </div>}
     <div className="article-facts" aria-label="Comparação com o mercado">
-      {fact("O seu preço com IVA", own === null ? "Sem preço local" : euro(own))}
+      {fact("O seu preço com IVA", own === null ? "Preço de venda indisponível" : euro(own))}
       {fact("Mais barato", s.stores ? `${euro(s.lowest_cents)} · ${s.lowest_store}` : "Sem preços registados")}
       {fact("Preço médio", euro(s.average_cents))}
       {fact("Mais caro", euro(s.highest_cents))}
-      {fact("Posição", !s.stores || own === null ? "Não calculável" : s.cheaper_stores === 0 ? `Mais barato ou igual em ${s.stores} loja(s)` : `${s.cheaper_stores} de ${s.stores} loja(s) mais baratas`)}
+      {fact("Posição", !s.stores || own === null ? "Não calculável" : cheaperStores === 0 ? `Mais barato ou igual em ${s.stores} loja(s)` : `${cheaperStores} de ${s.stores} loja(s) mais baratas`)}
       {s.stores > 0 && own !== null && fact("Diferença para o mais barato", difference(s.lowest_cents))}
     </div>
-    {own !== null && s.stores > 0 && s.cheaper_stores === s.stores && <Notice tone="warning">Todas as lojas registadas vendem abaixo do seu preço.</Notice>}
+    {own !== null && s.stores > 0 && cheaperStores === s.stores && <Notice tone="warning">Todas as lojas registadas vendem abaixo do seu preço.</Notice>}
     {editable && <fieldset className="market-prices-form" disabled={busy}>
       <legend>Registar preço</legend>
       <div className="form-grid">
@@ -104,6 +134,8 @@ export default function MarketPrices({ articleId, vatRate, cost, readOnly }: {
         <Field label="Preço com IVA (€)"><input value={value.price} type="number" inputMode="decimal" min="0.01" step="0.01" required onKeyDown={enter} onChange={e => change("price", e.target.value)} /></Field>
         <Field label="Data da consulta"><input value={value.observed_on} type="date" max={today()} required onChange={e => change("observed_on", e.target.value)} /></Field>
         <Field label="Ligação (HTTPS, opcional)"><input value={value.url} type="url" maxLength={2000} onKeyDown={enter} onChange={e => change("url", e.target.value)} /></Field>
+        <div className="market-read"><ActionButton type="button" disabled={busy || !/^https:\/\//i.test(value.url.trim())} onClick={() => void readLink()}>
+          <Download size={16} aria-hidden="true" />Ler preço da ligação</ActionButton><small>Preenche o preço e a loja a partir da página do produto.</small></div>
         <Field label="Observações"><input value={value.notes} maxLength={300} onKeyDown={enter} onChange={e => change("notes", e.target.value)} /></Field>
       </div>
       <ActionButton type="button" className="primary" onClick={add}>{busy ? "A registar…" : "Registar preço"}</ActionButton>

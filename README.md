@@ -15,7 +15,7 @@ Digitalizar fotografias e PDFs para anexos e dossiês: [guia de digitalização]
 Digitalização rápida por PIN a partir do ecrã de entrada, em dispositivos emparelhados: [digitalização rápida](docs/DIGITALIZACAO-RAPIDA.md).
 Arquivo central de todos os documentos, com caixa de entrada, extração, relações, pendências e assistente: [arquivo digital](docs/ARQUIVO-DIGITAL.md).
 Conferir e-Fatura, anexos e ERP: [assistente e-Fatura](docs/ASSISTENTE-EFATURA.md).
-Descritivo dos artigos para o site (descrição, resumo, pontos-chave e SEO) proposto por IA e revisto antes de publicar: [descritivos do site](docs/DESCRITIVOS-SITE-IA.md).
+Descritivo dos artigos para o site (descrição, resumo, pontos-chave e SEO) proposto por IA e revisto antes de publicar: [descritivos do site](docs/DESCRITIVOS-SITE-IA.md). Fotografia do produto e do rótulo carregadas na ficha (câmara ou ficheiro), enviadas à loja online e lidas pela IA: [fotografias dos artigos](docs/FOTOGRAFIAS-ARTIGOS.md) (migrações 0098 e 0099).
 Proveitos, custos e margens por rubrica (indicadores, tabela mensal, comparação, orçamento, alertas e gráficos) e mapa de IVA indicativos: [mapas de gestão](docs/MAPAS-DE-GESTAO.md). Separar custos operacionais, compras, obrigações fiscais e saídas de tesouraria: [natureza das rubricas](docs/NATUREZA-DAS-RUBRICAS.md). Pesquisar e corrigir os movimentos de cada rubrica: [movimentos da rubrica](docs/MOVIMENTOS-DA-RUBRICA.md).
 Obrigações fiscais, contratos, viaturas, inspeções e outros prazos: [obrigações e prazos](docs/OBRIGACOES-E-PRAZOS.md).
 Planear despesas, comparar previsto com realizado e acompanhar desvios: [orçamento e previsão de despesas](docs/ORCAMENTO.md).
@@ -79,7 +79,7 @@ Ao fechar uma folha com diferença de numerário, é criado automaticamente um m
 
 Os **Movimentos previstos** apresentam numa única lista os documentos locais e os saldos a crédito Wintouch, com origem identificada e totais conjuntos. A importação atualiza os saldos de vendas e compras ainda em aberto, incluindo documentos anteriores ao período selecionado. O filtro de vencimento começa no documento pendente mais antigo da loja selecionada e termina no último dia do mês atual. Sem pendentes, a data inicial assume o primeiro dia do mês atual. Pode alterar as datas ou usar **Limpar datas**; atualizar os dados conserva uma data inicial alterada manualmente. Também pode filtrar por vendas/compras e pesquisar a entidade. Os filtros atualizam a lista, os totais e a paginação. Administradores e gestores podem liquidar os saldos Wintouch diretamente pelo formulário, com confirmação de envio à origem.
 
-Grelha e ficha de artigos: [comportamento, desempenho e testes](docs/ARTIGOS-GRELHA-E-FICHA.md). Comparação com o KuantoKusta e outras lojas: [preços de mercado](docs/PRECOS-MERCADO.md).
+Grelha e ficha de artigos: [comportamento, desempenho e testes](docs/ARTIGOS-GRELHA-E-FICHA.md). Comparação com o KuantoKusta e outras lojas, com leitura automática do preço na página da loja: [preços de mercado](docs/PRECOS-MERCADO.md).
 
 ## Começar neste computador
 
@@ -248,6 +248,6 @@ Disponível em **Compras e Stock → Encomendas de clientes**, com pedidos, rese
 
 A evolução do [ciclo integrado de encomendas](docs/CICLO-ENCOMENDAS.md) acrescenta recomendações de reposição, originais/OCR/cloud, conferência tripla, propostas e escritas Wintouch confirmadas, e automatizações autorizadas por loja. Requer a migração 0058; consulte os limites do stock ERP e dos documentos suportados antes de ativar escritas.
 
-Loja online Raizpura: [configuração e sincronização de famílias, artigos, stock e encomendas](docs/INTEGRACAO-RAIZPURA.md). Escolher os artigos publicados, SKU, preço do canal e correspondências com a loja: [publicação online](docs/PUBLICACAO-ONLINE.md) (requer a migração 0095). Encomendas, pagamentos e reservas com prazo por meio de pagamento: [encomendas online](docs/ENCOMENDAS-ONLINE.md) (requer a migração 0096).
+Loja online Raizpura: [configuração e sincronização de famílias, artigos, stock e encomendas](docs/INTEGRACAO-RAIZPURA.md). Escolher os artigos publicados, SKU, preço do canal e correspondências com a loja: [publicação online](docs/PUBLICACAO-ONLINE.md) (requer a migração 0095). Encomendas, pagamentos e reservas com prazo por meio de pagamento: [encomendas online](docs/ENCOMENDAS-ONLINE.md) (requer a migração 0096). [Tabelas de famílias, subfamílias e marcas](docs/CLASSIFICACAO-ARTIGOS.md), ligadas à ficha e à publicação no site (migração 0097).
 
 Assistente IAZELA (perguntas sobre validades, reposição, vendas, clientes, IVA e documentos, com a Claude API; só consulta): [ativação, ferramentas e privacidade](docs/ASSISTENTE-IAZELA.md).

@@ -996,7 +996,7 @@ def update_record(key: str, record_id: str, data: RecordInput, user=Depends(curr
     spec.unique_checks(ctx, values, row)
     before = spec.values(ctx, row)
     try:
-        spec.update(ctx, row, values)
+        result = spec.update(ctx, row, values)
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Já existe um registo com estes dados.") from None
@@ -1008,7 +1008,7 @@ def update_record(key: str, record_id: str, data: RecordInput, user=Depends(curr
             spec.store_of(row),
         )
     db.commit()
-    return {"id": record_id}
+    return {"id": record_id, **(result if isinstance(result, dict) else {})}
 
 
 def record_label(ctx, spec, row):

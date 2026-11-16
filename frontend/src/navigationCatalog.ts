@@ -18,6 +18,9 @@ export const APP_PAGES: readonly string[] = [
     "Meios de pagamento",
     "Prazos de pagamento",
     "Tipos de Documentos",
+    "Famílias de artigos",
+    "Subfamílias de artigos",
+    "Marcas",
     "Folha de caixa",
     "Movimentos previstos",
     "Movimentos reais",
@@ -580,6 +583,9 @@ function referenceNavigation(): NavigationGroup[] {
     ] },
     { id: "artigos", label: "Artigos", description: "Catálogo, preços e validades.", items: [
       { ...item("comercial:Artigos e preços"), label: "Catálogo de artigos" }, item("stocks:Lotes e validades"),
+      { id: "artigos:familias", label: "Famílias", page: "Famílias de artigos" },
+      { id: "artigos:subfamilias", label: "Subfamílias", page: "Subfamílias de artigos" },
+      { id: "artigos:marcas", label: "Marcas", page: "Marcas" },
     ] },
     { id: "entidades", label: "Entidades", description: "Clientes, fornecedores e condições comerciais.", items: [
       item("comercial:Clientes"),

@@ -24,7 +24,9 @@ PROPOSAL = {"id": "pr1", "status": "pendente", "fields": FIELDS, "needs_review":
             "created_at": "2026-11-12T10:00:00+00:00"}
 QUEUE = [{"id": f"q{i}", "code": f"A{i}", "name": f"Artigo do lote {i}", "brand": "Marca", "family": "Família", "photo": "", "has_description": False,
           "has_images": i != 2, "proposal_status": None} for i in range(1, 4)]
-state = {"generated": set(), "approved": None}
+state = {"generated": set(), "approved": None, "notice": None}
+NOTICE = {"title": "Advertências", "text": "Suplemento Alimentar. Manter fora do alcance das crianças.",
+          "families": ["Suplementos"], "configured": False, "revision": 0, "family_options": ["Cosmética", "Suplementos"]}
 calls = []
 
 
@@ -43,6 +45,11 @@ def intercept(route):
         proposal = {**PROPOSAL, "status": status} if article in state["generated"] or action else None
         return route.fulfill(json={"article_id": article, "revision": 3, "configured": True,
                                    "current": {k: "" if k != "web_highlights" else [] for k in FIELDS}, "proposal": proposal})
+    if path == "/api/stock/web-content/settings":
+        if route.request.method == "PUT":
+            state["notice"] = route.request.post_data_json
+            return route.fulfill(json={**NOTICE, **{k: v for k, v in state["notice"].items() if k != "revision"}, "revision": 1})
+        return route.fulfill(json=NOTICE)
     if path == "/api/stock/web-content":
         params = {k: v[0] for k, v in parse_qs(url.query).items()}
         rows = [{**r, "proposal_status": "pendente" if r["id"] in state["generated"] else None} for r in QUEUE]
@@ -93,6 +100,13 @@ with sync_playwright() as p:
         # Lote: gerar propostas com progresso, rever, editar e aprovar.
         page.get_by_role("navigation", name="Artigos e stock").get_by_role("button", name="Descritivos do site").click()
         queue = page.get_by_role("region", name="Descritivos do site")
+        # Avisos obrigatórios: texto fixo da empresa e famílias abrangidas.
+        queue.get_by_text("Advertências obrigatórias (Suplementos)").click()
+        queue.get_by_label("Cosmética").check()
+        queue.get_by_role("button", name="Guardar advertências").click()
+        expect(queue.get_by_text("Advertências guardadas.", exact=False)).to_be_visible()
+        assert state["notice"]["families"] == ["Suplementos", "Cosmética"] and state["notice"]["revision"] == 0, state["notice"]
+        queue.get_by_text("Advertências obrigatórias (Suplementos, Cosmética)").click()
         table = queue.get_by_role("table", name="Artigos para o descritivo do site")
         expect(table.locator("tbody tr")).to_have_count(3)
         expect(table).to_contain_text("Sem imagem: texto mais genérico")

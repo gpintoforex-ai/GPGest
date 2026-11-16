@@ -247,3 +247,10 @@
   .article-content .article-summary strong { font-size: 14px; }
   .article-header h3 { font-size: 18px; }
 }
+
+/* Preços de mercado: leitura automática na página da loja. */
+.market-refresh { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--color-border, #d7e3ea); border-radius: 10px; background: var(--color-info-bg, #eef6ff); }
+.market-refresh ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+.market-refresh li.is-failed, .market-refresh li.is-skipped { color: var(--color-muted); }
+.market-read { display: grid; gap: 4px; align-content: end; }
+.market-read small { color: var(--color-muted); font-size: 12px; }

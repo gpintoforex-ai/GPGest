@@ -32,6 +32,29 @@ class Base(DeclarativeBase):
     pass
 
 
+class ArticleFamily(Base):
+    __tablename__ = "article_families"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ArticleBrand(Base):
+    __tablename__ = "article_brands"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ArticleSubfamily(Base):
+    __tablename__ = "article_subfamilies"
+    __table_args__ = (UniqueConstraint("family_id", "name"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    family_id: Mapped[str] = mapped_column(ForeignKey("article_families.id"))
+    name: Mapped[str] = mapped_column(String(100))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -1533,6 +1556,34 @@ class ArticleContentProposal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     decided_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ArticleImage(Base):
+    """Imagem carregada na ficha do artigo, guardada na base (sem alojamento externo).
+
+    `photo`: fotografia principal (aparece na aplicação e vai para a loja online por um endereço público com o
+    hash do conteúdo). `label`: fotografia do rótulo; por omissão interna (só a IA a lê). Com `public` (confirmado
+    na ficha: legível e em português) vai para a loja como rótulo da informação alimentar e, com `gallery`, também
+    como última imagem da galeria. Substituir a imagem volta a pedir a confirmação.
+    O ficheiro é normalizado ao carregar (orientação, dimensão máxima, JPEG sem metadados)."""
+    __tablename__ = "article_images"
+    __table_args__ = (
+        UniqueConstraint("article_id", "role", name="article_image_role_unique"),
+        CheckConstraint("role IN ('photo', 'label')", name="article_image_role"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    article_id: Mapped[str] = mapped_column(ForeignKey("stock_articles.id", ondelete="CASCADE"))
+    role: Mapped[str] = mapped_column(String(10))
+    mime: Mapped[str] = mapped_column(String(50))
+    sha256: Mapped[str] = mapped_column(String(64))
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    size: Mapped[int] = mapped_column(Integer)
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    public: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    gallery: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class PurchaseArticleAlias(Base):

@@ -18,16 +18,20 @@ from decimal import ROUND_HALF_UP
 from decimal import Decimal as D
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from . import article_images
 from . import inventory as stock
-from .access import authorize, current, record
+from .access import authorize, current, record, scope
 from .db import db_session
 from .models import (
+    ArticleBrand,
+    ArticleFamily,
+    ArticleSubfamily,
     StockArticle,
     User,
     WebshopConnection,
@@ -114,6 +118,24 @@ def blockers(src, net, vat):
 UNSET = object()
 
 
+def taxonomy(db):
+    """Famílias e subfamílias da IAZELA, lidas uma vez por pedido: (por nome, por (família, nome))."""
+    cached = db.info.get("webshop_taxonomy")
+    if cached is None:
+        families = {r.name.casefold(): r for r in db.scalars(select(ArticleFamily))}
+        subfamilies = {(r.family_id, r.name.casefold()): r for r in db.scalars(select(ArticleSubfamily))}
+        cached = db.info["webshop_taxonomy"] = (families, subfamilies)
+    return cached
+
+
+def classification(db, data):
+    """(família, subfamília) da ficha nas tabelas da IAZELA; a loja usa os identificadores como categorias."""
+    families, subfamilies = taxonomy(db)
+    family = families.get(str(data.get("family") or "").strip().casefold())
+    sub = subfamilies.get((family.id, str(data.get("category") or "").strip().casefold())) if family else None
+    return family, sub
+
+
 def payload(db, pub, src=None, woo=UNSET):
     """Conteúdo pretendido na loja. O `hash` muda quando algo publicado muda (não inclui a disponibilidade).
     `woo` calcula o conteúdo com outra associação ao produto da loja, sem alterar a publicação."""
@@ -122,7 +144,13 @@ def payload(db, pub, src=None, woo=UNSET):
     net, vat, gross = price_of(pub, src)
     blocked = blockers(src, net, vat)
     barcodes = [b for b in data.get("barcodes", []) if isinstance(b, str)]
-    images = [u for u in [data.get("photo", ""), *data.get("additional_photos", [])] if u]
+    family, sub = classification(db, data)
+    # Fotografia carregada no IAZELA (caminho público relativo, completado no envio) ou o endereço da ficha.
+    main = article_images.public_path(db, pub.article_id) or data.get("photo", "")
+    label = article_images.public_path(db, pub.article_id, "label")
+    images = [u for u in [main, *data.get("additional_photos", [])] if u]
+    if label and article_images.label_in_gallery(db, pub.article_id):
+        images.append(label)  # Rótulo publicado também na galeria: sempre a última imagem.
     content = {
         "schema": SCHEMA,
         "article_id": pub.article_id,
@@ -135,10 +163,14 @@ def payload(db, pub, src=None, woo=UNSET):
         "description": data.get("description", ""),
         "summary": data.get("web_summary", ""),
         "highlights": data.get("web_highlights", []),
+        "seo_keyword": data.get("seo_keyword", ""),
         "seo_title": data.get("seo_title", ""),
         "seo_description": data.get("seo_description", ""),
         "family": data.get("family", ""),
         "category": data.get("category", ""),
+        # Identidade estável da categoria na loja: muda o nome na IAZELA, muda o nome da categoria no site.
+        "family_id": family.id if family else "",
+        "category_id": sub.id if sub else "",
         "brand": data.get("brand", ""),
         "barcodes": barcodes,
         "gtin": next((b for b in barcodes if gtin_valid(b)), ""),
@@ -147,8 +179,13 @@ def payload(db, pub, src=None, woo=UNSET):
         "vat_rate": str(vat) if vat is not None else None,
         "price_gross": str(gross) if gross is not None else None,
         "images": images,
+        # Rótulo publicado (legível e em português): campo do rótulo na informação alimentar da loja.
+        "label_image": label,
     }
     content["hash"] = hashlib.sha256(dump(content).encode()).hexdigest()
+    if json.loads(pub.shop_data or "{}").get("override"):
+        # Pedido do operador: substituir o texto preservado na loja. Fora do hash; desaparece com a confirmação.
+        content["override"] = True
     return content, blocked
 
 
@@ -266,11 +303,18 @@ def view(db, pub, cost_visible, src=None):
         "retry_at": pub.retry_at,
         "attempts": pub.attempts,
         "error": pub.error,
+        "product_missing": product_missing(pub),
         "food_missing": shop.get("food_missing", []),
         "preserved": shop.get("preserved", []),
+        "override_pending": bool(shop.get("override")),
         "revision": pub.revision,
         "updated_at": pub.updated_at,
     }
+
+
+def product_missing(pub):
+    """A loja indicou que o produto associado foi apagado: o operador pode pedir um produto novo."""
+    return bool(pub.woo_product_id and "já não existe na loja" in (pub.error or ""))
 
 
 def can_see_cost(db, user):
@@ -481,15 +525,32 @@ class ActionInput(Strict):
 @router.post("/publications/{identifier}/{action}")
 def act(
     identifier: str,
-    action: Literal["publish", "withdraw", "resync"],
+    action: Literal["publish", "withdraw", "resync", "recreate", "override"],
     data: ActionInput,
     user=Depends(current),
     db: Session = Depends(db_session),
 ):
-    """Publicar, retirar (o produto fica em rascunho na loja, sem apagar) ou atualizar já (nova tentativa)."""
+    """Publicar, retirar (o produto fica em rascunho na loja, sem apagar), atualizar já (nova tentativa) ou criar
+    um produto novo quando o produto associado foi apagado na loja (decisão do operador; nunca automático)."""
     stock.lock(db)
     pub = get_publication(db, user, identifier, data.revision)
-    if action == "publish":
+    detail = {"article_id": pub.article_id}
+    if action == "recreate":
+        if not pub.woo_product_id:
+            fail("A publicação não está associada a nenhum produto da loja.", 409)
+        detail["previous_woo_product_id"] = pub.woo_product_id
+        # O produto apagado deixa de contar como produto da loja; a loja cria outro em rascunho na sincronização.
+        for remote in db.scalars(select(WebshopRemoteProduct).where(
+                WebshopRemoteProduct.connection_id == pub.connection_id,
+                WebshopRemoteProduct.woo_product_id == pub.woo_product_id)):
+            db.delete(remote)
+        pub.woo_product_id, pub.woo_status, pub.error, pub.synced_hash = None, "", "", ""
+    elif action == "override":
+        # O texto da loja foi preservado (editado lá): o operador escolhe o da IAZELA. Volta a enviar já.
+        shop = json.loads(pub.shop_data or "{}")
+        detail["preserved"] = shop.get("preserved", [])
+        pub.shop_data, pub.synced_hash = dump({**shop, "override": True}), ""
+    elif action == "publish":
         src = source(db, db.get(StockArticle, pub.article_id))
         net, vat, _ = price_of(pub, src)
         blocked = blockers(src, net, vat)
@@ -505,9 +566,11 @@ def act(
     pub.attempts = 0
     pub.revision += 1
     pub.updated_at = now()
-    event(db, pub, {"publish": "published", "withdraw": "withdrawn", "resync": "resync"}[action], user)
+    event(db, pub, {"publish": "published", "withdraw": "withdrawn", "resync": "resync", "recreate": "recreated",
+                    "override": "override"}[action],
+          user, **{k: v for k, v in detail.items() if k != "article_id"})
     connection = db.get(WebshopConnection, pub.connection_id)
-    record(db, user, "webshop_publication_" + action, pub.id, {"article_id": pub.article_id}, connection.store_id)
+    record(db, user, "webshop_publication_" + action, pub.id, detail, connection.store_id)
     commit(db)
     return view(db, pub, can_see_cost(db, user))
 
@@ -526,6 +589,73 @@ def history(identifier: str, user=Depends(current), db: Session = Depends(db_ses
         result.append({"action": item.action, "at": item.created_at, "user": names.get(item.user_id, "Loja online"),
                        "data": json.loads(item.data)})
     return result
+
+
+# --- Catálogo de artigos e ficha: o artigo está (ou não) na lista da loja online -------------------------------
+
+
+def managed_connections(db, user):
+    """Ligações ativas que o utilizador pode gerir (administrador ou gestor da loja da ligação)."""
+    if user.role not in MANAGERS:
+        return []
+    stores = set(scope(user, db))
+    return [row for row in db.scalars(select(WebshopConnection).where(WebshopConnection.active.is_(True))
+                                      .order_by(WebshopConnection.name)) if row.store_id in stores]
+
+
+def summary(db, pub, src=None):
+    """Estado resumido de uma publicação para a grelha e a ficha do artigo."""
+    src = src or source(db, db.get(StockArticle, pub.article_id))
+    content, blocked = payload(db, pub, src)
+    status = "withdrawn" if pub.state == "withdrawn" and not pub.error and pub.synced_hash == content["hash"] \
+        else status_of(pub, content, blocked)
+    net, _, gross = price_of(pub, src)
+    shop = json.loads(pub.shop_data or "{}")
+    return {"id": pub.id, "connection_id": pub.connection_id, "state": pub.state, "status": status,
+            "status_label": "Retirado da loja" if status == "withdrawn" else STATUS_LABELS[status],
+            "sku": pub.sku, "price_gross": str(gross) if gross is not None else None,
+            "channel_price": pub.price_net is not None, "blockers": blocked, "error": pub.error,
+            "synced_at": pub.synced_at, "retry_at": pub.retry_at, "woo_product_id": pub.woo_product_id,
+            "product_missing": product_missing(pub),
+            "woo_status": pub.woo_status, "food_missing": shop.get("food_missing", []),
+            "preserved": shop.get("preserved", []), "override_pending": bool(shop.get("override")),
+            "revision": pub.revision}
+
+
+def article_states(db, article_ids):
+    """{artigo: [resumo por ligação]} para os artigos indicados (uma página da grelha)."""
+    if not article_ids:
+        return {}
+    names = {row.id: row.name for row in db.scalars(select(WebshopConnection))}
+    result = {}
+    for pub in db.scalars(select(WebshopPublication).where(WebshopPublication.article_id.in_(article_ids))):
+        result.setdefault(pub.article_id, []).append({**summary(db, pub), "connection": names.get(pub.connection_id, "")})
+    return result
+
+
+@router.get("/article-publications/{article_id}")
+def article_publications(article_id: str, user=Depends(current), db: Session = Depends(db_session)):
+    """A ficha do artigo: em que lojas online está e o que se pode fazer (só administrador/gestor altera)."""
+    row = db.get(StockArticle, article_id)
+    if not row:
+        fail("Artigo não encontrado.", 404)
+    stores = set(scope(user, db))
+    managed = {c.id for c in managed_connections(db, user)}
+    src = source(db, row)
+    net, vat = src["base_net"], src["vat"]
+    items = []
+    for connection in db.scalars(select(WebshopConnection).order_by(WebshopConnection.name)):
+        if connection.store_id not in stores:
+            continue
+        pub = db.scalar(select(WebshopPublication).where(WebshopPublication.connection_id == connection.id,
+                                                         WebshopPublication.article_id == row.id))
+        if not pub and not connection.active:
+            continue
+        items.append({"connection_id": connection.id, "connection": connection.name, "active": connection.active,
+                      "can_manage": connection.id in managed and connection.active,
+                      "publication": summary(db, pub, src) if pub else None,
+                      "blockers": [] if pub else blockers(src, net, vat)})
+    return {"article_id": row.id, "connections": items}
 
 
 @router.get("/publications-suggestions")
@@ -588,14 +718,75 @@ def commit(db):
 # --- Loja online (credencial da ligação) ------------------------------------------------------------------
 
 
+class RemoteBrand(Strict):
+    id: int = Field(gt=0)
+    name: str = Field(min_length=1, max_length=300)
+
+
+class RemoteBrandsInput(Strict):
+    brands: list[RemoteBrand] = Field(max_length=200)
+
+
+@router.post("/brand-catalog")
+def import_brands(data: RemoteBrandsInput, identity=Depends(connector), db: Session = Depends(db_session)):
+    """Importação aditiva das marcas do site. Não altera fichas, estados ou nomes locais."""
+    connection, owner = identity
+    stock.lock(db)
+    known = {" ".join(r.name.split()).casefold(): r for r in db.scalars(select(ArticleBrand))}
+    created, matched, skipped = [], [], []
+    for item in data.brands:
+        name = " ".join(item.name.split())
+        if not name or len(name) > 100:
+            skipped.append({"site_id": item.id, "reason": "A designação deve ter entre 1 e 100 caracteres."})
+            continue
+        key = name.casefold()
+        row = known.get(key)
+        if row is None:
+            row = ArticleBrand(name=name, active=True)
+            db.add(row)
+            db.flush()
+            known[key] = row
+            created.append({"site_id": item.id, "id": row.id, "name": row.name})
+        else:
+            matched.append({"site_id": item.id, "id": row.id, "name": row.name})
+    if created or skipped:
+        record(db, owner, "webshop_brands_imported", connection.id,
+               {"created": created, "matched": len(matched), "skipped": skipped}, connection.store_id)
+    db.commit()
+    return {"connection_id": connection.id, "created": created, "matched": matched, "skipped": skipped}
+
+
+@router.get("/families")
+def families(identity=Depends(connector), db: Session = Depends(db_session)):
+    """Categorias da loja: as famílias (e subfamílias) da IAZELA usadas nos artigos desta ligação, com o
+    identificador estável, o nome atual e a hierarquia. A loja cria, renomeia e organiza as categorias por elas."""
+    connection, _ = identity
+    used = {}
+    for pub in db.scalars(select(WebshopPublication).where(WebshopPublication.connection_id == connection.id)):
+        row = db.get(StockArticle, pub.article_id)
+        family, sub = classification(db, json.loads(row.data or "{}")) if row else (None, None)
+        if not family:
+            continue
+        entry = used.setdefault(family.id, {"id": family.id, "name": family.name, "subfamilies": {}})
+        if sub:
+            entry["subfamilies"][sub.id] = {"id": sub.id, "name": sub.name}
+    items = [{**entry, "subfamilies": sorted(entry["subfamilies"].values(), key=lambda r: r["name"].casefold())}
+             for entry in sorted(used.values(), key=lambda r: r["name"].casefold())]
+    return {"version": SCHEMA, "connection_id": connection.id, "families": items}
+
+
 @router.get("/publications-feed")
 def feed(
+    request: Request,
     limit: int = Query(default=50, ge=1, le=100),
     identity=Depends(connector),
     db: Session = Depends(db_session),
 ):
-    """Publicações por enviar à loja: conteúdo ainda não confirmado e sem tentativa agendada para depois."""
+    """Publicações por enviar à loja: conteúdo ainda não confirmado e sem tentativa agendada para depois.
+    As fotografias carregadas no IAZELA seguem com o endereço completo; o hash usa o caminho relativo, por
+    isso não muda com a origem da API."""
     connection, _ = identity
+    origin = article_images.public_origin(request)
     moment = now()
     items = []
     rows = db.scalars(select(WebshopPublication).where(WebshopPublication.connection_id == connection.id)
@@ -606,6 +797,9 @@ def feed(
         content, _ = payload(db, pub)
         if content["hash"] == pub.synced_hash:
             continue
+        content["images"] = [origin + url if url.startswith("/") else url for url in content["images"]]
+        if content["label_image"].startswith("/"):
+            content["label_image"] = origin + content["label_image"]
         items.append(content)
         if len(items) >= limit:
             break
@@ -666,6 +860,8 @@ def results(data: ResultsInput, identity=Depends(connector), db: Session = Depen
                   **shop)
         else:
             fail_result(pub, moment, item.error or "Erro sem descrição na loja.")
+            if json.loads(pub.shop_data or "{}").get("override"):
+                shop["override"] = True  # O pedido de substituição mantém-se até a loja o aplicar.
             pub.shop_data = dump(shop)
             event(db, pub, "sync_error", hash=item.hash, error=pub.error, attempts=pub.attempts)
         answer.append({"article_id": item.article_id, "accepted": True})

@@ -36,3 +36,12 @@
 .awc-form label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; color: var(--color-text); }
 .awc-count { justify-self: end; font-weight: 500; color: var(--color-muted); }
 .awc-over { justify-self: end; font-weight: 700; color: var(--color-danger); }
+
+/* Avisos obrigatórios (texto fixo da empresa). */
+.awc-notice { margin: 12px 0; padding: 10px 14px; border: 1px solid var(--rs-border, var(--color-border)); border-radius: 10px; }
+.awc-notice > summary { cursor: pointer; font-weight: 600; }
+.awc-notice label { display: grid; gap: 4px; margin-top: 10px; }
+.awc-notice textarea { width: 100%; }
+.awc-notice fieldset { margin: 10px 0; border: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.awc-notice fieldset legend { font-weight: 600; margin-bottom: 4px; }
+.awc-notice .awc-check { display: inline-flex; align-items: center; gap: 6px; margin-top: 0; }

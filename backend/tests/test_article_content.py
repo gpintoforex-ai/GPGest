@@ -13,7 +13,7 @@ from app.models import ArticleContentProposal, Audit, StockArticle
 from sqlalchemy import select
 from test_inventory import product, stock_case  # noqa: F401
 
-PROPOSAL = {"description": "Spray de própolis em solução sem álcool, em frasco de 30 mL.\n\nAgitar antes de usar.",
+PROPOSAL = {"focus_keyword": "Própolis  Spray sem Álcool", "description": "Spray de própolis em solução sem álcool, em frasco de 30 mL.\n\nAgitar antes de usar.",
             "summary": "Spray de própolis sem álcool, 30 mL.", "highlights": ["Sem álcool", "Frasco de 30 mL"],
             "seo_title": "Própolis Spray sem álcool 30 mL | Marca Fictícia",
             "seo_description": "Spray de própolis sem álcool em frasco de 30 mL, da Marca Fictícia.",
@@ -66,11 +66,13 @@ def test_proposal_uses_sheet_and_images_and_never_changes_the_article(case):
     proposal = response.json()["proposal"]
     assert proposal["status"] == "pendente" and proposal["fields"]["web_summary"] == PROPOSAL["summary"]
     assert proposal["needs_review"] and proposal["images_used"] is True
+    assert proposal["fields"]["seo_keyword"] == "própolis spray sem álcool"  # palavra-chave principal normalizada
     request = fake.calls[0]
     assert request["model"] == "claude-opus-5-5" and request["fallbacks"] == "default" and "server-side-fallback-2026-07-01" in request["betas"]
     assert request["output_config"]["format"]["type"] == "json_schema"
     content = request["messages"][0]["content"]
-    assert content[0] == {"type": "image", "source": {"type": "url", "url": "https://example.com/rotulo.jpg"}}
+    assert [b for b in content if b["type"] == "image"] == [
+        {"type": "image", "source": {"type": "url", "url": "https://example.com/rotulo.jpg"}}]
     sent = json.loads(content[-1]["text"].split("\n", 1)[1].split("\n\n")[0])
     assert sent["marca"] == "Marca Fictícia" and "Margem negociada" not in content[-1]["text"]  # notas internas não saem
     assert "não inventes" in request["system"][0]["text"].lower() or "nunca inventes" in request["system"][0]["text"].lower()
@@ -109,6 +111,7 @@ def test_approve_with_edits_discard_queue_and_save_from_sheet(case, monkeypatch)
         assert (data["web_summary"], data["web_highlights"], data["seo_title"]) == ("Spray de própolis sem álcool (revisto).",
                                                                                    PROPOSAL["highlights"], PROPOSAL["seo_title"])
         assert data["description"] == PROPOSAL["description"] and data["brand"] == "Marca Fictícia"  # o resto da ficha mantém-se
+        assert data["seo_keyword"] == "própolis spray sem álcool"
         audit = db.scalar(select(Audit).where(Audit.action == "artigo_descritivo_aprovado"))
         detail = json.loads(audit.detail)
         assert detail["editado"] is True and detail["antes"]["description"] == ""
@@ -138,3 +141,52 @@ def test_without_api_key_nothing_is_sent(case, monkeypatch):
     response = stock[0].post(f"/api/stock/articles/{article}/web-content")
     assert response.status_code == 409 and "ANTHROPIC_API_KEY" in response.json()["detail"] and fake.calls == []
     assert article_content.fit({"summary": "x" * 400})["web_summary"] == "x" * 300
+
+
+def test_mandatory_supplement_notice_is_appended_verbatim_and_configurable(case, monkeypatch):
+    """Avisos obrigatórios: texto fixo da empresa no fim da proposta das famílias escolhidas (não é escrito pela IA)."""
+    from test_inventory import login, product
+
+    stock, _, install = case
+    client = stock[0]
+    supplement = product(stock, name="Magnésio Fictício", family="Suplementos Alimentares")
+    cosmetic = product(stock, name="Creme Fictício", family="Cosmética")
+    settings = client.get("/api/stock/web-content/settings").json()
+    assert settings["families"] == ["Suplementos Alimentares"] and settings["text"].startswith("Suplemento Alimentar.")
+    assert settings["title"] == "Advertências"
+    assert "Cosmética" in settings["family_options"]
+    fake = install(("end_turn", json.dumps(PROPOSAL)), ("end_turn", json.dumps(PROPOSAL)))
+    generated = client.post(f"/api/stock/articles/{supplement}/web-content").json()["proposal"]
+    description = generated["fields"]["description"]
+    assert description.startswith(PROPOSAL["description"]) and generated["notice"] is True
+    assert description.endswith("\n\n## Advertências\n" + settings["text"])  # subtítulo (H2 no site)
+    sent = json.loads(fake.calls[0]["messages"][0]["content"][-1]["text"].split("\n", 1)[1].split("\n\n")[0])
+    assert sent["avisos_obrigatorios_automaticos"] is True
+    assert "avisos_obrigatorios_automaticos" in fake.calls[0]["system"][0]["text"]
+    other = client.post(f"/api/stock/articles/{cosmetic}/web-content").json()["proposal"]
+    assert other["fields"]["description"] == PROPOSAL["description"] and other["notice"] is False
+    # A IA já escreveu os avisos: não se repetem.
+    install(("end_turn", json.dumps({**PROPOSAL, "description": "Texto.\n\nAvisos obrigatórios\n" + settings["text"]})))
+    again = client.post(f"/api/stock/articles/{supplement}/web-content").json()["proposal"]["fields"]["description"]
+    assert again.count("Manter fora do alcance das crianças") == 1
+    # A IA escreveu a secção «## Advertências» com as do rótulo: os avisos gerais entram no fim dela (sem repetir).
+    labelled = "Texto.\n\n## Advertências\nContém produtos da colmeia.\n\n## Apresentação\nFrasco de 30 mL."
+    install(("end_turn", json.dumps({**PROPOSAL, "description": labelled})))
+    merged = client.post(f"/api/stock/articles/{supplement}/web-content").json()["proposal"]["fields"]["description"]
+    assert merged == ("Texto.\n\n## Advertências\nContém produtos da colmeia.\n\n" + settings["text"]
+                      + "\n\n## Apresentação\nFrasco de 30 mL.")
+    # Configuração: texto e famílias da empresa, com controlo de alterações simultâneas e auditoria.
+    body = {"title": "Advertências", "text": "Suplemento alimentar.   Conservar ao abrigo da luz.",
+            "families": ["Cosmética"], "revision": settings["revision"]}
+    saved = client.put("/api/stock/web-content/settings", json=body)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["text"] == "Suplemento alimentar. Conservar ao abrigo da luz." and saved.json()["families"] == ["Cosmética"]
+    assert client.put("/api/stock/web-content/settings", json=body).status_code == 409
+    install(("end_turn", json.dumps(PROPOSAL)), ("end_turn", json.dumps(PROPOSAL)))
+    changed = client.post(f"/api/stock/articles/{cosmetic}/web-content").json()["proposal"]["fields"]["description"]
+    assert changed.endswith("Advertências\nSuplemento alimentar. Conservar ao abrigo da luz.")
+    assert client.post(f"/api/stock/articles/{supplement}/web-content").json()["proposal"]["notice"] is False
+    with stock[2]() as db:
+        assert db.scalar(select(Audit).where(Audit.action == "descritivo_avisos_alterados"))
+    login(client, "operator")
+    assert client.put("/api/stock/web-content/settings", json={**body, "revision": 1}).status_code == 403

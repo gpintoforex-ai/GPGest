@@ -13,7 +13,7 @@ import "./ArticleWebContent.css";
  */
 
 type Row = Record<string, any>;
-export type WebFields = { description: string; web_summary: string; web_highlights: string[]; seo_title: string; seo_description: string };
+export type WebFields = { description: string; web_summary: string; web_highlights: string[]; seo_keyword?: string; seo_title: string; seo_description: string };
 const STATUS: Record<string, [string, "warning" | "success" | "neutral" | "info"]> = {
   pendente: ["Por rever", "warning"], aprovada: ["Aprovada", "success"], aplicada: ["Aplicada na ficha", "success"], descartada: ["Descartada", "neutral"],
 };
@@ -29,7 +29,41 @@ function Review({ proposal }: { proposal: Row }) {
     {proposal.missing_information?.length > 0 && <p className="awc-hint">Em falta nos dados: {proposal.missing_information.join("; ")}.</p>}
     <p className="awc-hint">Fontes: {(proposal.sources_used || []).map((s: string) => s === "imagem" ? "imagens do artigo" : "ficha do artigo").join(" e ") || "ficha do artigo"}
       {proposal.images_used === false && " (as imagens não puderam ser lidas)"} · {proposal.model}</p>
+    {proposal.notice && <p className="awc-hint">Inclui as advertências obrigatórias definidas pela empresa (texto fixo, não escrito pela IA).</p>}
   </>;
+}
+
+/** Avisos obrigatórios (texto fixo da empresa) acrescentados às propostas das famílias escolhidas. */
+function NoticeSettings() {
+  const [data, setData] = useState<Row | null>(null), [draft, setDraft] = useState<Row | null>(null);
+  const [busy, setBusy] = useState(false), [error, setError] = useState(""), [saved, setSaved] = useState("");
+  useEffect(() => {
+    api("/stock/web-content/settings").then(value => { setData(value); setDraft(value); }).catch(e => setError((e as Error).message));
+  }, []);
+  if (!data || !draft) return error ? <Notice tone="error">{error}</Notice> : null;
+  const options: string[] = [...new Set<string>([...(data.family_options || []), ...(draft.families || [])])];
+  const toggle = (name: string, on: boolean) => setDraft({ ...draft, families: on ? [...draft.families, name] : draft.families.filter((f: string) => f !== name) });
+  async function save() {
+    setBusy(true); setError(""); setSaved("");
+    try {
+      const value = await api("/stock/web-content/settings", { title: draft!.title, text: draft!.text, families: draft!.families, revision: data!.revision }, { method: "PUT" });
+      setData(value); setDraft(value); setSaved("Advertências guardadas. Aplicam-se às próximas propostas.");
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <details className="awc-notice" data-ignore-dirty>
+    <summary>Advertências obrigatórias ({data.families.length ? data.families.join(", ") : "nenhuma família"})</summary>
+    <p className="awc-hint">Texto fixo acrescentado a cada proposta de descrição dos artigos destas famílias, sempre igual: no fim da secção com o mesmo título (por exemplo, «Advertências» com as do rótulo) ou numa secção nova no fim. A IA não escreve estes avisos gerais; mantém só as advertências próprias de cada rótulo, assinaladas para confirmar.</p>
+    <label>Título<input value={draft.title} maxLength={100} onChange={e => setDraft({ ...draft, title: e.target.value })} /></label>
+    <label>Texto das advertências<textarea rows={4} maxLength={1500} value={draft.text} onChange={e => setDraft({ ...draft, text: e.target.value })} /></label>
+    <fieldset><legend>Famílias abrangidas</legend>
+      {options.length ? options.map(name => <label key={name} className="awc-check"><input type="checkbox" checked={draft.families.includes(name)} onChange={e => toggle(name, e.target.checked)} />{name}</label>)
+        : <small className="awc-muted">Sem famílias ativas.</small>}
+    </fieldset>
+    {error && <Notice tone="error">{error}</Notice>}
+    {saved && <p className="awc-hint" role="status">{saved}</p>}
+    <ActionButton type="button" className="primary" disabled={busy} onClick={() => void save()}>{busy ? "A guardar…" : "Guardar advertências"}</ActionButton>
+  </details>;
 }
 
 /** Na ficha do artigo: gerar e usar a proposta no formulário. */
@@ -57,12 +91,14 @@ export function WebContentAssistant({ articleId, readOnly, onUse }: { articleId?
     {state?.configured === false && <Notice tone="info">A IA não está configurada: indique ANTHROPIC_API_KEY no ficheiro .env do servidor.</Notice>}
     {error && <Notice tone="error">{error}</Notice>}
     <p className="awc-hint">{COST} A proposta não altera a ficha: reveja-a, use-a no formulário e grave o artigo.</p>
+    {state && state.has_label === false && <p className="awc-hint">Sem fotografia do rótulo: carregue-a na ficha (botão do rótulo, por baixo da fotografia) para a IA ler ingredientes, dose e advertências.</p>}
     {pending && <div className="awc-proposal">
       <h4>Proposta</h4>
       <p className="awc-text">{proposal.fields.description}</p>
       <dl className="awc-facts">
         <div><dt>Resumo</dt><dd>{proposal.fields.web_summary}</dd></div>
         <div><dt>Pontos-chave</dt><dd><ul>{proposal.fields.web_highlights.map((h: string) => <li key={h}>{h}</li>)}</ul></dd></div>
+        {proposal.fields.seo_keyword && <div><dt>Palavra-chave principal</dt><dd>{proposal.fields.seo_keyword}</dd></div>}
         <div><dt>Título SEO</dt><dd>{proposal.fields.seo_title}</dd></div>
         <div><dt>Meta-descrição</dt><dd>{proposal.fields.seo_description}</dd></div>
       </dl>
@@ -97,6 +133,7 @@ function ReviewDialog({ article, onClose, onDone }: { article: Row; onClose: () 
       <label>Descrição<textarea rows={7} value={fields.description} maxLength={4000} onChange={e => set("description", e.target.value)} />{counter(fields.description, 4000)}</label>
       <label>Resumo<textarea rows={2} value={fields.web_summary} maxLength={300} onChange={e => set("web_summary", e.target.value)} />{counter(fields.web_summary, 300)}</label>
       <label>Pontos-chave (um por linha)<textarea rows={4} value={fields.web_highlights.join("\n")} onChange={e => set("web_highlights", e.target.value.split("\n").slice(0, 8))} /></label>
+      <label>Palavra-chave principal (SEO)<input value={fields.seo_keyword || ""} maxLength={60} onChange={e => set("seo_keyword", e.target.value)} /></label>
       <label>Título SEO<input value={fields.seo_title} maxLength={70} onChange={e => set("seo_title", e.target.value)} />{counter(fields.seo_title, 60)}</label>
       <label>Meta-descrição<textarea rows={2} value={fields.seo_description} maxLength={170} onChange={e => set("seo_description", e.target.value)} />{counter(fields.seo_description, 155)}</label>
       <Review proposal={state.proposal} />
@@ -146,6 +183,7 @@ export function WebContentQueue() {
     {data?.configured === false && <Notice tone="info">A IA não está configurada: indique ANTHROPIC_API_KEY no ficheiro .env do servidor.</Notice>}
     {error && <Notice tone="error">{error}</Notice>}
     {notice && <Notice tone="success" onDismiss={() => setNotice("")}>{notice}</Notice>}
+    <NoticeSettings />
     <div className="awc-toolbar">
       <div className="awc-tabs" role="group" aria-label="Artigos a mostrar">
         {([["sem_descritivo", "Sem descritivo"], ["por_rever", "Propostas por rever"]] as const).map(([key, label]) =>
@@ -168,7 +206,7 @@ export function WebContentQueue() {
           {state === "sem_descritivo" && <td><input type="checkbox" aria-label={`Selecionar ${r.name}`} checked={selected.includes(r.id)} disabled={!selected.includes(r.id) && selected.length >= 25}
             onChange={e => setSelected(e.target.checked ? [...selected, r.id] : selected.filter(id => id !== r.id))} /></td>}
           <td>{r.code}</td><td>{r.name}{r.family && <small>{r.family}</small>}</td><td>{r.brand || "—"}</td>
-          <td>{r.has_images ? "Sim" : <small className="awc-muted">Sem imagem: texto mais genérico</small>}</td>
+          <td>{r.has_label ? "Sim, com rótulo" : r.has_images ? "Sim" : <small className="awc-muted">Sem imagem: texto mais genérico</small>}</td>
           <td>{r.proposal_status ? <StatusBadge tone={STATUS[r.proposal_status]?.[1] || "neutral"} compact>{STATUS[r.proposal_status]?.[0]}</StatusBadge> : "Sem descritivo"}</td>
           <td><ActionButton type="button" onClick={() => setReviewing(r)}>{r.proposal_status === "pendente" ? "Rever" : "Abrir"}</ActionButton></td>
         </tr>)}</tbody>

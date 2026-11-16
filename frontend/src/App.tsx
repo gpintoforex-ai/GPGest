@@ -1029,7 +1029,10 @@ export default function App() {
           {page === "Orçamento" && manager && <Budget stores={boot.stores} />}
           {page === "Faturação e recebimentos" && <BillingConference stores={boot.stores} store={store} manager={manager} mode={boot.integration?.mode || "local"} navigate={navigatePage} />}
           {page === "Armazéns" && <TablePage tableKey="warehouses" context={tableContext} active={activePage === page} store={store} />}
-          {page === "Artigos e validades" && <Suspense fallback={<p role="status">A carregar artigos e stock…</p>}><Inventory stores={boot.stores} admin={boot.user.role === "administrador"} /></Suspense>}
+          {page === "Famílias de artigos" && <TablePage tableKey="article_families" context={tableContext} active={activePage === page} />}
+          {page === "Subfamílias de artigos" && <TablePage tableKey="article_subfamilies" context={tableContext} active={activePage === page} />}
+          {page === "Marcas" && <TablePage tableKey="article_brands" context={tableContext} active={activePage === page} />}
+          {page === "Artigos e validades" && <Suspense fallback={<p role="status">A carregar artigos e stock…</p>}><Inventory stores={boot.stores} admin={boot.user.role === "administrador"} active={activePage === page} /></Suspense>}
           {page === "Encomendas de clientes" && <Suspense fallback={<LoadingState />}><CustomerOrders stores={boot.stores} store={store} company={boot.company} navigate={navigatePage} onStoreChange={changeWorkspaceStore} /></Suspense>}
           {page !== "Encomendas de clientes" && PROCUREMENT_PAGES.includes(page) && <Suspense fallback={<p role="status">A carregar compras e stock…</p>}><Procurement key={page} section={page} store={store} stores={boot.stores} categories={boot.categories} navigate={navigatePage} /></Suspense>}
           {page === "Prazos de pagamento" && <TablePage tableKey="payment_terms" context={tableContext} active={activePage === page} />}

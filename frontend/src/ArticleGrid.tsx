@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type 
 import { MoreHorizontal, SlidersHorizontal } from "lucide-react";
 import { api } from "./lib/api";
 import { articlePayload } from "./articleValues";
+import { WITHDRAW_CONFIRMATION, WebBadge, markForShop, withdrawFromShop } from "./ArticleWebshop";
 import {
   ActionButton,
   Notice,
@@ -56,9 +57,9 @@ const columns: Column[] = [
     sort: "name",
     render: (r) => (
       <>
-        {r.photo && (
+        {(r.image_photo || r.photo) && (
           <img
-            src={r.photo}
+            src={r.image_photo || r.photo}
             alt=""
             className="stock-photo"
             loading="lazy"
@@ -180,6 +181,23 @@ const columns: Column[] = [
       ),
   },
   {
+    id: "web",
+    label: "Loja online",
+    render: (r) =>
+      r.web?.length ? (
+        <>
+          {r.web.map((state: Row) => (
+            <span key={state.connection_id} className="article-web-state">
+              <WebBadge state={state} />
+              {r.web.length > 1 && <small>{state.connection}</small>}
+            </span>
+          ))}
+        </>
+      ) : (
+        <span className="article-muted">Fora da loja</span>
+      ),
+  },
+  {
     id: "expiry",
     label: "Validade",
     render: (r) =>
@@ -212,6 +230,7 @@ const emptyFilters = {
   origin: "",
   stock: "",
   expiry: "",
+  web: "",
 };
 
 /**
@@ -488,6 +507,47 @@ export default function ArticleGrid({
     // Keep partial failures visible after the refresh has started.
     if (failures.length) setActionError(failures.join(" · "));
   }
+  // Loja online: marcar (criar a publicação ou voltar a publicar) e retirar, com as regras da Publicação online.
+  const shops: Row[] = data?.webshop_connections || catalog.webshop_connections || [];
+  const publicationOf = (row: Row, shop: Row) => (row.web || []).find((s: Row) => s.connection_id === shop.id);
+  async function shopAction(targets: Row[], shop: Row, kind: "mark" | "withdraw") {
+    if (changing.current || !targets.length) return;
+    const todo = targets.filter((r) => (publicationOf(r, shop)?.state === "published") === (kind === "withdraw"));
+    if (!todo.length) {
+      setActionError(kind === "mark" ? "Os artigos escolhidos já estão marcados para o site." : "Nenhum dos artigos escolhidos está marcado para o site.");
+      return;
+    }
+    if (kind === "withdraw" && !(await confirmAction({ ...WITHDRAW_CONFIRMATION,
+      message: `${todo.length} artigo(s). ${WITHDRAW_CONFIRMATION.message}` })))
+      return;
+    changing.current = true;
+    setBusy(true);
+    setActionError("");
+    let done = 0;
+    const failures: string[] = [];
+    try {
+      for (const row of todo) {
+        const pub = publicationOf(row, shop);
+        try {
+          await (kind === "mark" ? markForShop(shop.id, row.id, pub) : withdrawFromShop(pub));
+          done++;
+        } catch (e) {
+          failures.push(`${row.code}: ${(e as Error).message}`);
+        }
+      }
+      setSelected([]);
+      const where = shops.length > 1 ? ` (${shop.name})` : "";
+      if (done)
+        onChanged(kind === "mark"
+          ? `${done} artigo(s) marcados para o site${where}. A loja recebe-os na próxima sincronização.`
+          : `${done} artigo(s) retirados do site${where} na próxima sincronização.`);
+      setRetry((v) => v + 1);
+    } finally {
+      changing.current = false;
+      setBusy(false);
+    }
+    if (failures.length) setActionError(failures.join(" · "));
+  }
   async function remove(row: Row) {
     if (
       changing.current ||
@@ -558,7 +618,7 @@ export default function ArticleGrid({
     onOpen(row, true);
   }
   const operationDisabled = loading || busy;
-  const hasMenu = rights.adjust_stock || rights.change_price;
+  const hasMenu = rights.adjust_stock || rights.change_price || shops.length > 0;
   return (
     <section
       className={`panel article-grid density-${prefs.density}`}
@@ -656,6 +716,15 @@ export default function ArticleGrid({
                       ["low", "Abaixo do mínimo"],
                       ["over", "Acima do máximo"],
                       ["unknown", "Sem informação"],
+                    ],
+                  ],
+                  [
+                    "web",
+                    "Loja online",
+                    [
+                      ["published", "Marcados para o site"],
+                      ["withdrawn", "Retirados do site"],
+                      ["none", "Fora da loja"],
                     ],
                   ],
                   [
@@ -795,6 +864,16 @@ export default function ArticleGrid({
               </ActionButton>
             </>
           )}
+          {shops.map((shop) => (
+            <span key={shop.id} className="article-selection-shop">
+              <ActionButton disabled={operationDisabled} onClick={() => void shopAction(selectedRows, shop, "mark")}>
+                Marcar para o site{shops.length > 1 ? ` (${shop.name})` : ""}
+              </ActionButton>
+              <ActionButton disabled={operationDisabled} onClick={() => void shopAction(selectedRows, shop, "withdraw")}>
+                Retirar do site{shops.length > 1 ? ` (${shop.name})` : ""}
+              </ActionButton>
+            </span>
+          ))}
           <ActionButton onClick={() => setSelected([])}>
             Limpar seleção
           </ActionButton>
@@ -946,6 +1025,20 @@ export default function ArticleGrid({
                           </ActionButton>
                         </>
                       )}
+                      {shops.map((shop) => {
+                        const published = publicationOf(r, shop)?.state === "published";
+                        return (
+                          <ActionButton
+                            key={shop.id}
+                            role="menuitem"
+                            disabled={operationDisabled}
+                            onClick={() => void shopAction([r], shop, published ? "withdraw" : "mark")}
+                          >
+                            {published ? "Retirar do site" : "Marcar para o site"}
+                            {shops.length > 1 ? ` (${shop.name})` : ""}
+                          </ActionButton>
+                        );
+                      })}
                       {rights.change_price && r.origin === "Local" && (
                         <ActionButton
                           role="menuitem"

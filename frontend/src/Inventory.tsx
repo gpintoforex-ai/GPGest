@@ -144,9 +144,11 @@ function Num({
 export default function Inventory({
   stores,
   admin,
+  active = true,
 }: {
   stores: Row[];
   admin: boolean;
+  active?: boolean;
 }) {
   const [catalog, setCatalog] = useState<Row | null>(null),
     [tab, setTab] = useWorkspaceTab("stock", "Painel", ["Painel", "Artigos", "Movimentos", "Lotes e validades", "Inventários", "Importações", "Site", "Parâmetros"]),
@@ -209,22 +211,23 @@ export default function Inventory({
   ).toString();
   const [revision, setRevision] = useState(0);
   useEffect(() => {
-    let active = true;
+    if (!active) return;
+    let pending = true;
     api("/stock/catalog" + (tab === "Artigos" ? "?metadata_only=true" : ""))
       .then((data) => {
-        if (active) {
+        if (pending) {
           setQuantityDecimals(data.settings?.quantity_decimals);
           setCatalog(data);
           setConfig(data.settings);
         }
       })
       .catch((e) => {
-        if (active) setError(e.message);
+        if (pending) setError(e.message);
       });
     return () => {
-      active = false;
+      pending = false;
     };
-  }, [tab === "Artigos"]);
+  }, [tab === "Artigos", active]);
   useEffect(() => {
     if (!catalog) return;
     let active = true;
@@ -1232,13 +1235,13 @@ export default function Inventory({
                 setFilters(current => ({ ...current, article_id: id }));
                 setPage(1); setTab(section); setDialog(null);
               }}
-              onSave={async (values) => {
+              onSave={async (values, note) => {
                 await api(
                   `/stock/articles${dialog.article.id ? `/${dialog.article.id}` : ""}`,
                   values,
                   dialog.article.id ? { method: "PUT" } : undefined,
                 );
-                await saved("Artigo guardado.");
+                await saved(note ? `Artigo guardado. ${note}` : "Artigo guardado.");
               }}
             />
           )}
