@@ -11,3 +11,5 @@ backups/
 .wrangler/
 .dev.vars
 .dev.vars.*
+output/
+tmp/
