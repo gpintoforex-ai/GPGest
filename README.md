@@ -252,4 +252,4 @@ A evolução do [ciclo integrado de encomendas](docs/CICLO-ENCOMENDAS.md) acresc
 
 Loja online Raizpura: [configuração e sincronização de famílias, artigos, stock e encomendas](docs/INTEGRACAO-RAIZPURA.md). Escolher os artigos publicados, SKU, preço do canal e correspondências com a loja: [publicação online](docs/PUBLICACAO-ONLINE.md) (requer a migração 0095). Encomendas, pagamentos e reservas com prazo por meio de pagamento: [encomendas online](docs/ENCOMENDAS-ONLINE.md) (requer a migração 0096). [Tabelas de famílias, subfamílias e marcas](docs/CLASSIFICACAO-ARTIGOS.md), ligadas à ficha e à publicação no site (migração 0097).
 
-Assistente IAZELA (perguntas sobre validades, reposição, vendas, clientes, IVA e documentos, com a Claude API; só consulta): [ativação, ferramentas e privacidade](docs/ASSISTENTE-IAZELA.md).
+Assistente IAZELA (perguntas sobre validades, reposição, vendas, clientes, IVA e documentos, com gráficos, e propostas confirmadas pelo utilizador: preços, fotografias, descritivos e publicação de artigos no site a partir de uma fotografia; Claude API): [ativação, ferramentas e privacidade](docs/ASSISTENTE-IAZELA.md).

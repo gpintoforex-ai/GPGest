@@ -30,7 +30,7 @@
 .assistant-form textarea { flex: 1 1 auto; min-width: 0; resize: none; min-height: 44px; max-height: 140px; }
 .assistant-form .ui-action { flex: 0 0 auto; width: 44px; min-height: 44px; padding: 0; display: inline-grid; place-items: center; }
 /* Gráficos na resposta: a bolha alarga para o gráfico ficar legível. */
-.assistant-turn.is-assistant:has(.assistant-chart) { max-width: 100%; width: 100%; }
+.assistant-turn.is-assistant:has(.assistant-chart), .assistant-turn.is-assistant:has(.assistant-content-fields) { max-width: 100%; width: 100%; }
 .assistant-chart { --series-1: #2a78d6; --series-2: #eb6834; margin-top: 8px; background: var(--color-surface); border-radius: 10px; padding: 4px 8px; }
 .assistant-chart .dash-chart { margin: 0; }
 .assistant-chart .dash-chart figcaption { flex-wrap: wrap; gap: 6px; }
@@ -48,8 +48,21 @@
 .assistant-action-code { font-size: .8rem; color: var(--color-muted); }
 .assistant-action-prices { font-size: 1.05rem; }
 .assistant-action-prices small, .assistant-action-note { font-size: .78rem; color: var(--color-muted); }
-.assistant-action-buttons { display: flex; gap: 8px; margin-top: 6px; }
+.assistant-action-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.assistant-action-buttons .ui-action { white-space: nowrap; }
 .assistant-action-buttons .ui-action { display: inline-flex; align-items: center; gap: 6px; }
+/* Fotografia anexada: pré-visualização antes de enviar e na conversa. */
+.assistant-attachment { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px dashed var(--color-border); border-radius: 10px; font-size: .85rem; color: var(--color-muted); }
+.assistant-attachment img { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; }
+.assistant-attachment span { flex: 1 1 auto; }
+.assistant-attachment .ui-action { width: 36px; min-height: 36px; padding: 0; display: inline-grid; place-items: center; }
+.assistant-photo { display: block; max-width: 180px; max-height: 180px; border-radius: 8px; margin-bottom: 6px; }
+.assistant-action-image { display: block; max-width: 100%; max-height: 220px; object-fit: contain; border-radius: 8px; background: #fff; border: 1px solid var(--color-border); }
+.assistant-action-note a { color: var(--color-accent-ink); }
+.assistant-content-fields { display: grid; gap: 8px; margin-top: 4px; }
+.assistant-content-fields label { display: grid; gap: 4px; font-size: .8rem; font-weight: 600; color: var(--color-text); }
+.assistant-content-fields textarea, .assistant-content-fields input { width: 100%; font-weight: 400; font-size: .9rem; resize: vertical; }
+.assistant-dialog .assistant-action .ui-notice p { color: inherit; }
 @media (max-width: 600px) {
   .ui-dialog.assistant-dialog { width: calc(100vw - 16px); height: calc(100dvh - 16px); margin: 8px; }
   .assistant-turn { max-width: 100%; }

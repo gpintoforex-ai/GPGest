@@ -1,5 +1,6 @@
 """Assistente IAZELA: painel no cabeçalho, sugestões, envio, resposta formatada, fontes, estado sem chave,
-cartão de confirmação de preço (nada é gravado sem «Confirmar») e gráficos na resposta.
+cartões de confirmação (preço, fotografia anexada, descritivo editável, publicação; nada é gravado sem «Confirmar»)
+e gráficos na resposta.
 
 Só APIs intercetadas (reaproveita a preparação do teste visual); nada sai para a Anthropic.
 Requer o Vite em 127.0.0.1:5174.
@@ -18,7 +19,20 @@ OUT = ROOT / ".local" / "assistant-ui"
 OUT.mkdir(parents=True, exist_ok=True)
 REPLY = ("Nos próximos 60 dias terminam a validade **2 lotes**:\n- **Chá verde** (lote L1): 4 un., 20/11/2026\n"
          "- Mel biológico (lote M7): 2 un., 30/12/2026\n\nFonte: lotes em stock nos armazéns autorizados.")
-sent, available, saved = [], [True], []
+sent, available, saved, uploads = [], [True], [], []
+PIXEL = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+PHOTO_ACTION = {"type": "image", "article_id": "a1", "code": "OC500", "name": "Óleo de coco biológico 500 ml", "role": "photo",
+                "role_label": "Fotografia do produto", "source": "anexo", "width": 1500, "height": 2000,
+                "preview": "data:image/png;base64," + PIXEL, "request": {"path": "/stock/articles/a1/images/photo", "upload": "anexo"}}
+CONTENT_ACTION = {"type": "web_content", "article_id": "a1", "code": "OC500", "name": "Óleo de coco biológico 500 ml",
+                  "fields": {"description": "Óleo de coco biológico em frasco de 500 ml.", "web_summary": "Óleo de coco, 500 ml.",
+                             "web_highlights": ["Biológico"], "seo_keyword": "óleo de coco", "seo_title": "Óleo de coco 500 ml",
+                             "seo_description": "Óleo de coco biológico."},
+                  "needs_review": ["«Rico em ácido láurico» (rótulo)"], "missing_information": ["Modo de conservação"], "images_used": True,
+                  "request": {"path": "/stock/articles/a1/web-content/approve", "revision": 4, "discard": "/stock/articles/a1/web-content/discard"}}
+PUBLISH_ACTION = {"type": "publish", "article_id": "a1", "code": "OC500", "name": "Óleo de coco biológico 500 ml", "shop": "Raizpura",
+                  "sku": "OC500", "gross": "8.90", "warnings": [], "mode": "nova",
+                  "request": {"path": "/webshop/publications", "body": {"connection_id": "c1", "article_id": "a1"}}}
 ACTION = {"type": "price", "article_id": "a1", "code": "OC500", "name": "Óleo de coco biológico 500 ml", "origin": "local",
           "vat_rate": "23", "before_gross": "6.15", "after_gross": "8.90", "channels": [],
           "request": {"path": "/stock/articles/a1/price", "body": {"revision": 3, "sale_net": "7.235772"}}}
@@ -32,12 +46,19 @@ def intercept(route):
     if path == "/assistente/estado":
         return route.fulfill(json={"available": available[0], "model": "claude-opus-5-5",
                                    "message": "" if available[0] else "O assistente não está configurado: indique ANTHROPIC_API_KEY no ficheiro .env do servidor e reinicie a API."})
+    if path in ("/stock/articles/a1/images/photo", "/stock/articles/a1/web-content/approve", "/webshop/publications"):
+        uploads.append((path, route.request.headers.get("content-type", ""), route.request.post_data_buffer))
+        return route.fulfill(json={})
     if path == "/stock/articles/a1/price":
         saved.append(route.request.post_data_json)
         return route.fulfill(json={"saved": True})
     if path == "/assistente/mensagens":
         sent.append(route.request.post_data_json)
         question = sent[-1]["messages"][-1]["content"]
+        if "para o site" in question:
+            return route.fulfill(json={"reply": "Encontrei o artigo pelo código de barras. Confirme a fotografia, o descritivo e a publicação.",
+                                       "tools": [{"name": "procurar_artigos"}, {"name": "propor_imagem"}, {"name": "gerar_descritivo"}, {"name": "propor_publicacao"}],
+                                       "actions": [PHOTO_ACTION, CONTENT_ACTION, PUBLISH_ACTION], "charts": [], "usage": {}, "model": "claude-opus-5-5"})
         if "óleo de coco" in question:
             return route.fulfill(json={"reply": "Proposta pronta: confirme no cartão.", "tools": [{"name": "procurar_artigos"}, {"name": "propor_alteracao_preco"}],
                                        "actions": [ACTION], "charts": [], "usage": {}, "model": "claude-opus-5-5"})
@@ -64,7 +85,7 @@ with sync_playwright() as p:
         dialog = page.get_by_role("dialog", name="Assistente IAZELA")
         expect(dialog.get_by_text("enviados à Anthropic", exact=False)).to_be_visible()
         suggestions = dialog.get_by_role("group", name="Perguntas sugeridas")
-        expect(suggestions.get_by_role("button")).to_have_count(10)
+        expect(suggestions.get_by_role("button")).to_have_count(11)
         # Sugestão com «…»: vai para a caixa de texto, para completar (não é enviada).
         suggestions.get_by_role("button", name="Que produtos o cliente … já comprou?").click()
         box = dialog.get_by_label("Pergunta ao assistente", exact=True)
@@ -91,7 +112,7 @@ with sync_playwright() as p:
         saved.clear()
         box.fill("Põe o óleo de coco 500 ml a 8,90 €")
         box.press("Enter")
-        card = dialog.get_by_role("group", name="Alterar preço de Óleo de coco biológico 500 ml")
+        card = dialog.get_by_role("group", name="Alterar preço de venda: Óleo de coco biológico 500 ml")
         expect(card).to_contain_text("6,15 €")
         expect(card).to_contain_text("8,90 €")
         assert not saved
@@ -112,12 +133,44 @@ with sync_playwright() as p:
         chart.get_by_role("button", name="Ver tabela").click()
         expect(chart.locator("tbody tr")).to_have_count(3)
         expect(chart.locator("tbody tr").first).to_contain_text("12.345,00 €")
+        # Fotografia anexada: segue com a pergunta; cartões de imagem, descritivo (editável) e publicação.
+        dialog.get_by_role("button", name="Nova conversa").click()
+        uploads.clear()
+        dialog.locator("input[type=file]").set_input_files({"name": "produto.png", "mimeType": "image/png",
+                                                            "buffer": __import__("base64").b64decode(PIXEL)})
+        expect(dialog.get_by_alt_text("Fotografia a enviar")).to_be_visible()
+        box.fill("Cria este artigo para o site")
+        box.press("Enter")
+        expect(dialog.get_by_role("group", name="Guardar imagem na ficha: Óleo de coco biológico 500 ml")).to_be_visible()
+        assert sent[-1]["image"] and len(sent[-1]["image"]) > 20
+        expect(dialog.get_by_alt_text("Fotografia anexada")).to_be_visible()
+        assert not uploads
+        dialog.screenshot(path=str(OUT / f"photo-flow-{width}-{theme}.png"))
+        photo_card = dialog.get_by_role("group", name="Guardar imagem na ficha: Óleo de coco biológico 500 ml")
+        photo_card.scroll_into_view_if_needed()
+        dialog.screenshot(path=str(OUT / f"photo-card-{width}-{theme}.png"))
+        photo_card.get_by_role("button", name="Confirmar").click()
+        expect(photo_card).to_contain_text("Imagem guardada")
+        assert uploads[-1][0] == "/stock/articles/a1/images/photo" and uploads[-1][1].startswith("multipart/form-data")
+        content_card = dialog.get_by_role("group", name="Descritivo para o site: Óleo de coco biológico 500 ml")
+        expect(content_card).to_contain_text("Confirme antes de publicar")
+        content_card.get_by_label("Resumo").fill("Óleo de coco biológico, 500 ml (revisto).")
+        content_card.screenshot(path=str(OUT / f"content-card-{width}-{theme}.png"))
+        content_card.get_by_role("button", name="Aprovar e gravar").click()
+        expect(content_card).to_contain_text("Descritivo aprovado")
+        approved = __import__("json").loads(uploads[-1][2])
+        assert approved["web_summary"] == "Óleo de coco biológico, 500 ml (revisto)." and approved["revision"] == 4
+        publish_card = dialog.get_by_role("group", name="Publicar na loja online: Óleo de coco biológico 500 ml")
+        expect(publish_card).to_contain_text("Raizpura")
+        publish_card.get_by_role("button", name="Confirmar").click()
+        expect(publish_card).to_contain_text("Publicado")
+        assert uploads[-1][0] == "/webshop/publications"
         # Cancelar não grava nada.
         dialog.get_by_role("button", name="Nova conversa").click()
         saved.clear()
         box.fill("Põe o óleo de coco 500 ml a 8,90 €")
         box.press("Enter")
-        card = dialog.get_by_role("group", name="Alterar preço de Óleo de coco biológico 500 ml")
+        card = dialog.get_by_role("group", name="Alterar preço de venda: Óleo de coco biológico 500 ml")
         card.get_by_role("button", name="Cancelar").click()
         expect(card).to_contain_text("nada foi alterado")
         assert not saved
@@ -134,4 +187,4 @@ with sync_playwright() as p:
         assert not errors, errors
         page.close()
     browser.close()
-print("PASS: assistente (painel, sugestões, envio, resposta formatada, fontes, estado sem chave, confirmação de preço e gráficos)")
+print("PASS: assistente (painel, sugestões, envio, resposta formatada, fontes, estado sem chave, cartões de preço, fotografia, descritivo e publicação, e gráficos)")

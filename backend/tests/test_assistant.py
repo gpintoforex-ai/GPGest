@@ -14,14 +14,22 @@ from test_inventory import move, product, stock_case  # noqa: F401
 class FakeClient:
     """Substitui anthropic.Anthropic: executa as ferramentas pedidas em `plan` e devolve uma resposta."""
 
-    plan, results, calls = [], {}, []
+    plan, results, calls, generated, proposal = [], {}, [], [], {}
 
     def __init__(self, **_):
-        self.beta = SimpleNamespace(messages=SimpleNamespace(tool_runner=self.tool_runner))
+        self.beta = SimpleNamespace(messages=SimpleNamespace(tool_runner=self.tool_runner, create=self.create))
+
+    def create(self, **params):
+        """Geração do descritivo (serviço dos descritivos, chamado por gerar_descritivo)."""
+        FakeClient.generated.append(params)
+        return SimpleNamespace(stop_reason="end_turn", model=params["model"],
+                               content=[SimpleNamespace(type="text", text=json.dumps(FakeClient.proposal))],
+                               usage=SimpleNamespace(input_tokens=50, output_tokens=10))
 
     def tool_runner(self, **params):
         FakeClient.calls.append(params)
-        tools = {tool.name: tool for tool in params["tools"]}
+        # Ferramentas do servidor da Anthropic (pesquisa na internet) são dicionários e não correm aqui.
+        tools = {tool.name: tool for tool in params["tools"] if not isinstance(tool, dict)}
 
         def run():
             for name, args in FakeClient.plan:
@@ -38,7 +46,7 @@ def assistant(stock_case, monkeypatch):  # noqa: F811
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-teste")
     monkeypatch.setattr(anthropic, "Anthropic", FakeClient)
-    FakeClient.plan, FakeClient.results, FakeClient.calls = [], {}, []
+    FakeClient.plan, FakeClient.results, FakeClient.calls, FakeClient.generated = [], {}, [], []
     return stock_case
 
 
@@ -74,7 +82,8 @@ def test_answer_uses_the_model_with_fallback_and_records_the_question(assistant)
     assert result["reply"] == "Resposta de teste." and result["usage"]["input_tokens"] == 100
     params = FakeClient.calls[0]
     assert params["model"] == "claude-opus-5-5" and params["fallbacks"] == "default"
-    assert params["output_config"] == {"effort": "medium"} and len(params["tools"]) == 11
+    assert params["output_config"] == {"effort": "medium"} and len([t for t in params["tools"] if not isinstance(t, dict)]) == 15
+    assert {"type": "web_search_20250305", "name": "web_search", "max_uses": 3} in params["tools"]
     assert "português de Portugal" in params["system"][0]["text"] and "Hoje é" in params["system"][1]["text"]
     from app.models import Audit
     from sqlalchemy import select
