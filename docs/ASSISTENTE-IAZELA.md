@@ -4,6 +4,8 @@ Perguntas em linguagem natural sobre os dados da empresa, respondidas pela Claud
 
 O assistente **nunca grava sozinho**. Consulta os dados e pode **propor** alterações: o preço de venda, a fotografia e o rótulo da ficha, o descritivo para o site e a publicação na loja online. Cada proposta aparece num cartão e só é gravada quando o utilizador carrega em **Confirmar** (ver [Ações com confirmação](#ações-com-confirmação)). Para as restantes ações (encomendar, receber, anexar), indica onde se faz na app.
 
+Para fazer as mesmas consultas no chat do próprio Claude (claude.ai e apps), ver o [conector MCP](CONECTOR-CLAUDE-MCP.md).
+
 ## Ativação
 
 1. Crie uma chave em [console.anthropic.com](https://console.anthropic.com/) e escreva-a no `.env` do servidor: `ANTHROPIC_API_KEY=...` (o `.env` nunca vai para o Git).

@@ -107,3 +107,23 @@ test("network failure returns a clear error and never retries a write", async t 
   assert.equal((await response.json()).code, "backend_unavailable");
   assert.equal(calls, 1);
 });
+
+test("OAuth discovery of the MCP connector reaches the API; other well-known paths stay static", async t => {
+  const seen = [];
+  t.mock.method(globalThis, "fetch", async request => {
+    seen.push(new URL(request.url).pathname);
+    return Response.json({ issuer: app + "/api/mcp" });
+  });
+  for (const path of ["/.well-known/oauth-authorization-server/api/mcp", "/.well-known/oauth-protected-resource/api/mcp",
+                      "/.well-known/openid-configuration/api/mcp"]) {
+    const response = await worker.fetch(new Request(app + path), { BACKEND_ORIGIN: origin });
+    assert.equal((await response.json()).issuer, app + "/api/mcp");
+  }
+  assert.deepEqual(seen, ["/.well-known/oauth-authorization-server/api/mcp", "/.well-known/oauth-protected-resource/api/mcp",
+                          "/.well-known/openid-configuration/api/mcp"]);
+  for (const path of ["/.well-known/oauth-authorization-server", "/.well-known/oauth-authorization-server/outra", "/.well-known/security.txt"]) {
+    const response = await worker.fetch(new Request(app + path), { BACKEND_ORIGIN: origin, ASSETS: { fetch: () => new Response("frontend") } });
+    assert.equal(await response.text(), "frontend");
+  }
+  assert.equal(seen.length, 3);
+});

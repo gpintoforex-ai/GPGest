@@ -26,7 +26,9 @@ function protect(response) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname !== "/api" && !url.pathname.startsWith("/api/")) {
+    // Descoberta OAuth do conector MCP (RFC 8414 e RFC 9728) para /api/mcp: também segue para a API.
+    const oauthDiscovery = /^\/\.well-known\/(oauth-authorization-server|oauth-protected-resource|openid-configuration)\/api\/mcp$/.test(url.pathname);
+    if (!oauthDiscovery && url.pathname !== "/api" && !url.pathname.startsWith("/api/")) {
       return protect(await env.ASSETS.fetch(request));
     }
     const origin = backendOrigin(env.BACKEND_ORIGIN, url.origin);
