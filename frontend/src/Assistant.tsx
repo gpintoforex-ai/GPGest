@@ -119,7 +119,10 @@ export default function Assistant({ store }: { store: string }) {
           {turn.role === "user" ? <p>{turn.content}</p> : <Reply text={turn.content} />}
           {!!turn.tools?.length && <small className="assistant-sources">Consultou: {[...new Set(turn.tools.map(t => TOOL_LABELS[t.name] || t.name))].join(" · ")}</small>}
         </div>)}
-        {busy && <p className="assistant-turn is-assistant assistant-thinking" role="status">A consultar os dados…</p>}
+        {busy && <p className="assistant-turn is-assistant assistant-thinking" role="status">
+          <span>A consultar os dados</span>
+          <span className="assistant-typing-dots" aria-hidden="true"><span /><span /><span /></span>
+        </p>}
         <div ref={end} />
       </div>
       {error && <Notice tone="error">{error}</Notice>}
