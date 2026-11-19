@@ -19,7 +19,8 @@ export async function api(path: string, body?: unknown, options?: { timeoutMs?: 
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
-    throw new Error("Não foi possível concluir a operação porque o servidor não respondeu como esperado. Os dados preenchidos foram mantidos. Tente novamente dentro de instantes.");
+    const code = r.ok ? "" : ` (código ${r.status})`;
+    throw new Error(`Não foi possível concluir a operação porque o servidor não respondeu como esperado${code}. Os dados preenchidos foram mantidos. Tente novamente dentro de instantes.`);
   }
   if (r.status === 401) window.dispatchEvent(new Event("gpgest-expired"));
   if (!r.ok) {

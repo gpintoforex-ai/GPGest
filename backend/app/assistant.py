@@ -9,6 +9,7 @@ pergunta fica na auditoria (pergunta, ferramentas usadas e tokens).
 
 import json
 import os
+import time
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -35,6 +36,9 @@ from .schemas import Strict
 
 router = APIRouter(prefix="/api/assistente")
 MODEL = "claude-opus-5-5"
+# Limites para responder antes do corte de 100 s do túnel Cloudflare.
+ANSWER_TIMEOUT = 45
+ANSWER_DEADLINE = 50
 ROLES = ["administrador", "gestor"]
 # NIF genéricos (consumidor final): não identificam um cliente.
 GENERIC_NIFS = {"", "0", "000000000", "999999990", "999999999"}
@@ -537,29 +541,38 @@ def ask(data: Question, request: Request, user=Depends(current), db: Session = D
     tools, used, store_names = tools_for(request, user, db, data.store_id)
     context = (f"Hoje é {today().isoformat()} (Europe/Lisbon). Utilizador: {user.name} ({user.role}). "
                f"Lojas consideradas: {', '.join(store_names) or 'nenhuma'}.")
-    client = anthropic.Anthropic(max_retries=2, timeout=120)
+    # O túnel Cloudflare corta pedidos sem resposta ao fim de 100 s (erro 524): cada chamada e o total
+    # ficam abaixo disso, para a interface receber sempre uma mensagem clara.
+    client = anthropic.Anthropic(max_retries=0, timeout=ANSWER_TIMEOUT)
+    deadline = time.monotonic() + ANSWER_DEADLINE
     usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0}
     try:
         runner = client.beta.messages.tool_runner(
             model=MODEL,
             max_tokens=16000,
-            output_config={"effort": "medium"},
+            output_config={"effort": "low"},
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
             system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}, {"type": "text", "text": context}],
             tools=tools,
             messages=[{"role": turn.role, "content": turn.content} for turn in data.messages],
-            max_iterations=10,
+            max_iterations=6,
         )
         final = None
         for message in runner:
             final = message
             for key in usage:
                 usage[key] += getattr(message.usage, key, 0) or 0
+            if time.monotonic() > deadline and message.stop_reason == "tool_use":
+                fail("O assistente está a demorar demasiado nesta pergunta. Torne-a mais concreta "
+                     "(loja, fornecedor ou período) e volte a perguntar.", 504)
     except anthropic.AuthenticationError:
         fail("A chave da API da Anthropic foi recusada. Verifique ANTHROPIC_API_KEY no .env do servidor.", 502)
     except anthropic.RateLimitError:
         fail("O assistente está com muitos pedidos neste momento. Tente daqui a um minuto.", 429)
+    except anthropic.APITimeoutError:
+        fail("O assistente demorou demasiado a responder. Torne a pergunta mais concreta "
+             "(loja, fornecedor ou período) e volte a perguntar.", 504)
     except anthropic.APIConnectionError:
         fail("Não foi possível contactar o serviço do assistente. Verifique a ligação à internet do servidor.", 503)
     except anthropic.APIStatusError as exc:

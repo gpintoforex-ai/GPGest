@@ -107,3 +107,25 @@ test("network failure returns a clear error and never retries a write", async t 
   assert.equal((await response.json()).code, "backend_unavailable");
   assert.equal(calls, 1);
 });
+
+test("HTML and plain-text backend failures become JSON with a concrete message", async t => {
+  for (const [status, body, type, code, expected] of [
+    [524, "<html>A timeout occurred</html>", "text/html", "backend_timeout", 504],
+    [530, "<html>Error 1033</html>", "text/html", "backend_unavailable", 502],
+    [500, "Internal Server Error", "text/plain", "backend_error", 500],
+  ]) {
+    t.mock.method(globalThis, "fetch", async () => new Response(body, { status, headers: { "Content-Type": type } }));
+    const response = await worker.fetch(new Request(app + "/api/assistente/mensagens", { method: "POST", body: "{}" }), { BACKEND_ORIGIN: origin });
+    assert.equal(response.status, expected);
+    assert.equal((await response.json()).code, code);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+    t.mock.restoreAll();
+  }
+});
+
+test("JSON errors from the API pass through unchanged", async t => {
+  t.mock.method(globalThis, "fetch", async () => Response.json({ detail: "Sem créditos." }, { status: 502 }));
+  const response = await worker.fetch(new Request(app + "/api/assistente/mensagens", { method: "POST", body: "{}" }), { BACKEND_ORIGIN: origin });
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).detail, "Sem créditos.");
+});

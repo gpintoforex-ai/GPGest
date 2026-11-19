@@ -74,7 +74,7 @@ def test_answer_uses_the_model_with_fallback_and_records_the_question(assistant)
     assert result["reply"] == "Resposta de teste." and result["usage"]["input_tokens"] == 100
     params = FakeClient.calls[0]
     assert params["model"] == "claude-opus-5-5" and params["fallbacks"] == "default"
-    assert params["output_config"] == {"effort": "medium"} and len(params["tools"]) == 8
+    assert params["output_config"] == {"effort": "low"} and len(params["tools"]) == 8
     assert "português de Portugal" in params["system"][0]["text"] and "Hoje é" in params["system"][1]["text"]
     from app.models import Audit
     from sqlalchemy import select

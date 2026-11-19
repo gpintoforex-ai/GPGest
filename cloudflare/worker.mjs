@@ -13,6 +13,19 @@ function backendOrigin(value, publicOrigin) {
   }
 }
 
+// O túnel/Cloudflare devolve páginas HTML nos erros de ligação (530/1033 túnel desligado, 524 mais de 100 s
+// sem resposta) e o FastAPI devolve texto simples nos erros não tratados. A app só lê JSON: converter aqui
+// para uma mensagem concreta em vez de «o servidor não respondeu como esperado».
+function upstreamError(status) {
+  if ([504, 522, 524].includes(status)) {
+    return errorResponse("O servidor demorou demasiado a responder (limite de 100 segundos do túnel). Se era uma pergunta ao assistente, torne-a mais concreta (loja, fornecedor ou período) e volte a tentar.", 504, "backend_timeout");
+  }
+  if ([502, 503, 520, 521, 523, 530].includes(status)) {
+    return errorResponse("O serviço de dados não está disponível. Confirme que o PC, a API e o túnel estão ligados e que BACKEND_ORIGIN aponta para o endereço atual do túnel.", 502, "backend_unavailable");
+  }
+  return errorResponse(`O servidor encontrou um erro interno (código ${status}). Tente novamente; se persistir, consulte os registos da API.`, status >= 500 ? status : 502, "backend_error");
+}
+
 function protect(response) {
   const headers = new Headers(response.headers);
   headers.set("Referrer-Policy", "no-referrer");
@@ -48,6 +61,11 @@ export default {
       upstream = await fetch(forwarded, { cf: { cacheTtl: 0, cacheEverything: false } });
     } catch {
       return protect(errorResponse("Não foi possível contactar o serviço de dados. Verifique a ligação antes de repetir a operação.", 502, "backend_unavailable"));
+    }
+    const type = upstream.headers.get("Content-Type") || "";
+    if (upstream.status >= 500 && !type.includes("json")) {
+      await upstream.body?.cancel();
+      return protect(upstreamError(upstream.status));
     }
     const resultHeaders = new Headers(upstream.headers);
     resultHeaders.set("Cache-Control", "no-store");

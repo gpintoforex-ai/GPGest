@@ -162,6 +162,16 @@ async def conflict(request, exc):
     )
 
 
+@app.exception_handler(Exception)
+async def unexpected_error(request, exc):
+    # Sem isto o Starlette responde «Internal Server Error» em texto simples e a interface só consegue
+    # dizer que o servidor «não respondeu como esperado». O erro continua a ser registado no log.
+    return JSONResponse(
+        {"detail": "O servidor encontrou um erro inesperado. Tente novamente; se persistir, consulte os registos da API."},
+        status_code=500,
+    )
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError):
     if not request.url.path.startswith("/api/platform/"):
